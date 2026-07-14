@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Chat — {{ client.name if client and client.name else phone }}{% endblock %}
+{% block content %}
+<h1>
+  {{ client.name if client and client.name else 'Sin nombre' }}
+  <span style="color:var(--text-muted); font-size:.9rem; font-weight:400;">· {{ phone }}</span>
+</h1>
+
+<div class="card">
+  <p style="margin:0; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+    {% if bot_paused %}
+    <span class="badge pausado">bot pausado</span>
+    <form method="post" action="/inbox/{{ phone }}/bot-on" style="display:inline;">
+      <button type="submit" class="btn-sm">Reactivar bot</button>
+    </form>
+    {% else %}
+    <span class="badge cerrado">bot activo</span>
+    {% endif %}
+    {% if not window_open %}<span class="badge caducada">ventana de 24h cerrada</span>{% endif %}
+    {% if ticket %}
+    <a href="/tickets/{{ ticket.id }}">Ver solicitud #{{ ticket.id }}</a>
+    {% if ticket.assigned_to %}<span class="badge asignada">atiende: {{ ticket.assigned_to }}</span>{% endif %}
+    {% endif %}
+  </p>
+</div>
+
+<div class="card">
+  <div class="chat">
+    {% for m in messages %}
+    <div class="bubble {{ m.direction.value }}">
+      {{ m.body }}
+      {% if m.media_path %}
+        {% if m.media_path.endswith('.pdf') %}
+        <a href="{{ m.media_path }}" target="_blank" rel="noopener">📄 Ver documento</a>
+        {% else %}
+        <a href="{{ m.media_path }}" target="_blank" rel="noopener"><img src="{{ m.media_path }}" alt="Imagen enviada"></a>
+        {% endif %}
+      {% endif %}
+      <span class="meta">
+        {{ 'Cliente' if m.direction.value == 'in' else (m.sent_by or 'Bot') }}
+        · {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
+        {% if m.direction.value == 'out' and m.wa_status %} · {{ m.wa_status }}{% endif %}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="composer">
+    {% if error == 'window' %}
+    <p class="error" role="alert">No se pudo enviar: la ventana de 24h está cerrada. El cliente debe escribir primero.</p>
+    {% elif error == 'tipo' %}
+    <p class="error" role="alert">Tipo de archivo no permitido. Solo JPG, PNG, WebP o PDF.</p>
+    {% elif error == 'peso' %}
+    <p class="error" role="alert">Archivo demasiado grande (máx. 5 MB imágenes, 16 MB PDF).</p>
+    {% endif %}
+
+    {% if window_open %}
+    <div class="qr-bar" role="toolbar" aria-label="Respuestas rápidas">
+      {% for q in quick_replies %}
+      <button type="button" class="qr" data-text="{{ q.text }}">{{ q.title }}</button>
+      {% endfor %}
+    </div>
+    <form method="post" action="/inbox/{{ phone }}/send">
+      <label for="body" class="sr-only" style="position:absolute; left:-9999px;">Mensaje</label>
+      <textarea id="body" name="body" placeholder="Escribe un mensaje…" required></textarea>
+      <div class="row">
+        <button type="submit">Enviar</button>
+      </div>
+    </form>
+    <form method="post" action="/inbox/{{ phone }}/send-media" enctype="multipart/form-data" style="margin-top:.75rem;">
+      <div class="row">
+        <label for="file" style="margin:0;">Adjuntar:</label>
+        <input type="file" id="file" name="file" accept=".jpg,.jpeg,.png,.webp,.pdf" required>
+        <input type="text" name="caption" placeholder="Texto opcional" style="max-width:220px;">
+        <button type="submit" class="btn-sm">Enviar archivo</button>
+      </div>
+    </form>
+    <script>
+      document.querySelectorAll('.qr').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var ta = document.getElementById('body');
+          ta.value = b.dataset.text;
+          ta.focus();
+        });
+      });
+    </script>
+    {% else %}
+    <div class="banner-warn" role="status">
+      La ventana de 24h de WhatsApp está cerrada: solo puedes responder cuando el cliente
+      vuelva a escribir. (Meta rechaza mensajes libres fuera de la ventana.)
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

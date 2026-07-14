@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Saludo",
+    "text": "¡Hola! Soy tu asesor de trámites. Con gusto te ayudo con tu solicitud."
+  },
+  {
+    "title": "Documentos requeridos",
+    "text": "Para continuar con tu trámite necesito que me envíes: identificación oficial vigente (INE o pasaporte) y comprobante de domicilio no mayor a 3 meses."
+  },
+  {
+    "title": "Confirmación de precio",
+    "text": "Te confirmo el costo de tu trámite. ¿Deseas que procedamos?"
+  },
+  {
+    "title": "Tiempo de entrega",
+    "text": "El tiempo estimado de entrega de tu trámite es de 3 a 5 días hábiles una vez recibida la documentación completa."
+  },
+  {
+    "title": "En proceso",
+    "text": "Tu trámite ya está en proceso. Te aviso en cuanto tenga novedades. ¡Gracias por tu paciencia!"
+  },
+  {
+    "title": "Despedida",
+    "text": "¡Gracias por contactarnos! Si necesitas algo más, escríbenos por aquí. ¡Que tengas excelente día!"
+  }
+]

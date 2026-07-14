@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Registro{% endblock %}
+{% block content_public %}
+<div class="login-wrap">
+  <div class="card login-card">
+    <h1>Crear cuenta</h1>
+    <p style="color: var(--text-muted); margin-top: -.5rem;">Para colaboradores con código de invitación</p>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="/register">
+      <label for="username">Usuario</label>
+      <input type="text" id="username" name="username" autocomplete="username" required minlength="3" maxlength="30">
+      <br><br>
+      <label for="password">Contraseña</label>
+      <input type="password" id="password" name="password" autocomplete="new-password" required minlength="8">
+      <br><br>
+      <label for="code">Código de invitación</label>
+      <input type="password" id="code" name="code" autocomplete="off" required>
+      <br>
+      <button type="submit">Registrarme</button>
+    </form>
+    <p style="margin-top: 1rem; font-size: .85rem;">¿Ya tienes cuenta? <a href="/login">Inicia sesión</a></p>
+  </div>
+</div>
+{% endblock %}

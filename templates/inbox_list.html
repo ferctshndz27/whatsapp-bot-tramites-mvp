@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Bandeja{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="30">{% endblock %}
+{% block content %}
+<h1>Bandeja de mensajes</h1>
+
+<div class="card">
+  <nav class="pills" aria-label="Filtrar conversaciones">
+    <a href="/inbox" {% if not current_filter %}aria-current="true"{% endif %}>todas ({{ counts.todas }})</a>
+    <a href="/inbox?filter=esperando" {% if current_filter == 'esperando' %}aria-current="true"{% endif %}>esperando respuesta ({{ counts.esperando }})</a>
+    <a href="/inbox?filter=caducadas" {% if current_filter == 'caducadas' %}aria-current="true"{% endif %}>caducadas ({{ counts.caducadas }})</a>
+    <a href="/inbox?filter=pausadas" {% if current_filter == 'pausadas' %}aria-current="true"{% endif %}>bot pausado ({{ counts.pausadas }})</a>
+  </nav>
+
+  {% if items %}
+  <div class="convo-list">
+    {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
+    {% for i in items %}
+    <a class="convo-card" href="/inbox/{{ i.phone }}">
+      <span class="avatar" style="background: {{ palette[loop.index % 5] }}" aria-hidden="true">
+        {{ (i.name or i.phone)[:2] | upper }}
+      </span>
+      <span class="body">
+        <strong>{{ i.name or i.phone }}</strong>
+        {% if i.name %}<span class="sub" style="color:var(--text-muted); font-size:.8rem;"> · {{ i.phone }}</span>{% endif %}
+        <div class="preview">{{ '📎 ' if i.last_direction == 'out' and not i.last_body else '' }}{{ i.last_body[:70] }}</div>
+        <span class="badges">
+          {% if i.waiting %}<span class="badge esperando">esperando respuesta</span>{% endif %}
+          {% if not i.window_open %}<span class="badge caducada">caducó</span>{% endif %}
+          {% if i.bot_paused %}<span class="badge pausado">bot pausado</span>{% endif %}
+          {% if i.assigned_to %}<span class="badge asignada">{{ i.assigned_to }}</span>{% endif %}
+        </span>
+      </span>
+      <span class="when">{{ i.ago }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">No hay conversaciones{% if current_filter %} en este filtro{% endif %}.</p>
+  {% endif %}
+</div>
+{% endblock %}

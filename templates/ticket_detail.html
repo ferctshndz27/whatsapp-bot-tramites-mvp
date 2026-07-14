@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Solicitud #{{ ticket.id }}{% endblock %}
+{% block content %}
+<h1>Solicitud #{{ ticket.id }}</h1>
+
+<div class="card">
+  <h2>
+    {{ ticket.client_name or 'Sin nombre' }}
+    <span class="badge {{ ticket.status.value }}">{{ ticket.status.value.replace('_', ' ') }}</span>
+    {% if ticket.escalado %}<span class="badge escalado">escalado</span>{% endif %}
+  </h2>
+  <p>
+    <strong>Teléfono:</strong> {{ ticket.phone }}<br>
+    <strong>Categoría:</strong> {{ ticket.category }}<br>
+    <strong>Servicio:</strong> {{ ticket.service_name }}<br>
+    <strong>Precio:</strong> {{ ticket.price_info }}<br>
+    <strong>Asignado a:</strong> {{ ticket.assigned_to or '— sin asignar' }}<br>
+    <strong>Conversación:</strong> <a href="/inbox/{{ ticket.phone }}">Abrir chat</a>
+  </p>
+
+  {% if ticket.notes %}
+  <h2>Notas del trámite</h2>
+  <p style="white-space: pre-line; background:#f8fafc; border-radius:6px; padding:.75rem 1rem;">{{ ticket.notes }}</p>
+  {% endif %}
+
+  {% if not ticket.assigned_to and ticket.status.value != 'cerrado' %}
+  <form method="post" action="/tickets/{{ ticket.id }}/claim">
+    <button type="submit">Tomar esta solicitud</button>
+  </form>
+  {% elif ticket.assigned_to == user %}
+  <form method="post" action="/tickets/{{ ticket.id }}/status" style="display:inline-block; margin-right:.75rem;">
+    <label for="status">Cambiar estado</label>
+    <select name="status" id="status">
+      {% for s in statuses %}
+      <option value="{{ s }}" {{ 'selected' if s == ticket.status.value else '' }}>{{ s.replace('_', ' ') }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Actualizar</button>
+  </form>
+  <form method="post" action="/tickets/{{ ticket.id }}/release" style="display:inline-block;">
+    <button type="submit" class="btn-danger">Soltar solicitud</button>
+  </form>
+
+  <h2 style="margin-top:1.5rem;">Agregar nota</h2>
+  <form method="post" action="/tickets/{{ ticket.id }}/notes">
+    <textarea name="note" required placeholder="Detalles del trámite, avances, pendientes…"
+      style="width:100%; min-height:60px; padding:.6rem .75rem; border:1px solid var(--border); border-radius:6px; font:inherit;"></textarea>
+    <button type="submit" class="btn-sm" style="margin-top:.5rem;">Guardar nota</button>
+  </form>
+
+  {% if usernames %}
+  <h2 style="margin-top:1.5rem;">Transferir a otro colaborador</h2>
+  <form method="post" action="/tickets/{{ ticket.id }}/reassign">
+    <label for="to_user">Colaborador</label>
+    <select name="to_user" id="to_user" required>
+      {% for u in usernames %}<option value="{{ u }}">{{ u }}</option>{% endfor %}
+    </select>
+    <label for="note" style="margin-top:.5rem;">Nota de contexto para quien recibe (opcional)</label>
+    <textarea name="note" id="note" placeholder="Qué se ha hecho, qué falta, acuerdos con el cliente…"
+      style="width:100%; min-height:60px; padding:.6rem .75rem; border:1px solid var(--border); border-radius:6px; font:inherit;"></textarea>
+    <button type="submit" style="margin-top:.5rem;">Transferir</button>
+  </form>
+  {% endif %}
+  {% else %}
+  <p class="empty" style="text-align:left; padding:.5rem 0;">
+    La está atendiendo <strong>{{ ticket.assigned_to }}</strong> — solo esa persona puede cambiar el estado.
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Conversación</h2>
+  {% if messages %}
+  <div class="chat">
+    {% for m in messages %}
+    <div class="bubble {{ m.direction.value }}">
+      {{ m.body }}
+      <span class="meta">
+        {{ 'Cliente' if m.direction.value == 'in' else 'Bot' }}
+        · {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
+        {% if m.direction.value == 'out' and m.wa_status %} · {{ m.wa_status }}{% endif %}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">Sin mensajes registrados.</p>
+  {% endif %}
+</div>
+{% endblock %}

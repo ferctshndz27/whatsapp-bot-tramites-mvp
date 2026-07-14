@@ -1,0 +1,116 @@
+{
+  "categories": [
+    {
+      "id": "servicios-basicos",
+      "name": "Servicios básicos",
+      "services": [
+        {"id": "sb-acta-nacimiento", "name": "Acta de nacimiento", "price_info": "A cotizar"},
+        {"id": "sb-acta-matrimonio", "name": "Acta de matrimonio", "price_info": "A cotizar"},
+        {"id": "sb-acta-defuncion", "name": "Acta de defunción", "price_info": "A cotizar"},
+        {"id": "sb-acta-divorcio", "name": "Acta de divorcio", "price_info": "A cotizar"},
+        {"id": "sb-curp", "name": "Descarga de CURP", "price_info": "A cotizar"},
+        {"id": "sb-recibo-cfe", "name": "Descarga de Recibo CFE", "price_info": "A cotizar"}
+      ]
+    },
+    {
+      "id": "sindos",
+      "name": "Sindos",
+      "services": [
+        {"id": "sin-ultimo-retiro", "name": "Sindo de último retiro", "price_info": "A cotizar"},
+        {"id": "sin-canase", "name": "Sindo canase", "price_info": "A cotizar"},
+        {"id": "sin-alfanumerico", "name": "Sindo alfanumérico", "price_info": "A cotizar"},
+        {"id": "sin-patronal", "name": "Sindo patronal", "price_info": "A cotizar"},
+        {"id": "sin-f7", "name": "Sindo F7 (registros patronales)", "price_info": "A cotizar"},
+        {"id": "sin-f1", "name": "Sindo F1 (datos de clínica)", "price_info": "A cotizar"},
+        {"id": "sin-vigencia-derechos", "name": "Sindo de vigencia de derechos", "price_info": "A cotizar"},
+        {"id": "sin-semanas-cotizadas", "name": "Sindo de semanas cotizadas", "price_info": "A cotizar"},
+        {"id": "sin-completo", "name": "Sindo completo", "price_info": "A cotizar"}
+      ]
+    },
+    {
+      "id": "servicios-sat",
+      "name": "Servicios SAT",
+      "services": [
+        {"id": "sat-csf-original", "name": "Constancia de situación fiscal original", "price_info": "A cotizar"},
+        {"id": "sat-csf-moral", "name": "Constancia de situación fiscal Moral", "price_info": "A cotizar"},
+        {"id": "sat-csf-expres", "name": "Constancia de situación fiscal Exprés", "price_info": "A cotizar"},
+        {"id": "sat-csf-generica", "name": "Constancia de situación fiscal genérica", "price_info": "A cotizar"},
+        {"id": "sat-cif-rfc", "name": "Constancia con ID CIF y RFC", "price_info": "A cotizar"},
+        {"id": "sat-32d", "name": "Constancia 32D", "price_info": "A cotizar"}
+      ]
+    },
+    {
+      "id": "infonavit",
+      "name": "Infonavit",
+      "services": [
+        {"id": "inf-hoja-retencion", "name": "Hoja de retención", "price_info": "A cotizar"},
+        {"id": "inf-edo-cuenta-historico", "name": "Estado de cuenta histórico", "price_info": "A cotizar"},
+        {"id": "inf-edo-cuenta-mensual", "name": "Estado de cuenta mensual", "price_info": "A cotizar"},
+        {"id": "inf-precalificacion-mejoravit", "name": "Precalificación MejoraVit", "price_info": "A cotizar"},
+        {"id": "inf-precalificacion", "name": "Precalificación Infonavit", "price_info": "A cotizar"},
+        {"id": "inf-historial", "name": "Historial Infonavit", "price_info": "A cotizar"},
+        {"id": "inf-reseteo-total", "name": "Reseteo total", "price_info": "A cotizar"},
+        {"id": "inf-recuperacion-password", "name": "Recuperación de contraseña", "price_info": "A cotizar"},
+        {"id": "inf-creacion-cuenta", "name": "Creación de cuenta", "price_info": "A cotizar"},
+        {"id": "inf-correccion-rfc", "name": "Corrección de RFC", "price_info": "A cotizar"},
+        {"id": "inf-extraccion-datos", "name": "Extracción de datos", "price_info": "A cotizar"},
+        {"id": "inf-pantalla-saldos", "name": "Pantalla de saldos", "price_info": "A cotizar"}
+      ]
+    },
+    {
+      "id": "constancias",
+      "name": "Constancias",
+      "services": [
+        {"id": "con-semanas-cotizadas", "name": "Semanas cotizadas", "price_info": "A cotizar"},
+        {"id": "con-vigencia-derechos", "name": "Vigencia de derechos", "price_info": "A cotizar"},
+        {"id": "con-nss-pdf", "name": "NSS en PDF", "price_info": "A cotizar"},
+        {"id": "con-antecedentes-no-penales", "name": "Constancia de antecedentes no penales (estatal)", "price_info": "A cotizar"},
+        {"id": "con-inexistencia-matrimonio", "name": "Constancia de inexistencia de matrimonio", "price_info": "A cotizar"},
+        {"id": "con-no-deudor-alimenticio", "name": "Constancia de no deudor alimenticio", "price_info": "A cotizar"},
+        {"id": "con-no-derechohabiente", "name": "Constancia de no derechohabiente", "price_info": "A cotizar"}
+      ]
+    },
+    {
+      "id": "pensiones",
+      "name": "Pensiones",
+      "services": [
+        {"id": "pen-proyeccion", "name": "Proyección de pensión", "price_info": "A cotizar"},
+        {"id": "pen-resolucion", "name": "Resolución de pensión", "price_info": "A cotizar"},
+        {"id": "pen-estatus", "name": "Estatus de pensión", "price_info": "A cotizar"},
+        {"id": "pen-modalidad-10", "name": "Modalidad 10", "price_info": "A cotizar"},
+        {"id": "pen-modalidad-40", "name": "Modalidad 40", "price_info": "A cotizar"},
+        {"id": "pen-busqueda-manual-semanas", "name": "Búsqueda manual de semanas", "price_info": "A cotizar"},
+        {"id": "pen-amparo-mod40", "name": "Amparo para liberar pensión en Mod. 40", "price_info": "A cotizar"}
+      ]
+    },
+    {
+      "id": "servicios-imss",
+      "name": "Servicios IMSS",
+      "services": [
+        {"id": "imss-alta-medica-basica", "name": "Alta médica básica", "price_info": "A cotizar"},
+        {"id": "imss-alta-medica-estable", "name": "Alta médica estable", "price_info": "A cotizar"},
+        {"id": "imss-unificacion-nss", "name": "Unificación de NSS", "price_info": "A cotizar"},
+        {"id": "imss-vinculacion-nss-curp", "name": "Vinculación de NSS y CURP", "price_info": "A cotizar"}
+      ]
+    },
+    {
+      "id": "afore",
+      "name": "Afore",
+      "services": [
+        {"id": "afo-alta-desempleo-2dias", "name": "Alta para retiro por desempleo (2 días)", "price_info": "A cotizar"},
+        {"id": "afo-alta-desempleo-1dia", "name": "Alta para retiro por desempleo (1 día)", "price_info": "A cotizar"},
+        {"id": "afo-baja-desempleo", "name": "Baja para cancelar retiro por desempleo", "price_info": "A cotizar"},
+        {"id": "afo-estados-cuenta", "name": "Estados de cuenta", "price_info": "A cotizar"}
+      ]
+    },
+    {
+      "id": "otros-servicios",
+      "name": "Otros servicios",
+      "services": [
+        {"id": "otr-buro-credito", "name": "Buró de crédito", "price_info": "A cotizar"},
+        {"id": "otr-recibo-pago-pension", "name": "Recibo de pago de pensión", "price_info": "A cotizar"},
+        {"id": "otr-historial-pagos-pension", "name": "Historial de pagos de pensión", "price_info": "A cotizar"}
+      ]
+    }
+  ]
+}

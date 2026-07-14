@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Solicitudes{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="30">{% endblock %}
+{% block content %}
+<h1>Hola, {{ user }}</h1>
+
+<div class="stats">
+  <div class="stat-card green">
+    <div class="label">Total de solicitudes</div>
+    <div class="value">{{ stats.total }}</div>
+  </div>
+  <div class="stat-card red">
+    <div class="label">Nuevas</div>
+    <div class="value">{{ stats.nuevos }}</div>
+  </div>
+  <div class="stat-card blue">
+    <div class="label">En atención</div>
+    <div class="value">{{ stats.activos }}</div>
+  </div>
+  <div class="stat-card orange">
+    <div class="label">Escaladas</div>
+    <div class="value">{{ stats.escalados }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Solicitudes</h2>
+
+  <nav class="pills" aria-label="Filtrar por estado">
+    <a href="/" {% if not current_filter and not assigned_filter %}aria-current="true"{% endif %}>todas</a>
+    {% for s in statuses %}
+    <a href="/?status={{ s }}" {% if current_filter == s %}aria-current="true"{% endif %}>{{ s.replace('_', ' ') }}</a>
+    {% endfor %}
+    <a href="/?assigned=none" {% if assigned_filter == 'none' %}aria-current="true"{% endif %}>sin asignar</a>
+  </nav>
+
+  {% if tickets %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Cliente</th><th>Categoría</th><th>Servicio</th>
+          <th>Precio</th><th>Estado</th><th>Asignado a</th><th>Creado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
+        {% for t in tickets %}
+        <tr>
+          <td>
+            <a class="cell-person" href="/tickets/{{ t.id }}" style="text-decoration:none; color:inherit;">
+              <span class="avatar" style="background: {{ palette[t.id % 5] }}" aria-hidden="true">
+                {{ (t.client_name or t.phone)[:2] | upper }}
+              </span>
+              <span>
+                <strong>{{ t.client_name or 'Sin nombre' }}</strong><br>
+                <span class="sub">#{{ t.id }} · {{ t.phone }}</span>
+              </span>
+            </a>
+          </td>
+          <td>{{ t.category }}</td>
+          <td>{{ t.service_name }}</td>
+          <td>{{ t.price_info }}</td>
+          <td>
+            <span class="badge {{ t.status.value }}">{{ t.status.value.replace('_', ' ') }}</span>
+            {% if t.escalado %}<span class="badge escalado">escalado</span>{% endif %}
+          </td>
+          <td>
+            {% if t.assigned_to %}
+              {{ t.assigned_to }}
+            {% elif t.status.value != 'cerrado' %}
+              <form method="post" action="/tickets/{{ t.id }}/claim" style="margin:0;">
+                <button type="submit" class="btn-sm">Tomar</button>
+              </form>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>{{ t.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No hay solicitudes{% if current_filter %} con estado «{{ current_filter }}»{% endif %}.</p>
+  {% endif %}
+</div>
+{% endblock %}
