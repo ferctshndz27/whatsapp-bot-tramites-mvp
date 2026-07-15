@@ -1,7 +1,5 @@
 import json
 import logging
-import re
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,6 +12,7 @@ from app import whatsapp_client
 from app.config import settings
 from app.conversation import _log_message
 from app.db import get_session
+from app.media_store import MEDIA_NAME_RE, save_upload
 from app.models import Client, Conversation, Direction, Message, Ticket
 
 logger = logging.getLogger(__name__)
@@ -23,14 +22,6 @@ templates = Jinja2Templates(directory="templates")
 
 WINDOW_HOURS = 24
 QUICK_REPLIES = json.loads((Path(__file__).parent / "quick_replies.json").read_text())
-
-ALLOWED_MEDIA = {
-    "image/jpeg": (".jpg", 5 * 1024 * 1024),
-    "image/png": (".png", 5 * 1024 * 1024),
-    "image/webp": (".webp", 5 * 1024 * 1024),
-    "application/pdf": (".pdf", 16 * 1024 * 1024),
-}
-MEDIA_NAME_RE = re.compile(r"^[a-f0-9]{32}\.(jpg|png|webp|pdf)$")
 
 
 def _current_user(request: Request) -> str | None:
@@ -219,14 +210,6 @@ def inbox_send_media(request: Request, phone: str, file: UploadFile, caption: st
     if not user:
         return RedirectResponse("/login", status_code=303)
 
-    if file.content_type not in ALLOWED_MEDIA:
-        return RedirectResponse(f"/inbox/{phone}?err=tipo", status_code=303)
-    ext, max_size = ALLOWED_MEDIA[file.content_type]
-
-    data = file.file.read()
-    if len(data) > max_size:
-        return RedirectResponse(f"/inbox/{phone}?err=peso", status_code=303)
-
     with get_session() as session:
         last_in = session.exec(
             select(Message)
@@ -236,13 +219,12 @@ def inbox_send_media(request: Request, phone: str, file: UploadFile, caption: st
         if not _window_open(last_in.created_at if last_in else None):
             return RedirectResponse(f"/inbox/{phone}?err=window", status_code=303)
 
-        media_dir = Path(settings.media_dir)
-        media_dir.mkdir(parents=True, exist_ok=True)
-        name = f"{uuid.uuid4().hex}{ext}"
-        (media_dir / name).write_bytes(data)
+        web_path, disk_path, error = save_upload(file)
+        if error:
+            return RedirectResponse(f"/inbox/{phone}?err={error}", status_code=303)
 
         wamid = whatsapp_client.send_media(
-            phone, str(media_dir / name), file.content_type, caption, file.filename
+            phone, disk_path, file.content_type, caption, file.filename
         )
         kind = "imagen" if file.content_type.startswith("image/") else "documento"
         session.add(
@@ -251,7 +233,7 @@ def inbox_send_media(request: Request, phone: str, file: UploadFile, caption: st
                 direction=Direction.OUT,
                 body=caption or f"[{kind}: {file.filename}]",
                 wa_message_id=wamid,
-                media_path=f"/media/{name}",
+                media_path=web_path,
                 sent_by=user,
             )
         )

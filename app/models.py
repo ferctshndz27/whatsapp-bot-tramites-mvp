@@ -67,3 +67,11 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
     password_hash: str
+
+
+class TeamMessage(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    author: str = Field(index=True)
+    body: str
+    media_path: str | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)

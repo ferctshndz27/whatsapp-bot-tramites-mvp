@@ -216,6 +216,7 @@
       <nav aria-label="Principal">
         <a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Solicitudes</a>
         <a href="/inbox" {% if request.url.path.startswith('/inbox') %}aria-current="page"{% endif %}>Bandeja</a>
+        <a href="/team" {% if request.url.path.startswith('/team') %}aria-current="page"{% endif %}>Equipo</a>
       </nav>
       <div class="userbox">
         {{ user }} · <a href="/logout">Salir</a>

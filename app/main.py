@@ -4,7 +4,7 @@ import secrets
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import dashboard, inbox, webhook
+from app import dashboard, inbox, team_chat, webhook
 from app.config import settings
 from app.db import init_db
 
@@ -26,6 +26,7 @@ app.add_middleware(SessionMiddleware, secret_key=session_secret)
 app.include_router(webhook.router)
 app.include_router(dashboard.router)
 app.include_router(inbox.router)
+app.include_router(team_chat.router)
 
 
 @app.on_event("startup")
