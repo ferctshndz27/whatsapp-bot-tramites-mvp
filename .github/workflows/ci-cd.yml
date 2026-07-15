@@ -1,5 +1,12 @@
 name: CI/CD
 
+# Modelo pull: GitHub no guarda ninguna credencial del VPS.
+# 1. Cada push/PR corre los tests.
+# 2. Si pasan en main, la rama `production` avanza a ese commit
+#    (con el GITHUB_TOKEN efímero de Actions, no un secreto almacenado).
+# 3. El VPS hace polling de `production` con una deploy key de solo
+#    lectura y se redespliega solo (ver deploy/pull-deploy.sh).
+
 on:
   push:
     branches: [main]
@@ -19,43 +26,16 @@ jobs:
       - name: Ejecutar tests
         run: pytest -q
 
-  deploy:
+  promote:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    concurrency: deploy-production
+    permissions:
+      contents: write
+    concurrency: promote-production
     steps:
       - uses: actions/checkout@v4
-
-      - name: Preparar SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Sincronizar código al VPS
-        # .env, data/ y media/ viven solo en el servidor — nunca se tocan
-        run: |
-          rsync -az --delete \
-            --exclude '.git' --exclude '.github' --exclude '.env' \
-            --exclude 'data/' --exclude 'media/' --exclude '.venv' \
-            --exclude '__pycache__' --exclude '*.db' \
-            ./ "root@${{ secrets.VPS_HOST }}:/opt/whatsapp-bot-tramites/"
-
-      - name: Reconstruir y reiniciar contenedor
-        run: |
-          ssh "root@${{ secrets.VPS_HOST }}" \
-            "cd /opt/whatsapp-bot-tramites && docker compose up -d --build"
-
-      - name: Verificar despliegue (health check)
-        run: |
-          for i in $(seq 1 12); do
-            if ssh "root@${{ secrets.VPS_HOST }}" "curl -sf http://127.0.0.1:8000/health" > /dev/null; then
-              echo "Despliegue OK"; exit 0
-            fi
-            sleep 5
-          done
-          echo "El servicio no respondió tras el despliegue"
-          ssh "root@${{ secrets.VPS_HOST }}" "cd /opt/whatsapp-bot-tramites && docker compose logs --tail 50 bot"
-          exit 1
+        with:
+          fetch-depth: 0
+      - name: Promover a production
+        run: git push origin HEAD:production
