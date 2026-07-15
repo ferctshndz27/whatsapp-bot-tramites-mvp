@@ -7,7 +7,26 @@ services:
     environment:
       - DB_PATH=/data/tramites.db
       - MEDIA_DIR=/data/media
+      - MSSQL_HOST=mssql
     volumes:
       - ./data:/data
     ports:
       - "127.0.0.1:8000:8000"
+    depends_on:
+      - mssql
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: tramites-mssql
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      # La contraseña vive solo en .env (gitignored); compose la interpola aquí
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+      - MSSQL_PID=Express
+    # Sin "ports": solo accesible dentro de la red de docker, nunca desde internet
+    volumes:
+      - mssql_data:/var/opt/mssql
+
+volumes:
+  mssql_data:
