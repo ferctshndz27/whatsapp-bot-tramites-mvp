@@ -83,3 +83,9 @@ Carga de documentos, pagos, motor de precios dinámico, multi-sucursal,
 roles/permisos finos, interpretación de lenguaje libre con IA. Ver la sección
 "Alcance del MVP" del plan para el detalle completo y el camino de migración
 hacia el ERP real.
+
+## CI/CD
+
+Push a `main` → tests en GitHub Actions → si pasan, la rama `production` avanza →
+el VPS hace pull (cron cada 2 min con deploy key de solo lectura) y reconstruye el
+contenedor con health check. GitHub no guarda ninguna credencial del servidor.
