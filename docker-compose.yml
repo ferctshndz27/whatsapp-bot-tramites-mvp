@@ -24,7 +24,9 @@ services:
       # La contraseña vive solo en .env (gitignored); compose la interpola aquí
       - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
       - MSSQL_PID=Express
-    # Sin "ports": solo accesible dentro de la red de docker, nunca desde internet
+    ports:
+      # Solo loopback del servidor: accesible vía túnel SSH, nunca desde internet
+      - "127.0.0.1:1433:1433"
     volumes:
       - mssql_data:/var/opt/mssql
 
