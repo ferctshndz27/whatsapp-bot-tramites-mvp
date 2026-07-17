@@ -209,7 +209,9 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         _set_state(session, conv, "menu_categoria")
         return [
             f"Listo, registré tu solicitud de '{service.name}' (folio #{ticket.id}). "
-            "Un asesor te contactará en breve.\n\n" + catalog.format_category_menu()
+            "Un asesor te contactará en breve.\n\n"
+            "¡Gracias por tu confianza! Fue un gusto ayudarte. "
+            "Si necesitas algo más, aquí estoy cuando quieras."
         ]
 
     if normalized in NO_WORDS:
