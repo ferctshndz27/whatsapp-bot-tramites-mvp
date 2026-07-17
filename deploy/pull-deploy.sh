@@ -24,6 +24,11 @@ echo "$(date -Is) desplegando $REMOTE (antes: $LOCAL)"
 git reset --hard "origin/$BRANCH"
 docker compose up -d --build
 
+# Stack de correo (Poste.io) — independiente del bot, no bloquea su deploy
+# ni su health check si falla; solo se registra la advertencia.
+(cd mailserver && docker compose up -d) \
+  || echo "$(date -Is) ADVERTENCIA: fallo al desplegar mailserver" >&2
+
 for _ in $(seq 1 12); do
   if curl -sf http://127.0.0.1:8000/health > /dev/null; then
     echo "$(date -Is) deploy OK: $REMOTE"

@@ -1,0 +1,27 @@
+services:
+  poste:
+    image: analogic/poste.io
+    container_name: mail-poste
+    restart: unless-stopped
+    # Sin network_mode host a propósito: nginx ya es dueño de 80/443 en este
+    # VPS (sirve bot.esaumillan.cloud). Solo se publican los puertos de
+    # protocolo de correo; el panel web/webmail se sirve en localhost y
+    # nginx lo expone en mail.esaumillan.cloud con su propio TLS.
+    ports:
+      - "25:25"
+      - "110:110"
+      - "143:143"
+      - "465:465"
+      - "587:587"
+      - "993:993"
+      - "995:995"
+      - "127.0.0.1:8081:80"
+    volumes:
+      - ./data:/data
+    environment:
+      # nginx termina TLS; Poste no debe redirigir a su propio HTTPS interno.
+      - HTTPS=OFF
+      # ponytail: VPS de 2 vCPU compartido con el bot y MSSQL — ClamAV se
+      # come el procesador escaneando cada correo. Actívalo (quita esta
+      # línea) solo si sobra CPU y quieres antivirus.
+      - DISABLE_CLAMAV=TRUE
