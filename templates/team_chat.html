@@ -17,7 +17,14 @@
         <a href="{{ m.media_path }}" target="_blank" rel="noopener">📄 Ver archivo</a>
         {% endif %}
       {% endif %}
-      <span class="meta">{{ m.author }} · {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      <span class="meta">
+        {{ m.author }} · {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
+        {% if m.author == user %}
+        · <form method="post" action="/team/{{ m.id }}/delete" style="display:inline;" onsubmit="return confirm('¿Eliminar este mensaje?');">
+            <button type="submit" style="background:none; border:none; padding:0; min-height:auto; color:inherit; text-decoration:underline; cursor:pointer; font-size:inherit;">eliminar</button>
+          </form>
+        {% endif %}
+      </span>
     </div>
     {% endfor %}
   </div>

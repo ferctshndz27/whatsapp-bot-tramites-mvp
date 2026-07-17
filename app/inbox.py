@@ -52,7 +52,9 @@ def _window_open(last_in_at: datetime | None) -> bool:
 def build_conversation_items(session) -> list[dict]:
     # ponytail: carga todos los mensajes y agrupa en Python — sobra a este
     # volumen; pasar a una consulta agregada si el historial crece a decenas de miles.
-    messages = session.exec(select(Message).order_by(Message.created_at.desc())).all()
+    messages = session.exec(
+        select(Message).where(Message.habilitado.is_(True)).order_by(Message.created_at.desc())
+    ).all()
     clients = {c.phone: c for c in session.exec(select(Client)).all()}
     convs = {c.phone: c for c in session.exec(select(Conversation)).all()}
     tickets: dict[str, Ticket] = {}
@@ -129,7 +131,10 @@ def inbox_chat(request: Request, phone: str, err: str | None = None):
 
     with get_session() as session:
         messages = session.exec(
-            select(Message).where(Message.phone == phone).order_by(Message.created_at)
+            select(Message)
+            .where(Message.phone == phone)
+            .where(Message.habilitado.is_(True))
+            .order_by(Message.created_at)
         ).all()
         if not messages:
             return RedirectResponse("/inbox", status_code=303)
@@ -240,6 +245,25 @@ def inbox_send_media(request: Request, phone: str, file: UploadFile, caption: st
         session.commit()
         _pause_bot(session, phone)
 
+    return RedirectResponse(f"/inbox/{phone}", status_code=303)
+
+
+@router.post("/inbox/{phone}/messages/{message_id}/delete")
+def inbox_delete_message(request: Request, phone: str, message_id: int):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    with get_session() as session:
+        message = session.get(Message, message_id)
+        # Solo se puede ocultar un mensaje que el propio asesor envió desde el
+        # panel — nunca las palabras del cliente, que son evidencia de la
+        # conversación real y deben permanecer intactas.
+        if message is not None and message.phone == phone and message.sent_by == user:
+            message.habilitado = False
+            session.add(message)
+            session.commit()
+            logger.info("Mensaje #%s ocultado por %s", message_id, user)
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
 

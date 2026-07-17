@@ -41,6 +41,7 @@ _SCHEMA_DDL = [
         wa_status     NVARCHAR(32)  NULL,
         media_path    NVARCHAR(300) NULL,
         sent_by       NVARCHAR(64)  NULL,
+        habilitado    BIT           NOT NULL DEFAULT 1,
         created_at    DATETIME2     NOT NULL,
         CONSTRAINT fk_wa_messages_client
             FOREIGN KEY (phone) REFERENCES wa_clients(phone)
@@ -60,12 +61,20 @@ _SCHEMA_DDL = [
         author     NVARCHAR(64)  NOT NULL,
         body       NVARCHAR(MAX) NOT NULL,
         media_path NVARCHAR(300) NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
         created_at DATETIME2     NOT NULL,
         CONSTRAINT fk_team_messages_user
             FOREIGN KEY (author) REFERENCES team_users(username)
     )
     """,
 ]
+
+# ponytail: igual que db.py, sin alembic — columnas agregadas después del
+# lanzamiento se suman a mano vía ALTER TABLE si no existen.
+_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "wa_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+}
 
 
 def enabled() -> bool:
@@ -108,6 +117,14 @@ def init() -> None:
         with engine.begin() as conn:
             for ddl in _SCHEMA_DDL:
                 conn.execute(text(ddl))
+            for table, columns in _COLUMNS_ADDED_AFTER_LAUNCH.items():
+                for name, col_type in columns.items():
+                    conn.execute(
+                        text(
+                            f"IF COL_LENGTH('{table}', '{name}') IS NULL "
+                            f"ALTER TABLE {table} ADD {name} {col_type}"
+                        )
+                    )
         _ready = True
         logger.info("Archivo MSSQL listo (base %s en %s)", settings.mssql_db, settings.mssql_host)
     except Exception:
@@ -143,8 +160,8 @@ def archive_wa_message(m) -> None:
         conn.execute(
             text(
                 "INSERT INTO wa_messages (source_id, phone, direction, body, wa_message_id,"
-                " wa_status, media_path, sent_by, created_at)"
-                " VALUES (:sid, :p, :d, :b, :wid, :ws, :mp, :sb, :c)"
+                " wa_status, media_path, sent_by, habilitado, created_at)"
+                " VALUES (:sid, :p, :d, :b, :wid, :ws, :mp, :sb, :hab, :c)"
             ),
             {
                 "sid": m.id,
@@ -155,20 +172,21 @@ def archive_wa_message(m) -> None:
                 "ws": m.wa_status,
                 "mp": m.media_path,
                 "sb": m.sent_by,
+                "hab": m.habilitado,
                 "c": _naive_utc(m.created_at),
             },
         )
 
 
 def sync_wa_message(m) -> None:
-    """Sincroniza wamid/estado de entrega cuando el registro local se actualiza."""
+    """Sincroniza wamid/estado de entrega/habilitado cuando el registro local se actualiza."""
     with _get_engine().begin() as conn:
         conn.execute(
             text(
-                "UPDATE wa_messages SET wa_message_id = :wid, wa_status = :ws"
+                "UPDATE wa_messages SET wa_message_id = :wid, wa_status = :ws, habilitado = :hab"
                 " WHERE source_id = :sid"
             ),
-            {"wid": m.wa_message_id, "ws": m.wa_status, "sid": m.id},
+            {"wid": m.wa_message_id, "ws": m.wa_status, "hab": m.habilitado, "sid": m.id},
         )
 
 
@@ -181,16 +199,26 @@ def archive_team_message(m) -> None:
             conn.execute(text("INSERT INTO team_users (username) VALUES (:u)"), {"u": m.author})
         conn.execute(
             text(
-                "INSERT INTO team_messages (source_id, author, body, media_path, created_at)"
-                " VALUES (:sid, :a, :b, :mp, :c)"
+                "INSERT INTO team_messages (source_id, author, body, media_path, habilitado, created_at)"
+                " VALUES (:sid, :a, :b, :mp, :hab, :c)"
             ),
             {
                 "sid": m.id,
                 "a": m.author,
                 "b": m.body,
                 "mp": m.media_path,
+                "hab": m.habilitado,
                 "c": _naive_utc(m.created_at),
             },
+        )
+
+
+def sync_team_message(m) -> None:
+    """Sincroniza el campo habilitado (soft-delete) de un mensaje de equipo."""
+    with _get_engine().begin() as conn:
+        conn.execute(
+            text("UPDATE team_messages SET habilitado = :hab WHERE source_id = :sid"),
+            {"hab": m.habilitado, "sid": m.id},
         )
 
 
@@ -228,6 +256,10 @@ def _register_listeners() -> None:
     @event.listens_for(TeamMessage, "after_insert")
     def _team_insert(mapper, connection, target):
         _safe(archive_team_message, target)
+
+    @event.listens_for(TeamMessage, "after_update")
+    def _team_update(mapper, connection, target):
+        _safe(sync_team_message, target)
 
     @event.listens_for(Client, "after_insert")
     @event.listens_for(Client, "after_update")

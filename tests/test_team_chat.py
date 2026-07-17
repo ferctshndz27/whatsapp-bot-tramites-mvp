@@ -6,11 +6,11 @@ from fastapi import UploadFile
 import app.db as db
 from app.media_store import save_upload
 from app.models import TeamMessage
-from app.team_chat import team_send, team_send_media
+from app.team_chat import team_chat, team_delete_message, team_send, team_send_media
 
 
 def _request(user: str) -> SimpleNamespace:
-    return SimpleNamespace(session={"user": user})
+    return SimpleNamespace(session={"user": user}, url=SimpleNamespace(path="/team"))
 
 
 def _upload(filename: str, content_type: str, data: bytes) -> UploadFile:
@@ -73,3 +73,39 @@ def test_media_too_big_rejected(monkeypatch, tmp_path):
     big = b"x" * (5 * 1024 * 1024 + 1)
     web, disk, err = save_upload(_upload("foto.jpg", "image/jpeg", big))
     assert err == "peso"
+
+
+def test_own_message_can_be_soft_deleted(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    team_send(_request("ana"), body="mensaje a borrar")
+    msg = session.query(TeamMessage).one()
+
+    team_delete_message(_request("ana"), msg.id)
+
+    session.refresh(msg)
+    assert msg.habilitado is False
+
+
+def test_cannot_delete_other_users_message(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    team_send(_request("ana"), body="mensaje de ana")
+    msg = session.query(TeamMessage).one()
+
+    team_delete_message(_request("bob"), msg.id)
+
+    session.refresh(msg)
+    assert msg.habilitado is True
+
+
+def test_soft_deleted_message_hidden_from_chat(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    team_send(_request("ana"), body="visible")
+    team_send(_request("ana"), body="se va a ocultar")
+    hidden = session.query(TeamMessage).filter(TeamMessage.body == "se va a ocultar").one()
+
+    team_delete_message(_request("ana"), hidden.id)
+
+    response = team_chat(_request("ana"))
+    bodies = [m.body for m in response.context["messages"]]
+    assert "visible" in bodies
+    assert "se va a ocultar" not in bodies

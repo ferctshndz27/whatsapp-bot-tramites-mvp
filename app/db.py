@@ -13,12 +13,17 @@ _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     "wa_status_at": "DATETIME",
     "media_path": "VARCHAR",
     "sent_by": "VARCHAR",
+    "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
+}
+_TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
 }
 
 
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _add_missing_columns("message", _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
+    _add_missing_columns("teammessage", _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     with engine.begin() as conn:
         # Respaldo contra webhooks duplicados concurrentes: el chequeo en
         # conversation._already_processed cubre el caso normal; este índice

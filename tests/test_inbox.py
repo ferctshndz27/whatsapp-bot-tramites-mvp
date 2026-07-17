@@ -3,12 +3,12 @@ from types import SimpleNamespace
 
 import app.db as db
 from app import whatsapp_client
-from app.inbox import build_conversation_items, inbox_bot_on, inbox_send
+from app.inbox import build_conversation_items, inbox_bot_on, inbox_chat, inbox_delete_message, inbox_send
 from app.models import Conversation, Direction, Message
 
 
 def _request(user: str) -> SimpleNamespace:
-    return SimpleNamespace(session={"user": user})
+    return SimpleNamespace(session={"user": user}, url=SimpleNamespace(path="/inbox/000"))
 
 
 def _msg(phone: str, direction: Direction, body: str, hours_ago: float = 0) -> Message:
@@ -84,3 +84,49 @@ def test_bot_reactivation(monkeypatch, session):
     conv = session.get(Conversation, "555")
     session.refresh(conv)
     assert conv.state == "inicio"
+
+
+def test_advisor_can_soft_delete_own_sent_message(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.SENT2")
+    session.add(_msg("666", Direction.IN, "hola", hours_ago=1))
+    session.commit()
+    inbox_send(_request("ana"), "666", body="mensaje a borrar")
+    sent = session.query(Message).filter(
+        Message.phone == "666", Message.direction == Direction.OUT
+    ).one()
+
+    inbox_delete_message(_request("ana"), "666", sent.id)
+
+    session.refresh(sent)
+    assert sent.habilitado is False
+
+
+def test_advisor_cannot_delete_client_message(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    session.add(_msg("777", Direction.IN, "palabras del cliente", hours_ago=1))
+    session.commit()
+    client_msg = session.query(Message).filter(Message.phone == "777").one()
+
+    inbox_delete_message(_request("ana"), "777", client_msg.id)
+
+    session.refresh(client_msg)
+    assert client_msg.habilitado is True
+
+
+def test_soft_deleted_message_hidden_from_inbox_chat(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.SENT3")
+    session.add(_msg("888", Direction.IN, "hola", hours_ago=1))
+    session.commit()
+    inbox_send(_request("ana"), "888", body="respuesta a ocultar")
+    sent = session.query(Message).filter(
+        Message.phone == "888", Message.direction == Direction.OUT
+    ).one()
+
+    inbox_delete_message(_request("ana"), "888", sent.id)
+
+    response = inbox_chat(_request("ana"), "888")
+    bodies = [m.body for m in response.context["messages"]]
+    assert "respuesta a ocultar" not in bodies
+    assert "hola" in bodies

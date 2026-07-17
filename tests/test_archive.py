@@ -14,12 +14,12 @@ ARCHIVE_DDL = [
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         phone TEXT REFERENCES wa_clients(phone), direction TEXT, body TEXT,
         wa_message_id TEXT, wa_status TEXT, media_path TEXT, sent_by TEXT,
-        created_at TIMESTAMP)""",
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
     "CREATE TABLE team_users (username TEXT PRIMARY KEY)",
     """CREATE TABLE team_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         author TEXT REFERENCES team_users(username), body TEXT,
-        media_path TEXT, created_at TIMESTAMP)""",
+        media_path TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
 ]
 
 
@@ -71,6 +71,34 @@ def test_wa_status_synced_by_source_id(mirror):
             text("SELECT wa_message_id, wa_status FROM wa_messages WHERE source_id = 7")
         ).first()
     assert tuple(row) == ("wamid.X", "read")
+
+
+def test_wa_message_soft_delete_synced(mirror):
+    archive.archive_wa_message(_wa_message(id=8, direction=Direction.OUT))
+
+    archive.sync_wa_message(_wa_message(id=8, direction=Direction.OUT, habilitado=False))
+
+    with mirror.connect() as conn:
+        row = conn.execute(
+            text("SELECT habilitado FROM wa_messages WHERE source_id = 8")
+        ).first()
+    assert row[0] == 0
+
+
+def test_team_message_soft_delete_synced(mirror):
+    archive.archive_team_message(
+        TeamMessage(id=9, author="ana", body="oculto luego", created_at=datetime.now(timezone.utc))
+    )
+
+    archive.sync_team_message(
+        TeamMessage(id=9, author="ana", body="oculto luego", habilitado=False)
+    )
+
+    with mirror.connect() as conn:
+        row = conn.execute(
+            text("SELECT habilitado FROM team_messages WHERE source_id = 9")
+        ).first()
+    assert row[0] == 0
 
 
 def test_team_message_archived_with_linked_user(mirror):

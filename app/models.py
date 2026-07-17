@@ -45,6 +45,7 @@ class Message(SQLModel, table=True):
     wa_status_at: datetime | None = None
     media_path: str | None = None
     sent_by: str | None = None
+    habilitado: bool = True
 
 
 class Ticket(SQLModel, table=True):
@@ -75,3 +76,14 @@ class TeamMessage(SQLModel, table=True):
     body: str
     media_path: str | None = None
     created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
+class Invitation(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    token: str = Field(unique=True, index=True)
+    phone: str | None = None
+    created_by: str
+    created_at: datetime = Field(default_factory=utcnow)
+    used_at: datetime | None = None
+    used_by: str | None = None

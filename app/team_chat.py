@@ -31,7 +31,10 @@ def team_chat(request: Request, err: str | None = None):
     with get_session() as session:
         # ponytail: últimos N y reversa en memoria; paginar si el canal crece mucho.
         recent = session.exec(
-            select(TeamMessage).order_by(TeamMessage.created_at.desc()).limit(MAX_MESSAGES_SHOWN)
+            select(TeamMessage)
+            .where(TeamMessage.habilitado.is_(True))
+            .order_by(TeamMessage.created_at.desc())
+            .limit(MAX_MESSAGES_SHOWN)
         ).all()
 
     return templates.TemplateResponse(
@@ -78,4 +81,20 @@ def team_send_media(request: Request, file: UploadFile, caption: str = Form(""))
             )
         )
         session.commit()
+    return RedirectResponse("/team", status_code=303)
+
+
+@router.post("/team/{message_id}/delete")
+def team_delete_message(request: Request, message_id: int):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    with get_session() as session:
+        message = session.get(TeamMessage, message_id)
+        if message is not None and message.author == user:
+            message.habilitado = False
+            session.add(message)
+            session.commit()
+            logger.info("Mensaje de equipo #%s ocultado por %s", message_id, user)
     return RedirectResponse("/team", status_code=303)

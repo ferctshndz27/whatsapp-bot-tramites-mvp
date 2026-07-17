@@ -40,6 +40,11 @@
         {{ 'Cliente' if m.direction.value == 'in' else (m.sent_by or 'Bot') }}
         · {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
         {% if m.direction.value == 'out' and m.wa_status %} · {{ m.wa_status }}{% endif %}
+        {% if m.direction.value == 'out' and m.sent_by == user %}
+        · <form method="post" action="/inbox/{{ phone }}/messages/{{ m.id }}/delete" style="display:inline;" onsubmit="return confirm('¿Ocultar este mensaje?');">
+            <button type="submit" style="background:none; border:none; padding:0; min-height:auto; color:inherit; text-decoration:underline; cursor:pointer; font-size:inherit;">eliminar</button>
+          </form>
+        {% endif %}
       </span>
     </div>
     {% endfor %}

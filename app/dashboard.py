@@ -1,5 +1,6 @@
 import hmac
 import logging
+import secrets
 import time
 
 import bcrypt
@@ -9,9 +10,10 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import update
 from sqlmodel import select
 
+from app import whatsapp_client
 from app.config import settings
 from app.db import get_session
-from app.models import Message, Ticket, TicketStatus, User, utcnow
+from app.models import Invitation, Message, Ticket, TicketStatus, User, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -94,16 +96,29 @@ USERNAME_MIN, USERNAME_MAX = 3, 30
 PASSWORD_MIN = 8
 
 
-def _validate_registration(username: str, password: str, code: str) -> str | None:
-    if not settings.registration_code:
-        return "El registro está deshabilitado. Pide al administrador definir REGISTRATION_CODE."
-    if not hmac.compare_digest(code, settings.registration_code):
-        return "Código de invitación incorrecto."
+def _validate_registration(username: str, password: str) -> str | None:
     if not (USERNAME_MIN <= len(username) <= USERNAME_MAX) or not username.replace("_", "").isalnum():
         return f"El usuario debe tener {USERNAME_MIN}-{USERNAME_MAX} caracteres alfanuméricos (se permite _)."
     if len(password) < PASSWORD_MIN:
         return f"La contraseña debe tener al menos {PASSWORD_MIN} caracteres."
     return None
+
+
+def _find_valid_invitation(session, code: str) -> Invitation | None:
+    if not code:
+        return None
+    return session.exec(
+        select(Invitation).where(Invitation.token == code, Invitation.used_at.is_(None))
+    ).first()
+
+
+def _code_grants_registration(session, code: str) -> tuple[bool, Invitation | None]:
+    """Un código de registro es válido si coincide con el código maestro
+    (REGISTRATION_CODE) o con una invitación individual sin usar."""
+    if settings.registration_code and hmac.compare_digest(code, settings.registration_code):
+        return True, None
+    invitation = _find_valid_invitation(session, code)
+    return invitation is not None, invitation
 
 
 @router.get("/register")
@@ -127,24 +142,99 @@ def register_submit(
             {"request": request, "error": "Demasiados intentos. Espera unos minutos."},
         )
 
-    error = _validate_registration(username, password, code)
+    error = _validate_registration(username, password)
     if error:
         _record_failed_login("__register__")
         logger.warning("Registro rechazado para %s: %s", username, error)
         return templates.TemplateResponse("register.html", {"request": request, "error": error})
 
     with get_session() as session:
+        code_ok, invitation = _code_grants_registration(session, code)
+        if not code_ok:
+            _record_failed_login("__register__")
+            logger.warning("Registro rechazado para %s: código inválido", username)
+            return templates.TemplateResponse(
+                "register.html",
+                {
+                    "request": request,
+                    "error": "Código de invitación incorrecto, ya utilizado, o el registro está deshabilitado.",
+                },
+            )
+
         if session.exec(select(User).where(User.username == username)).first():
             return templates.TemplateResponse(
                 "register.html", {"request": request, "error": "Ese usuario ya existe."}
             )
+
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
         session.add(User(username=username, password_hash=hashed.decode()))
+        if invitation is not None:
+            invitation.used_at = utcnow()
+            invitation.used_by = username
+            session.add(invitation)
         session.commit()
 
     logger.info("Usuario registrado: %s", username)
     request.session["user"] = username
     return RedirectResponse("/", status_code=303)
+
+
+def _invitation_message(token: str, request: Request) -> str:
+    base = str(request.base_url).rstrip("/")
+    return (
+        "Te invitamos a colaborar en el panel de trámites.\n"
+        f"Regístrate en {base}/register con el código de invitación: {token}"
+    )
+
+
+@router.get("/invitations")
+def invitations_list(request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    with get_session() as session:
+        invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
+
+    return templates.TemplateResponse(
+        "invitations.html", {"request": request, "user": user, "invitations": invitations}
+    )
+
+
+@router.post("/invitations")
+def invitations_create(request: Request, phone: str = Form("")):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    phone = phone.strip()
+    token = secrets.token_urlsafe(9)
+    sent = False
+
+    with get_session() as session:
+        session.add(Invitation(token=token, phone=phone or None, created_by=user))
+        session.commit()
+
+        if phone:
+            sent = whatsapp_client.send_text(phone, _invitation_message(token, request)) is not None
+            if sent:
+                logger.info("Invitación enviada por WhatsApp a %s (por %s)", phone, user)
+            else:
+                logger.warning("No se pudo enviar la invitación por WhatsApp a %s", phone)
+
+        invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
+
+    return templates.TemplateResponse(
+        "invitations.html",
+        {
+            "request": request,
+            "user": user,
+            "invitations": invitations,
+            "new_token": token,
+            "new_phone": phone,
+            "sent": sent,
+        },
+    )
 
 
 @router.get("/")

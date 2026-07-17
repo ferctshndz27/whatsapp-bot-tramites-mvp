@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Invitaciones{% endblock %}
+{% block content %}
+<h1>Invitar colaboradores</h1>
+
+<div class="card">
+  {% if new_token %}
+  <div class="banner-warn" role="status">
+    <strong>Código generado:</strong> {{ new_token }}<br>
+    {% if new_phone and sent %}
+      Se envió por WhatsApp a {{ new_phone }}.
+    {% elif new_phone and not sent %}
+      No se pudo enviar por WhatsApp a {{ new_phone }} — copia el código y compártelo manualmente.
+    {% else %}
+      Copia el código y compártelo con el nuevo colaborador (WhatsApp, correo, etc.).
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/invitations">
+    <label for="phone">Número de WhatsApp del colaborador (opcional)</label>
+    <input type="text" id="phone" name="phone" placeholder="5215500000000" style="max-width: 260px;">
+    <p style="color: var(--text-muted); font-size: .85rem; margin: .35rem 0 0;">
+      Si lo indicas, el bot le envía el código de invitación por WhatsApp automáticamente.
+      Si lo dejas vacío, el código se genera para que lo copies y lo compartas tú mismo.
+    </p>
+    <button type="submit" style="margin-top: .75rem;">Generar invitación</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Invitaciones emitidas</h2>
+  {% if invitations %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Código</th><th>Teléfono</th><th>Creado por</th><th>Creado</th><th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for i in invitations %}
+        <tr>
+          <td>{{ i.token }}</td>
+          <td>{{ i.phone or '—' }}</td>
+          <td>{{ i.created_by }}</td>
+          <td>{{ i.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>
+            {% if i.used_at %}
+            <span class="badge cerrado">usado por {{ i.used_by }}</span>
+            {% else %}
+            <span class="badge nuevo">pendiente</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Aún no has generado invitaciones.</p>
+  {% endif %}
+</div>
+{% endblock %}
