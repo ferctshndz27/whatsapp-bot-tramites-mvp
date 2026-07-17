@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Actividad{% endblock %}
+{% block content %}
+<h1>
+  Actividad
+  {% if viewing != user %}
+  <span style="color:var(--text-muted); font-size:.9rem; font-weight:400;">· viendo a {{ viewing }}</span>
+  {% endif %}
+</h1>
+
+<div class="stats">
+  <div class="stat-card green">
+    <div class="label">Despachadas hoy</div>
+    <div class="value">{{ stats.day }}</div>
+  </div>
+  <div class="stat-card blue">
+    <div class="label">Esta semana</div>
+    <div class="value">{{ stats.week }}</div>
+  </div>
+  <div class="stat-card orange">
+    <div class="label">Este mes</div>
+    <div class="value">{{ stats.month }}</div>
+  </div>
+  <div class="stat-card red">
+    <div class="label">Total histórico</div>
+    <div class="value">{{ stats.total }}</div>
+  </div>
+</div>
+
+{% if team %}
+<div class="card">
+  <h2>Equipo — solicitudes despachadas</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Colaborador</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for m in team %}
+        <tr {% if m.username == viewing %}style="background:#f0f7ff;"{% endif %}>
+          <td><strong>{{ m.username }}</strong></td>
+          <td>{{ m.day }}</td>
+          <td>{{ m.week }}</td>
+          <td>{{ m.month }}</td>
+          <td>{{ m.total }}</td>
+          <td><a href="/activity?user={{ m.username }}">ver histórico</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Histórico de {{ viewing }}</h2>
+  {% if recent %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Fecha</th><th>Solicitud</th><th>Acción</th></tr>
+      </thead>
+      <tbody>
+        {% for a in recent %}
+        <tr>
+          <td>{{ a.at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td><a href="/tickets/{{ a.ticket_id }}">#{{ a.ticket_id }}</a></td>
+          <td>{{ a.label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Sin actividad registrada todavía.</p>
+  {% endif %}
+</div>
+{% endblock %}

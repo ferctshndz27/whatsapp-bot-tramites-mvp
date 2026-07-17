@@ -4,7 +4,7 @@ import secrets
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import archive, dashboard, inbox, team_chat, webhook
+from app import activity, archive, dashboard, inbox, team_chat, webhook
 from app.config import settings
 from app.db import init_db
 
@@ -27,6 +27,7 @@ app.include_router(webhook.router)
 app.include_router(dashboard.router)
 app.include_router(inbox.router)
 app.include_router(team_chat.router)
+app.include_router(activity.router)
 
 
 @app.on_event("startup")
@@ -34,6 +35,7 @@ def on_startup() -> None:
     init_db()
     dashboard.seed_dashboard_user(settings)
     archive.init()
+    activity.backfill_closed_tickets()
 
 
 @app.get("/health")

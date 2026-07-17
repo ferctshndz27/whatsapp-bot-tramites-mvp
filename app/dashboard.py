@@ -14,7 +14,7 @@ from app import whatsapp_client
 from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
-from app.models import Invitation, Message, Ticket, TicketStatus, User, utcnow
+from app.models import Invitation, Message, Ticket, TicketActivity, TicketStatus, User, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +339,8 @@ def claim_ticket(request: Request, ticket_id: int):
         session.commit()
 
     if result.rowcount:
+        with get_session() as session:
+            _log_activity(session, ticket_id, user, "tomado")
         logger.info("Ticket #%s tomado por %s", ticket_id, user)
     else:
         logger.info("Ticket #%s ya estaba tomado (intento de %s)", ticket_id, user)
@@ -360,8 +362,15 @@ def release_ticket(request: Request, ticket_id: int):
         session.commit()
 
     if result.rowcount:
+        with get_session() as session:
+            _log_activity(session, ticket_id, user, "soltado")
         logger.info("Ticket #%s soltado por %s", ticket_id, user)
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
+def _log_activity(session, ticket_id: int, username: str, action: str) -> None:
+    session.add(TicketActivity(ticket_id=ticket_id, username=username, action=action))
+    session.commit()
 
 
 def _append_note(ticket: Ticket, author: str, text: str) -> None:
@@ -388,6 +397,7 @@ def reassign_ticket(
             ticket.updated_at = utcnow()
             session.add(ticket)
             session.commit()
+            _log_activity(session, ticket_id, user, f"reasignado:{to_user}")
             logger.info("Ticket #%s reasignado de %s a %s", ticket_id, user, to_user)
         elif ticket is not None:
             logger.warning(
@@ -410,6 +420,7 @@ def add_ticket_note(request: Request, ticket_id: int, note: str = Form(...)):
             ticket.updated_at = utcnow()
             session.add(ticket)
             session.commit()
+            _log_activity(session, ticket_id, user, "nota")
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
 
@@ -425,10 +436,15 @@ def update_ticket_status(request: Request, ticket_id: int, status: str = Form(..
             logger.info(
                 "Ticket #%s: %s -> %s (por %s)", ticket_id, ticket.status.value, status, user
             )
-            ticket.status = TicketStatus(status)
+            new_status = TicketStatus(status)
+            changed = ticket.status != new_status
+            ticket.status = new_status
             ticket.updated_at = utcnow()
             session.add(ticket)
             session.commit()
+            if changed:
+                action = "cerrado" if new_status == TicketStatus.CERRADO else f"estado:{new_status.value}"
+                _log_activity(session, ticket_id, user, action)
         elif ticket is not None:
             logger.warning(
                 "Cambio de estado rechazado en #%s: %s no es el asignado (%s)",

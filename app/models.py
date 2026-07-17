@@ -80,6 +80,16 @@ class TeamMessage(SQLModel, table=True):
     habilitado: bool = True
 
 
+class TicketActivity(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    ticket_id: int = Field(index=True)
+    username: str = Field(index=True)
+    # Acciones: "tomado", "soltado", "cerrado", "estado:<valor>",
+    # "reasignado:<destino>", "nota"
+    action: str
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class Invitation(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     token: str = Field(unique=True, index=True)
