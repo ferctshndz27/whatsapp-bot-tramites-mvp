@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import select
 
 from app import whatsapp_client
+from app.auth import is_admin
 from app.config import settings
 from app.conversation import _log_message
 from app.db import get_session
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
+templates.env.globals["is_admin"] = is_admin
 
 WINDOW_HOURS = 24
 QUICK_REPLIES = json.loads((Path(__file__).parent / "quick_replies.json").read_text())

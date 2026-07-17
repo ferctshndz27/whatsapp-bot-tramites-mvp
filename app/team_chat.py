@@ -5,6 +5,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import select
 
+from app.auth import is_admin
 from app.db import get_session
 from app.media_store import save_upload
 from app.models import TeamMessage
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
+templates.env.globals["is_admin"] = is_admin
 
 MAX_MESSAGES_SHOWN = 200
 MAX_BODY_LENGTH = 4000

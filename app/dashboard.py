@@ -11,6 +11,7 @@ from sqlalchemy import update
 from sqlmodel import select
 
 from app import whatsapp_client
+from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
 from app.models import Invitation, Message, Ticket, TicketStatus, User, utcnow
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
+templates.env.globals["is_admin"] = is_admin
 
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 300
@@ -48,7 +50,19 @@ def seed_dashboard_user(settings) -> None:
         ).first()
         if existing is None:
             hashed = bcrypt.hashpw(settings.dashboard_password.encode(), bcrypt.gensalt())
-            session.add(User(username=settings.dashboard_username, password_hash=hashed.decode()))
+            session.add(
+                User(
+                    username=settings.dashboard_username,
+                    password_hash=hashed.decode(),
+                    is_admin=True,
+                )
+            )
+            session.commit()
+        elif not existing.is_admin:
+            # El usuario semilla ya existía de antes de agregar el rol de
+            # administrador — se promueve para no dejar el panel sin admin.
+            existing.is_admin = True
+            session.add(existing)
             session.commit()
 
 
@@ -192,6 +206,8 @@ def invitations_list(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    if not is_admin(user):
+        return RedirectResponse("/", status_code=303)
 
     with get_session() as session:
         invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
@@ -206,6 +222,8 @@ def invitations_create(request: Request, phone: str = Form("")):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    if not is_admin(user):
+        return RedirectResponse("/", status_code=303)
 
     phone = phone.strip()
     token = secrets.token_urlsafe(9)
