@@ -80,3 +80,72 @@ def test_media_message_is_not_processed(session):
 
     conv = session.get(Conversation, PHONE)
     assert conv.state == "inicio"  # no cambia de estado por un adjunto
+
+
+def test_menu_keyword_resets_from_any_state(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "Juan Pérez")
+    handle_incoming(session, PHONE, "1")  # entra al submenú de Servicios básicos
+
+    replies = handle_incoming(session, PHONE, "menu")
+    assert "1." in replies[0]  # de vuelta al menú de categorías
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "menu_categoria"
+
+
+def test_zero_goes_back_to_category_menu_from_service_menu(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "Juan Pérez")
+    handle_incoming(session, PHONE, "1")  # submenú de Servicios básicos
+
+    replies = handle_incoming(session, PHONE, "0")
+    assert "1." in replies[0]
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "menu_categoria"
+
+
+def test_confused_user_no_longer_escalates_if_they_use_menu(session):
+    # Reproduce el caso real: el cliente se confunde en el submenú y en vez de
+    # escalar automáticamente por 2 respuestas inválidas, usa "menu" para salir.
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "Leticia Diaz")
+    handle_incoming(session, PHONE, "1")  # submenú de Servicios básicos
+
+    replies = handle_incoming(session, PHONE, "menu")
+    assert "asesor" not in replies[0].lower()
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "menu_categoria"
+
+
+def test_escalated_user_resumes_bot_with_menu_if_ticket_unclaimed(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "escalado"
+
+    replies = handle_incoming(session, PHONE, "menu")
+    assert replies != []
+    assert "1." in replies[0]
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "menu_categoria"
+
+
+def test_escalated_user_stays_silent_if_ticket_already_claimed(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    ticket = session.exec(select(Ticket).where(Ticket.phone == PHONE)).first()
+    ticket.assigned_to = "ana"
+    session.add(ticket)
+    session.commit()
+
+    replies = handle_incoming(session, PHONE, "menu")
+    assert replies == []
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "escalado"

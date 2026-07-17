@@ -22,6 +22,7 @@ ESCALATION_KEYWORDS = [
 
 YES_WORDS = {"si", "sí", "s", "yes", "confirmo"}
 NO_WORDS = {"no", "n"}
+MENU_KEYWORDS = {"menu", "menú", "inicio", "reiniciar"}
 MAX_FAILED_ATTEMPTS = 2
 MAX_STORED_TEXT = 4000
 MAX_NOTE_TEXT = 500
@@ -53,7 +54,12 @@ def handle_incoming(
     if is_media:
         replies = ["Por ahora no puedo recibir documentos en este chat. Un asesor te indicará cómo enviarlos."]
     elif conv.state == "escalado":
-        replies = []
+        normalized = text.strip().lower()
+        if normalized in MENU_KEYWORDS and _escalated_ticket_unclaimed(session, phone):
+            _set_state(session, conv, "menu_categoria")
+            replies = ["Claro, continuemos aquí. " + catalog.format_category_menu()]
+        else:
+            replies = []
     else:
         normalized = text.strip().lower()
         if _is_escalation(normalized):
@@ -88,7 +94,21 @@ def _is_rate_limited(session: Session, phone: str) -> bool:
     return len(recent) > RATE_LIMIT_MAX_MESSAGES
 
 
+def _escalated_ticket_unclaimed(session: Session, phone: str) -> bool:
+    ticket = session.exec(
+        select(Ticket)
+        .where(Ticket.phone == phone)
+        .where(Ticket.status != TicketStatus.CERRADO)
+        .order_by(Ticket.created_at.desc())
+    ).first()
+    return ticket is None or ticket.assigned_to is None
+
+
 def _dispatch(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
+    if normalized in MENU_KEYWORDS:
+        _set_state(session, conv, "menu_categoria")
+        return [catalog.format_category_menu()]
+
     handlers = {
         "inicio": _handle_inicio,
         "esperando_nombre": _handle_esperando_nombre,
@@ -154,6 +174,9 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
         return _bump_or_escalate(session, client, conv, text, "No hay más opciones en esa categoría.")
 
     idx = _parse_int(normalized)
+    if idx == 0:
+        _set_state(session, conv, "menu_categoria")
+        return [catalog.format_category_menu()]
     if idx is not None:
         service = catalog.service_by_index(category_id, idx)
         if service is not None:
@@ -198,7 +221,10 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
 
 
 def _confirm_message(service) -> str:
-    return f"Confirmas '{service.name}' ({service.price_info})? Responde 'sí' o 'no'."
+    return (
+        f"Confirmas '{service.name}' ({service.price_info})? Responde 'sí' o 'no'.\n"
+        "Escribe *menu* en cualquier momento para reiniciar."
+    )
 
 
 def _is_escalation(normalized: str) -> bool:

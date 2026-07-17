@@ -75,6 +75,7 @@ class Catalog:
         lines = ["¿Qué tipo de servicio necesitas? Responde con el número:"]
         for i, c in enumerate(self.categories, start=1):
             lines.append(f"{i}. {c.name}")
+        lines.append("\nEscribe *menu* en cualquier momento para reiniciar.")
         return "\n".join(lines)
 
     def format_service_menu(self, category_id: str, page: int = 0) -> str:
@@ -88,6 +89,8 @@ class Catalog:
             lines.append(f"{start + offset}. {s.name}")
         if start + PAGE_SIZE < len(category.services):
             lines.append("Escribe 'más' para ver más opciones.")
+        lines.append("0. Volver al menú anterior")
+        lines.append("\nEscribe *menu* en cualquier momento para reiniciar.")
         return "\n".join(lines)
 
 
