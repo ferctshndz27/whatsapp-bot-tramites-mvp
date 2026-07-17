@@ -23,6 +23,15 @@ ESCALATION_KEYWORDS = [
 YES_WORDS = {"si", "sí", "s", "yes", "confirmo"}
 NO_WORDS = {"no", "n"}
 MENU_KEYWORDS = {"menu", "menú", "inicio", "reiniciar"}
+GREETING_WORDS = {
+    "hola", "holaa", "holaaa", "buenas", "buen dia", "buen día",
+    "buenos dias", "buenos días", "buenas tardes", "buenas noches",
+    "hey", "que tal", "qué tal", "saludos",
+}
+NOT_RECOGNIZED_HINT = (
+    "No reconocí esa opción.\n"
+    "Si no encuentras lo que buscas, escribe *asesor* para hablar con alguien de nuestro equipo.\n"
+)
 MAX_FAILED_ATTEMPTS = 2
 MAX_STORED_TEXT = 4000
 MAX_NOTE_TEXT = 500
@@ -109,6 +118,15 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
         _set_state(session, conv, "menu_categoria")
         return [catalog.format_category_menu()]
 
+    # Un saludo en medio del flujo (p. ej. tras cerrar un trámite) se responde
+    # con cortesía en vez de "no reconocí esa opción". Se excluye "inicio"
+    # (ya saluda y pide el nombre por su cuenta) y "esperando_nombre" (para
+    # no confundir un saludo con el nombre real del cliente).
+    if normalized in GREETING_WORDS and conv.state not in {"inicio", "esperando_nombre"}:
+        _set_state(session, conv, "menu_categoria")
+        saludo = f"¡Hola de nuevo, {client.name}!" if client.name else "¡Hola!"
+        return [f"{saludo} {catalog.format_category_menu()}"]
+
     handlers = {
         "inicio": _handle_inicio,
         "esperando_nombre": _handle_esperando_nombre,
@@ -157,7 +175,7 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
         client,
         conv,
         text,
-        "No reconocí esa opción.\n" + catalog.format_category_menu(),
+        NOT_RECOGNIZED_HINT + catalog.format_category_menu(),
     )
 
 
@@ -185,7 +203,7 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
 
     category = catalog.category_by_id(category_id)
     reprompt = catalog.format_service_menu(category_id, context.get("page", 0)) if category else catalog.format_category_menu()
-    return _bump_or_escalate(session, client, conv, text, "No reconocí esa opción.\n" + reprompt)
+    return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT + reprompt)
 
 
 def _handle_confirmar(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:

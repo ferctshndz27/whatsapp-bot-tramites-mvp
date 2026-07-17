@@ -135,6 +135,43 @@ def test_escalated_user_resumes_bot_with_menu_if_ticket_unclaimed(session):
     assert conv.state == "menu_categoria"
 
 
+def test_greeting_after_closed_ticket_is_cordial_not_confused(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "Leticia Diaz")
+    handle_incoming(session, PHONE, "1")
+    handle_incoming(session, PHONE, "1")
+    handle_incoming(session, PHONE, "sí")  # folio + despedida, estado vuelve a menu_categoria
+
+    replies = handle_incoming(session, PHONE, "hola")
+    assert "no reconocí" not in replies[0].lower()
+    assert "leticia diaz" in replies[0].lower()
+    assert "1." in replies[0]  # muestra el menú de categorías
+
+
+def test_greeting_mid_submenu_is_cordial(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "Ana")
+    handle_incoming(session, PHONE, "1")  # entra al submenú
+
+    replies = handle_incoming(session, PHONE, "buenas tardes")
+    assert "no reconocí" not in replies[0].lower()
+    assert "1." in replies[0]
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "menu_categoria"
+
+
+def test_first_invalid_option_offers_agent_contact(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "Juan Pérez")
+
+    replies = handle_incoming(session, PHONE, "xyz no reconocido")  # 1er intento, no escala aún
+
+    assert "asesor" in replies[0].lower()
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "menu_categoria"  # sigue en el menú, no escaló
+
+
 def test_escalated_user_stays_silent_if_ticket_already_claimed(session):
     handle_incoming(session, PHONE, "Hola")
     handle_incoming(session, PHONE, "quiero hablar con un asesor")
