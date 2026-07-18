@@ -6,7 +6,16 @@ from sqlmodel import Session, SQLModel
 
 import app.archive as archive
 from app.config import settings
-from app.models import Direction, Message, TeamMessage
+from app.models import (
+    Direction,
+    Invitation,
+    Message,
+    TeamMessage,
+    Ticket,
+    TicketActivity,
+    TicketStatus,
+    User,
+)
 
 ARCHIVE_DDL = [
     "CREATE TABLE wa_clients (phone TEXT PRIMARY KEY, name TEXT, created_at TIMESTAMP)",
@@ -20,6 +29,23 @@ ARCHIVE_DDL = [
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         author TEXT REFERENCES team_users(username), body TEXT,
         media_path TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
+    """CREATE TABLE app_users (
+        source_id INTEGER PRIMARY KEY, username TEXT UNIQUE,
+        password_hash TEXT, is_admin INTEGER DEFAULT 0)""",
+    """CREATE TABLE invitations (
+        source_id INTEGER PRIMARY KEY, token TEXT, phone TEXT, created_by TEXT,
+        created_at TIMESTAMP, used_at TIMESTAMP, used_by TEXT)""",
+    """CREATE TABLE tickets (
+        source_id INTEGER PRIMARY KEY, phone TEXT, client_name TEXT, category TEXT,
+        service_id TEXT, service_name TEXT, price_info TEXT, status TEXT,
+        escalado INTEGER DEFAULT 0, notes TEXT, assigned_to TEXT,
+        created_at TIMESTAMP, updated_at TIMESTAMP)""",
+    """CREATE TABLE ticket_activity (
+        source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT,
+        action TEXT, created_at TIMESTAMP)""",
+    """CREATE TABLE conversations (
+        phone TEXT PRIMARY KEY, state TEXT, context_json TEXT,
+        failed_attempts INTEGER, updated_at TIMESTAMP)""",
 ]
 
 
@@ -138,3 +164,116 @@ def test_disabled_mirror_is_noop(monkeypatch):
     with Session(app_engine) as s:
         s.add(Message(phone="5215500006666", direction=Direction.IN, body="sin espejo"))
         s.commit()
+
+
+def test_user_archived_with_bcrypt_hash_not_plaintext(mirror):
+    archive.archive_user(
+        User(id=1, username="ana", password_hash="$2b$12$abc.hashbcrypt", is_admin=True)
+    )
+
+    with mirror.connect() as conn:
+        row = conn.execute(
+            text("SELECT username, password_hash, is_admin FROM app_users")
+        ).first()
+    assert row[0] == "ana"
+    assert row[1].startswith("$2b$")  # es un hash bcrypt, nunca la contraseña
+    assert row[2] == 1
+
+
+def test_user_upsert_updates_admin_flag(mirror):
+    archive.archive_user(User(id=2, username="bob", password_hash="h", is_admin=False))
+    archive.archive_user(User(id=2, username="bob", password_hash="h", is_admin=True))
+
+    with mirror.connect() as conn:
+        rows = conn.execute(text("SELECT is_admin FROM app_users WHERE source_id = 2")).all()
+    assert len(rows) == 1  # upsert, no duplica
+    assert rows[0][0] == 1
+
+
+def test_invitation_archived_and_marked_used(mirror):
+    archive.archive_invitation(
+        Invitation(id=1, token="tok1", created_by="ana", created_at=datetime.now(timezone.utc))
+    )
+    archive.archive_invitation(
+        Invitation(
+            id=1, token="tok1", created_by="ana",
+            created_at=datetime.now(timezone.utc),
+            used_at=datetime.now(timezone.utc), used_by="carlos",
+        )
+    )
+
+    with mirror.connect() as conn:
+        row = conn.execute(
+            text("SELECT token, used_by FROM invitations WHERE source_id = 1")
+        ).first()
+    assert row[0] == "tok1"
+    assert row[1] == "carlos"
+
+
+def test_ticket_archived_and_status_updated(mirror):
+    def _ticket(**kw):
+        base = dict(
+            id=5, phone="521550000", category="Servicios básicos", service_id="curp",
+            service_name="CURP", price_info="$80", status=TicketStatus.NUEVO,
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        )
+        base.update(kw)
+        return Ticket(**base)
+
+    archive.archive_ticket(_ticket())
+    archive.archive_ticket(_ticket(status=TicketStatus.CERRADO, assigned_to="ana"))
+
+    with mirror.connect() as conn:
+        rows = conn.execute(
+            text("SELECT status, assigned_to FROM tickets WHERE source_id = 5")
+        ).all()
+    assert len(rows) == 1
+    assert tuple(rows[0]) == ("cerrado", "ana")
+
+
+def test_activity_archived(mirror):
+    archive.archive_activity(
+        TicketActivity(id=1, ticket_id=5, username="ana", action="cerrado",
+                       created_at=datetime.now(timezone.utc))
+    )
+
+    with mirror.connect() as conn:
+        row = conn.execute(
+            text("SELECT ticket_id, username, action FROM ticket_activity")
+        ).first()
+    assert tuple(row) == (5, "ana", "cerrado")
+
+
+def test_conversation_archived_by_phone(mirror):
+    from app.models import Conversation
+
+    archive.archive_conversation(
+        Conversation(phone="521999", state="menu_categoria", context_json="{}",
+                     failed_attempts=1, updated_at=datetime.now(timezone.utc))
+    )
+    archive.archive_conversation(
+        Conversation(phone="521999", state="escalado", context_json="{}",
+                     failed_attempts=0, updated_at=datetime.now(timezone.utc))
+    )
+
+    with mirror.connect() as conn:
+        rows = conn.execute(text("SELECT state FROM conversations WHERE phone = '521999'")).all()
+    assert len(rows) == 1  # keyed por phone, no duplica
+    assert rows[0][0] == "escalado"
+
+
+def test_listeners_mirror_new_entities(mirror):
+    app_engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(app_engine)
+
+    with Session(app_engine) as s:
+        s.add(User(username="jefa", password_hash="$2b$12$h", is_admin=True))
+        s.add(Ticket(phone="521111", category="c", service_id="s", service_name="n",
+                     price_info="$1"))
+        s.commit()
+
+    with mirror.connect() as conn:
+        user = conn.execute(text("SELECT username FROM app_users")).first()
+        ticket = conn.execute(text("SELECT phone FROM tickets")).first()
+    assert user[0] == "jefa"
+    assert ticket[0] == "521111"

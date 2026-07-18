@@ -1,9 +1,14 @@
-"""Archivo espejo en MSSQL de todas las conversaciones.
+"""Archivo espejo en MSSQL de toda la data operativa.
 
-SQLite sigue siendo la base operativa del bot; este módulo replica cada
-mensaje (WhatsApp entrante/saliente y chat de equipo) a SQL Server para
-archivo/BI. Escritura best-effort: si MSSQL no responde, el bot sigue
-funcionando y solo se registra el fallo en el log.
+SQLite sigue siendo la base operativa del bot; este módulo replica a SQL
+Server cada entidad: clientes, mensajes de WhatsApp, chat de equipo,
+colaboradores (contraseña como hash bcrypt — nunca en claro), invitaciones,
+solicitudes, actividad y estado de conversaciones.
+
+Escritura best-effort: si MSSQL no responde, el bot sigue funcionando y solo
+se registra el fallo en el log. Al arrancar corre un backfill idempotente que
+sincroniza cualquier fila que falte (histórico previo al espejo o cambios
+hechos mientras MSSQL estaba caído).
 
 Se activa definiendo MSSQL_HOST y MSSQL_SA_PASSWORD (ver .env).
 """
@@ -65,6 +70,70 @@ _SCHEMA_DDL = [
         created_at DATETIME2     NOT NULL,
         CONSTRAINT fk_team_messages_user
             FOREIGN KEY (author) REFERENCES team_users(username)
+    )
+    """,
+    # Colaboradores. La contraseña se guarda tal cual está en SQLite: un hash
+    # bcrypt irreversible, nunca la contraseña en texto plano.
+    """
+    IF OBJECT_ID('app_users', 'U') IS NULL
+    CREATE TABLE app_users (
+        source_id     BIGINT        NOT NULL PRIMARY KEY,
+        username      NVARCHAR(64)  NOT NULL UNIQUE,
+        password_hash NVARCHAR(200) NOT NULL,
+        is_admin      BIT           NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    IF OBJECT_ID('invitations', 'U') IS NULL
+    CREATE TABLE invitations (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        token      NVARCHAR(64) NOT NULL,
+        phone      NVARCHAR(32) NULL,
+        created_by NVARCHAR(64) NOT NULL,
+        created_at DATETIME2    NOT NULL,
+        used_at    DATETIME2    NULL,
+        used_by    NVARCHAR(64) NULL
+    )
+    """,
+    # Sin FKs en las tablas de solicitud/actividad a propósito: es un archivo
+    # de solo lectura y las FKs complicarían el orden del backfill sin aportar
+    # integridad que SQLite (la base operativa) no garantice ya.
+    """
+    IF OBJECT_ID('tickets', 'U') IS NULL
+    CREATE TABLE tickets (
+        source_id    BIGINT        NOT NULL PRIMARY KEY,
+        phone        NVARCHAR(32)  NOT NULL,
+        client_name  NVARCHAR(200) NULL,
+        category     NVARCHAR(100) NOT NULL,
+        service_id   NVARCHAR(64)  NOT NULL,
+        service_name NVARCHAR(200) NOT NULL,
+        price_info   NVARCHAR(200) NOT NULL,
+        status       NVARCHAR(20)  NOT NULL,
+        escalado     BIT           NOT NULL DEFAULT 0,
+        notes        NVARCHAR(MAX) NULL,
+        assigned_to  NVARCHAR(64)  NULL,
+        created_at   DATETIME2     NOT NULL,
+        updated_at   DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('ticket_activity', 'U') IS NULL
+    CREATE TABLE ticket_activity (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        ticket_id  BIGINT        NOT NULL,
+        username   NVARCHAR(64)  NOT NULL,
+        action     NVARCHAR(100) NOT NULL,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('conversations', 'U') IS NULL
+    CREATE TABLE conversations (
+        phone           NVARCHAR(32)  NOT NULL PRIMARY KEY,
+        state           NVARCHAR(50)  NOT NULL,
+        context_json    NVARCHAR(MAX) NOT NULL,
+        failed_attempts INT           NOT NULL,
+        updated_at      DATETIME2     NOT NULL
     )
     """,
 ]
@@ -227,6 +296,87 @@ def sync_client_name(c) -> None:
         _upsert_client(conn, c.phone, c.name)
 
 
+def _upsert(table: str, key_col: str, key_val, columns: dict) -> None:
+    """UPSERT genérico por clave primaria: intenta UPDATE y, si no afectó
+    filas, hace INSERT. Idempotente — sirve igual para insert, update y
+    backfill (reprocesar una fila ya espejada no la duplica)."""
+    with _get_engine().begin() as conn:
+        params = {**columns, "_key": key_val}
+        set_clause = ", ".join(f"{c} = :{c}" for c in columns)
+        result = conn.execute(
+            text(f"UPDATE {table} SET {set_clause} WHERE {key_col} = :_key"), params
+        )
+        if result.rowcount == 0:
+            cols = ", ".join([key_col, *columns])
+            vals = ", ".join([":_key", *(f":{c}" for c in columns)])
+            conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({vals})"), params)
+
+
+def archive_user(u) -> None:
+    _upsert(
+        "app_users", "source_id", u.id,
+        {"username": u.username, "password_hash": u.password_hash, "is_admin": u.is_admin},
+    )
+
+
+def archive_invitation(i) -> None:
+    _upsert(
+        "invitations", "source_id", i.id,
+        {
+            "token": i.token,
+            "phone": i.phone,
+            "created_by": i.created_by,
+            "created_at": _naive_utc(i.created_at),
+            "used_at": _naive_utc(i.used_at) if i.used_at else None,
+            "used_by": i.used_by,
+        },
+    )
+
+
+def archive_ticket(t) -> None:
+    _upsert(
+        "tickets", "source_id", t.id,
+        {
+            "phone": t.phone,
+            "client_name": t.client_name,
+            "category": t.category,
+            "service_id": t.service_id,
+            "service_name": t.service_name,
+            "price_info": t.price_info,
+            "status": t.status.value,
+            "escalado": t.escalado,
+            "notes": t.notes,
+            "assigned_to": t.assigned_to,
+            "created_at": _naive_utc(t.created_at),
+            "updated_at": _naive_utc(t.updated_at),
+        },
+    )
+
+
+def archive_activity(a) -> None:
+    _upsert(
+        "ticket_activity", "source_id", a.id,
+        {
+            "ticket_id": a.ticket_id,
+            "username": a.username,
+            "action": a.action,
+            "created_at": _naive_utc(a.created_at),
+        },
+    )
+
+
+def archive_conversation(c) -> None:
+    _upsert(
+        "conversations", "phone", c.phone,
+        {
+            "state": c.state,
+            "context_json": c.context_json,
+            "failed_attempts": c.failed_attempts,
+            "updated_at": _naive_utc(c.updated_at),
+        },
+    )
+
+
 def _safe(fn, target) -> None:
     if not enabled():
         return
@@ -239,11 +389,55 @@ def _safe(fn, target) -> None:
         logger.warning("No se pudo archivar en MSSQL (%s): %s", fn.__name__, exc)
 
 
+def backfill() -> None:
+    """Sincroniza a MSSQL toda la data que ya existe en SQLite. Idempotente
+    (gracias al upsert), así que corre seguro en cada arranque: cubre el
+    histórico previo al espejo y cualquier cambio hecho mientras MSSQL
+    estuvo caído. Best-effort — no tumba el arranque si MSSQL no responde."""
+    if not enabled():
+        return
+    from app.db import get_session
+    from app.models import Client, Conversation, Invitation, Ticket, TicketActivity, User
+    from sqlmodel import select
+
+    # Los mensajes (WhatsApp y chat de equipo) no se backfillean aquí: sus
+    # tablas usan UNIQUE(source_id) e INSERT directo, así que reinsertarlos
+    # rompería la constraint. Se espejan por listener en cada escritura nueva.
+    try:
+        if not _ready:
+            init()
+        with get_session() as session:
+            for c in session.exec(select(Client)).all():
+                sync_client_name(c)
+            for u in session.exec(select(User)).all():
+                archive_user(u)
+            for t in session.exec(select(Ticket)).all():
+                archive_ticket(t)
+            for a in session.exec(select(TicketActivity)).all():
+                archive_activity(a)
+            for i in session.exec(select(Invitation)).all():
+                archive_invitation(i)
+            for conv in session.exec(select(Conversation)).all():
+                archive_conversation(conv)
+        logger.info("Backfill de MSSQL completado")
+    except Exception as exc:
+        logger.warning("Backfill de MSSQL incompleto: %s", exc)
+
+
 def _register_listeners() -> None:
     # ponytail: la réplica corre dentro del flush de SQLModel — con este
     # volumen es inofensivo; mover a una cola si algún día hay miles de
     # mensajes por minuto.
-    from app.models import Client, Message, TeamMessage
+    from app.models import (
+        Client,
+        Conversation,
+        Invitation,
+        Message,
+        TeamMessage,
+        Ticket,
+        TicketActivity,
+        User,
+    )
 
     @event.listens_for(Message, "after_insert")
     def _wa_insert(mapper, connection, target):
@@ -265,6 +459,31 @@ def _register_listeners() -> None:
     @event.listens_for(Client, "after_update")
     def _client_upsert(mapper, connection, target):
         _safe(sync_client_name, target)
+
+    @event.listens_for(User, "after_insert")
+    @event.listens_for(User, "after_update")
+    def _user_upsert(mapper, connection, target):
+        _safe(archive_user, target)
+
+    @event.listens_for(Invitation, "after_insert")
+    @event.listens_for(Invitation, "after_update")
+    def _invitation_upsert(mapper, connection, target):
+        _safe(archive_invitation, target)
+
+    @event.listens_for(Ticket, "after_insert")
+    @event.listens_for(Ticket, "after_update")
+    def _ticket_upsert(mapper, connection, target):
+        _safe(archive_ticket, target)
+
+    @event.listens_for(TicketActivity, "after_insert")
+    @event.listens_for(TicketActivity, "after_update")
+    def _activity_upsert(mapper, connection, target):
+        _safe(archive_activity, target)
+
+    @event.listens_for(Conversation, "after_insert")
+    @event.listens_for(Conversation, "after_update")
+    def _conversation_upsert(mapper, connection, target):
+        _safe(archive_conversation, target)
 
 
 _register_listeners()

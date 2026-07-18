@@ -36,6 +36,7 @@ def on_startup() -> None:
     dashboard.seed_dashboard_user(settings)
     archive.init()
     activity.backfill_closed_tickets()
+    archive.backfill()
 
 
 @app.get("/health")
