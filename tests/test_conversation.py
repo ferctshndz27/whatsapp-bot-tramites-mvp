@@ -6,38 +6,57 @@ from app.models import Conversation, Ticket, TicketStatus
 PHONE = "5215500000000"
 
 
-def test_happy_path_creates_ticket(session):
+def test_greeting_gets_open_question_not_service_list(session):
     replies = handle_incoming(session, PHONE, "Hola")
-    assert "nombre" in replies[0].lower()
 
-    replies = handle_incoming(session, PHONE, "Juan Pérez")
-    assert "1." in replies[0]  # menú de categorías
+    assert "ayudarte" in replies[0].lower()
+    assert "1." not in replies[0]  # regla: no listar servicios en la primera respuesta
 
-    replies = handle_incoming(session, PHONE, "1")  # Servicios básicos
-    assert "Acta de nacimiento" in replies[0]
 
-    replies = handle_incoming(session, PHONE, "1")  # Acta de nacimiento
+def test_direct_service_request_skips_menu_and_creates_ticket(session):
+    # Regla: si el cliente llega directo con su trámite, saludar y generar el ticket
+    replies = handle_incoming(session, PHONE, "Necesito un acta de divorcio, soy Juan Pérez")
+    assert "Acta de divorcio" in replies[0]
     assert "confirmas" in replies[0].lower()
+    assert "1." not in replies[0]  # sin listado
 
     replies = handle_incoming(session, PHONE, "sí")
     assert "folio" in replies[0].lower()
 
     ticket = session.exec(select(Ticket).where(Ticket.phone == PHONE)).first()
     assert ticket is not None
-    assert ticket.service_name == "Acta de nacimiento"
+    assert ticket.service_name == "Acta de divorcio"
     assert ticket.status == TicketStatus.NUEVO
+
+
+def test_services_keyword_shows_catalog_listing(session):
+    handle_incoming(session, PHONE, "Hola")
+
+    replies = handle_incoming(session, PHONE, "¿qué servicios tienen?")
+
+    assert "1." in replies[0]  # única situación donde sí se lista
 
     conv = session.get(Conversation, PHONE)
     assert conv.state == "menu_categoria"
 
 
-def test_keyword_free_text_jumps_to_confirm(session):
-    handle_incoming(session, PHONE, "Hola")
-    handle_incoming(session, PHONE, "Ana López")
+def test_identity_question_gets_fixed_reply(session):
+    replies = handle_incoming(session, PHONE, "¿quién eres?")
 
-    replies = handle_incoming(session, PHONE, "acta de divorcio")
-    assert "confirmas" in replies[0].lower()
-    assert "Acta de divorcio" in replies[0]
+    assert "agente" in replies[0].lower()
+
+
+def test_annoyed_client_is_escalated_to_human(session):
+    handle_incoming(session, PHONE, "Hola")
+
+    replies = handle_incoming(session, PHONE, "estoy muy molesto con su servicio")
+
+    assert "asesor" in replies[0].lower()
+    ticket = session.exec(select(Ticket).where(Ticket.phone == PHONE)).first()
+    assert ticket is not None and ticket.escalado is True
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "escalado"
 
 
 def test_escalation_keyword_from_any_state(session):
@@ -61,12 +80,11 @@ def test_escalation_keyword_from_any_state(session):
 
 def test_two_failed_attempts_auto_escalates(session):
     handle_incoming(session, PHONE, "Hola")
-    handle_incoming(session, PHONE, "Juan Pérez")  # ahora en menu_categoria
 
-    handle_incoming(session, PHONE, "xyz no reconocido")  # intento 1
-    replies = handle_incoming(session, PHONE, "otro texto raro")  # intento 2 -> escala
+    replies = handle_incoming(session, PHONE, "xyzqq zzz")  # intento 1
+    assert "asesor" in replies[0].lower()  # ofrece el contacto humano
 
-    assert "asesor" in replies[0].lower()
+    replies = handle_incoming(session, PHONE, "wwwk qqq")  # intento 2 -> escala
     conv = session.get(Conversation, PHONE)
     assert conv.state == "escalado"
 
@@ -83,42 +101,38 @@ def test_media_message_is_not_processed(session):
     assert conv.state == "inicio"  # no cambia de estado por un adjunto
 
 
-def test_menu_keyword_resets_from_any_state(session):
+def test_menu_keyword_shows_listing_from_any_state(session):
     handle_incoming(session, PHONE, "Hola")
-    handle_incoming(session, PHONE, "Juan Pérez")
-    handle_incoming(session, PHONE, "1")  # entra al submenú de Servicios básicos
 
     replies = handle_incoming(session, PHONE, "menu")
-    assert "1." in replies[0]  # de vuelta al menú de categorías
-
-    conv = session.get(Conversation, PHONE)
-    assert conv.state == "menu_categoria"
-
-
-def test_zero_goes_back_to_category_menu_from_service_menu(session):
-    handle_incoming(session, PHONE, "Hola")
-    handle_incoming(session, PHONE, "Juan Pérez")
-    handle_incoming(session, PHONE, "1")  # submenú de Servicios básicos
-
-    replies = handle_incoming(session, PHONE, "0")
     assert "1." in replies[0]
 
     conv = session.get(Conversation, PHONE)
     assert conv.state == "menu_categoria"
 
 
-def test_confused_user_no_longer_escalates_if_they_use_menu(session):
-    # Reproduce el caso real: el cliente se confunde en el submenú y en vez de
-    # escalar automáticamente por 2 respuestas inválidas, usa "menu" para salir.
+def test_numeric_flow_still_works_after_listing(session):
     handle_incoming(session, PHONE, "Hola")
-    handle_incoming(session, PHONE, "Leticia Diaz")
-    handle_incoming(session, PHONE, "1")  # submenú de Servicios básicos
+    handle_incoming(session, PHONE, "servicios")  # muestra categorías
 
-    replies = handle_incoming(session, PHONE, "menu")
-    assert "asesor" not in replies[0].lower()
+    replies = handle_incoming(session, PHONE, "1")  # Servicios básicos
+    assert "Acta de nacimiento" in replies[0]
 
+    replies = handle_incoming(session, PHONE, "0")  # volver
+    assert "1." in replies[0]
     conv = session.get(Conversation, PHONE)
     assert conv.state == "menu_categoria"
+
+
+def test_greeting_after_closed_ticket_is_cordial_short(session):
+    handle_incoming(session, PHONE, "necesito acta de nacimiento")
+    handle_incoming(session, PHONE, "sí")  # folio creado, estado vuelve a menu_categoria
+
+    replies = handle_incoming(session, PHONE, "hola")
+
+    assert "no logré" not in replies[0].lower()
+    assert "ayud" in replies[0].lower()
+    assert "1." not in replies[0]  # el saludo no lista servicios
 
 
 def test_escalated_user_resumes_bot_with_menu_if_ticket_unclaimed(session):
@@ -134,43 +148,6 @@ def test_escalated_user_resumes_bot_with_menu_if_ticket_unclaimed(session):
 
     conv = session.get(Conversation, PHONE)
     assert conv.state == "menu_categoria"
-
-
-def test_greeting_after_closed_ticket_is_cordial_not_confused(session):
-    handle_incoming(session, PHONE, "Hola")
-    handle_incoming(session, PHONE, "Leticia Diaz")
-    handle_incoming(session, PHONE, "1")
-    handle_incoming(session, PHONE, "1")
-    handle_incoming(session, PHONE, "sí")  # folio + despedida, estado vuelve a menu_categoria
-
-    replies = handle_incoming(session, PHONE, "hola")
-    assert "no reconocí" not in replies[0].lower()
-    assert "leticia diaz" in replies[0].lower()
-    assert "1." in replies[0]  # muestra el menú de categorías
-
-
-def test_greeting_mid_submenu_is_cordial(session):
-    handle_incoming(session, PHONE, "Hola")
-    handle_incoming(session, PHONE, "Ana")
-    handle_incoming(session, PHONE, "1")  # entra al submenú
-
-    replies = handle_incoming(session, PHONE, "buenas tardes")
-    assert "no reconocí" not in replies[0].lower()
-    assert "1." in replies[0]
-
-    conv = session.get(Conversation, PHONE)
-    assert conv.state == "menu_categoria"
-
-
-def test_first_invalid_option_offers_agent_contact(session):
-    handle_incoming(session, PHONE, "Hola")
-    handle_incoming(session, PHONE, "Juan Pérez")
-
-    replies = handle_incoming(session, PHONE, "xyz no reconocido")  # 1er intento, no escala aún
-
-    assert "asesor" in replies[0].lower()
-    conv = session.get(Conversation, PHONE)
-    assert conv.state == "menu_categoria"  # sigue en el menú, no escaló
 
 
 def test_escalated_user_stays_silent_if_ticket_already_claimed(session):

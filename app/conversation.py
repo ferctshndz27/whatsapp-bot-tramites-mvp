@@ -29,9 +29,34 @@ GREETING_WORDS = {
     "buenos dias", "buenos días", "buenas tardes", "buenas noches",
     "hey", "que tal", "qué tal", "saludos",
 }
+
+# Reglas del agente (definidas por el negocio, 2026-07-19): siempre español,
+# mensajes cortos (<30 palabras, máx. 2 emojis, sin listas salvo que pidan el
+# catálogo), nunca inventar precios (solo los del catálogo), molestia → humano,
+# saludo → pregunta abierta sin listar servicios, servicio directo → ticket.
+ANNOYANCE_KEYWORDS = [
+    "molesto", "molesta", "enojado", "enojada", "furioso", "furiosa",
+    "queja", "quejarme", "pesimo", "pésimo", "mal servicio", "muy mal",
+    "no sirve", "tardan mucho", "indignado", "indignada", "harto", "harta",
+]
+IDENTITY_KEYWORDS = [
+    "quien eres", "quién eres", "eres un bot", "eres un robot",
+    "eres humano", "con quien hablo", "con quién hablo",
+]
+SERVICES_KEYWORDS = [
+    "servicios", "catalogo", "catálogo", "listado", "lista",
+    "precios", "que hacen", "qué hacen", "que ofrecen", "qué ofrecen",
+]
+GREETING_REPLY = "¡Hola! 😊 ¿Cómo puedo ayudarte hoy?"
+ASK_GOAL_REPLY = (
+    "Cuéntame, ¿qué trámite o servicio necesitas? "
+    "Escribe *servicios* si quieres ver la lista."
+)
+IDENTITY_REPLY = "Soy un agente colaborador que ayuda a los colaboradores 🤖 ¿Qué trámite necesitas?"
+ANNOYANCE_REPLY = "Lamento mucho la molestia 🙏 Te comunico con un asesor ahora mismo."
 NOT_RECOGNIZED_HINT = (
-    "No reconocí esa opción.\n"
-    "Si no encuentras lo que buscas, escribe *asesor* para hablar con alguien de nuestro equipo.\n"
+    "No logré identificar el trámite 🤔 Cuéntame qué necesitas, "
+    "escribe *servicios* para ver la lista o *asesor* para hablar con una persona."
 )
 ESCALATED_WAIT_REPLY = (
     "Recibimos tu mensaje. Un asesor te contactará muy pronto — gracias por tu paciencia.\n"
@@ -83,7 +108,10 @@ def handle_incoming(
             replies = []
     else:
         normalized = text.strip().lower()
-        if _is_escalation(normalized):
+        if _mentions_any(normalized, ANNOYANCE_KEYWORDS):
+            # Cliente molesto: disculpa breve y directo con un humano.
+            replies = _escalate(session, client, conv, text, reply=ANNOYANCE_REPLY)
+        elif _is_escalation(normalized):
             replies = _escalate(session, client, conv, text)
         else:
             replies = _dispatch(session, client, conv, text, normalized)
@@ -130,14 +158,26 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
         _set_state(session, conv, "menu_categoria")
         return [catalog.format_category_menu()]
 
-    # Un saludo en medio del flujo (p. ej. tras cerrar un trámite) se responde
-    # con cortesía en vez de "no reconocí esa opción". Se excluye "inicio"
-    # (ya saluda y pide el nombre por su cuenta) y "esperando_nombre" (para
-    # no confundir un saludo con el nombre real del cliente).
+    # "¿Quién eres?" → identidad fija, sin cambiar de estado.
+    if _mentions_any(normalized, IDENTITY_KEYWORDS):
+        return [IDENTITY_REPLY]
+
+    # Pidieron el catálogo explícitamente: única situación donde sí se lista.
+    if _mentions_any(normalized, SERVICES_KEYWORDS):
+        _set_state(session, conv, "menu_categoria")
+        return [catalog.format_category_menu()]
+
+    # Un saludo en medio del flujo se responde con pregunta abierta, sin
+    # listar servicios. Se excluye "inicio" (lo maneja su handler) y
+    # "esperando_nombre" (para no confundir un saludo con el nombre real).
     if normalized in GREETING_WORDS and conv.state not in {"inicio", "esperando_nombre"}:
         _set_state(session, conv, "menu_categoria")
-        saludo = f"¡Hola de nuevo, {client.name}!" if client.name else "¡Hola!"
-        return [f"{saludo} {catalog.format_category_menu()}"]
+        saludo = (
+            f"¡Hola de nuevo, {client.name}! ¿En qué te ayudo hoy?"
+            if client.name
+            else GREETING_REPLY
+        )
+        return [saludo]
 
     handlers = {
         "inicio": _handle_inicio,
@@ -151,11 +191,29 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
 
 
 def _handle_inicio(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
-    if client.name:
+    saludo = (
+        f"¡Hola de nuevo, {client.name}! ¿En qué te ayudo hoy?"
+        if client.name
+        else GREETING_REPLY
+    )
+    if normalized in GREETING_WORDS:
+        # Regla: al saludo se responde con pregunta abierta, sin listar servicios.
         _set_state(session, conv, "menu_categoria")
-        return [f"Hola de nuevo, {client.name}. {catalog.format_category_menu()}"]
-    _set_state(session, conv, "esperando_nombre")
-    return ["¡Hola! Para comenzar, ¿cuál es tu nombre completo?"]
+        return [saludo]
+
+    # Regla: si el primer mensaje ya trae el servicio ("necesito mi CURP, soy
+    # Juan…"), no se listan servicios: saludo breve y directo a confirmar.
+    service, category = nlu.deduce(text)
+    if service is not None:
+        _set_state(session, conv, "confirmar", {"pending_service_id": service.id})
+        return ["¡Hola! 😊 " + _confirm_message(service)]
+    if category is not None:
+        _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
+        return [catalog.format_service_menu(category.id)]
+
+    _set_state(session, conv, "menu_categoria")
+    prefix = f"¡Hola, {client.name}! " if client.name else "¡Hola! 😊 "
+    return [prefix + ASK_GOAL_REPLY]
 
 
 def _handle_esperando_nombre(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -184,13 +242,7 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
 
-    return _bump_or_escalate(
-        session,
-        client,
-        conv,
-        text,
-        NOT_RECOGNIZED_HINT + catalog.format_category_menu(),
-    )
+    return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
 
 
 def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -225,9 +277,7 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
         _set_state(session, conv, "menu_servicio", {"category_id": deduced_category.id, "page": 0})
         return [catalog.format_service_menu(deduced_category.id)]
 
-    category = catalog.category_by_id(category_id)
-    reprompt = catalog.format_service_menu(category_id, context.get("page", 0)) if category else catalog.format_category_menu()
-    return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT + reprompt)
+    return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
 
 
 def _handle_confirmar(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -250,10 +300,8 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         session.refresh(ticket)
         _set_state(session, conv, "menu_categoria")
         return [
-            f"Listo, registré tu solicitud de '{service.name}' (folio #{ticket.id}). "
-            "Un asesor te contactará en breve.\n\n"
-            "¡Gracias por tu confianza! Fue un gusto ayudarte. "
-            "Si necesitas algo más, aquí estoy cuando quieras."
+            f"¡Listo! ✅ Registré tu solicitud de '{service.name}' (folio #{ticket.id}). "
+            "Un asesor te contactará pronto, gracias por tu confianza."
         ]
 
     if normalized in NO_WORDS:
@@ -265,17 +313,25 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
 
 
 def _confirm_message(service) -> str:
-    return (
-        f"Confirmas '{service.name}' ({service.price_info})? Responde 'sí' o 'no'.\n"
-        "Escribe *menu* en cualquier momento para reiniciar."
-    )
+    # El precio sale SOLO del catálogo — el agente nunca inventa precios.
+    return f"¿Confirmas '{service.name}' ({service.price_info})? Responde sí o no."
 
 
 def _is_escalation(normalized: str) -> bool:
     return any(keyword in normalized for keyword in ESCALATION_KEYWORDS)
 
 
-def _escalate(session: Session, client: Client, conv: Conversation, original_text: str) -> list[str]:
+def _mentions_any(normalized: str, keywords: list[str]) -> bool:
+    return any(keyword in normalized for keyword in keywords)
+
+
+def _escalate(
+    session: Session,
+    client: Client,
+    conv: Conversation,
+    original_text: str,
+    reply: str | None = None,
+) -> list[str]:
     open_ticket = session.exec(
         select(Ticket)
         .where(Ticket.phone == client.phone)
@@ -301,7 +357,7 @@ def _escalate(session: Session, client: Client, conv: Conversation, original_tex
         session.add(ticket)
 
     _set_state(session, conv, "escalado")
-    return ["Un asesor te contactará en breve."]
+    return [reply or "Un asesor te contactará en breve."]
 
 
 def _bump_or_escalate(session: Session, client: Client, conv: Conversation, original_text: str, reprompt: str) -> list[str]:
