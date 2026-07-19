@@ -220,6 +220,7 @@
         <a href="/activity" {% if request.url.path.startswith('/activity') %}aria-current="page"{% endif %}>Actividad</a>
         {% if is_admin(user) %}
         <a href="/invitations" {% if request.url.path.startswith('/invitations') %}aria-current="page"{% endif %}>Invitaciones</a>
+        <a href="/users" {% if request.url.path.startswith('/users') %}aria-current="page"{% endif %}>Usuarios</a>
         {% endif %}
       </nav>
       <div class="userbox">

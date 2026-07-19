@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Usuarios{% endblock %}
+{% block content %}
+<h1>Colaboradores</h1>
+
+{% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
+{% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}
+
+<div class="card">
+  <h2>Nuevo colaborador</h2>
+  <form method="post" action="/users">
+    <div class="row" style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end;">
+      <div>
+        <label for="username">Usuario</label>
+        <input type="text" id="username" name="username" required autocomplete="off"
+          placeholder="ana_lopez" style="max-width:200px;">
+      </div>
+      <div>
+        <label for="password">Contraseña</label>
+        <input type="password" id="password" name="password" required minlength="8"
+          autocomplete="new-password" style="max-width:200px;">
+      </div>
+      <div>
+        <label for="role">Rol</label>
+        <select name="role" id="role">
+          <option value="colaborador" selected>colaborador</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+      <button type="submit">Crear usuario</button>
+    </div>
+  </form>
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+    También puedes invitar por WhatsApp desde <a href="/invitations">Invitaciones</a>
+    para que la persona elija su propia contraseña.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Registrados</h2>
+  {% if users %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Usuario</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.username }}{% if u.username == user %} <span style="color:var(--text-muted); font-size:.85rem;">(tú)</span>{% endif %}</td>
+          <td>
+            {% if u.is_admin %}
+            <span class="badge asignada">admin</span>
+            {% else %}
+            colaborador
+            {% endif %}
+          </td>
+          <td>
+            {% if u.habilitado %}
+            <span class="badge cerrado">habilitado</span>
+            {% else %}
+            <span class="badge caducada">deshabilitado</span>
+            {% endif %}
+          </td>
+          <td>
+            <details style="display:inline-block; margin-right:.5rem;">
+              <summary class="btn-sm" style="cursor:pointer; display:inline-block;">Restablecer contraseña</summary>
+              <form method="post" action="/users/{{ u.username }}/password"
+                style="margin-top:.5rem; display:flex; gap:.5rem; align-items:center;">
+                <label for="pw-{{ u.username }}" class="sr-only" style="position:absolute; left:-9999px;">Nueva contraseña</label>
+                <input type="password" id="pw-{{ u.username }}" name="password" required minlength="8"
+                  autocomplete="new-password" placeholder="Nueva contraseña" style="max-width:180px;">
+                <button type="submit" class="btn-sm">Guardar</button>
+              </form>
+            </details>
+            {% if u.username != user %}
+            <form method="post" action="/users/{{ u.username }}/role" style="display:inline;"
+              onsubmit="return confirm('¿Cambiar el rol de {{ u.username }} a {{ 'colaborador' if u.is_admin else 'admin' }}?');">
+              <button type="submit" class="btn-sm">
+                {{ 'Quitar admin' if u.is_admin else 'Hacer admin' }}
+              </button>
+            </form>
+            <form method="post" action="/users/{{ u.username }}/toggle" style="display:inline;"
+              onsubmit="return confirm('{{ '¿Deshabilitar' if u.habilitado else '¿Habilitar' }} a {{ u.username }}?');">
+              <button type="submit" class="btn-sm {{ 'btn-danger' if u.habilitado else '' }}">
+                {{ 'Deshabilitar' if u.habilitado else 'Habilitar' }}
+              </button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Sin colaboradores registrados.</p>
+  {% endif %}
+</div>
+{% endblock %}

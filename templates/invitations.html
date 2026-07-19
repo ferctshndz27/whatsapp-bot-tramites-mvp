@@ -73,45 +73,8 @@
   {% endif %}
 </div>
 
-<div class="card">
-  <h2>Colaboradores</h2>
-  {% if users %}
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for u in users %}
-        <tr>
-          <td>{{ u.username }}</td>
-          <td>{{ 'admin' if u.is_admin else 'colaborador' }}</td>
-          <td>
-            {% if u.habilitado %}
-            <span class="badge cerrado">habilitado</span>
-            {% else %}
-            <span class="badge caducada">deshabilitado</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if u.username != user %}
-            <form method="post" action="/users/{{ u.username }}/toggle" style="display:inline;"
-              onsubmit="return confirm('{{ '¿Deshabilitar' if u.habilitado else '¿Habilitar' }} a {{ u.username }}?');">
-              <button type="submit" class="btn-sm {{ 'btn-danger' if u.habilitado else '' }}">
-                {{ 'Deshabilitar' if u.habilitado else 'Habilitar' }}
-              </button>
-            </form>
-            {% else %}
-            <span style="color:var(--text-muted); font-size:.85rem;">(tú)</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="empty">Sin colaboradores registrados.</p>
-  {% endif %}
-</div>
+<p style="color:var(--text-muted);">
+  La gestión de colaboradores (alta, contraseñas, roles, deshabilitar) está en
+  <a href="/users">Usuarios</a>.
+</p>
 {% endblock %}

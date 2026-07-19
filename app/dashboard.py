@@ -215,11 +215,9 @@ def invitations_list(request: Request):
 
     with get_session() as session:
         invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
-        users = session.exec(select(User).order_by(User.username)).all()
 
     return templates.TemplateResponse(
-        "invitations.html",
-        {"request": request, "user": user, "invitations": invitations, "users": users},
+        "invitations.html", {"request": request, "user": user, "invitations": invitations}
     )
 
 
@@ -242,31 +240,6 @@ def invitations_toggle(request: Request, invitation_id: int):
             logger.info(
                 "Invitación #%s %s por %s", invitation_id,
                 "reactivada" if invitation.habilitado else "cancelada", user,
-            )
-    return RedirectResponse("/invitations", status_code=303)
-
-
-@router.post("/users/{username}/toggle")
-def user_toggle(request: Request, username: str):
-    admin_user = _current_user(request)
-    if not admin_user:
-        return RedirectResponse("/login", status_code=303)
-    if not is_admin(admin_user):
-        return RedirectResponse("/", status_code=303)
-    if username == admin_user:
-        # Un admin no puede deshabilitarse a sí mismo: evita quedarse fuera
-        # del panel por accidente.
-        return RedirectResponse("/invitations", status_code=303)
-
-    with get_session() as session:
-        target = session.exec(select(User).where(User.username == username)).first()
-        if target is not None:
-            target.habilitado = not target.habilitado
-            session.add(target)
-            session.commit()
-            logger.info(
-                "Colaborador %s %s por %s", username,
-                "habilitado" if target.habilitado else "deshabilitado", admin_user,
             )
     return RedirectResponse("/invitations", status_code=303)
 
