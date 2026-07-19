@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}No entendidos{% endblock %}
+{% block content %}
+<h1>Mensajes no entendidos (últimos 30 días)</h1>
+
+{% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
+{% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}
+
+<div class="card">
+  <p style="margin-top:0;">
+    <a href="/system">← Volver a Sistema</a> ·
+    <a href="/export/no-entendidos.csv">⬇ Descargar CSV</a>
+  </p>
+  {% if pending %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Fecha (UTC)</th><th>Teléfono</th><th>Mensaje</th></tr></thead>
+      <tbody>
+        {% for m in pending %}
+        <tr>
+          <td>{{ m.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ m.phone }}</td>
+          <td>{{ m.body }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if mining_available %}
+  <form method="post" action="/unmatched/mine" style="margin-top:.75rem;">
+    <button type="submit">Proponer sinónimos con Claude</button>
+  </form>
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+    Analiza estos mensajes por lote y sugiere sinónimos para el catálogo.
+    Nada se agrega sin tu aprobación.
+  </p>
+  {% else %}
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.75rem 0 0;">
+    Define ANTHROPIC_API_KEY en el servidor para que Claude proponga sinónimos
+    automáticamente; mientras tanto puedes agregarlos a mano aquí abajo.
+  </p>
+  {% endif %}
+  {% else %}
+  <p class="empty">Sin mensajes pendientes: el bot entendió todo (o los sinónimos ya los cubren). 🎉</p>
+  {% endif %}
+</div>
+
+{% if proposals %}
+<div class="card">
+  <h2>Propuestas de Claude</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Servicio</th><th>Sinónimo propuesto</th><th></th></tr></thead>
+      <tbody>
+        {% for p in proposals %}
+        <tr>
+          <td>{{ p.service_name }}</td>
+          <td>{{ p.synonym }}</td>
+          <td>
+            <form method="post" action="/unmatched/synonyms" style="display:inline;">
+              <input type="hidden" name="service_id" value="{{ p.service_id }}">
+              <input type="hidden" name="synonym" value="{{ p.synonym }}">
+              <button type="submit" class="btn-sm">Aprobar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Agregar sinónimo a mano</h2>
+  <form method="post" action="/unmatched/synonyms" style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:flex-end;">
+    <div>
+      <label for="service_id">Servicio</label>
+      <select name="service_id" id="service_id" required>
+        {% for sid, sname in services %}<option value="{{ sid }}">{{ sname }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="synonym">Sinónimo</label>
+      <input type="text" id="synonym" name="synonym" required placeholder="como lo escribe el cliente" style="min-width:240px;">
+    </div>
+    <button type="submit" class="btn-sm">Agregar</button>
+  </form>
+</div>
+{% endblock %}

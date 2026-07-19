@@ -185,6 +185,22 @@ class Catalog:
         self._save()
         return None
 
+    def add_synonym(self, service_id: str, synonym: str) -> str | None:
+        self._maybe_reload()
+        found = self._raw_service(service_id)
+        if found is None:
+            return "Servicio no encontrado."
+        _, svc = found
+        cleaned = synonym.strip()
+        if not cleaned:
+            return "El sinónimo no puede estar vacío."
+        existing = svc.setdefault("synonyms", [])
+        if cleaned.lower() in (s.lower() for s in existing):
+            return "Ese sinónimo ya existe."
+        existing.append(cleaned)
+        self._save()
+        return None
+
     def toggle_service(self, service_id: str) -> str | None:
         self._maybe_reload()
         found = self._raw_service(service_id)
