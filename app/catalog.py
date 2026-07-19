@@ -38,6 +38,8 @@ class Service:
     # Sinónimos/frases coloquiales con que los clientes piden el servicio;
     # editables desde el panel Catálogo, usados por la deducción de intención.
     synonyms: tuple[str, ...] = ()
+    # Requisitos/documentos del trámite (base de conocimiento del equipo).
+    requirements: str = ""
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,7 @@ class Catalog:
                     category_id=cat["id"],
                     category_name=cat["name"],
                     synonyms=tuple(svc.get("synonyms", [])),
+                    requirements=svc.get("requirements", ""),
                 )
                 for svc in cat["services"]
                 if svc.get("habilitado", True)
@@ -172,6 +175,7 @@ class Catalog:
         name: str,
         price_info: str,
         synonyms: list[str] | None = None,
+        requirements: str | None = None,
     ) -> str | None:
         self._maybe_reload()
         found = self._raw_service(service_id)
@@ -182,6 +186,8 @@ class Catalog:
         svc["price_info"] = price_info.strip()
         if synonyms is not None:
             svc["synonyms"] = [s.strip() for s in synonyms if s.strip()]
+        if requirements is not None:
+            svc["requirements"] = requirements.strip()
         self._save()
         return None
 

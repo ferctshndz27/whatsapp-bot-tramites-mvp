@@ -332,8 +332,26 @@ def ticket_detail(request: Request, ticket_id: int):
         messages = session.exec(
             select(Message).where(Message.phone == ticket.phone).order_by(Message.created_at)
         ).all()
-        usernames = [u.username for u in session.exec(select(User)).all()]
+        teammates = [
+            (u.username, u.estado)
+            for u in session.exec(
+                select(User).where(User.habilitado == True).order_by(User.username)  # noqa: E712
+            ).all()
+            if u.username != user
+        ]
+        from app.models import FollowUp
 
+        followups = session.exec(
+            select(FollowUp)
+            .where(FollowUp.ticket_id == ticket_id)
+            .where(FollowUp.done_at.is_(None))
+            .where(FollowUp.habilitado == True)  # noqa: E712
+            .order_by(FollowUp.due_at)
+        ).all()
+
+    from app.catalog import catalog
+
+    service = catalog.service_by_id(ticket.service_id)
     return templates.TemplateResponse(
         "ticket_detail.html",
         {
@@ -342,7 +360,9 @@ def ticket_detail(request: Request, ticket_id: int):
             "ticket": ticket,
             "messages": messages,
             "statuses": [s.value for s in TicketStatus],
-            "usernames": [u for u in usernames if u != user],
+            "teammates": teammates,
+            "followups": followups,
+            "requirements": service.requirements if service else "",
         },
     )
 

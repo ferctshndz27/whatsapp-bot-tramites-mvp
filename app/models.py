@@ -73,6 +73,43 @@ class User(SQLModel, table=True):
     password_hash: str
     is_admin: bool = False
     habilitado: bool = True
+    # Disponibilidad visible al equipo: disponible | ocupado | ausente
+    estado: str = "disponible"
+
+
+class FollowUp(SQLModel, table=True):
+    """Recordatorio de seguimiento sobre un ticket ("recontactar el lunes")."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    ticket_id: int = Field(index=True)
+    username: str = Field(index=True)
+    note: str = ""
+    due_at: datetime = Field(index=True)
+    done_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
+class ClientNote(SQLModel, table=True):
+    """Nota interna sobre un cliente (visible a todo el equipo, no al cliente)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    phone: str = Field(index=True)
+    author: str
+    body: str
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
+class SavedReply(SQLModel, table=True):
+    """Respuesta guardada personal de un colaborador para la bandeja."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    title: str
+    body: str
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
 
 
 class TeamMessage(SQLModel, table=True):

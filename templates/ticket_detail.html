@@ -28,7 +28,13 @@
     <strong>Precio:</strong> {{ ticket.price_info }}<br>
     <strong>Asignado a:</strong> {{ ticket.assigned_to or '— sin asignar' }}<br>
     <strong>Conversación:</strong> <a href="/inbox/{{ ticket.phone }}">Abrir chat</a>
+    · <a href="/clients/{{ ticket.phone }}">Ficha del cliente</a>
   </p>
+
+  {% if requirements %}
+  <h2>Requisitos del trámite</h2>
+  <p style="white-space: pre-line; background:#f8fafc; border-radius:6px; padding:.75rem 1rem;">{{ requirements }}</p>
+  {% endif %}
 
   {% if ticket.notes %}
   <h2>Notas del trámite</h2>
@@ -60,12 +66,43 @@
     <button type="submit" class="btn-sm" style="margin-top:.5rem;">Guardar nota</button>
   </form>
 
-  {% if usernames %}
+  <h2 style="margin-top:1.5rem;">Seguimiento</h2>
+  <form method="post" action="/tickets/{{ ticket.id }}/followup" style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:flex-end;">
+    <div>
+      <label for="fu-days">Recordarme en</label>
+      <select name="days" id="fu-days" style="max-width:160px;">
+        <option value="0">hoy mismo</option>
+        <option value="1" selected>1 día</option>
+        <option value="2">2 días</option>
+        <option value="3">3 días</option>
+        <option value="7">1 semana</option>
+        <option value="15">15 días</option>
+      </select>
+    </div>
+    <div style="flex:1; min-width:220px;">
+      <label for="fu-note">Motivo (opcional)</label>
+      <input type="text" id="fu-note" name="note" maxlength="500"
+        placeholder="Ej. recontactar por documentos" style="max-width:none;">
+    </div>
+    <button type="submit" class="btn-sm">Crear recordatorio</button>
+  </form>
+  {% if followups %}
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+    Pendientes:
+    {% for f in followups %}
+    <span class="badge asignada">{{ f.due_at.strftime('%d %b') }} · {{ f.username }}{% if f.note %} — {{ f.note }}{% endif %}</span>
+    {% endfor %}
+  </p>
+  {% endif %}
+
+  {% if teammates %}
   <h2 style="margin-top:1.5rem;">Transferir a otro colaborador</h2>
   <form method="post" action="/tickets/{{ ticket.id }}/reassign">
     <label for="to_user">Colaborador</label>
     <select name="to_user" id="to_user" required>
-      {% for u in usernames %}<option value="{{ u }}">{{ u }}</option>{% endfor %}
+      {% for u, estado in teammates %}
+      <option value="{{ u }}">{{ u }}{{ '' if estado == 'disponible' else ' — ' + estado }}</option>
+      {% endfor %}
     </select>
     <label for="note" style="margin-top:.5rem;">Nota de contexto para quien recibe (opcional)</label>
     <textarea name="note" id="note" placeholder="Qué se ha hecho, qué falta, acuerdos con el cliente…"

@@ -146,6 +146,9 @@ def inbox_chat(request: Request, phone: str, err: str | None = None):
         ticket = session.exec(
             select(Ticket).where(Ticket.phone == phone).order_by(Ticket.created_at.desc())
         ).first()
+        from app.replies import personal_replies
+
+        my_replies = personal_replies(session, user)
 
     last_in = next(
         (m.created_at for m in reversed(messages) if m.direction == Direction.IN), None
@@ -162,6 +165,7 @@ def inbox_chat(request: Request, phone: str, err: str | None = None):
             "bot_paused": bool(conv and conv.state == "escalado"),
             "window_open": _window_open(last_in),
             "quick_replies": QUICK_REPLIES,
+            "my_replies": my_replies,
             "error": err,
         },
     )

@@ -82,7 +82,43 @@ _SCHEMA_DDL = [
         username      NVARCHAR(64)  NOT NULL UNIQUE,
         password_hash NVARCHAR(200) NOT NULL,
         is_admin      BIT           NOT NULL DEFAULT 0,
-        habilitado    BIT           NOT NULL DEFAULT 1
+        habilitado    BIT           NOT NULL DEFAULT 1,
+        estado        NVARCHAR(20)  NOT NULL DEFAULT 'disponible'
+    )
+    """,
+    """
+    IF OBJECT_ID('followups', 'U') IS NULL
+    CREATE TABLE followups (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        ticket_id  BIGINT        NOT NULL,
+        username   NVARCHAR(64)  NOT NULL,
+        note       NVARCHAR(500) NOT NULL,
+        due_at     DATETIME2     NOT NULL,
+        done_at    DATETIME2     NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('client_notes', 'U') IS NULL
+    CREATE TABLE client_notes (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        phone      NVARCHAR(32)  NOT NULL,
+        author     NVARCHAR(64)  NOT NULL,
+        body       NVARCHAR(MAX) NOT NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('saved_replies', 'U') IS NULL
+    CREATE TABLE saved_replies (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        username   NVARCHAR(64)  NOT NULL,
+        title      NVARCHAR(100) NOT NULL,
+        body      NVARCHAR(MAX) NOT NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        created_at DATETIME2     NOT NULL
     )
     """,
     """
@@ -161,7 +197,10 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
     "wa_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "wa_clients": {"habilitado": "BIT NOT NULL DEFAULT 1"},
-    "app_users": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "app_users": {
+        "habilitado": "BIT NOT NULL DEFAULT 1",
+        "estado": "NVARCHAR(20) NOT NULL DEFAULT 'disponible'",
+    },
     "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "tickets": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "ticket_activity": {"habilitado": "BIT NOT NULL DEFAULT 1"},
@@ -356,6 +395,48 @@ def archive_user(u) -> None:
             "password_hash": u.password_hash,
             "is_admin": u.is_admin,
             "habilitado": u.habilitado,
+            "estado": u.estado,
+        },
+    )
+
+
+def archive_followup(f) -> None:
+    _upsert(
+        "followups", "source_id", f.id,
+        {
+            "ticket_id": f.ticket_id,
+            "username": f.username,
+            "note": f.note,
+            "due_at": _naive_utc(f.due_at),
+            "done_at": _naive_utc(f.done_at) if f.done_at else None,
+            "habilitado": f.habilitado,
+            "created_at": _naive_utc(f.created_at),
+        },
+    )
+
+
+def archive_client_note(n) -> None:
+    _upsert(
+        "client_notes", "source_id", n.id,
+        {
+            "phone": n.phone,
+            "author": n.author,
+            "body": n.body,
+            "habilitado": n.habilitado,
+            "created_at": _naive_utc(n.created_at),
+        },
+    )
+
+
+def archive_saved_reply(r) -> None:
+    _upsert(
+        "saved_replies", "source_id", r.id,
+        {
+            "username": r.username,
+            "title": r.title,
+            "body": r.body,
+            "habilitado": r.habilitado,
+            "created_at": _naive_utc(r.created_at),
         },
     )
 
@@ -458,8 +539,11 @@ def backfill() -> None:
     from app.models import (
         AdminAudit,
         Client,
+        ClientNote,
         Conversation,
+        FollowUp,
         Invitation,
+        SavedReply,
         Ticket,
         TicketActivity,
         User,
@@ -487,6 +571,12 @@ def backfill() -> None:
                 archive_conversation(conv)
             for aa in session.exec(select(AdminAudit)).all():
                 archive_admin_audit(aa)
+            for f in session.exec(select(FollowUp)).all():
+                archive_followup(f)
+            for n in session.exec(select(ClientNote)).all():
+                archive_client_note(n)
+            for r in session.exec(select(SavedReply)).all():
+                archive_saved_reply(r)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -499,9 +589,12 @@ def _register_listeners() -> None:
     from app.models import (
         AdminAudit,
         Client,
+        ClientNote,
         Conversation,
+        FollowUp,
         Invitation,
         Message,
+        SavedReply,
         TeamMessage,
         Ticket,
         TicketActivity,
@@ -558,6 +651,21 @@ def _register_listeners() -> None:
     @event.listens_for(AdminAudit, "after_update")
     def _admin_audit_upsert(mapper, connection, target):
         _safe(archive_admin_audit, target)
+
+    @event.listens_for(FollowUp, "after_insert")
+    @event.listens_for(FollowUp, "after_update")
+    def _followup_upsert(mapper, connection, target):
+        _safe(archive_followup, target)
+
+    @event.listens_for(ClientNote, "after_insert")
+    @event.listens_for(ClientNote, "after_update")
+    def _client_note_upsert(mapper, connection, target):
+        _safe(archive_client_note, target)
+
+    @event.listens_for(SavedReply, "after_insert")
+    @event.listens_for(SavedReply, "after_update")
+    def _saved_reply_upsert(mapper, connection, target):
+        _safe(archive_saved_reply, target)
 
 
 _register_listeners()

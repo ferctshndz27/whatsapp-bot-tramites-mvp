@@ -115,6 +115,7 @@ def service_update(
     name: str = Form(...),
     price_info: str = Form(...),
     synonyms: str = Form(""),
+    requirements: str = Form(""),
 ):
     admin, redirect = _admin_or_redirect(request)
     if redirect:
@@ -124,7 +125,7 @@ def service_update(
     synonym_list = [s for s in (part.strip() for part in synonyms.split(",")) if s]
     return _apply(
         request, admin, "servicio_editado", service_id,
-        catalog.update_service(service_id, name, price_info, synonym_list),
+        catalog.update_service(service_id, name, price_info, synonym_list, requirements),
     )
 
 

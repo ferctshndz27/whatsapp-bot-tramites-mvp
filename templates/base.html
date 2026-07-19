@@ -46,12 +46,17 @@
     .sidebar nav { flex: 1; margin-top: .75rem; }
     .sidebar nav a {
       display: block; color: var(--sidebar-text); text-decoration: none;
-      padding: .7rem 1.25rem; min-height: 44px; line-height: 1.6;
+      padding: .6rem 1.25rem; min-height: 44px; line-height: 1.6; border-radius: 0 999px 999px 0;
+      margin-right: .6rem;
     }
-    .sidebar nav a:hover { color: #fff; background: rgba(255,255,255,.05); }
+    .sidebar nav a:hover { color: #fff; background: rgba(255,255,255,.06); }
     .sidebar nav a[aria-current="page"] {
-      color: var(--sidebar-active); background: rgba(255,255,255,.08);
-      border-left: 3px solid var(--green); padding-left: calc(1.25rem - 3px);
+      color: var(--sidebar-active); background: rgba(255,255,255,.1);
+      border-left: 3px solid var(--green); padding-left: calc(1.25rem - 3px); font-weight: 600;
+    }
+    .nav-label {
+      display: block; padding: 1rem 1.25rem .35rem; font-size: .68rem; font-weight: 700;
+      letter-spacing: 1.2px; text-transform: uppercase; color: rgba(255,255,255,.35);
     }
     .sidebar .userbox {
       padding: 1rem 1.25rem; border-top: 1px solid rgba(255,255,255,.08); font-size: .85rem;
@@ -117,12 +122,20 @@
     .badge.en_proceso { background: #d9ecfb; color: #0f5c9e; }
     .badge.cerrado    { background: #d5f6f0; color: #0b6e5d; }
     .badge.escalado   { background: #191c24; color: #ffd35c; }
+    .badge.disponible { background: #d5f6f0; color: #0b6e5d; }
+    .badge.ocupado    { background: #fff1d6; color: #8a5b00; }
+    .badge.ausente    { background: #eef1f6; color: #666; }
+    .badge.urgente    { background: #b0295a; color: #fff; }
 
     /* ---- Forms & buttons ---- */
     label { display: block; margin-bottom: .35rem; font-size: .85rem; color: var(--text-muted); }
-    input[type=text], input[type=password], select {
+    input[type=text], input[type=password], select, textarea {
       width: 100%; max-width: 320px; padding: .6rem .75rem; border: 1px solid var(--border);
-      border-radius: 6px; font-size: .95rem; background: #fff; min-height: 44px;
+      border-radius: 6px; font-size: .95rem; background: #fff; min-height: 44px; font-family: inherit;
+    }
+    textarea { max-width: none; min-height: 70px; resize: vertical; }
+    input[type=text]:focus, input[type=password]:focus, select:focus, textarea:focus {
+      border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px rgba(25,138,227,.15);
     }
     button {
       background: var(--blue); color: #fff; border: 0; border-radius: 6px;
@@ -133,6 +146,12 @@
     .btn-sm:hover { background: #0a7a69; }
     .btn-danger { background: var(--red-2); }
     .btn-danger:hover { background: #c43e68; }
+    .btn-ghost {
+      background: transparent; color: var(--blue); border: 1px solid var(--blue);
+    }
+    .btn-ghost:hover { background: #d9ecfb; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }
+    @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
     .error {
       background: #ffe3ea; color: #b0295a; border-radius: 6px; padding: .75rem 1rem; margin-bottom: 1rem;
     }
@@ -197,8 +216,10 @@
       .layout { flex-direction: column; }
       .sidebar { width: 100%; flex-direction: row; align-items: center; padding: .5rem 1rem; gap: .5rem; }
       .sidebar .brand { border: 0; padding: 0 1rem 0 0; }
-      .sidebar nav { display: flex; margin: 0; }
+      .sidebar nav { display: flex; margin: 0; overflow-x: auto; }
+      .sidebar nav a { white-space: nowrap; border-radius: 6px; margin-right: 0; }
       .sidebar nav a[aria-current="page"] { border-left: 0; border-bottom: 3px solid var(--green); padding-left: 1.25rem; }
+      .nav-label { display: none; }
       .sidebar .userbox { border: 0; margin-left: auto; padding: 0; }
       .main { padding: 1rem; }
       .bubble { max-width: 90%; }
@@ -214,15 +235,20 @@
     <aside class="sidebar">
       <div class="brand">Trámites</div>
       <nav aria-label="Principal">
+        <span class="nav-label">Operación</span>
+        <a href="/my" {% if request.url.path.startswith('/my') %}aria-current="page"{% endif %}>Mi día</a>
         <a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Solicitudes</a>
         <a href="/inbox" {% if request.url.path.startswith('/inbox') %}aria-current="page"{% endif %}>Bandeja</a>
         <a href="/team" {% if request.url.path.startswith('/team') %}aria-current="page"{% endif %}>Equipo</a>
         <a href="/activity" {% if request.url.path.startswith('/activity') %}aria-current="page"{% endif %}>Actividad</a>
+        <a href="/replies" {% if request.url.path.startswith('/replies') %}aria-current="page"{% endif %}>Respuestas</a>
+        <a href="/kb" {% if request.url.path.startswith('/kb') %}aria-current="page"{% endif %}>Guía de trámites</a>
         {% if is_admin(user) %}
+        <span class="nav-label">Administración</span>
         <a href="/invitations" {% if request.url.path.startswith('/invitations') %}aria-current="page"{% endif %}>Invitaciones</a>
         <a href="/users" {% if request.url.path.startswith('/users') %}aria-current="page"{% endif %}>Usuarios</a>
         <a href="/catalog" {% if request.url.path.startswith('/catalog') %}aria-current="page"{% endif %}>Catálogo</a>
-        <a href="/system" {% if request.url.path.startswith('/system') or request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Sistema</a>
+        <a href="/system" {% if request.url.path.startswith('/system') or request.url.path.startswith('/audit') or request.url.path.startswith('/unmatched') %}aria-current="page"{% endif %}>Sistema</a>
         {% endif %}
       </nav>
       <div class="userbox">

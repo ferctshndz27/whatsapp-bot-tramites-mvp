@@ -58,6 +58,10 @@
                 value="{{ svc.get('synonyms', []) | join(', ') }}"
                 placeholder="sinónimos, separados, por comas" style="min-width:240px; flex:1;"
                 title="Palabras o frases con que los clientes piden este servicio; el bot las usa para deducir la intención.">
+              <label for="req-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Requisitos</label>
+              <textarea id="req-{{ svc.id }}" name="requirements" rows="2"
+                placeholder="Requisitos del trámite (se muestran al equipo en la Guía de trámites)"
+                style="flex-basis:100%; min-height:52px;">{{ svc.get('requirements', '') }}</textarea>
               <button type="submit" class="btn-sm">Guardar</button>
             </form>
           </td>

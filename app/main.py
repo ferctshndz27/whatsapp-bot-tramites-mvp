@@ -8,8 +8,12 @@ from app import (
     activity,
     archive,
     catalog_admin,
+    clients,
     dashboard,
     inbox,
+    kb,
+    my,
+    replies,
     synonym_miner,
     system,
     team_chat,
@@ -43,6 +47,10 @@ app.include_router(users.router)
 app.include_router(catalog_admin.router)
 app.include_router(system.router)
 app.include_router(synonym_miner.router)
+app.include_router(my.router)
+app.include_router(clients.router)
+app.include_router(replies.router)
+app.include_router(kb.router)
 
 
 @app.on_event("startup")

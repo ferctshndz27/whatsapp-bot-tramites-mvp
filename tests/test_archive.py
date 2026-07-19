@@ -34,7 +34,17 @@ ARCHIVE_DDL = [
     """CREATE TABLE app_users (
         source_id INTEGER PRIMARY KEY, username TEXT UNIQUE,
         password_hash TEXT, is_admin INTEGER DEFAULT 0,
-        habilitado INTEGER DEFAULT 1)""",
+        habilitado INTEGER DEFAULT 1, estado TEXT DEFAULT 'disponible')""",
+    """CREATE TABLE followups (
+        source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT, note TEXT,
+        due_at TIMESTAMP, done_at TIMESTAMP, habilitado INTEGER DEFAULT 1,
+        created_at TIMESTAMP)""",
+    """CREATE TABLE client_notes (
+        source_id INTEGER PRIMARY KEY, phone TEXT, author TEXT, body TEXT,
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
+    """CREATE TABLE saved_replies (
+        source_id INTEGER PRIMARY KEY, username TEXT, title TEXT, body TEXT,
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
     """CREATE TABLE invitations (
         source_id INTEGER PRIMARY KEY, token TEXT, phone TEXT, created_by TEXT,
         created_at TIMESTAMP, used_at TIMESTAMP, used_by TEXT,

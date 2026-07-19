@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Cliente {{ client.name or client.phone }}{% endblock %}
+{% block content %}
+<h1>
+  {{ client.name or 'Sin nombre' }}
+  <span style="color:var(--text-muted); font-size:.9rem; font-weight:400;">· {{ client.phone }}</span>
+  {% if not client.habilitado %}<span class="badge caducada">bloqueado</span>{% endif %}
+</h1>
+
+<div class="card">
+  <p style="margin:0; display:flex; gap:.75rem; flex-wrap:wrap;">
+    <a href="/inbox/{{ client.phone }}" class="btn-sm" style="text-decoration:none; color:#fff; display:inline-flex; align-items:center; background:var(--green-2); border-radius:6px; padding:.35rem .9rem;">💬 Abrir chat</a>
+    <span style="color:var(--text-muted); align-self:center;">
+      Cliente desde {{ client.created_at.strftime('%Y-%m-%d') }} · {{ tickets | length }} solicitud(es)
+    </span>
+  </p>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Notas del equipo</h2>
+    <form method="post" action="/clients/{{ client.phone }}/notes" style="margin-bottom:1rem;">
+      <label for="body" class="sr-only" style="position:absolute; left:-9999px;">Nueva nota</label>
+      <textarea id="body" name="body" required
+        placeholder="Ej. ya pagó anticipo, prefiere llamadas por la tarde…"></textarea>
+      <button type="submit" class="btn-sm" style="margin-top:.5rem;">Guardar nota</button>
+    </form>
+    {% if notes %}
+    {% for n in notes %}
+    <p style="border-bottom:1px solid var(--border); padding-bottom:.6rem;">
+      {{ n.body }}<br>
+      <span style="color:var(--text-muted); font-size:.78rem;">
+        — {{ n.author }} · {{ n.created_at.strftime('%Y-%m-%d %H:%M') }}
+        {% if n.author == user or is_admin(user) %}
+        · <form method="post" action="/clients/{{ client.phone }}/notes/{{ n.id }}/delete" style="display:inline;"
+            onsubmit="return confirm('¿Ocultar esta nota?');">
+            <button type="submit" style="background:none; border:none; padding:0; min-height:auto; color:inherit; text-decoration:underline; cursor:pointer; font-size:inherit;">eliminar</button>
+          </form>
+        {% endif %}
+      </span>
+    </p>
+    {% endfor %}
+    {% else %}
+    <p class="empty">Aún no hay notas sobre este cliente.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Historial de solicitudes</h2>
+    {% if tickets %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Folio</th><th>Servicio</th><th>Estado</th><th>Fecha</th><th>Atendió</th></tr></thead>
+        <tbody>
+          {% for t in tickets %}
+          <tr {% if not t.habilitado %}style="opacity:.55;"{% endif %}>
+            <td><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
+            <td>{{ t.service_name }}</td>
+            <td><span class="badge {{ t.status.value }}">{{ t.status.value.replace('_', ' ') }}</span></td>
+            <td>{{ t.created_at.strftime('%Y-%m-%d') }}</td>
+            <td>{{ t.assigned_to or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">Sin solicitudes registradas.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

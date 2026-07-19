@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Mis respuestas{% endblock %}
+{% block content %}
+<h1>Mis respuestas guardadas</h1>
+
+{% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <h2>Nueva respuesta</h2>
+  <form method="post" action="/replies">
+    <div style="display:flex; gap:.75rem; flex-wrap:wrap;">
+      <div style="flex:1; min-width:220px;">
+        <label for="title">Título (para ti)</label>
+        <input type="text" id="title" name="title" required maxlength="100"
+          placeholder="Ej. saludo inicial" style="max-width:none;">
+      </div>
+    </div>
+    <label for="body" style="margin-top:.75rem;">Texto que se enviará al cliente</label>
+    <textarea id="body" name="body" required maxlength="1000"
+      placeholder="Hola, gracias por escribirnos…"></textarea>
+    <button type="submit" style="margin-top:.75rem;">Guardar</button>
+  </form>
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+    Tus respuestas aparecen como botones en el chat de la Bandeja, junto a las
+    respuestas rápidas del negocio. Solo tú las ves.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Guardadas ({{ replies | length }})</h2>
+  {% if replies %}
+  {% for r in replies %}
+  <p style="border-bottom:1px solid var(--border); padding-bottom:.6rem;">
+    <strong>{{ r.title }}</strong><br>
+    <span style="white-space:pre-line;">{{ r.body }}</span><br>
+    <form method="post" action="/replies/{{ r.id }}/delete" style="display:inline;"
+      onsubmit="return confirm('¿Eliminar «{{ r.title }}»?');">
+      <button type="submit" style="background:none; border:none; padding:0; min-height:auto; color:var(--red-2); text-decoration:underline; cursor:pointer; font-size:.82rem;">eliminar</button>
+    </form>
+  </p>
+  {% endfor %}
+  {% else %}
+  <p class="empty">Aún no guardas respuestas. La primera te ahorrará teclear la número cien.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -21,6 +21,7 @@
     <a href="/tickets/{{ ticket.id }}">Ver solicitud #{{ ticket.id }}</a>
     {% if ticket.assigned_to %}<span class="badge asignada">atiende: {{ ticket.assigned_to }}</span>{% endif %}
     {% endif %}
+    {% if client %}<a href="/clients/{{ phone }}">Ficha del cliente</a>{% endif %}
     {% if client and not client.habilitado %}<span class="badge caducada">cliente bloqueado</span>{% endif %}
     {% if is_admin(user) and client %}
     <form method="post" action="/inbox/{{ phone }}/block" style="display:inline;"
@@ -72,6 +73,9 @@
     <div class="qr-bar" role="toolbar" aria-label="Respuestas rápidas">
       {% for q in quick_replies %}
       <button type="button" class="qr" data-text="{{ q.text }}">{{ q.title }}</button>
+      {% endfor %}
+      {% for r in my_replies %}
+      <button type="button" class="qr" data-text="{{ r.body }}" title="Respuesta guardada personal">★ {{ r.title }}</button>
       {% endfor %}
     </div>
     <form method="post" action="/inbox/{{ phone }}/send">
