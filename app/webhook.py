@@ -10,7 +10,7 @@ from app import whatsapp_client
 from app.config import settings
 from app.conversation import handle_incoming
 from app.db import get_session
-from app.models import Message
+from app.models import Client, Message
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,12 @@ def _process_message(message: dict) -> None:
     phone = message.get("from")
     if not phone:
         return
+
+    with get_session() as session:
+        client = session.get(Client, phone)
+        if client is not None and not client.habilitado:
+            logger.info("Mensaje de %s ignorado: cliente bloqueado", phone)
+            return
 
     msg_type = message.get("type")
     is_media = msg_type != "text"

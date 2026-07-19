@@ -1,9 +1,20 @@
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import settings
 
 engine = create_engine(f"sqlite:///{settings.db_path}", connect_args={"check_same_thread": False})
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, _record) -> None:
+    cursor = dbapi_connection.cursor()
+    # WAL: lecturas no bloquean escrituras (necesario para backup en caliente
+    # y para que el dashboard lea mientras el bot escribe mensajes entrantes).
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
 
 # ponytail: no alembic for this MVP; new nullable columns are added by hand here.
 # Upgrade to a real migration tool if the schema starts changing often.
@@ -20,7 +31,12 @@ _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
 }
 _USER_COLUMNS_ADDED_AFTER_LAUNCH = {
     "is_admin": "BOOLEAN NOT NULL DEFAULT 0",
+    "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
 }
+# Tablas que ya existían antes de agregar el campo "habilitado" (soft delete);
+# message/teammessage/user ya lo tienen en sus dicts propios de arriba.
+_HABILITADO_COLUMN = {"habilitado": "BOOLEAN NOT NULL DEFAULT 1"}
+_TABLES_NEEDING_HABILITADO = ("client", "conversation", "ticket", "invitation", "ticketactivity")
 
 
 def init_db() -> None:
@@ -28,6 +44,8 @@ def init_db() -> None:
     _add_missing_columns("message", _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("teammessage", _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("user", _USER_COLUMNS_ADDED_AFTER_LAUNCH)
+    for table in _TABLES_NEEDING_HABILITADO:
+        _add_missing_columns(table, _HABILITADO_COLUMN)
     with engine.begin() as conn:
         # Respaldo contra webhooks duplicados concurrentes: el chequeo en
         # conversation._already_processed cubre el caso normal; este índice

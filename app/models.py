@@ -24,6 +24,7 @@ class Client(SQLModel, table=True):
     phone: str = Field(primary_key=True)
     name: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
 
 
 class Conversation(SQLModel, table=True):
@@ -32,6 +33,7 @@ class Conversation(SQLModel, table=True):
     context_json: str = "{}"
     failed_attempts: int = 0
     updated_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
 
 
 class Message(SQLModel, table=True):
@@ -62,6 +64,7 @@ class Ticket(SQLModel, table=True):
     assigned_to: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
 
 
 class User(SQLModel, table=True):
@@ -69,6 +72,7 @@ class User(SQLModel, table=True):
     username: str = Field(unique=True, index=True)
     password_hash: str
     is_admin: bool = False
+    habilitado: bool = True
 
 
 class TeamMessage(SQLModel, table=True):
@@ -88,6 +92,7 @@ class TicketActivity(SQLModel, table=True):
     # "reasignado:<destino>", "nota"
     action: str
     created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
 
 
 class Invitation(SQLModel, table=True):
@@ -98,3 +103,4 @@ class Invitation(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     used_at: datetime | None = None
     used_by: str | None = None
+    habilitado: bool = True

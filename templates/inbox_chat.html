@@ -21,6 +21,15 @@
     <a href="/tickets/{{ ticket.id }}">Ver solicitud #{{ ticket.id }}</a>
     {% if ticket.assigned_to %}<span class="badge asignada">atiende: {{ ticket.assigned_to }}</span>{% endif %}
     {% endif %}
+    {% if client and not client.habilitado %}<span class="badge caducada">cliente bloqueado</span>{% endif %}
+    {% if is_admin(user) and client %}
+    <form method="post" action="/inbox/{{ phone }}/block" style="display:inline;"
+      onsubmit="return confirm('{{ '¿Desbloquear' if not client.habilitado else '¿Bloquear' }} a este cliente?');">
+      <button type="submit" class="btn-sm {{ 'btn-danger' if client.habilitado else '' }}">
+        {{ 'Bloquear cliente' if client.habilitado else 'Desbloquear cliente' }}
+      </button>
+    </form>
+    {% endif %}
   </p>
 </div>
 

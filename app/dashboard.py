@@ -87,7 +87,7 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
     with get_session() as session:
         user = session.exec(select(User).where(User.username == username)).first()
 
-    if user and bcrypt.checkpw(password.encode(), user.password_hash.encode()):
+    if user and user.habilitado and bcrypt.checkpw(password.encode(), user.password_hash.encode()):
         _login_attempts.pop(username, None)
         logger.info("Login exitoso: %s", username)
         request.session["user"] = username
@@ -122,7 +122,11 @@ def _find_valid_invitation(session, code: str) -> Invitation | None:
     if not code:
         return None
     return session.exec(
-        select(Invitation).where(Invitation.token == code, Invitation.used_at.is_(None))
+        select(Invitation).where(
+            Invitation.token == code,
+            Invitation.used_at.is_(None),
+            Invitation.habilitado == True,  # noqa: E712 — SQLAlchemy requiere `== True`, no `is True`
+        )
     ).first()
 
 
@@ -211,10 +215,60 @@ def invitations_list(request: Request):
 
     with get_session() as session:
         invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
+        users = session.exec(select(User).order_by(User.username)).all()
 
     return templates.TemplateResponse(
-        "invitations.html", {"request": request, "user": user, "invitations": invitations}
+        "invitations.html",
+        {"request": request, "user": user, "invitations": invitations, "users": users},
     )
+
+
+@router.post("/invitations/{invitation_id}/toggle")
+def invitations_toggle(request: Request, invitation_id: int):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+
+    with get_session() as session:
+        invitation = session.get(Invitation, invitation_id)
+        # Solo tiene sentido cancelar/reactivar invitaciones sin usar — una ya
+        # canjeada no debe poder revocarse desde aquí (el usuario ya existe).
+        if invitation is not None and invitation.used_at is None:
+            invitation.habilitado = not invitation.habilitado
+            session.add(invitation)
+            session.commit()
+            logger.info(
+                "Invitación #%s %s por %s", invitation_id,
+                "reactivada" if invitation.habilitado else "cancelada", user,
+            )
+    return RedirectResponse("/invitations", status_code=303)
+
+
+@router.post("/users/{username}/toggle")
+def user_toggle(request: Request, username: str):
+    admin_user = _current_user(request)
+    if not admin_user:
+        return RedirectResponse("/login", status_code=303)
+    if not is_admin(admin_user):
+        return RedirectResponse("/", status_code=303)
+    if username == admin_user:
+        # Un admin no puede deshabilitarse a sí mismo: evita quedarse fuera
+        # del panel por accidente.
+        return RedirectResponse("/invitations", status_code=303)
+
+    with get_session() as session:
+        target = session.exec(select(User).where(User.username == username)).first()
+        if target is not None:
+            target.habilitado = not target.habilitado
+            session.add(target)
+            session.commit()
+            logger.info(
+                "Colaborador %s %s por %s", username,
+                "habilitado" if target.habilitado else "deshabilitado", admin_user,
+            )
+    return RedirectResponse("/invitations", status_code=303)
 
 
 @router.post("/invitations")
@@ -262,7 +316,9 @@ def ticket_list(request: Request, status: str | None = None, assigned: str | Non
         return RedirectResponse("/login", status_code=303)
 
     with get_session() as session:
-        all_tickets = session.exec(select(Ticket).order_by(Ticket.created_at.desc())).all()
+        all_tickets = session.exec(
+            select(Ticket).where(Ticket.habilitado == True).order_by(Ticket.created_at.desc())  # noqa: E712
+        ).all()
 
     stats = {
         "total": len(all_tickets),
@@ -365,6 +421,29 @@ def release_ticket(request: Request, ticket_id: int):
         with get_session() as session:
             _log_activity(session, ticket_id, user, "soltado")
         logger.info("Ticket #%s soltado por %s", ticket_id, user)
+    return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
+@router.post("/tickets/{ticket_id}/delete")
+def delete_ticket(request: Request, ticket_id: int):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not is_admin(user):
+        return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+    with get_session() as session:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is not None:
+            ticket.habilitado = not ticket.habilitado
+            ticket.updated_at = utcnow()
+            session.add(ticket)
+            session.commit()
+            _log_activity(session, ticket_id, user, "restaurado" if ticket.habilitado else "eliminado")
+            logger.info(
+                "Ticket #%s %s por %s", ticket_id,
+                "restaurado" if ticket.habilitado else "eliminado", user,
+            )
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
 

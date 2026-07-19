@@ -31,6 +31,7 @@ _SCHEMA_DDL = [
     CREATE TABLE wa_clients (
         phone      NVARCHAR(32)  NOT NULL PRIMARY KEY,
         name       NVARCHAR(200) NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
         created_at DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
     )
     """,
@@ -80,7 +81,8 @@ _SCHEMA_DDL = [
         source_id     BIGINT        NOT NULL PRIMARY KEY,
         username      NVARCHAR(64)  NOT NULL UNIQUE,
         password_hash NVARCHAR(200) NOT NULL,
-        is_admin      BIT           NOT NULL DEFAULT 0
+        is_admin      BIT           NOT NULL DEFAULT 0,
+        habilitado    BIT           NOT NULL DEFAULT 1
     )
     """,
     """
@@ -92,7 +94,8 @@ _SCHEMA_DDL = [
         created_by NVARCHAR(64) NOT NULL,
         created_at DATETIME2    NOT NULL,
         used_at    DATETIME2    NULL,
-        used_by    NVARCHAR(64) NULL
+        used_by    NVARCHAR(64) NULL,
+        habilitado BIT          NOT NULL DEFAULT 1
     )
     """,
     # Sin FKs en las tablas de solicitud/actividad a propósito: es un archivo
@@ -112,6 +115,7 @@ _SCHEMA_DDL = [
         escalado     BIT           NOT NULL DEFAULT 0,
         notes        NVARCHAR(MAX) NULL,
         assigned_to  NVARCHAR(64)  NULL,
+        habilitado   BIT           NOT NULL DEFAULT 1,
         created_at   DATETIME2     NOT NULL,
         updated_at   DATETIME2     NOT NULL
     )
@@ -123,6 +127,7 @@ _SCHEMA_DDL = [
         ticket_id  BIGINT        NOT NULL,
         username   NVARCHAR(64)  NOT NULL,
         action     NVARCHAR(100) NOT NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
         created_at DATETIME2     NOT NULL
     )
     """,
@@ -133,6 +138,7 @@ _SCHEMA_DDL = [
         state           NVARCHAR(50)  NOT NULL,
         context_json    NVARCHAR(MAX) NOT NULL,
         failed_attempts INT           NOT NULL,
+        habilitado      BIT           NOT NULL DEFAULT 1,
         updated_at      DATETIME2     NOT NULL
     )
     """,
@@ -143,6 +149,12 @@ _SCHEMA_DDL = [
 _COLUMNS_ADDED_AFTER_LAUNCH = {
     "wa_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "wa_clients": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "app_users": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "tickets": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "ticket_activity": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "conversations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
 }
 
 
@@ -208,18 +220,31 @@ def _naive_utc(dt: datetime) -> datetime:
     return dt
 
 
-def _upsert_client(conn, phone: str, name: str | None = None) -> None:
+def _upsert_client(
+    conn, phone: str, name: str | None = None, habilitado: bool | None = None
+) -> None:
     row = conn.execute(
-        text("SELECT name FROM wa_clients WHERE phone = :p"), {"p": phone}
+        text("SELECT name, habilitado FROM wa_clients WHERE phone = :p"), {"p": phone}
     ).first()
     if row is None:
         conn.execute(
-            text("INSERT INTO wa_clients (phone, name, created_at) VALUES (:p, :n, :c)"),
-            {"p": phone, "n": name, "c": datetime.utcnow()},
+            text(
+                "INSERT INTO wa_clients (phone, name, habilitado, created_at)"
+                " VALUES (:p, :n, :hab, :c)"
+            ),
+            {"p": phone, "n": name, "hab": habilitado if habilitado is not None else True,
+             "c": datetime.utcnow()},
         )
-    elif name and row[0] != name:
+        return
+    updates = {}
+    if name and row[0] != name:
+        updates["name"] = name
+    if habilitado is not None and bool(row[1]) != habilitado:
+        updates["habilitado"] = habilitado
+    if updates:
+        set_clause = ", ".join(f"{c} = :{c}" for c in updates)
         conn.execute(
-            text("UPDATE wa_clients SET name = :n WHERE phone = :p"), {"n": name, "p": phone}
+            text(f"UPDATE wa_clients SET {set_clause} WHERE phone = :p"), {**updates, "p": phone}
         )
 
 
@@ -293,7 +318,7 @@ def sync_team_message(m) -> None:
 
 def sync_client_name(c) -> None:
     with _get_engine().begin() as conn:
-        _upsert_client(conn, c.phone, c.name)
+        _upsert_client(conn, c.phone, c.name, c.habilitado)
 
 
 def _upsert(table: str, key_col: str, key_val, columns: dict) -> None:
@@ -315,7 +340,12 @@ def _upsert(table: str, key_col: str, key_val, columns: dict) -> None:
 def archive_user(u) -> None:
     _upsert(
         "app_users", "source_id", u.id,
-        {"username": u.username, "password_hash": u.password_hash, "is_admin": u.is_admin},
+        {
+            "username": u.username,
+            "password_hash": u.password_hash,
+            "is_admin": u.is_admin,
+            "habilitado": u.habilitado,
+        },
     )
 
 
@@ -329,6 +359,7 @@ def archive_invitation(i) -> None:
             "created_at": _naive_utc(i.created_at),
             "used_at": _naive_utc(i.used_at) if i.used_at else None,
             "used_by": i.used_by,
+            "habilitado": i.habilitado,
         },
     )
 
@@ -349,6 +380,7 @@ def archive_ticket(t) -> None:
             "assigned_to": t.assigned_to,
             "created_at": _naive_utc(t.created_at),
             "updated_at": _naive_utc(t.updated_at),
+            "habilitado": t.habilitado,
         },
     )
 
@@ -361,6 +393,7 @@ def archive_activity(a) -> None:
             "username": a.username,
             "action": a.action,
             "created_at": _naive_utc(a.created_at),
+            "habilitado": a.habilitado,
         },
     )
 
@@ -373,6 +406,7 @@ def archive_conversation(c) -> None:
             "context_json": c.context_json,
             "failed_attempts": c.failed_attempts,
             "updated_at": _naive_utc(c.updated_at),
+            "habilitado": c.habilitado,
         },
     )
 

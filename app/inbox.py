@@ -269,6 +269,27 @@ def inbox_delete_message(request: Request, phone: str, message_id: int):
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
 
+@router.post("/inbox/{phone}/block")
+def inbox_toggle_block(request: Request, phone: str):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not is_admin(user):
+        return RedirectResponse(f"/inbox/{phone}", status_code=303)
+
+    with get_session() as session:
+        client = session.get(Client, phone)
+        if client is not None:
+            client.habilitado = not client.habilitado
+            session.add(client)
+            session.commit()
+            logger.info(
+                "Cliente %s %s por %s", phone,
+                "desbloqueado" if client.habilitado else "bloqueado", user,
+            )
+    return RedirectResponse(f"/inbox/{phone}", status_code=303)
+
+
 @router.post("/inbox/{phone}/bot-on")
 def inbox_bot_on(request: Request, phone: str):
     user = _current_user(request)

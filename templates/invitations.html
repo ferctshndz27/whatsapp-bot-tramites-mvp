@@ -35,7 +35,7 @@
     <table>
       <thead>
         <tr>
-          <th>Código</th><th>Teléfono</th><th>Creado por</th><th>Creado</th><th>Estado</th>
+          <th>Código</th><th>Teléfono</th><th>Creado por</th><th>Creado</th><th>Estado</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -48,8 +48,19 @@
           <td>
             {% if i.used_at %}
             <span class="badge cerrado">usado por {{ i.used_by }}</span>
+            {% elif not i.habilitado %}
+            <span class="badge caducada">cancelada</span>
             {% else %}
             <span class="badge nuevo">pendiente</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if not i.used_at %}
+            <form method="post" action="/invitations/{{ i.id }}/toggle" style="display:inline;">
+              <button type="submit" class="btn-sm {{ '' if i.habilitado else 'btn-danger' }}">
+                {{ 'Cancelar' if i.habilitado else 'Reactivar' }}
+              </button>
+            </form>
             {% endif %}
           </td>
         </tr>
@@ -59,6 +70,48 @@
   </div>
   {% else %}
   <p class="empty">Aún no has generado invitaciones.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Colaboradores</h2>
+  {% if users %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{{ 'admin' if u.is_admin else 'colaborador' }}</td>
+          <td>
+            {% if u.habilitado %}
+            <span class="badge cerrado">habilitado</span>
+            {% else %}
+            <span class="badge caducada">deshabilitado</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if u.username != user %}
+            <form method="post" action="/users/{{ u.username }}/toggle" style="display:inline;"
+              onsubmit="return confirm('{{ '¿Deshabilitar' if u.habilitado else '¿Habilitar' }} a {{ u.username }}?');">
+              <button type="submit" class="btn-sm {{ 'btn-danger' if u.habilitado else '' }}">
+                {{ 'Deshabilitar' if u.habilitado else 'Habilitar' }}
+              </button>
+            </form>
+            {% else %}
+            <span style="color:var(--text-muted); font-size:.85rem;">(tú)</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Sin colaboradores registrados.</p>
   {% endif %}
 </div>
 {% endblock %}

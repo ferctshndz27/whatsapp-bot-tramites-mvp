@@ -3,11 +3,23 @@
 {% block content %}
 <h1>Solicitud #{{ ticket.id }}</h1>
 
+{% if not ticket.habilitado %}
+<div class="banner-warn" role="status">Esta solicitud fue eliminada — solo un administrador puede restaurarla.</div>
+{% endif %}
+
 <div class="card">
   <h2>
     {{ ticket.client_name or 'Sin nombre' }}
     <span class="badge {{ ticket.status.value }}">{{ ticket.status.value.replace('_', ' ') }}</span>
     {% if ticket.escalado %}<span class="badge escalado">escalado</span>{% endif %}
+    {% if is_admin(user) %}
+    <form method="post" action="/tickets/{{ ticket.id }}/delete" style="display:inline;"
+      onsubmit="return confirm('{{ '¿Restaurar' if not ticket.habilitado else '¿Eliminar' }} esta solicitud?');">
+      <button type="submit" class="btn-sm {{ '' if not ticket.habilitado else 'btn-danger' }}">
+        {{ 'Restaurar' if not ticket.habilitado else 'Eliminar' }}
+      </button>
+    </form>
+    {% endif %}
   </h2>
   <p>
     <strong>Teléfono:</strong> {{ ticket.phone }}<br>

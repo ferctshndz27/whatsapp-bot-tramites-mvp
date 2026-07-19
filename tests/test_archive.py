@@ -18,7 +18,9 @@ from app.models import (
 )
 
 ARCHIVE_DDL = [
-    "CREATE TABLE wa_clients (phone TEXT PRIMARY KEY, name TEXT, created_at TIMESTAMP)",
+    """CREATE TABLE wa_clients (
+        phone TEXT PRIMARY KEY, name TEXT,
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
     """CREATE TABLE wa_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         phone TEXT REFERENCES wa_clients(phone), direction TEXT, body TEXT,
@@ -31,21 +33,24 @@ ARCHIVE_DDL = [
         media_path TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
     """CREATE TABLE app_users (
         source_id INTEGER PRIMARY KEY, username TEXT UNIQUE,
-        password_hash TEXT, is_admin INTEGER DEFAULT 0)""",
+        password_hash TEXT, is_admin INTEGER DEFAULT 0,
+        habilitado INTEGER DEFAULT 1)""",
     """CREATE TABLE invitations (
         source_id INTEGER PRIMARY KEY, token TEXT, phone TEXT, created_by TEXT,
-        created_at TIMESTAMP, used_at TIMESTAMP, used_by TEXT)""",
+        created_at TIMESTAMP, used_at TIMESTAMP, used_by TEXT,
+        habilitado INTEGER DEFAULT 1)""",
     """CREATE TABLE tickets (
         source_id INTEGER PRIMARY KEY, phone TEXT, client_name TEXT, category TEXT,
         service_id TEXT, service_name TEXT, price_info TEXT, status TEXT,
         escalado INTEGER DEFAULT 0, notes TEXT, assigned_to TEXT,
+        habilitado INTEGER DEFAULT 1,
         created_at TIMESTAMP, updated_at TIMESTAMP)""",
     """CREATE TABLE ticket_activity (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT,
-        action TEXT, created_at TIMESTAMP)""",
+        action TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
     """CREATE TABLE conversations (
         phone TEXT PRIMARY KEY, state TEXT, context_json TEXT,
-        failed_attempts INTEGER, updated_at TIMESTAMP)""",
+        failed_attempts INTEGER, habilitado INTEGER DEFAULT 1, updated_at TIMESTAMP)""",
 ]
 
 
