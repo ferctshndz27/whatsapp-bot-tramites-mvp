@@ -11,6 +11,7 @@ from sqlalchemy import update
 from sqlmodel import select
 
 from app import whatsapp_client
+from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
@@ -237,10 +238,9 @@ def invitations_toggle(request: Request, invitation_id: int):
             invitation.habilitado = not invitation.habilitado
             session.add(invitation)
             session.commit()
-            logger.info(
-                "Invitación #%s %s por %s", invitation_id,
-                "reactivada" if invitation.habilitado else "cancelada", user,
-            )
+            state = "reactivada" if invitation.habilitado else "cancelada"
+            log_admin(user, f"invitacion:{state}", invitation.token)
+            logger.info("Invitación #%s %s por %s", invitation_id, state, user)
     return RedirectResponse("/invitations", status_code=303)
 
 
@@ -412,11 +412,10 @@ def delete_ticket(request: Request, ticket_id: int):
             ticket.updated_at = utcnow()
             session.add(ticket)
             session.commit()
-            _log_activity(session, ticket_id, user, "restaurado" if ticket.habilitado else "eliminado")
-            logger.info(
-                "Ticket #%s %s por %s", ticket_id,
-                "restaurado" if ticket.habilitado else "eliminado", user,
-            )
+            state = "restaurado" if ticket.habilitado else "eliminado"
+            _log_activity(session, ticket_id, user, state)
+            log_admin(user, f"ticket:{state}", str(ticket_id))
+            logger.info("Ticket #%s %s por %s", ticket_id, state, user)
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
 

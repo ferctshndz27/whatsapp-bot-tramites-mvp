@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import select
 
+from app.audit import log_admin
 from app.auth import is_admin
 from app.dashboard import PASSWORD_MIN, _validate_registration
 from app.db import get_session
@@ -77,6 +78,7 @@ def users_create(
         )
         session.commit()
 
+    log_admin(admin, "usuario:creado", username)
     logger.info("Usuario %s creado por %s (rol %s)", username, admin, role)
     return _render_list(request, admin, ok=f"Usuario {username} creado.")
 
@@ -101,6 +103,7 @@ def users_reset_password(request: Request, username: str, password: str = Form(.
         session.add(target)
         session.commit()
 
+    log_admin(admin, "usuario:password", username)
     logger.info("Contraseña de %s restablecida por %s", username, admin)
     return _render_list(request, admin, ok=f"Contraseña de {username} actualizada.")
 
@@ -122,6 +125,7 @@ def users_toggle_role(request: Request, username: str):
         session.commit()
         new_role = "admin" if target.is_admin else "colaborador"
 
+    log_admin(admin, f"usuario:rol:{new_role}", username)
     logger.info("Rol de %s cambiado a %s por %s", username, new_role, admin)
     return _render_list(request, admin, ok=f"{username} ahora es {new_role}.")
 
@@ -144,5 +148,6 @@ def users_toggle_enabled(request: Request, username: str):
         session.commit()
         state = "habilitado" if target.habilitado else "deshabilitado"
 
+    log_admin(admin, f"usuario:{state}", username)
     logger.info("Colaborador %s %s por %s", username, state, admin)
     return _render_list(request, admin, ok=f"{username} {state}.")

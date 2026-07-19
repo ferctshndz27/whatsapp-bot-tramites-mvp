@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import select
 
 from app import whatsapp_client
+from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
 from app.conversation import _log_message
@@ -283,10 +284,9 @@ def inbox_toggle_block(request: Request, phone: str):
             client.habilitado = not client.habilitado
             session.add(client)
             session.commit()
-            logger.info(
-                "Cliente %s %s por %s", phone,
-                "desbloqueado" if client.habilitado else "bloqueado", user,
-            )
+            state = "desbloqueado" if client.habilitado else "bloqueado"
+            log_admin(user, f"cliente:{state}", phone)
+            logger.info("Cliente %s %s por %s", phone, state, user)
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
 

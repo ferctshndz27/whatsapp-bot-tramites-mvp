@@ -1,8 +1,29 @@
+"""Catálogo de servicios: configuración como dato (JSON editable).
+
+El archivo vive en settings.catalog_path (en producción, el volumen
+persistente /data/catalog.json — el JSON del repo es solo la semilla del
+primer arranque, porque cada deploy pisa el código con git reset).
+
+Recarga en caliente: cada acceso público revisa el mtime del archivo, así
+las ediciones del panel admin las ve el bot al instante sin reiniciar.
+Escritura atómica (tmp + os.replace) para que una lectura concurrente
+nunca vea un JSON a medias.
+
+Soft-delete: categorías y servicios llevan "habilitado" (default true).
+El bot solo ve los habilitados; el panel admin ve todos.
+"""
+
 import json
+import os
+import re
+import shutil
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-CATALOG_PATH = Path(__file__).parent / "catalog.json"
+from app.config import settings
+
+SEED_PATH = Path(__file__).parent / "catalog.json"
 
 PAGE_SIZE = 10
 
@@ -23,11 +44,31 @@ class Category:
     services: list[Service]
 
 
+def slugify(name: str) -> str:
+    text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "item"
+
+
 class Catalog:
-    def __init__(self, path: Path = CATALOG_PATH):
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        self.categories: list[Category] = []
-        for cat in raw["categories"]:
+    def __init__(self, path: str | Path | None = None):
+        self._path = Path(path) if path else Path(settings.catalog_path)
+        self._mtime = 0.0
+        self._ensure_seed()
+        self._load()
+
+    def _ensure_seed(self) -> None:
+        if not self._path.exists():
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(SEED_PATH, self._path)
+
+    def _load(self) -> None:
+        self.raw = json.loads(self._path.read_text(encoding="utf-8"))
+        self._mtime = self._path.stat().st_mtime
+        # Vista del bot: solo lo habilitado.
+        self.categories = []
+        for cat in self.raw["categories"]:
+            if not cat.get("habilitado", True):
+                continue
             services = [
                 Service(
                     id=svc["id"],
@@ -37,21 +78,124 @@ class Catalog:
                     category_name=cat["name"],
                 )
                 for svc in cat["services"]
+                if svc.get("habilitado", True)
             ]
             self.categories.append(Category(id=cat["id"], name=cat["name"], services=services))
 
         self._service_by_id = {s.id: s for c in self.categories for s in c.services}
         self._category_by_id = {c.id: c for c in self.categories}
 
+    def _maybe_reload(self) -> None:
+        try:
+            if self._path.stat().st_mtime != self._mtime:
+                self._load()
+        except OSError:
+            pass  # archivo momentáneamente inaccesible: seguir con lo cargado
+
+    # ---- Escritura (panel admin) ----
+
+    def _save(self) -> None:
+        tmp = self._path.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(self.raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        os.replace(tmp, self._path)
+        self._load()
+
+    def _raw_category(self, category_id: str) -> dict | None:
+        return next((c for c in self.raw["categories"] if c["id"] == category_id), None)
+
+    def _raw_service(self, service_id: str) -> tuple[dict, dict] | None:
+        for cat in self.raw["categories"]:
+            for svc in cat["services"]:
+                if svc["id"] == service_id:
+                    return cat, svc
+        return None
+
+    def add_category(self, name: str) -> str | None:
+        """Devuelve un mensaje de error, o None si se agregó."""
+        self._maybe_reload()
+        cat_id = slugify(name)
+        if self._raw_category(cat_id):
+            return "Ya existe una categoría con ese nombre."
+        self.raw["categories"].append(
+            {"id": cat_id, "name": name.strip(), "habilitado": True, "services": []}
+        )
+        self._save()
+        return None
+
+    def rename_category(self, category_id: str, name: str) -> str | None:
+        self._maybe_reload()
+        cat = self._raw_category(category_id)
+        if cat is None:
+            return "Categoría no encontrada."
+        cat["name"] = name.strip()
+        self._save()
+        return None
+
+    def toggle_category(self, category_id: str) -> str | None:
+        self._maybe_reload()
+        cat = self._raw_category(category_id)
+        if cat is None:
+            return "Categoría no encontrada."
+        cat["habilitado"] = not cat.get("habilitado", True)
+        self._save()
+        return None
+
+    def add_service(self, category_id: str, name: str, price_info: str) -> str | None:
+        self._maybe_reload()
+        cat = self._raw_category(category_id)
+        if cat is None:
+            return "Categoría no encontrada."
+        svc_id = slugify(name)
+        if self._raw_service(svc_id):
+            return "Ya existe un servicio con ese nombre."
+        cat["services"].append(
+            {
+                "id": svc_id,
+                "name": name.strip(),
+                "price_info": price_info.strip(),
+                "habilitado": True,
+            }
+        )
+        self._save()
+        return None
+
+    def update_service(self, service_id: str, name: str, price_info: str) -> str | None:
+        self._maybe_reload()
+        found = self._raw_service(service_id)
+        if found is None:
+            return "Servicio no encontrado."
+        _, svc = found
+        svc["name"] = name.strip()
+        svc["price_info"] = price_info.strip()
+        self._save()
+        return None
+
+    def toggle_service(self, service_id: str) -> str | None:
+        self._maybe_reload()
+        found = self._raw_service(service_id)
+        if found is None:
+            return "Servicio no encontrado."
+        _, svc = found
+        svc["habilitado"] = not svc.get("habilitado", True)
+        self._save()
+        return None
+
+    # ---- Lectura (bot) ----
+
     def category_by_index(self, index: int) -> Category | None:
+        self._maybe_reload()
         if 1 <= index <= len(self.categories):
             return self.categories[index - 1]
         return None
 
     def category_by_id(self, category_id: str) -> Category | None:
+        self._maybe_reload()
         return self._category_by_id.get(category_id)
 
     def service_by_id(self, service_id: str) -> Service | None:
+        self._maybe_reload()
         return self._service_by_id.get(service_id)
 
     def service_by_index(self, category_id: str, index: int) -> Service | None:
@@ -61,6 +205,7 @@ class Catalog:
         return category.services[index - 1]
 
     def search_by_keyword(self, text: str) -> list[Service]:
+        self._maybe_reload()
         normalized = text.strip().lower()
         if len(normalized) < 3:
             return []
@@ -72,6 +217,7 @@ class Catalog:
         ]
 
     def format_category_menu(self) -> str:
+        self._maybe_reload()
         lines = ["¿Qué tipo de servicio necesitas? Responde con el número:"]
         for i, c in enumerate(self.categories, start=1):
             lines.append(f"{i}. {c.name}")

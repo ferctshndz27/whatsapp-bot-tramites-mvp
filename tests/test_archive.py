@@ -51,6 +51,9 @@ ARCHIVE_DDL = [
     """CREATE TABLE conversations (
         phone TEXT PRIMARY KEY, state TEXT, context_json TEXT,
         failed_attempts INTEGER, habilitado INTEGER DEFAULT 1, updated_at TIMESTAMP)""",
+    """CREATE TABLE admin_audit (
+        source_id INTEGER PRIMARY KEY, admin TEXT, action TEXT, target TEXT,
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
 ]
 
 
@@ -247,6 +250,21 @@ def test_activity_archived(mirror):
             text("SELECT ticket_id, username, action FROM ticket_activity")
         ).first()
     assert tuple(row) == (5, "ana", "cerrado")
+
+
+def test_admin_audit_archived(mirror):
+    from app.models import AdminAudit
+
+    archive.archive_admin_audit(
+        AdminAudit(id=1, admin="jefa", action="usuario:deshabilitado", target="colab",
+                   created_at=datetime.now(timezone.utc))
+    )
+
+    with mirror.connect() as conn:
+        row = conn.execute(
+            text("SELECT admin, action, target FROM admin_audit")
+        ).first()
+    assert tuple(row) == ("jefa", "usuario:deshabilitado", "colab")
 
 
 def test_conversation_archived_by_phone(mirror):

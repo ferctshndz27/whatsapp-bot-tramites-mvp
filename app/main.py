@@ -4,7 +4,7 @@ import secrets
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import activity, archive, dashboard, inbox, team_chat, users, webhook
+from app import activity, archive, catalog_admin, dashboard, inbox, system, team_chat, users, webhook
 from app.config import settings
 from app.db import init_db
 
@@ -29,6 +29,8 @@ app.include_router(inbox.router)
 app.include_router(team_chat.router)
 app.include_router(activity.router)
 app.include_router(users.router)
+app.include_router(catalog_admin.router)
+app.include_router(system.router)
 
 
 @app.on_event("startup")

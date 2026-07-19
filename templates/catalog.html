@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Catálogo{% endblock %}
+{% block content %}
+<h1>Catálogo de servicios</h1>
+
+{% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <h2>Nueva categoría</h2>
+  <form method="post" action="/catalog/categories" style="display:flex; gap:.5rem; flex-wrap:wrap;">
+    <label for="new-cat" class="sr-only" style="position:absolute; left:-9999px;">Nombre de la categoría</label>
+    <input type="text" id="new-cat" name="name" required placeholder="Nombre de la categoría" style="max-width:280px;">
+    <button type="submit">Agregar categoría</button>
+  </form>
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+    Los cambios se aplican al instante: el bot los usa en el siguiente mensaje, sin reiniciar.
+    Deshabilitar oculta del menú del bot sin borrar (las solicitudes históricas no se afectan).
+  </p>
+</div>
+
+{% for cat in raw.categories %}
+<div class="card" {% if not cat.get('habilitado', True) %}style="opacity:.6;"{% endif %}>
+  <h2>
+    {{ cat.name }}
+    {% if not cat.get('habilitado', True) %}<span class="badge caducada">deshabilitada</span>{% endif %}
+  </h2>
+  <div style="display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:.75rem;">
+    <form method="post" action="/catalog/categories/{{ cat.id }}/rename" style="display:flex; gap:.5rem;">
+      <label for="ren-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Nuevo nombre</label>
+      <input type="text" id="ren-{{ cat.id }}" name="name" value="{{ cat.name }}" required style="max-width:240px;">
+      <button type="submit" class="btn-sm">Renombrar</button>
+    </form>
+    <form method="post" action="/catalog/categories/{{ cat.id }}/toggle"
+      onsubmit="return confirm('{{ '¿Habilitar' if not cat.get('habilitado', True) else '¿Deshabilitar' }} la categoría {{ cat.name }}?');">
+      <button type="submit" class="btn-sm {{ 'btn-danger' if cat.get('habilitado', True) else '' }}">
+        {{ 'Deshabilitar' if cat.get('habilitado', True) else 'Habilitar' }}
+      </button>
+    </form>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Servicio</th><th>Precio</th><th>Estado</th><th>Acciones</th></tr>
+      </thead>
+      <tbody>
+        {% for svc in cat.services %}
+        <tr {% if not svc.get('habilitado', True) %}style="opacity:.6;"{% endif %}>
+          <td colspan="2">
+            <form method="post" action="/catalog/services/{{ svc.id }}/update"
+              style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+              <label for="n-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Nombre</label>
+              <input type="text" id="n-{{ svc.id }}" name="name" value="{{ svc.name }}" required style="min-width:260px; flex:1;">
+              <label for="p-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Precio</label>
+              <input type="text" id="p-{{ svc.id }}" name="price_info" value="{{ svc.price_info }}" required style="max-width:170px;">
+              <button type="submit" class="btn-sm">Guardar</button>
+            </form>
+          </td>
+          <td>
+            {% if svc.get('habilitado', True) %}
+            <span class="badge cerrado">visible</span>
+            {% else %}
+            <span class="badge caducada">oculto</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/catalog/services/{{ svc.id }}/toggle" style="display:inline;">
+              <button type="submit" class="btn-sm {{ 'btn-danger' if svc.get('habilitado', True) else '' }}">
+                {{ 'Ocultar' if svc.get('habilitado', True) else 'Mostrar' }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 style="margin-top:1rem; font-size:.95rem;">Agregar servicio a {{ cat.name }}</h2>
+  <form method="post" action="/catalog/services" style="display:flex; gap:.5rem; flex-wrap:wrap;">
+    <input type="hidden" name="category_id" value="{{ cat.id }}">
+    <label for="ns-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Nombre del servicio</label>
+    <input type="text" id="ns-{{ cat.id }}" name="name" required placeholder="Nombre del servicio" style="min-width:260px;">
+    <label for="np-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Precio</label>
+    <input type="text" id="np-{{ cat.id }}" name="price_info" required placeholder="$500" style="max-width:170px;">
+    <button type="submit" class="btn-sm">Agregar</button>
+  </form>
+</div>
+{% endfor %}
+{% endblock %}

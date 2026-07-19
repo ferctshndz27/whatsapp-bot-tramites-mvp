@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Sistema{% endblock %}
+{% block content %}
+<h1>Sistema</h1>
+
+{% if synced %}
+<div class="banner-warn" role="status" style="border-color:var(--green);">
+  Sincronización del espejo completada.
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Espejo MSSQL (filas por tabla)</h2>
+  {% if not info.mssql_enabled %}
+  <p class="empty">El espejo MSSQL está deshabilitado (MSSQL_HOST/MSSQL_SA_PASSWORD sin definir).</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Tabla</th><th>SQLite (operativa)</th><th>MSSQL (espejo)</th><th>Estado</th></tr>
+      </thead>
+      <tbody>
+        {% for row in mirror %}
+        <tr>
+          <td>{{ row.table }}</td>
+          <td>{{ row.sqlite }}</td>
+          <td>{{ row.mssql if row.mssql is not none else 'sin conexión' }}</td>
+          <td>
+            {% if row.ok %}
+            <span class="badge cerrado">al día</span>
+            {% else %}
+            <span class="badge escalado">desfasado</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form method="post" action="/system/sync" style="margin-top:.75rem;">
+    <button type="submit">Sincronizar ahora</button>
+  </form>
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+    Ejecuta el backfill completo SQLite → MSSQL (idempotente). Úsalo si alguna tabla
+    aparece desfasada, por ejemplo tras editar SQLite por consola.
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Información del servidor</h2>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><th scope="row">Versión desplegada</th><td>{{ info.deploy }}</td></tr>
+        <tr><th scope="row">Proceso activo desde hace</th><td>{{ info.uptime_hours }} h</td></tr>
+        <tr><th scope="row">Base SQLite</th><td>{{ info.db_mb }} MB (+ {{ info.wal_mb }} MB WAL)</td></tr>
+        <tr><th scope="row">Archivos multimedia</th><td>{{ info.media_mb }} MB</td></tr>
+        <tr>
+          <th scope="row">WhatsApp</th>
+          <td>
+            {% if info.whatsapp_configured %}
+            <span class="badge cerrado">credenciales configuradas</span>
+            {% else %}
+            <span class="badge escalado">sin credenciales</span>
+            {% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Reportes y auditoría</h2>
+  <p style="display:flex; gap:.75rem; flex-wrap:wrap; margin:0;">
+    <a href="/export/tickets.csv" class="btn-sm" style="text-decoration:none;">⬇ Solicitudes (CSV)</a>
+    <a href="/export/activity.csv" class="btn-sm" style="text-decoration:none;">⬇ Actividad (CSV)</a>
+    <a href="/audit" class="btn-sm" style="text-decoration:none;">Bitácora de acciones admin</a>
+  </p>
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+    Los CSV abren directo en Excel (UTF-8 con BOM: los acentos se ven bien).
+  </p>
+</div>
+{% endblock %}

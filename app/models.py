@@ -95,6 +95,21 @@ class TicketActivity(SQLModel, table=True):
     habilitado: bool = True
 
 
+class AdminAudit(SQLModel, table=True):
+    """Bitácora permanente de acciones administrativas (los logs del
+    contenedor se pierden al recrearlo; esto no)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    admin: str = Field(index=True)
+    # Acciones: "usuario:creado", "usuario:password", "usuario:rol",
+    # "usuario:toggle", "invitacion:toggle", "ticket:toggle",
+    # "cliente:toggle", "espejo:sync", "catalogo:<detalle>"
+    action: str
+    target: str | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
 class Invitation(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     token: str = Field(unique=True, index=True)

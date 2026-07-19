@@ -15,6 +15,9 @@ BRANCH=production
 # posición de lectura del intérprete a mitad de las líneas restantes.
 deploy() {
   git reset --hard "origin/$BRANCH"
+  # Versión desplegada visible en el panel /system (data/ está montado en /data)
+  mkdir -p data
+  echo "$REMOTE $(date -Is)" > data/deploy-info
   docker compose up -d --build
 
   # Stack de correo (Poste.io) — independiente del bot, no bloquea su

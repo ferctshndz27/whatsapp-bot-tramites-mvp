@@ -132,6 +132,17 @@ _SCHEMA_DDL = [
     )
     """,
     """
+    IF OBJECT_ID('admin_audit', 'U') IS NULL
+    CREATE TABLE admin_audit (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        admin      NVARCHAR(64)  NOT NULL,
+        action     NVARCHAR(100) NOT NULL,
+        target     NVARCHAR(200) NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
     IF OBJECT_ID('conversations', 'U') IS NULL
     CREATE TABLE conversations (
         phone           NVARCHAR(32)  NOT NULL PRIMARY KEY,
@@ -398,6 +409,19 @@ def archive_activity(a) -> None:
     )
 
 
+def archive_admin_audit(a) -> None:
+    _upsert(
+        "admin_audit", "source_id", a.id,
+        {
+            "admin": a.admin,
+            "action": a.action,
+            "target": a.target,
+            "habilitado": a.habilitado,
+            "created_at": _naive_utc(a.created_at),
+        },
+    )
+
+
 def archive_conversation(c) -> None:
     _upsert(
         "conversations", "phone", c.phone,
@@ -431,7 +455,15 @@ def backfill() -> None:
     if not enabled():
         return
     from app.db import get_session
-    from app.models import Client, Conversation, Invitation, Ticket, TicketActivity, User
+    from app.models import (
+        AdminAudit,
+        Client,
+        Conversation,
+        Invitation,
+        Ticket,
+        TicketActivity,
+        User,
+    )
     from sqlmodel import select
 
     # Los mensajes (WhatsApp y chat de equipo) no se backfillean aquí: sus
@@ -453,6 +485,8 @@ def backfill() -> None:
                 archive_invitation(i)
             for conv in session.exec(select(Conversation)).all():
                 archive_conversation(conv)
+            for aa in session.exec(select(AdminAudit)).all():
+                archive_admin_audit(aa)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -463,6 +497,7 @@ def _register_listeners() -> None:
     # volumen es inofensivo; mover a una cola si algún día hay miles de
     # mensajes por minuto.
     from app.models import (
+        AdminAudit,
         Client,
         Conversation,
         Invitation,
@@ -518,6 +553,11 @@ def _register_listeners() -> None:
     @event.listens_for(Conversation, "after_update")
     def _conversation_upsert(mapper, connection, target):
         _safe(archive_conversation, target)
+
+    @event.listens_for(AdminAudit, "after_insert")
+    @event.listens_for(AdminAudit, "after_update")
+    def _admin_audit_upsert(mapper, connection, target):
+        _safe(archive_admin_audit, target)
 
 
 _register_listeners()

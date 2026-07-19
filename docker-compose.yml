@@ -7,6 +7,9 @@ services:
     environment:
       - DB_PATH=/data/tramites.db
       - MEDIA_DIR=/data/media
+      # Catálogo editable: vive en el volumen para sobrevivir a los deploys
+      # (el JSON del repo es solo la semilla del primer arranque).
+      - CATALOG_PATH=/data/catalog.json
       - MSSQL_HOST=mssql
     volumes:
       - ./data:/data

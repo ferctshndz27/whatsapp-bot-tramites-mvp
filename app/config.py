@@ -17,6 +17,11 @@ class Settings:
         self.dashboard_password = os.environ.get("DASHBOARD_PASSWORD", "")
         self.registration_code = os.environ.get("REGISTRATION_CODE", "")
         self.media_dir = os.environ.get("MEDIA_DIR", "media")
+        # En producción apunta al volumen persistente (/data/catalog.json):
+        # el archivo del repo es solo la semilla inicial y se pisa en cada deploy.
+        self.catalog_path = os.environ.get(
+            "CATALOG_PATH", os.path.join(os.path.dirname(__file__), "catalog.json")
+        )
         self.mssql_host = os.environ.get("MSSQL_HOST", "")
         self.mssql_port = int(os.environ.get("MSSQL_PORT", "1433"))
         self.mssql_user = os.environ.get("MSSQL_USER", "sa")
