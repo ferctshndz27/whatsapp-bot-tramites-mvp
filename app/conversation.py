@@ -52,7 +52,10 @@ ASK_GOAL_REPLY = (
     "Cuéntame, ¿qué trámite o servicio necesitas? "
     "Escribe *servicios* si quieres ver la lista."
 )
-IDENTITY_REPLY = "Soy un agente colaborador que ayuda a los colaboradores 🤖 ¿Qué trámite necesitas?"
+IDENTITY_REPLY = (
+    "Soy el agente virtual de Consultoría y Soluciones Empresariales, "
+    "ayudo a nuestros clientes con sus trámites 🤖 ¿Qué necesitas?"
+)
 ANNOYANCE_REPLY = "Lamento mucho la molestia 🙏 Te comunico con un asesor ahora mismo."
 NOT_RECOGNIZED_HINT = (
     "No logré identificar el trámite 🤔 Cuéntame qué necesitas, "
