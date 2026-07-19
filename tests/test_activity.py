@@ -65,9 +65,11 @@ def test_unchanged_status_logs_nothing(monkeypatch, session):
 
 def test_dispatch_counts_by_period(session):
     starts = _period_starts_utc()
-    session.add(_closure("ana", hours_ago=1))      # hoy
+    # hours_ago=0 (ahora mismo): siempre cae en "hoy" sin importar la hora local
+    # — con hours_ago=1 el test fallaba si se corría justo después de medianoche.
+    session.add(_closure("ana", hours_ago=0))      # hoy
     session.add(_closure("ana", hours_ago=24 * 40))  # hace 40 días: solo total
-    session.add(_closure("bob", hours_ago=2))
+    session.add(_closure("bob", hours_ago=0))
     session.commit()
 
     counts = dispatch_counts(session, starts)

@@ -110,16 +110,21 @@ def service_create(
 
 @router.post("/catalog/services/{service_id}/update")
 def service_update(
-    request: Request, service_id: str, name: str = Form(...), price_info: str = Form(...)
+    request: Request,
+    service_id: str,
+    name: str = Form(...),
+    price_info: str = Form(...),
+    synonyms: str = Form(""),
 ):
     admin, redirect = _admin_or_redirect(request)
     if redirect:
         return redirect
     if not name.strip() or not price_info.strip():
         return _render(request, admin, error="Nombre y precio son obligatorios.")
+    synonym_list = [s for s in (part.strip() for part in synonyms.split(",")) if s]
     return _apply(
         request, admin, "servicio_editado", service_id,
-        catalog.update_service(service_id, name, price_info),
+        catalog.update_service(service_id, name, price_info, synonym_list),
     )
 
 

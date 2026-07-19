@@ -35,6 +35,9 @@ class Service:
     price_info: str
     category_id: str
     category_name: str
+    # Sinónimos/frases coloquiales con que los clientes piden el servicio;
+    # editables desde el panel Catálogo, usados por la deducción de intención.
+    synonyms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,7 @@ class Catalog:
                     price_info=svc["price_info"],
                     category_id=cat["id"],
                     category_name=cat["name"],
+                    synonyms=tuple(svc.get("synonyms", [])),
                 )
                 for svc in cat["services"]
                 if svc.get("habilitado", True)
@@ -155,13 +159,20 @@ class Catalog:
                 "id": svc_id,
                 "name": name.strip(),
                 "price_info": price_info.strip(),
+                "synonyms": [],
                 "habilitado": True,
             }
         )
         self._save()
         return None
 
-    def update_service(self, service_id: str, name: str, price_info: str) -> str | None:
+    def update_service(
+        self,
+        service_id: str,
+        name: str,
+        price_info: str,
+        synonyms: list[str] | None = None,
+    ) -> str | None:
         self._maybe_reload()
         found = self._raw_service(service_id)
         if found is None:
@@ -169,6 +180,8 @@ class Catalog:
         _, svc = found
         svc["name"] = name.strip()
         svc["price_info"] = price_info.strip()
+        if synonyms is not None:
+            svc["synonyms"] = [s.strip() for s in synonyms if s.strip()]
         self._save()
         return None
 

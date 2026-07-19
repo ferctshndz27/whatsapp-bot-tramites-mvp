@@ -89,7 +89,7 @@ def test_non_admin_route_redirected(monkeypatch, session, tmp_path):
     session.commit()
 
     response = catalog_admin.service_update(
-        _request("colab"), "curp", name="Hack", price_info="$0"
+        _request("colab"), "curp", name="Hack", price_info="$0", synonyms=""
     )
 
     assert response.headers["location"] == "/"
@@ -104,7 +104,7 @@ def test_admin_update_persists_and_audits(monkeypatch, session, tmp_path):
     session.commit()
 
     response = catalog_admin.service_update(
-        _request("jefa"), "curp", name="CURP exprés", price_info="$150"
+        _request("jefa"), "curp", name="CURP exprés", price_info="$150", synonyms=""
     )
 
     assert response.status_code == 303
@@ -114,3 +114,21 @@ def test_admin_update_persists_and_audits(monkeypatch, session, tmp_path):
     audit = session.exec(select(AdminAudit)).one()
     assert audit.action == "catalogo:servicio_editado"
     assert audit.target == "curp"
+
+
+def test_synonyms_persist_via_admin_route(monkeypatch, session, tmp_path):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    cat, path = _make_catalog(tmp_path)
+    monkeypatch.setattr(catalog_admin, "catalog", cat)
+    session.add(User(username="jefa", password_hash="x", is_admin=True))
+    session.commit()
+
+    catalog_admin.service_update(
+        _request("jefa"), "curp", name="CURP certificada", price_info="$80",
+        synonyms="clave única, curp certificada , ",
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    svc = saved["categories"][0]["services"][0]
+    assert svc["synonyms"] == ["clave única", "curp certificada"]  # limpia vacíos/espacios
+    assert cat.service_by_id("curp").synonyms == ("clave única", "curp certificada")

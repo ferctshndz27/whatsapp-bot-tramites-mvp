@@ -53,6 +53,11 @@
               <input type="text" id="n-{{ svc.id }}" name="name" value="{{ svc.name }}" required style="min-width:260px; flex:1;">
               <label for="p-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Precio</label>
               <input type="text" id="p-{{ svc.id }}" name="price_info" value="{{ svc.price_info }}" required style="max-width:170px;">
+              <label for="syn-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Sinónimos</label>
+              <input type="text" id="syn-{{ svc.id }}" name="synonyms"
+                value="{{ svc.get('synonyms', []) | join(', ') }}"
+                placeholder="sinónimos, separados, por comas" style="min-width:240px; flex:1;"
+                title="Palabras o frases con que los clientes piden este servicio; el bot las usa para deducir la intención.">
               <button type="submit" class="btn-sm">Guardar</button>
             </form>
           </td>

@@ -53,9 +53,10 @@ def test_escalation_keyword_from_any_state(session):
     conv = session.get(Conversation, PHONE)
     assert conv.state == "escalado"
 
-    # tras escalar, el bot ya no responde automáticamente
+    # tras escalar (ticket sin asignar), el bot nunca deja sin respuesta
     replies = handle_incoming(session, PHONE, "sigo esperando")
-    assert replies == []
+    assert replies != []
+    assert "asesor" in replies[0].lower()
 
 
 def test_two_failed_attempts_auto_escalates(session):

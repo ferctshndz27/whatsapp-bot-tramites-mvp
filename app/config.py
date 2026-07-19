@@ -22,6 +22,10 @@ class Settings:
         self.catalog_path = os.environ.get(
             "CATALOG_PATH", os.path.join(os.path.dirname(__file__), "catalog.json")
         )
+        # Deducción de intención con Claude (opcional): sin API key el bot
+        # usa el matching por palabras clave de siempre.
+        self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        self.nlu_model = os.environ.get("NLU_MODEL", "claude-opus-4-8")
         self.mssql_host = os.environ.get("MSSQL_HOST", "")
         self.mssql_port = int(os.environ.get("MSSQL_PORT", "1433"))
         self.mssql_user = os.environ.get("MSSQL_USER", "sa")

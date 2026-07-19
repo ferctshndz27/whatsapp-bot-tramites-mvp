@@ -9,3 +9,5 @@ itsdangerous==2.2.0
 python-dotenv==1.0.1
 pytest==8.3.4
 pymssql==2.3.2
+anthropic>=0.92.0
+rapidfuzz>=3.0

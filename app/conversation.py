@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from sqlmodel import Session, select
 
+from app import nlu
 from app.catalog import catalog
 from app.models import Client, Conversation, Direction, Message, Ticket, TicketStatus, utcnow
 from app.utils import mask_phone
@@ -31,6 +32,10 @@ GREETING_WORDS = {
 NOT_RECOGNIZED_HINT = (
     "No reconocí esa opción.\n"
     "Si no encuentras lo que buscas, escribe *asesor* para hablar con alguien de nuestro equipo.\n"
+)
+ESCALATED_WAIT_REPLY = (
+    "Recibimos tu mensaje. Un asesor te contactará muy pronto — gracias por tu paciencia.\n"
+    "Si mientras tanto quieres usar el menú automático, escribe *menu*."
 )
 MAX_FAILED_ATTEMPTS = 2
 MAX_STORED_TEXT = 4000
@@ -64,10 +69,17 @@ def handle_incoming(
         replies = ["Por ahora no puedo recibir documentos en este chat. Un asesor te indicará cómo enviarlos."]
     elif conv.state == "escalado":
         normalized = text.strip().lower()
-        if normalized in MENU_KEYWORDS and _escalated_ticket_unclaimed(session, phone):
-            _set_state(session, conv, "menu_categoria")
-            replies = ["Claro, continuemos aquí. " + catalog.format_category_menu()]
+        if _escalated_ticket_unclaimed(session, phone):
+            if normalized in MENU_KEYWORDS:
+                _set_state(session, conv, "menu_categoria")
+                replies = ["Claro, continuemos aquí. " + catalog.format_category_menu()]
+            else:
+                # Nadie ha tomado el ticket aún: el bot nunca deja al cliente
+                # sin respuesta mientras espera.
+                replies = [ESCALATED_WAIT_REPLY]
         else:
+            # Un asesor ya está atendiendo este chat desde el panel: el bot
+            # guarda silencio para no interrumpir la conversación humana.
             replies = []
     else:
         normalized = text.strip().lower()
@@ -164,11 +176,13 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
             _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
             return [catalog.format_service_menu(category.id)]
 
-    matches = catalog.search_by_keyword(text)
-    if len(matches) == 1:
-        service = matches[0]
+    service, category = nlu.deduce(text)
+    if service is not None:
         _set_state(session, conv, "confirmar", {"pending_service_id": service.id})
         return [_confirm_message(service)]
+    if category is not None:
+        _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
+        return [catalog.format_service_menu(category.id)]
 
     return _bump_or_escalate(
         session,
@@ -200,6 +214,16 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
         if service is not None:
             _set_state(session, conv, "confirmar", {"pending_service_id": service.id})
             return [_confirm_message(service)]
+
+    # Texto libre dentro del submenú: intentar deducir igual que en el menú
+    # principal ("mejor quiero una CURP" debe funcionar desde cualquier lado).
+    service, deduced_category = nlu.deduce(text)
+    if service is not None:
+        _set_state(session, conv, "confirmar", {"pending_service_id": service.id})
+        return [_confirm_message(service)]
+    if deduced_category is not None and deduced_category.id != category_id:
+        _set_state(session, conv, "menu_servicio", {"category_id": deduced_category.id, "page": 0})
+        return [catalog.format_service_menu(deduced_category.id)]
 
     category = catalog.category_by_id(category_id)
     reprompt = catalog.format_service_menu(category_id, context.get("page", 0)) if category else catalog.format_category_menu()
