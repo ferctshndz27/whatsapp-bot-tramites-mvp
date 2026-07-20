@@ -179,6 +179,37 @@ _SCHEMA_DDL = [
     )
     """,
     """
+    IF OBJECT_ID('login_events', 'U') IS NULL
+    CREATE TABLE login_events (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        username   NVARCHAR(64)  NOT NULL,
+        success    BIT           NOT NULL,
+        reason     NVARCHAR(100) NULL,
+        ip         NVARCHAR(64)  NULL,
+        geo        NVARCHAR(200) NULL,
+        device     NVARCHAR(100) NULL,
+        user_agent NVARCHAR(300) NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('web_sessions', 'U') IS NULL
+    CREATE TABLE web_sessions (
+        source_id    BIGINT        NOT NULL PRIMARY KEY,
+        token        NVARCHAR(64)  NOT NULL,
+        username     NVARCHAR(64)  NOT NULL,
+        ip           NVARCHAR(64)  NULL,
+        geo          NVARCHAR(200) NULL,
+        device       NVARCHAR(100) NULL,
+        user_agent   NVARCHAR(300) NULL,
+        created_at   DATETIME2     NOT NULL,
+        last_seen_at DATETIME2     NOT NULL,
+        ended_at     DATETIME2     NULL,
+        habilitado   BIT           NOT NULL DEFAULT 1
+    )
+    """,
+    """
     IF OBJECT_ID('conversations', 'U') IS NULL
     CREATE TABLE conversations (
         phone           NVARCHAR(32)  NOT NULL PRIMARY KEY,
@@ -503,6 +534,41 @@ def archive_admin_audit(a) -> None:
     )
 
 
+def archive_login_event(e) -> None:
+    _upsert(
+        "login_events", "source_id", e.id,
+        {
+            "username": e.username,
+            "success": e.success,
+            "reason": e.reason,
+            "ip": e.ip,
+            "geo": e.geo,
+            "device": e.device,
+            "user_agent": e.user_agent,
+            "habilitado": e.habilitado,
+            "created_at": _naive_utc(e.created_at),
+        },
+    )
+
+
+def archive_web_session(w) -> None:
+    _upsert(
+        "web_sessions", "source_id", w.id,
+        {
+            "token": w.token,
+            "username": w.username,
+            "ip": w.ip,
+            "geo": w.geo,
+            "device": w.device,
+            "user_agent": w.user_agent,
+            "created_at": _naive_utc(w.created_at),
+            "last_seen_at": _naive_utc(w.last_seen_at),
+            "ended_at": _naive_utc(w.ended_at) if w.ended_at else None,
+            "habilitado": w.habilitado,
+        },
+    )
+
+
 def archive_conversation(c) -> None:
     _upsert(
         "conversations", "phone", c.phone,
@@ -543,10 +609,12 @@ def backfill() -> None:
         Conversation,
         FollowUp,
         Invitation,
+        LoginEvent,
         SavedReply,
         Ticket,
         TicketActivity,
         User,
+        WebSession,
     )
     from sqlmodel import select
 
@@ -577,6 +645,10 @@ def backfill() -> None:
                 archive_client_note(n)
             for r in session.exec(select(SavedReply)).all():
                 archive_saved_reply(r)
+            for e in session.exec(select(LoginEvent)).all():
+                archive_login_event(e)
+            for w in session.exec(select(WebSession)).all():
+                archive_web_session(w)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -593,12 +665,14 @@ def _register_listeners() -> None:
         Conversation,
         FollowUp,
         Invitation,
+        LoginEvent,
         Message,
         SavedReply,
         TeamMessage,
         Ticket,
         TicketActivity,
         User,
+        WebSession,
     )
 
     @event.listens_for(Message, "after_insert")
@@ -666,6 +740,16 @@ def _register_listeners() -> None:
     @event.listens_for(SavedReply, "after_update")
     def _saved_reply_upsert(mapper, connection, target):
         _safe(archive_saved_reply, target)
+
+    @event.listens_for(LoginEvent, "after_insert")
+    @event.listens_for(LoginEvent, "after_update")
+    def _login_event_upsert(mapper, connection, target):
+        _safe(archive_login_event, target)
+
+    @event.listens_for(WebSession, "after_insert")
+    @event.listens_for(WebSession, "after_update")
+    def _web_session_upsert(mapper, connection, target):
+        _safe(archive_web_session, target)
 
 
 _register_listeners()

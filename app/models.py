@@ -147,6 +147,55 @@ class AdminAudit(SQLModel, table=True):
     habilitado: bool = True
 
 
+class LoginEvent(SQLModel, table=True):
+    """Bitácora de intentos de acceso al panel: éxitos y fallos con motivo.
+
+    Append-only (como AdminAudit): los logs del contenedor se pierden al
+    recrearlo, esto no. La respuesta al usuario en /login sigue siendo
+    genérica; el motivo detallado solo se ve en el panel admin."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    success: bool = Field(index=True)
+    # None en éxito; en fallo: "usuario no existe", "contraseña incorrecta",
+    # "usuario deshabilitado", "bloqueado temporalmente"
+    reason: str | None = None
+    ip: str | None = None
+    # "Ciudad, Región, País" — se completa best-effort (ver app.authlog)
+    geo: str | None = None
+    # Resumen legible del User-Agent, p.ej. "Chrome · Windows"
+    device: str | None = None
+    user_agent: str | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
+class WebSession(SQLModel, table=True):
+    """Sesión del panel por dispositivo, para saber quién está conectado,
+    desde dónde y desde cuándo. Activa = ended_at nulo y last_seen reciente."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    token: str = Field(unique=True, index=True)
+    username: str = Field(index=True)
+    ip: str | None = None
+    geo: str | None = None
+    device: str | None = None
+    user_agent: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    last_seen_at: datetime = Field(default_factory=utcnow, index=True)
+    ended_at: datetime | None = None
+    habilitado: bool = True
+
+
+class IpGeoCache(SQLModel, table=True):
+    """Cache local de geolocalización por IP. Solo vive en SQLite (no se
+    espeja a MSSQL: es derivable y se reconstruye con nuevos lookups)."""
+
+    ip: str = Field(primary_key=True)
+    geo: str | None = None  # None = el lookup falló; se reintenta al expirar
+    resolved_at: datetime = Field(default_factory=utcnow)
+
+
 class Invitation(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     token: str = Field(unique=True, index=True)

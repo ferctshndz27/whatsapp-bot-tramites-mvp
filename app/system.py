@@ -28,11 +28,13 @@ from app.models import (
     Client,
     Conversation,
     Invitation,
+    LoginEvent,
     Message,
     TeamMessage,
     Ticket,
     TicketActivity,
     User,
+    WebSession,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,8 @@ MIRROR_TABLES = [
     (Invitation, "invitations"),
     (Conversation, "conversations"),
     (AdminAudit, "admin_audit"),
+    (LoginEvent, "login_events"),
+    (WebSession, "web_sessions"),
 ]
 
 

@@ -26,6 +26,9 @@ class Settings:
         # usa el matching por palabras clave de siempre.
         self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         self.nlu_model = os.environ.get("NLU_MODEL", "claude-opus-4-8")
+        # Geolocalización de IPs en la bitácora de accesos (ipwho.is,
+        # best-effort con cache local). GEOIP_ENABLED=0 la apaga.
+        self.geoip_enabled = os.environ.get("GEOIP_ENABLED", "1") != "0"
         self.mssql_host = os.environ.get("MSSQL_HOST", "")
         self.mssql_port = int(os.environ.get("MSSQL_PORT", "1433"))
         self.mssql_user = os.environ.get("MSSQL_USER", "sa")

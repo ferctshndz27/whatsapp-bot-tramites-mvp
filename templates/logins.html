@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Accesos{% endblock %}
+{% block content %}
+<h1>Accesos al panel</h1>
+
+<div class="stats">
+  <div class="stat-card green"><div class="label">Conectados ahora</div><div class="value">{{ stats.activos }}</div></div>
+  <div class="stat-card blue"><div class="label">Entradas hoy (UTC)</div><div class="value">{{ stats.hoy_ok }}</div></div>
+  <div class="stat-card orange"><div class="label">Fallos hoy (UTC)</div><div class="value">{{ stats.hoy_fail }}</div></div>
+  <div class="stat-card red"><div class="label">Fallos últimos 7 días</div><div class="value">{{ stats.fail_7d }}</div></div>
+</div>
+
+<div class="card">
+  <h2>Conectados ahora (actividad en los últimos {{ window_min }} min)</h2>
+  {% if active %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Colaborador</th><th>Dispositivo</th><th>IP</th><th>Ubicación</th><th>Última actividad</th><th>Sesión iniciada (UTC)</th></tr>
+      </thead>
+      <tbody>
+        {% for a in active %}
+        <tr>
+          <td>{{ a.s.username }}</td>
+          <td>{{ a.s.device or '—' }}</td>
+          <td>{{ a.s.ip or '—' }}</td>
+          <td>{{ a.s.geo or '—' }}</td>
+          <td>{% if a.mins == 0 %}ahora mismo{% else %}hace {{ a.mins }} min{% endif %}</td>
+          <td>{{ a.s.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Nadie conectado en los últimos {{ window_min }} minutos.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Historial de accesos</h2>
+  <div class="pills">
+    <a href="/logins" {% if not result %}aria-current="true"{% endif %}>Todos</a>
+    <a href="/logins?result=ok" {% if result == 'ok' %}aria-current="true"{% endif %}>Exitosos</a>
+    <a href="/logins?result=fail" {% if result == 'fail' %}aria-current="true"{% endif %}>Fallidos</a>
+    <a href="/export/logins.csv">⬇ CSV completo</a>
+  </div>
+  {% if entries %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Fecha (UTC)</th><th>Usuario</th><th>Resultado</th><th>IP</th><th>Ubicación</th><th>Dispositivo</th></tr>
+      </thead>
+      <tbody>
+        {% for e in entries %}
+        <tr>
+          <td>{{ e.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td>{{ e.username }}</td>
+          <td>
+            {% if e.success %}
+            <span class="badge cerrado">entró</span>
+            {% else %}
+            <span class="badge nuevo">fallo</span>
+            <span style="color:var(--text-muted); font-size:.85rem;">{{ e.reason }}</span>
+            {% endif %}
+          </td>
+          <td>{{ e.ip or '—' }}</td>
+          <td>{{ e.geo or '—' }}</td>
+          <td>{{ e.device or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p style="color:var(--text-muted); font-size:.85rem; margin:.75rem 0 0;">
+    Se muestran los últimos {{ entries|length }} intentos; el CSV incluye el historial completo.
+    La ubicación es aproximada (por IP) y puede tardar unos segundos en aparecer tras el primer acceso desde una IP nueva.
+  </p>
+  {% else %}
+  <p class="empty">Aún no hay intentos de acceso registrados.</p>
+  {% endif %}
+</div>
+{% endblock %}

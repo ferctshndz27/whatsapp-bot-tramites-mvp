@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import update
 from sqlmodel import select
 
-from app import whatsapp_client
+from app import authlog, whatsapp_client
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
@@ -80,6 +80,7 @@ def login_form(request: Request):
 def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
     if _is_login_locked(username):
         logger.warning("Login bloqueado por intentos fallidos: %s", username)
+        authlog.record_login(request, username, success=False, reason=authlog.REASON_LOCKED)
         return templates.TemplateResponse(
             "login.html",
             {"request": request, "error": "Demasiados intentos fallidos. Intenta de nuevo en unos minutos."},
@@ -91,9 +92,20 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
     if user and user.habilitado and bcrypt.checkpw(password.encode(), user.password_hash.encode()):
         _login_attempts.pop(username, None)
         logger.info("Login exitoso: %s", username)
+        authlog.record_login(request, username, success=True)
         request.session["user"] = username
+        request.session["sid"] = authlog.open_session(request, username)
         return RedirectResponse("/", status_code=303)
 
+    # El motivo detallado va solo a la bitácora admin; la respuesta al
+    # navegador sigue siendo genérica (no revela si el usuario existe).
+    if user is None:
+        reason = authlog.REASON_NO_USER
+    elif not user.habilitado:
+        reason = authlog.REASON_DISABLED
+    else:
+        reason = authlog.REASON_BAD_PASSWORD
+    authlog.record_login(request, username, success=False, reason=reason)
     _record_failed_login(username)
     logger.warning("Login fallido: %s", username)
     return templates.TemplateResponse(
@@ -103,6 +115,7 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
 
 @router.get("/logout")
 def logout(request: Request):
+    authlog.close_session(request)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 

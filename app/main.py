@@ -7,6 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app import (
     activity,
     archive,
+    authlog,
     catalog_admin,
     clients,
     dashboard,
@@ -37,6 +38,10 @@ if not session_secret:
         "Define SESSION_SECRET para sesiones persistentes en producción."
     )
 
+# Registrado ANTES que SessionMiddleware a propósito: en Starlette el último
+# middleware agregado queda más afuera, y este necesita request.session (es
+# decir, correr por DENTRO de SessionMiddleware).
+app.middleware("http")(authlog.session_activity_middleware)
 app.add_middleware(SessionMiddleware, secret_key=session_secret)
 app.include_router(webhook.router)
 app.include_router(dashboard.router)
@@ -51,6 +56,7 @@ app.include_router(my.router)
 app.include_router(clients.router)
 app.include_router(replies.router)
 app.include_router(kb.router)
+app.include_router(authlog.router)
 
 
 @app.on_event("startup")
