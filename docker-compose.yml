@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      # México ya no tiene horario de verano (eliminado en 2022): offset fijo.
+      - TZ=America/Mexico_City
       - DB_PATH=/data/tramites.db
       - MEDIA_DIR=/data/media
       # Catálogo editable: vive en el volumen para sobrevivir a los deploys
@@ -23,6 +25,7 @@ services:
     container_name: tramites-mssql
     restart: unless-stopped
     environment:
+      - TZ=America/Mexico_City
       - ACCEPT_EULA=Y
       # La contraseña vive solo en .env (gitignored); compose la interpola aquí
       - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
