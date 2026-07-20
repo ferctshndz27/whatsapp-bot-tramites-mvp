@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import timedelta
 
 from sqlmodel import Session, select
@@ -65,6 +66,9 @@ ESCALATED_WAIT_REPLY = (
     "Recibimos tu mensaje. Un asesor te contactará muy pronto — gracias por tu paciencia.\n"
     "Si mientras tanto quieres usar el menú automático, escribe *menu*."
 )
+# Selección múltiple pura en un menú: "1 y 2", "1,3", "2 4", "1y2".
+_MULTI_PICK_RE = re.compile(r"\d+(?:(?:\s*(?:[,;+&]|y|e)\s*|\s+)\d+)+")
+
 MAX_FAILED_ATTEMPTS = 2
 MAX_STORED_TEXT = 4000
 MAX_NOTE_TEXT = 500
@@ -204,11 +208,18 @@ def _handle_inicio(session: Session, client: Client, conv: Conversation, text: s
         _set_state(session, conv, "menu_categoria")
         return [saludo]
 
+    # Varios servicios en un mismo mensaje ("quiero acta de nacimiento y mi
+    # curp"): se confirman juntos y se crea un ticket por cada uno.
+    multi = nlu.deduce_all(text)
+    if multi:
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
+        return ["¡Hola! 😊 " + _confirm_multi_message(multi)]
+
     # Regla: si el primer mensaje ya trae el servicio ("necesito mi CURP, soy
     # Juan…"), no se listan servicios: saludo breve y directo a confirmar.
     service, category = nlu.deduce(text)
     if service is not None:
-        _set_state(session, conv, "confirmar", {"pending_service_id": service.id})
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
         return ["¡Hola! 😊 " + _confirm_message(service)]
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
@@ -237,9 +248,30 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
             _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
             return [catalog.format_service_menu(category.id)]
 
+    # "1 y 2" con categorías: se atienden una por una (sin cola — el cliente
+    # vuelve con *menu* al terminar la primera).
+    indices = _parse_indices(normalized)
+    if indices:
+        picked = [c for c in (catalog.category_by_index(i) for i in indices) if c is not None]
+        if picked:
+            first = picked[0]
+            _set_state(session, conv, "menu_servicio", {"category_id": first.id, "page": 0})
+            menu = catalog.format_service_menu(first.id)
+            if len(picked) > 1:
+                menu = (
+                    f"Vamos una por una 😊 Empecemos con {first.name}; al terminar, "
+                    "escribe *menu* para la siguiente.\n" + menu
+                )
+            return [menu]
+
+    multi = nlu.deduce_all(text)
+    if multi:
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
+        return [_confirm_multi_message(multi)]
+
     service, category = nlu.deduce(text)
     if service is not None:
-        _set_state(session, conv, "confirmar", {"pending_service_id": service.id})
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
         return [_confirm_message(service)]
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
@@ -267,14 +299,34 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
     if idx is not None:
         service = catalog.service_by_index(category_id, idx)
         if service is not None:
-            _set_state(session, conv, "confirmar", {"pending_service_id": service.id})
+            _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
             return [_confirm_message(service)]
+
+    # "1 y 2": varios servicios del mismo menú en un solo mensaje.
+    indices = _parse_indices(normalized)
+    if indices:
+        picked = _unique_services(
+            catalog.service_by_index(category_id, i) for i in indices
+        )
+        if picked:
+            missing = [
+                str(i) for i in indices if catalog.service_by_index(category_id, i) is None
+            ]
+            note = f"No encontré la opción {', '.join(missing)}. " if missing else ""
+            _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in picked]})
+            msg = _confirm_multi_message(picked) if len(picked) > 1 else _confirm_message(picked[0])
+            return [note + msg]
 
     # Texto libre dentro del submenú: intentar deducir igual que en el menú
     # principal ("mejor quiero una CURP" debe funcionar desde cualquier lado).
+    multi = nlu.deduce_all(text)
+    if multi:
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
+        return [_confirm_multi_message(multi)]
+
     service, deduced_category = nlu.deduce(text)
     if service is not None:
-        _set_state(session, conv, "confirmar", {"pending_service_id": service.id})
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
         return [_confirm_message(service)]
     if deduced_category is not None and deduced_category.id != category_id:
         _set_state(session, conv, "menu_servicio", {"category_id": deduced_category.id, "page": 0})
@@ -285,39 +337,87 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
 
 def _handle_confirmar(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
     context = _get_context(conv)
-    service_id = context.get("pending_service_id")
-    service = catalog.service_by_id(service_id) if service_id else None
+    ids = context.get("pending_service_ids") or (
+        # Compatibilidad con confirmaciones en vuelo del formato anterior.
+        [context["pending_service_id"]] if context.get("pending_service_id") else []
+    )
+    services = [s for s in (catalog.service_by_id(i) for i in ids) if s is not None]
 
-    if normalized in YES_WORDS and service is not None:
-        ticket = Ticket(
-            phone=client.phone,
-            client_name=client.name,
-            category=service.category_name,
-            service_id=service.id,
-            service_name=service.name,
-            price_info=service.price_info,
-            status=TicketStatus.NUEVO,
-        )
-        session.add(ticket)
+    if normalized in YES_WORDS and services:
+        tickets = []
+        for service in services:
+            ticket = Ticket(
+                phone=client.phone,
+                client_name=client.name,
+                category=service.category_name,
+                service_id=service.id,
+                service_name=service.name,
+                price_info=service.price_info,
+                status=TicketStatus.NUEVO,
+            )
+            session.add(ticket)
+            tickets.append(ticket)
         session.commit()
-        session.refresh(ticket)
+        for ticket in tickets:
+            session.refresh(ticket)
         _set_state(session, conv, "menu_categoria")
+        if len(tickets) == 1:
+            return [
+                f"¡Listo! ✅ Registré tu solicitud de '{tickets[0].service_name}' "
+                f"(folio #{tickets[0].id}). "
+                "Un asesor te contactará pronto, gracias por tu confianza."
+            ]
+        lines = "\n".join(f"• '{t.service_name}' — folio #{t.id}" for t in tickets)
         return [
-            f"¡Listo! ✅ Registré tu solicitud de '{service.name}' (folio #{ticket.id}). "
-            "Un asesor te contactará pronto, gracias por tu confianza."
+            f"¡Listo! ✅ Registré tus {len(tickets)} solicitudes:\n{lines}\n"
+            "Un asesor te contactará pronto. ¿Otro trámite? Escribe *menu*."
         ]
 
     if normalized in NO_WORDS:
         _set_state(session, conv, "menu_categoria")
         return ["Sin problema. " + catalog.format_category_menu()]
 
-    confirm_text = _confirm_message(service) if service else catalog.format_category_menu()
+    if len(services) > 1:
+        confirm_text = _confirm_multi_message(services)
+    elif services:
+        confirm_text = _confirm_message(services[0])
+    else:
+        confirm_text = catalog.format_category_menu()
     return _bump_or_escalate(session, client, conv, text, "¿Puedes confirmar con 'sí' o 'no'?\n" + confirm_text)
 
 
 def _confirm_message(service) -> str:
     # El precio sale SOLO del catálogo — el agente nunca inventa precios.
     return f"¿Confirmas '{service.name}' ({service.price_info})? Responde sí o no."
+
+
+def _confirm_multi_message(services) -> str:
+    lines = "\n".join(f"• {s.name} ({s.price_info})" for s in services)
+    return f"¿Confirmas estos {len(services)} trámites?\n{lines}\nResponde sí o no."
+
+
+def _parse_indices(normalized: str) -> list[int]:
+    """"1 y 2", "1,3", "2 4" → [1, 2]. Solo aplica si el texto completo es una
+    selección múltiple (números y separadores); en otro caso devuelve []."""
+    if not _MULTI_PICK_RE.fullmatch(normalized.strip()):
+        return []
+    indices: list[int] = []
+    for n in re.findall(r"\d+", normalized):
+        value = int(n)
+        if value not in indices:
+            indices.append(value)
+    return indices[: nlu.MULTI_MAX_SERVICES]
+
+
+def _unique_services(candidates) -> list:
+    """Filtra None y deduplica por id preservando el orden."""
+    picked: list = []
+    seen: set[str] = set()
+    for service in candidates:
+        if service is not None and service.id not in seen:
+            seen.add(service.id)
+            picked.append(service)
+    return picked
 
 
 def _is_escalation(normalized: str) -> bool:

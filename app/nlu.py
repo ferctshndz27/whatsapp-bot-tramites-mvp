@@ -106,6 +106,27 @@ def _deduce_llm(text: str) -> tuple[Service | None, Category | None]:
 
 FUZZY_THRESHOLD = 85
 FUZZY_MIN_CHARS = 4
+# Tope de servicios por mensaje ("quiero acta, curp, rfc…"): más de esto huele
+# a texto sin sentido y es mejor que lo vea un humano.
+MULTI_MAX_SERVICES = 5
+
+
+def deduce_all(text: str) -> list[Service]:
+    """Todos los servicios mencionados textualmente en la frase ("necesito
+    acta de nacimiento y mi curp"). Solo usa la capa literal (nombre o
+    sinónimo contenido en el texto): es barata, determinista y no llama a
+    Claude. Devuelve [] salvo que haya 2+ menciones claras — el caso de un
+    solo servicio lo sigue resolviendo deduce()."""
+    normalized = _norm(text)
+    if len(normalized) < 3:
+        return []
+    found: list[Service] = []
+    seen: set[str] = set()
+    for service, words in _service_terms():
+        if service.id not in seen and any(w and w in normalized for w in words):
+            seen.add(service.id)
+            found.append(service)
+    return found[:MULTI_MAX_SERVICES] if len(found) >= 2 else []
 
 
 def _norm(text: str) -> str:
