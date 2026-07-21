@@ -30,11 +30,17 @@ GREETING_WORDS = {
     "buenos dias", "buenos días", "buenas tardes", "buenas noches",
     "hey", "que tal", "qué tal", "saludos",
 }
-STATUS_KEYWORDS = [
-    "estatus", "status", "como va mi", "cómo va mi", "en que va mi", "en qué va mi",
-    "seguimiento de mi", "mi folio", "numero de folio", "número de folio",
-    "avance de mi", "mis solicitudes", "mis tramites", "mis trámites",
-]
+# Intención de estatus: se busca sobre el texto normalizado (minúsculas, sin
+# acentos — ver nlu._norm), así "¿Cómo va?" == "como va". Palabras directas
+# (estatus, avance, folio…) o giros comunes ("como va", "que paso con", "ya
+# quedo"). A propósito NO incluye "mi solicitud/mi tramite" a secas: "quiero
+# iniciar mi tramite de curp" debe ir a deducción de servicio, no a estatus.
+_STATUS_INTENT_RE = re.compile(
+    r"estatus|status|avance|seguimiento|folio"
+    r"|como van?\b|en que va\b|en que quedo|que paso con|que ha pasado"
+    r"|ya quedo|ya esta list|ya salio"
+    r"|mis solicitudes|mis tramites|mis pedidos|mis casos"
+)
 
 # Reglas del agente (definidas por el negocio, 2026-07-19): siempre español,
 # mensajes cortos (<30 palabras, máx. 2 emojis, sin listas salvo que pidan el
@@ -123,7 +129,7 @@ def handle_incoming(
         elif normalized in MENU_KEYWORDS:
             _set_state(session, conv, "menu_categoria")
             replies = ["Claro, continuemos aquí. " + catalog.format_category_menu()]
-        elif _mentions_any(normalized, STATUS_KEYWORDS):
+        elif _asks_status(text):
             replies = [_status_reply(session, phone)]
         else:
             # Nadie ha apagado el agente: el bot nunca deja al cliente sin
@@ -175,6 +181,10 @@ def _latest_open_ticket(session: Session, phone: str) -> Ticket | None:
     ).first()
 
 
+def _asks_status(text: str) -> bool:
+    return _STATUS_INTENT_RE.search(nlu._norm(text)) is not None
+
+
 def _status_reply(session: Session, phone: str) -> str:
     tickets = session.exec(
         select(Ticket)
@@ -205,7 +215,7 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
         return [catalog.format_category_menu()]
 
     # "¿Cómo va mi trámite?" — funciona desde cualquier estado, sin tocarlo.
-    if _mentions_any(normalized, STATUS_KEYWORDS):
+    if _asks_status(text):
         return [_status_reply(session, client.phone)]
 
     # Un saludo en medio del flujo se responde con pregunta abierta, sin
@@ -226,6 +236,7 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
         "menu_categoria": _handle_menu_categoria,
         "menu_servicio": _handle_menu_servicio,
         "confirmar": _handle_confirmar,
+        "eligiendo_sugerencia": _handle_sugerencia,
     }
     handler = handlers.get(conv.state, _handle_inicio)
     return handler(session, client, conv, text, normalized)
@@ -258,6 +269,12 @@ def _handle_inicio(session: Session, client: Client, conv: Conversation, text: s
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
+
+    # "quiero un acta": una palabra que coincide con varios servicios no debe
+    # terminar en "no te entendí" — se ofrece el mini-menú de parecidos.
+    options = nlu.suggestions(text)
+    if options:
+        return _suggest_reply(session, conv, options)
 
     _set_state(session, conv, "menu_categoria")
     prefix = f"¡Hola, {client.name}! " if client.name else "¡Hola! 😊 "
@@ -311,7 +328,7 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
 
-    return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
+    return _not_understood(session, client, conv, text)
 
 
 def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -366,7 +383,7 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
         _set_state(session, conv, "menu_servicio", {"category_id": deduced_category.id, "page": 0})
         return [catalog.format_service_menu(deduced_category.id)]
 
-    return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
+    return _not_understood(session, client, conv, text)
 
 
 def _handle_confirmar(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -418,6 +435,45 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     else:
         confirm_text = catalog.format_category_menu()
     return _bump_or_escalate(session, client, conv, text, "¿Puedes confirmar con 'sí' o 'no'?\n" + confirm_text)
+
+
+def _suggest_reply(session: Session, conv: Conversation, options: list) -> list[str]:
+    if len(options) == 1:
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [options[0].id]})
+        return [_confirm_message(options[0])]
+    _set_state(
+        session, conv, "eligiendo_sugerencia", {"suggestion_ids": [s.id for s in options]}
+    )
+    lines = "\n".join(f"{i}. {s.name}" for i, s in enumerate(options, 1))
+    return [
+        "Tenemos varios trámites parecidos 😊 ¿Cuál necesitas? Responde con el número:\n" + lines
+    ]
+
+
+def _not_understood(session: Session, client: Client, conv: Conversation, text: str) -> list[str]:
+    options = nlu.suggestions(text)
+    if options:
+        return _suggest_reply(session, conv, options)
+    return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
+
+
+def _handle_sugerencia(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
+    context = _get_context(conv)
+    options = [
+        s for s in (catalog.service_by_id(i) for i in context.get("suggestion_ids", []))
+        if s is not None
+    ]
+    idx = _parse_int(normalized)
+    picks = [idx] if idx is not None else _parse_indices(normalized)
+    if picks and options:
+        chosen = _unique_services(options[i - 1] for i in picks if 1 <= i <= len(options))
+        if chosen:
+            _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in chosen]})
+            if len(chosen) > 1:
+                return [_confirm_multi_message(chosen)]
+            return [_confirm_message(chosen[0])]
+    # Cualquier otra cosa se procesa como texto libre normal.
+    return _handle_menu_categoria(session, client, conv, text, normalized)
 
 
 def _confirm_message(service) -> str:

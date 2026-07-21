@@ -190,6 +190,72 @@ def test_status_query_lists_open_tickets_with_folio(session):
     assert "folio #" in replies[0]
 
 
+def test_status_query_understands_casual_phrasings(session):
+    """Frases reales de clientes (captura 2026-07-21): "como va?" y
+    "mi solicitud como va?" deben responder estatus, no escalar por error."""
+    handle_incoming(session, PHONE, "Necesito un acta de divorcio, soy Juan Pérez")
+    handle_incoming(session, PHONE, "si")
+
+    for phrasing in ["como va?", "mi solicitud como va?", "¿Cómo va mi trámite?",
+                     "que pasó con mi acta", "ya quedó?"]:
+        replies = handle_incoming(session, PHONE, phrasing)
+        assert "Acta de divorcio" in replies[0], phrasing
+        assert "folio #" in replies[0], phrasing
+
+    conv = session.get(Conversation, PHONE)
+    assert conv.state != "escalado"  # preguntar estatus jamás escala
+
+
+def test_ambiguous_keyword_shows_matching_services(session):
+    """Captura 2026-07-21: "quiero un acta" debe listar las actas disponibles,
+    no rendirse con "no logré identificar el trámite"."""
+    handle_incoming(session, PHONE, "hola")
+
+    replies = handle_incoming(session, PHONE, "quiero un acta")
+    assert "parecidos" in replies[0]
+    for name in ["Acta de nacimiento", "Acta de matrimonio",
+                 "Acta de defunción", "Acta de divorcio"]:
+        assert name in replies[0]
+
+    replies = handle_incoming(session, PHONE, "2")
+    assert "Acta de matrimonio" in replies[0]
+    assert "confirmas" in replies[0].lower()
+
+    handle_incoming(session, PHONE, "sí")
+    ticket = session.exec(select(Ticket).where(Ticket.phone == PHONE)).first()
+    assert ticket.service_name == "Acta de matrimonio"
+
+
+def test_ambiguous_keyword_works_as_first_message(session):
+    replies = handle_incoming(session, PHONE, "quiero un acta")
+
+    assert "parecidos" in replies[0]
+
+
+def test_suggestion_menu_accepts_multi_pick(session):
+    handle_incoming(session, PHONE, "quiero un acta")
+
+    replies = handle_incoming(session, PHONE, "1 y 4")
+
+    assert "2 trámites" in replies[0]
+    assert "Acta de nacimiento" in replies[0]
+    assert "Acta de divorcio" in replies[0]
+
+
+def test_gibberish_still_gets_not_recognized_hint(session):
+    handle_incoming(session, PHONE, "hola")
+
+    replies = handle_incoming(session, PHONE, "xyzk qwrt")
+
+    assert "no logré identificar" in replies[0].lower()
+
+
+def test_starting_a_new_procedure_is_not_mistaken_for_status(session):
+    replies = handle_incoming(session, PHONE, "quiero iniciar mi tramite")
+
+    assert "no tienes ninguna solicitud" not in replies[0].lower()
+
+
 def test_status_query_with_no_tickets_redirects_to_services(session):
     replies = handle_incoming(session, PHONE, "cual es el estatus de mi solicitud")
 

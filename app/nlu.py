@@ -8,6 +8,7 @@ bot jamás se queda sin responder por culpa de un servicio externo.
 
 import json
 import logging
+import re
 import unicodedata
 
 from rapidfuzz import fuzz
@@ -109,6 +110,24 @@ FUZZY_MIN_CHARS = 4
 # Tope de servicios por mensaje ("quiero acta, curp, rfc…"): más de esto huele
 # a texto sin sentido y es mejor que lo vea un humano.
 MULTI_MAX_SERVICES = 5
+SUGGESTIONS_MAX = 6
+
+
+def suggestions(text: str) -> list[Service]:
+    """Servicios que comparten alguna palabra clave con el texto ("quiero un
+    acta" → las cuatro actas). Es la red de seguridad cuando deduce() no
+    encontró UN servicio claro: en vez de rendirse, el bot ofrece un mini-menú
+    de los parecidos. Palabras de 4+ letras con frontera izquierda ("acta"
+    matchea "acta"/"actas", no "contacta")."""
+    normalized = _norm(text)
+    if len(normalized) < FUZZY_MIN_CHARS:
+        return []
+    found: list[Service] = []
+    for service, terms in _service_terms():
+        words = {w for term in terms for w in term.split() if len(w) >= 4}
+        if any(re.search(rf"\b{re.escape(w)}", normalized) for w in words):
+            found.append(service)
+    return found[:SUGGESTIONS_MAX]
 
 
 def deduce_all(text: str) -> list[Service]:
