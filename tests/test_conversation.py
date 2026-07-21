@@ -242,6 +242,39 @@ def test_suggestion_menu_accepts_multi_pick(session):
     assert "Acta de divorcio" in replies[0]
 
 
+def test_escalated_client_asking_for_service_gets_attended(session):
+    """Captura 2026-07-21 (2): estando escalado, "quiero un acta" recibía dos
+    veces el 'espera' enlatado — debe ofrecer el mini-menú y registrar."""
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "escalado"
+
+    replies = handle_incoming(session, PHONE, "hola quiero una acta")
+    assert "parecidos" in replies[0]
+    assert "Acta de nacimiento" in replies[0]
+
+    handle_incoming(session, PHONE, "1")
+    replies = handle_incoming(session, PHONE, "sí")
+    assert "folio" in replies[0].lower()
+
+
+def test_escalated_client_with_direct_service_goes_to_confirm(session):
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    replies = handle_incoming(session, PHONE, "necesito un acta de divorcio")
+
+    assert "Acta de divorcio" in replies[0]
+    assert "confirmas" in replies[0].lower()
+
+
+def test_escalated_client_with_vague_message_still_gets_wait_reply(session):
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    replies = handle_incoming(session, PHONE, "gracias, aquí espero")
+
+    assert "asesor te contactará" in replies[0].lower()
+
+
 def test_gibberish_still_gets_not_recognized_hint(session):
     handle_incoming(session, PHONE, "hola")
 

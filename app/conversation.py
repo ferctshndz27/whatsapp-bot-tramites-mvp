@@ -132,9 +132,10 @@ def handle_incoming(
         elif _asks_status(text):
             replies = [_status_reply(session, phone)]
         else:
-            # Nadie ha apagado el agente: el bot nunca deja al cliente sin
-            # respuesta mientras espera, esté o no tomado el ticket.
-            replies = [ESCALATED_WAIT_REPLY]
+            # Aunque esté esperando a un asesor, un pedido concreto de trámite
+            # se atiende (deducción, multi-servicio o mini-menú de parecidos):
+            # el "espera" enlatado es solo para mensajes sin petición clara.
+            replies = _try_service_request(session, conv, text) or [ESCALATED_WAIT_REPLY]
     else:
         normalized = text.strip().lower()
         if _mentions_any(normalized, ANNOYANCE_KEYWORDS):
@@ -435,6 +436,26 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     else:
         confirm_text = catalog.format_category_menu()
     return _bump_or_escalate(session, client, conv, text, "¿Puedes confirmar con 'sí' o 'no'?\n" + confirm_text)
+
+
+def _try_service_request(session: Session, conv: Conversation, text: str) -> list[str] | None:
+    """Resuelve el texto como pedido de servicio: varios de golpe, uno claro,
+    una categoría o parecidos por palabra clave. None si no pide nada."""
+    multi = nlu.deduce_all(text)
+    if multi:
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
+        return [_confirm_multi_message(multi)]
+    service, category = nlu.deduce(text)
+    if service is not None:
+        _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
+        return [_confirm_message(service)]
+    if category is not None:
+        _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
+        return [catalog.format_service_menu(category.id)]
+    options = nlu.suggestions(text)
+    if options:
+        return _suggest_reply(session, conv, options)
+    return None
 
 
 def _suggest_reply(session: Session, conv: Conversation, options: list) -> list[str]:
