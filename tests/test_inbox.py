@@ -4,11 +4,80 @@ from types import SimpleNamespace
 import app.db as db
 from app import whatsapp_client
 from app.inbox import build_conversation_items, inbox_bot_on, inbox_chat, inbox_delete_message, inbox_send
-from app.models import Conversation, Direction, Message
+from app.models import Conversation, Direction, Message, Ticket, TicketActivity, TicketStatus
 
 
 def _request(user: str) -> SimpleNamespace:
     return SimpleNamespace(session={"user": user}, url=SimpleNamespace(path="/inbox/000"))
+
+
+def _ticket(session, phone: str, **kwargs) -> Ticket:
+    ticket = Ticket(
+        phone=phone, category="Servicios básicos", service_id="curp",
+        service_name="CURP certificada", price_info="$80", **kwargs,
+    )
+    session.add(ticket)
+    session.commit()
+    session.refresh(ticket)
+    return ticket
+
+
+def test_manual_reply_auto_claims_and_pauses_agent(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.AUTO1")
+    session.add(_msg("444", Direction.IN, "hola", hours_ago=1))
+    session.add(Conversation(phone="444", state="escalado"))
+    ticket = _ticket(session, "444", escalado=True)
+
+    inbox_send(_request("ana"), "444", body="te ayudo yo")
+
+    session.refresh(ticket)
+    assert ticket.assigned_to == "ana"  # quien responde se queda el chat
+    assert ticket.status == TicketStatus.TOMADO
+    assert ticket.agent_active is False  # y el agente se apaga solo
+    actions = {
+        a.action
+        for a in session.query(TicketActivity).filter(TicketActivity.ticket_id == ticket.id)
+    }
+    assert {"tomado", "agente:pausado-auto"} <= actions
+
+
+def test_manual_reply_pauses_agent_without_stealing_assigned_ticket(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.AUTO2")
+    session.add(_msg("445", Direction.IN, "hola", hours_ago=1))
+    session.add(Conversation(phone="445", state="escalado"))
+    ticket = _ticket(
+        session, "445", escalado=True, assigned_to="bob", status=TicketStatus.TOMADO
+    )
+
+    inbox_send(_request("ana"), "445", body="apoyo con esto")
+
+    session.refresh(ticket)
+    assert ticket.assigned_to == "bob"  # el dueño no cambia
+    assert ticket.agent_active is False
+    entry = session.query(TicketActivity).filter(
+        TicketActivity.action == "agente:pausado-auto"
+    ).one()
+    assert entry.username == "ana"  # queda registrado quién lo apagó
+
+
+def test_bot_reactivation_also_resumes_ticket_agent(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    session.add(Conversation(phone="556", state="escalado"))
+    ticket = _ticket(
+        session, "556", escalado=True, assigned_to="bob",
+        status=TicketStatus.TOMADO, agent_active=False,
+    )
+
+    inbox_bot_on(_request("ana"), "556")
+
+    session.refresh(ticket)
+    assert ticket.agent_active is True
+    entry = session.query(TicketActivity).filter(
+        TicketActivity.action == "agente:reanudado"
+    ).one()
+    assert entry.username == "ana"
 
 
 def _msg(phone: str, direction: Direction, body: str, hours_ago: float = 0) -> Message:

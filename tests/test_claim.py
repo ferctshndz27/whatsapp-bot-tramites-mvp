@@ -1,9 +1,12 @@
 from types import SimpleNamespace
 
+from sqlmodel import select
+
+import app.dashboard as dashboard
 import app.db as db
 from app.conversation import handle_incoming
-from app.dashboard import claim_ticket, release_ticket, update_ticket_status
-from app.models import Direction, Message, Ticket, TicketStatus
+from app.dashboard import claim_ticket, release_ticket, toggle_ticket_agent, update_ticket_status
+from app.models import Direction, Message, Ticket, TicketActivity, TicketStatus
 
 
 def _request(user: str) -> SimpleNamespace:
@@ -82,6 +85,107 @@ def test_status_change_only_by_assignee(monkeypatch, session):
     update_ticket_status(_request("bob"), ticket.id, status="cerrado")
     session.refresh(ticket)
     assert ticket.status == TicketStatus.CERRADO
+
+
+def test_claim_resets_agent_active_to_true(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    # Ticket que quedó pausado de una atención anterior y se soltó.
+    ticket = _make_ticket(session, escalado=True, agent_active=False)
+
+    claim_ticket(_request("ana"), ticket.id)
+
+    session.refresh(ticket)
+    assert ticket.agent_active is True
+
+
+def test_agent_toggle_only_by_assignee(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO, escalado=True)
+
+    toggle_ticket_agent(_request("ana"), ticket.id)
+    session.refresh(ticket)
+    assert ticket.agent_active is True  # sin cambios: ana no es la asignada
+
+    toggle_ticket_agent(_request("bob"), ticket.id)
+    session.refresh(ticket)
+    assert ticket.agent_active is False
+
+    toggle_ticket_agent(_request("bob"), ticket.id)
+    session.refresh(ticket)
+    assert ticket.agent_active is True
+
+
+def test_agent_toggle_logs_activity_with_username(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO, escalado=True)
+
+    toggle_ticket_agent(_request("bob"), ticket.id)
+
+    entry = session.exec(
+        select(TicketActivity).where(TicketActivity.ticket_id == ticket.id)
+    ).one()
+    assert entry.username == "bob"
+    assert entry.action == "agente:pausado"
+
+
+def test_release_resets_agent_and_notifies_escalated_client(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    sent = []
+    monkeypatch.setattr(
+        dashboard.whatsapp_client, "send_text",
+        lambda phone, body: sent.append((phone, body)) or "wamid.NOTICE",
+    )
+    ticket = _make_ticket(
+        session, assigned_to="bob", status=TicketStatus.TOMADO, escalado=True, agent_active=False
+    )
+    session.add(Message(phone=ticket.phone, direction=Direction.IN, body="hola"))
+    session.commit()
+
+    release_ticket(_request("bob"), ticket.id)
+
+    session.refresh(ticket)
+    assert ticket.assigned_to is None
+    assert ticket.agent_active is True  # el bot vuelve a cubrir el chat
+    assert len(sent) == 1
+    assert "revisando más a fondo" in sent[0][1]
+    assert "folio #" in sent[0][1]
+    logged = session.exec(
+        select(Message).where(Message.phone == ticket.phone, Message.direction == Direction.OUT)
+    ).all()
+    assert len(logged) == 1
+
+
+def test_release_of_unescalated_ticket_sends_no_notice(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    sent = []
+    monkeypatch.setattr(
+        dashboard.whatsapp_client, "send_text",
+        lambda phone, body: sent.append((phone, body)) or "wamid.X",
+    )
+    ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO)
+    session.add(Message(phone=ticket.phone, direction=Direction.IN, body="hola"))
+    session.commit()
+
+    release_ticket(_request("bob"), ticket.id)
+
+    assert sent == []
+
+
+def test_release_notice_skipped_when_24h_window_closed(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    sent = []
+    monkeypatch.setattr(
+        dashboard.whatsapp_client, "send_text",
+        lambda phone, body: sent.append((phone, body)) or "wamid.X",
+    )
+    # Escalado pero sin ningún mensaje entrante: ventana cerrada.
+    ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO, escalado=True)
+
+    release_ticket(_request("bob"), ticket.id)
+
+    session.refresh(ticket)
+    assert ticket.assigned_to is None
+    assert sent == []
 
 
 def test_duplicate_webhook_message_ignored(session):

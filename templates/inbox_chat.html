@@ -9,7 +9,11 @@
 <div class="card">
   <p style="margin:0; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
     {% if bot_paused %}
-    <span class="badge pausado">bot pausado</span>
+    {% if ticket and not ticket.agent_active %}
+    <span class="badge pausado">agente apagado — el cliente solo te ve a ti</span>
+    {% else %}
+    <span class="badge esperando">escalado — el agente sigue activo; se apaga al enviar tu primer mensaje</span>
+    {% endif %}
     <form method="post" action="/inbox/{{ phone }}/bot-on" style="display:inline;">
       <button type="submit" class="btn-sm">Reactivar bot</button>
     </form>

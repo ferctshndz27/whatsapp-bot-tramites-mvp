@@ -233,7 +233,10 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "estado": "NVARCHAR(20) NOT NULL DEFAULT 'disponible'",
     },
     "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
-    "tickets": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "tickets": {
+        "habilitado": "BIT NOT NULL DEFAULT 1",
+        "agent_active": "BIT NOT NULL DEFAULT 1",
+    },
     "ticket_activity": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "conversations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
 }
@@ -504,6 +507,7 @@ def archive_ticket(t) -> None:
             "created_at": _naive_utc(t.created_at),
             "updated_at": _naive_utc(t.updated_at),
             "habilitado": t.habilitado,
+            "agent_active": t.agent_active,
         },
     )
 

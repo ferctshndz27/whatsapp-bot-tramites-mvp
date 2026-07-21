@@ -30,6 +30,11 @@ GREETING_WORDS = {
     "buenos dias", "buenos días", "buenas tardes", "buenas noches",
     "hey", "que tal", "qué tal", "saludos",
 }
+STATUS_KEYWORDS = [
+    "estatus", "status", "como va mi", "cómo va mi", "en que va mi", "en qué va mi",
+    "seguimiento de mi", "mi folio", "numero de folio", "número de folio",
+    "avance de mi", "mis solicitudes", "mis tramites", "mis trámites",
+]
 
 # Reglas del agente (definidas por el negocio, 2026-07-19): siempre español,
 # mensajes cortos (<30 palabras, máx. 2 emojis, sin listas salvo que pidan el
@@ -66,6 +71,14 @@ ESCALATED_WAIT_REPLY = (
     "Recibimos tu mensaje. Un asesor te contactará muy pronto — gracias por tu paciencia.\n"
     "Si mientras tanto quieres usar el menú automático, escribe *menu*."
 )
+NO_TICKETS_REPLY = "Aún no tienes ninguna solicitud registrada. Escribe *servicios* para ver la lista."
+STATUS_LABELS = {
+    TicketStatus.NUEVO: "recibido, en espera de asignación",
+    TicketStatus.TOMADO: "en atención",
+    TicketStatus.EN_PROCESO: "en proceso",
+    TicketStatus.CERRADO: "completado ✅",
+}
+STATUS_LIST_LIMIT = 5
 # Selección múltiple pura en un menú: "1 y 2", "1,3", "2 4", "1y2".
 _MULTI_PICK_RE = re.compile(r"\d+(?:(?:\s*(?:[,;+&]|y|e)\s*|\s+)\d+)+")
 
@@ -101,18 +114,21 @@ def handle_incoming(
         replies = ["Por ahora no puedo recibir documentos en este chat. Un asesor te indicará cómo enviarlos."]
     elif conv.state == "escalado":
         normalized = text.strip().lower()
-        if _escalated_ticket_unclaimed(session, phone):
-            if normalized in MENU_KEYWORDS:
-                _set_state(session, conv, "menu_categoria")
-                replies = ["Claro, continuemos aquí. " + catalog.format_category_menu()]
-            else:
-                # Nadie ha tomado el ticket aún: el bot nunca deja al cliente
-                # sin respuesta mientras espera.
-                replies = [ESCALATED_WAIT_REPLY]
-        else:
-            # Un asesor ya está atendiendo este chat desde el panel: el bot
-            # guarda silencio para no interrumpir la conversación humana.
+        ticket = _latest_open_ticket(session, phone)
+        if ticket is not None and not ticket.agent_active:
+            # El colaborador asignado apagó el agente explícitamente para este
+            # ticket: silencio total, ni siquiera responde el estatus. Tomar
+            # el ticket (asignarlo) YA NO basta para callar al bot por sí solo.
             replies = []
+        elif normalized in MENU_KEYWORDS:
+            _set_state(session, conv, "menu_categoria")
+            replies = ["Claro, continuemos aquí. " + catalog.format_category_menu()]
+        elif _mentions_any(normalized, STATUS_KEYWORDS):
+            replies = [_status_reply(session, phone)]
+        else:
+            # Nadie ha apagado el agente: el bot nunca deja al cliente sin
+            # respuesta mientras espera, esté o no tomado el ticket.
+            replies = [ESCALATED_WAIT_REPLY]
     else:
         normalized = text.strip().lower()
         if _mentions_any(normalized, ANNOYANCE_KEYWORDS):
@@ -150,14 +166,28 @@ def _is_rate_limited(session: Session, phone: str) -> bool:
     return len(recent) > RATE_LIMIT_MAX_MESSAGES
 
 
-def _escalated_ticket_unclaimed(session: Session, phone: str) -> bool:
-    ticket = session.exec(
+def _latest_open_ticket(session: Session, phone: str) -> Ticket | None:
+    return session.exec(
         select(Ticket)
         .where(Ticket.phone == phone)
         .where(Ticket.status != TicketStatus.CERRADO)
         .order_by(Ticket.created_at.desc())
     ).first()
-    return ticket is None or ticket.assigned_to is None
+
+
+def _status_reply(session: Session, phone: str) -> str:
+    tickets = session.exec(
+        select(Ticket)
+        .where(Ticket.phone == phone)
+        .where(Ticket.habilitado == True)  # noqa: E712
+        .where(Ticket.service_id != "escalado")  # ese ticket es interno, no un trámite real
+        .order_by(Ticket.created_at.desc())
+        .limit(STATUS_LIST_LIMIT)
+    ).all()
+    if not tickets:
+        return NO_TICKETS_REPLY
+    lines = "\n".join(f"• {t.service_name} (folio #{t.id}): {STATUS_LABELS[t.status]}" for t in tickets)
+    return f"Estatus de tus solicitudes:\n{lines}"
 
 
 def _dispatch(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -173,6 +203,10 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
     if _mentions_any(normalized, SERVICES_KEYWORDS):
         _set_state(session, conv, "menu_categoria")
         return [catalog.format_category_menu()]
+
+    # "¿Cómo va mi trámite?" — funciona desde cualquier estado, sin tocarlo.
+    if _mentions_any(normalized, STATUS_KEYWORDS):
+        return [_status_reply(session, client.phone)]
 
     # Un saludo en medio del flujo se responde con pregunta abierta, sin
     # listar servicios. Se excluye "inicio" (lo maneja su handler) y
@@ -435,12 +469,7 @@ def _escalate(
     original_text: str,
     reply: str | None = None,
 ) -> list[str]:
-    open_ticket = session.exec(
-        select(Ticket)
-        .where(Ticket.phone == client.phone)
-        .where(Ticket.status != TicketStatus.CERRADO)
-        .order_by(Ticket.created_at.desc())
-    ).first()
+    open_ticket = _latest_open_ticket(session, client.phone)
 
     if open_ticket is not None:
         open_ticket.escalado = True

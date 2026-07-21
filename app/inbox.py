@@ -12,10 +12,19 @@ from app import whatsapp_client
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
-from app.conversation import _log_message
+from app.conversation import _latest_open_ticket, _log_message
 from app.db import get_session
 from app.media_store import MEDIA_NAME_RE, save_upload
-from app.models import Client, Conversation, Direction, Message, Ticket
+from app.models import (
+    Client,
+    Conversation,
+    Direction,
+    Message,
+    Ticket,
+    TicketActivity,
+    TicketStatus,
+    utcnow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -171,12 +180,30 @@ def inbox_chat(request: Request, phone: str, err: str | None = None):
     )
 
 
-def _pause_bot(session, phone: str) -> None:
+def _pause_bot(session, phone: str, user: str) -> None:
+    """Primer mensaje humano en un chat: la conversación queda escalada y el
+    agente IA se apaga solo — sin que el asesor tenga que ir al detalle del
+    ticket. Regla: quien responde se queda el chat; si el ticket no tenía
+    dueño se le asigna, para que nunca exista un chat con el agente apagado
+    y sin asesor responsable. Cada cambio queda en TicketActivity."""
     conv = session.get(Conversation, phone)
     if conv and conv.state != "escalado":
         conv.state = "escalado"
         session.add(conv)
-        session.commit()
+    ticket = _latest_open_ticket(session, phone)
+    if ticket is not None:
+        if ticket.assigned_to is None:
+            ticket.assigned_to = user
+            ticket.status = TicketStatus.TOMADO
+            session.add(TicketActivity(ticket_id=ticket.id, username=user, action="tomado"))
+        if ticket.agent_active:
+            ticket.agent_active = False
+            session.add(
+                TicketActivity(ticket_id=ticket.id, username=user, action="agente:pausado-auto")
+            )
+        ticket.updated_at = utcnow()
+        session.add(ticket)
+    session.commit()
 
 
 @router.post("/inbox/{phone}/send")
@@ -209,7 +236,7 @@ def inbox_send(request: Request, phone: str, body: str = Form(...)):
             )
         )
         session.commit()
-        _pause_bot(session, phone)
+        _pause_bot(session, phone, user)
 
     if wamid is None:
         logger.warning("Mensaje a %s registrado pero sin confirmación de envío", phone)
@@ -250,7 +277,7 @@ def inbox_send_media(request: Request, phone: str, file: UploadFile, caption: st
             )
         )
         session.commit()
-        _pause_bot(session, phone)
+        _pause_bot(session, phone, user)
 
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
@@ -305,8 +332,18 @@ def inbox_bot_on(request: Request, phone: str):
         if conv and conv.state == "escalado":
             conv.state = "inicio"
             session.add(conv)
-            session.commit()
-            logger.info("Bot reactivado para %s por %s", phone, user)
+        # Reactivar el bot también reenciende el agente del ticket abierto,
+        # con su registro de quién lo hizo (espejo del apagado).
+        ticket = _latest_open_ticket(session, phone)
+        if ticket is not None and not ticket.agent_active:
+            ticket.agent_active = True
+            ticket.updated_at = utcnow()
+            session.add(ticket)
+            session.add(
+                TicketActivity(ticket_id=ticket.id, username=user, action="agente:reanudado")
+            )
+        session.commit()
+        logger.info("Bot reactivado para %s por %s", phone, user)
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
 

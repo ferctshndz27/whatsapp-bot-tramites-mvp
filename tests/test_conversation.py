@@ -150,7 +150,9 @@ def test_escalated_user_resumes_bot_with_menu_if_ticket_unclaimed(session):
     assert conv.state == "menu_categoria"
 
 
-def test_escalated_user_stays_silent_if_ticket_already_claimed(session):
+def test_escalated_user_keeps_getting_bot_replies_after_being_claimed(session):
+    # Regla: tomar el ticket NO apaga el bot por sí solo — solo lo hace el
+    # colaborador de forma explícita (agent_active=False, ver test siguiente).
     handle_incoming(session, PHONE, "Hola")
     handle_incoming(session, PHONE, "quiero hablar con un asesor")
 
@@ -159,7 +161,63 @@ def test_escalated_user_stays_silent_if_ticket_already_claimed(session):
     session.add(ticket)
     session.commit()
 
+    replies = handle_incoming(session, PHONE, "cualquier cosa")
+    assert replies != []
+    assert "asesor" in replies[0].lower()
+
+
+def test_escalated_user_stays_silent_only_after_agent_explicitly_paused(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    ticket = session.exec(select(Ticket).where(Ticket.phone == PHONE)).first()
+    ticket.assigned_to = "ana"
+    ticket.agent_active = False
+    session.add(ticket)
+    session.commit()
+
     replies = handle_incoming(session, PHONE, "menu")
+    assert replies == []
+
+
+def test_status_query_lists_open_tickets_with_folio(session):
+    handle_incoming(session, PHONE, "Necesito un acta de divorcio, soy Juan Pérez")
+    handle_incoming(session, PHONE, "si")
+
+    replies = handle_incoming(session, PHONE, "cual es el estatus de mi tramite")
+
+    assert "Acta de divorcio" in replies[0]
+    assert "folio #" in replies[0]
+
+
+def test_status_query_with_no_tickets_redirects_to_services(session):
+    replies = handle_incoming(session, PHONE, "cual es el estatus de mi solicitud")
+
+    assert "no tienes ninguna solicitud" in replies[0].lower()
+
+
+def test_status_query_works_while_escalated_and_agent_active(session):
+    handle_incoming(session, PHONE, "Necesito un acta de divorcio, soy Juan Pérez")
+    handle_incoming(session, PHONE, "si")
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    replies = handle_incoming(session, PHONE, "estatus")
+
+    assert "Acta de divorcio" in replies[0]
+
+
+def test_status_query_blocked_when_agent_explicitly_paused(session):
+    handle_incoming(session, PHONE, "Necesito un acta de divorcio, soy Juan Pérez")
+    handle_incoming(session, PHONE, "si")
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    ticket = session.exec(select(Ticket).where(Ticket.phone == PHONE)).first()
+    ticket.assigned_to = "ana"
+    ticket.agent_active = False
+    session.add(ticket)
+    session.commit()
+
+    replies = handle_incoming(session, PHONE, "estatus")
     assert replies == []
 
     conv = session.get(Conversation, PHONE)

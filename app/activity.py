@@ -35,6 +35,9 @@ ACTION_LABELS = {
     "soltado": "soltó la solicitud",
     "cerrado": "cerró la solicitud ✅",
     "nota": "agregó una nota",
+    "agente:pausado": "apagó el agente IA",
+    "agente:pausado-auto": "apagó el agente IA (al responder por bandeja)",
+    "agente:reanudado": "reanudó el agente IA",
 }
 
 

@@ -38,6 +38,7 @@ _USER_COLUMNS_ADDED_AFTER_LAUNCH = {
 # message/teammessage/user ya lo tienen en sus dicts propios de arriba.
 _HABILITADO_COLUMN = {"habilitado": "BOOLEAN NOT NULL DEFAULT 1"}
 _TABLES_NEEDING_HABILITADO = ("client", "conversation", "ticket", "invitation", "ticketactivity")
+_TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {"agent_active": "BOOLEAN NOT NULL DEFAULT 1"}
 
 
 def init_db() -> None:
@@ -45,6 +46,7 @@ def init_db() -> None:
     _add_missing_columns("message", _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("teammessage", _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("user", _USER_COLUMNS_ADDED_AFTER_LAUNCH)
+    _add_missing_columns("ticket", _TICKET_COLUMNS_ADDED_AFTER_LAUNCH)
     for table in _TABLES_NEEDING_HABILITADO:
         _add_missing_columns(table, _HABILITADO_COLUMN)
     with engine.begin() as conn:

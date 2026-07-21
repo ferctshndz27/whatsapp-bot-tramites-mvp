@@ -62,6 +62,10 @@ class Ticket(SQLModel, table=True):
     escalado: bool = False
     notes: str | None = None
     assigned_to: str | None = None
+    # Si el ticket está escalado, controla si el bot le sigue respondiendo al
+    # cliente. Tomar el ticket YA NO lo apaga por sí solo — debe apagarlo el
+    # colaborador asignado explícitamente (ver /tickets/{id}/agent-toggle).
+    agent_active: bool = True
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True

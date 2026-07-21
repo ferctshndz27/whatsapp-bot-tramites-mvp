@@ -15,7 +15,16 @@ from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
-from app.models import Invitation, Message, Ticket, TicketActivity, TicketStatus, User, utcnow
+from app.models import (
+    Direction,
+    Invitation,
+    Message,
+    Ticket,
+    TicketActivity,
+    TicketStatus,
+    User,
+    utcnow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -396,7 +405,9 @@ def claim_ticket(request: Request, ticket_id: int):
                 Ticket.assigned_to.is_(None),
                 Ticket.status != TicketStatus.CERRADO,
             )
-            .values(assigned_to=user, status=TicketStatus.TOMADO, updated_at=utcnow())
+            # agent_active=True: quien reclama un ticket arranca con el agente
+            # activo por default; lo apaga explícitamente si lo decide (abajo).
+            .values(assigned_to=user, status=TicketStatus.TOMADO, agent_active=True, updated_at=utcnow())
         )
         session.commit()
 
@@ -409,6 +420,19 @@ def claim_ticket(request: Request, ticket_id: int):
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
 
+# Aviso de cortesía al soltar un ticket escalado: el cliente no debe sentir
+# que lo dejaron colgado ni enterarse del movimiento interno de asesores.
+RELEASE_NOTICE_SERVICE = (
+    "Seguimos trabajando para ti 🙌 Tu solicitud de '{service}' (folio #{folio}) "
+    "se está revisando más a fondo. Un asesor te contactará pronto; "
+    "si necesitas algo más mientras tanto, escribe *menu*."
+)
+RELEASE_NOTICE_GENERIC = (
+    "Seguimos trabajando para ti 🙌 Tu caso se está revisando más a fondo. "
+    "Un asesor te contactará pronto; si necesitas algo más mientras tanto, escribe *menu*."
+)
+
+
 @router.post("/tickets/{ticket_id}/release")
 def release_ticket(request: Request, ticket_id: int):
     user = _current_user(request)
@@ -419,7 +443,14 @@ def release_ticket(request: Request, ticket_id: int):
         result = session.exec(
             update(Ticket)
             .where(Ticket.id == ticket_id, Ticket.assigned_to == user)
-            .values(assigned_to=None, status=TicketStatus.NUEVO, updated_at=utcnow())
+            # agent_active=True: al soltar, el bot vuelve a cubrir al cliente —
+            # nunca debe quedar un chat sin asesor Y con el agente apagado.
+            .values(
+                assigned_to=None,
+                status=TicketStatus.NUEVO,
+                agent_active=True,
+                updated_at=utcnow(),
+            )
         )
         session.commit()
 
@@ -427,7 +458,39 @@ def release_ticket(request: Request, ticket_id: int):
         with get_session() as session:
             _log_activity(session, ticket_id, user, "soltado")
         logger.info("Ticket #%s soltado por %s", ticket_id, user)
+        _notify_release(ticket_id)
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
+def _notify_release(ticket_id: int) -> None:
+    """Mensaje best-effort al cliente cuando su ticket escalado queda sin
+    asesor, solo dentro de la ventana de 24h de WhatsApp."""
+    from app.inbox import _window_open
+
+    with get_session() as session:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is None or not ticket.escalado:
+            return
+        phone = ticket.phone
+        last_in = session.exec(
+            select(Message)
+            .where(Message.phone == phone, Message.direction == Direction.IN)
+            .order_by(Message.created_at.desc())
+        ).first()
+        if not _window_open(last_in.created_at if last_in else None):
+            logger.info("Sin aviso de soltado a %s: ventana de 24h cerrada", phone)
+            return
+        if ticket.service_id == "escalado":
+            body = RELEASE_NOTICE_GENERIC
+        else:
+            body = RELEASE_NOTICE_SERVICE.format(service=ticket.service_name, folio=ticket.id)
+        wamid = whatsapp_client.send_text(phone, body)
+        session.add(
+            Message(phone=phone, direction=Direction.OUT, body=body, wa_message_id=wamid)
+        )
+        session.commit()
+    if wamid is None:
+        logger.warning("Aviso de soltado a %s sin confirmación de envío", phone)
 
 
 @router.post("/tickets/{ticket_id}/delete")
@@ -449,6 +512,29 @@ def delete_ticket(request: Request, ticket_id: int):
             _log_activity(session, ticket_id, user, state)
             log_admin(user, f"ticket:{state}", str(ticket_id))
             logger.info("Ticket #%s %s por %s", ticket_id, state, user)
+    return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
+@router.post("/tickets/{ticket_id}/agent-toggle")
+def toggle_ticket_agent(request: Request, ticket_id: int):
+    """Apaga o reanuda el agente IA para este ticket. Solo puede hacerlo quien
+    lo tiene asignado — es la acción explícita que exige la regla de negocio:
+    escalar un ticket NUNCA calla al bot por sí solo, tiene que apagarlo el
+    colaborador. Cada cambio queda en TicketActivity (quién y cuándo)."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    with get_session() as session:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is not None and ticket.assigned_to == user:
+            ticket.agent_active = not ticket.agent_active
+            ticket.updated_at = utcnow()
+            session.add(ticket)
+            session.commit()
+            action = "agente:reanudado" if ticket.agent_active else "agente:pausado"
+            _log_activity(session, ticket_id, user, action)
+            logger.info("Ticket #%s: %s (por %s)", ticket_id, action, user)
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
 
