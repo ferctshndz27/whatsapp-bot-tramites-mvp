@@ -221,25 +221,9 @@ def register_submit(
     return RedirectResponse("/", status_code=303)
 
 
-def _normalize_mx_phone(raw: str) -> str | None:
-    """Convierte lo tecleado al formato de WhatsApp para celulares mexicanos
-    (521 + 10 dígitos). Acepta 10 dígitos, 52+10 o 521+10; None si no cuadra."""
-    digits = "".join(c for c in raw if c.isdigit())
-    if len(digits) == 10:
-        return "521" + digits
-    if len(digits) == 12 and digits.startswith("52"):
-        return "521" + digits[2:]
-    if len(digits) == 13 and digits.startswith("521"):
-        return digits
-    return None
-
-
-def _invitation_message(token: str, request: Request) -> str:
-    base = str(request.base_url).rstrip("/")
-    return (
-        "Te invitamos a colaborar en el panel de trámites.\n"
-        f"Regístrate en {base}/register con el código de invitación: {token}"
-    )
+# El código de invitación se comparte manualmente (botón "Copiar código"):
+# el envío por WhatsApp se eliminó porque Meta solo entrega mensajes libres
+# a números con ventana de 24h abierta y fallaba en silencio con números nuevos.
 
 
 @router.get("/invitations")
@@ -281,64 +265,22 @@ def invitations_toggle(request: Request, invitation_id: int):
 
 
 @router.post("/invitations")
-def invitations_create(request: Request, phone: str = Form("")):
+def invitations_create(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     if not is_admin(user):
         return RedirectResponse("/", status_code=303)
 
-    phone = phone.strip()
-    normalized = _normalize_mx_phone(phone) if phone else None
-    if phone and normalized is None:
-        with get_session() as session:
-            invitations = session.exec(
-                select(Invitation).order_by(Invitation.created_at.desc())
-            ).all()
-        return templates.TemplateResponse(
-            "invitations.html",
-            {
-                "request": request,
-                "user": user,
-                "invitations": invitations,
-                "error": "Número inválido: escribe solo los 10 dígitos del celular (ej. 3312345678).",
-            },
-        )
-
     token = secrets.token_urlsafe(9)
-    sent = False
-    replaced_tokens: list[str] = []
-
     with get_session() as session:
-        if normalized:
-            # Un solo código activo por número: volver a generar para el mismo
-            # celular cancela el/los códigos pendientes anteriores (regenerar).
-            previous = session.exec(
-                select(Invitation).where(
-                    Invitation.phone == normalized,
-                    Invitation.used_at.is_(None),
-                    Invitation.habilitado == True,  # noqa: E712
-                )
-            ).all()
-            for prev in previous:
-                prev.habilitado = False
-                session.add(prev)
-                replaced_tokens.append(prev.token)
-        session.add(Invitation(token=token, phone=normalized, created_by=user))
+        session.add(Invitation(token=token, phone=None, created_by=user))
         session.commit()
+        invitations = session.exec(
+            select(Invitation).order_by(Invitation.created_at.desc())
+        ).all()
 
-        if normalized:
-            sent = whatsapp_client.send_text(normalized, _invitation_message(token, request)) is not None
-            if sent:
-                logger.info("Invitación enviada por WhatsApp a %s (por %s)", normalized, user)
-            else:
-                logger.warning("No se pudo enviar la invitación por WhatsApp a %s", normalized)
-
-        invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
-
-    for prev_token in replaced_tokens:
-        log_admin(user, "invitacion:cancelada", prev_token)
-
+    logger.info("Invitación generada por %s", user)
     return templates.TemplateResponse(
         "invitations.html",
         {
@@ -346,9 +288,6 @@ def invitations_create(request: Request, phone: str = Form("")):
             "user": user,
             "invitations": invitations,
             "new_token": token,
-            "new_phone": normalized or "",
-            "sent": sent,
-            "replaced": bool(replaced_tokens),
         },
     )
 
