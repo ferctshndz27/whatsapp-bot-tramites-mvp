@@ -83,7 +83,8 @@ _SCHEMA_DDL = [
         password_hash NVARCHAR(200) NOT NULL,
         is_admin      BIT           NOT NULL DEFAULT 0,
         habilitado    BIT           NOT NULL DEFAULT 1,
-        estado        NVARCHAR(20)  NOT NULL DEFAULT 'disponible'
+        estado        NVARCHAR(20)  NOT NULL DEFAULT 'disponible',
+        phone         NVARCHAR(20)  NULL
     )
     """,
     """
@@ -231,6 +232,7 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
     "app_users": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "estado": "NVARCHAR(20) NOT NULL DEFAULT 'disponible'",
+        "phone": "NVARCHAR(20) NULL",
     },
     "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "tickets": {
@@ -430,6 +432,7 @@ def archive_user(u) -> None:
             "is_admin": u.is_admin,
             "habilitado": u.habilitado,
             "estado": u.estado,
+            "phone": u.phone,
         },
     )
 

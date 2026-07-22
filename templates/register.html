@@ -10,6 +10,10 @@
       <label for="username">Usuario</label>
       <input type="text" id="username" name="username" autocomplete="username" required minlength="3" maxlength="30">
       <br><br>
+      <label for="phone">Celular — 10 dígitos</label>
+      <input type="tel" id="phone" name="phone" autocomplete="tel" required inputmode="numeric"
+             pattern="[0-9\s\-]{10,15}" placeholder="3312345678">
+      <br><br>
       <label for="password">Contraseña</label>
       <input type="password" id="password" name="password" autocomplete="new-password" required minlength="8">
       <br><br>

@@ -42,12 +42,13 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Usuario</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr>
+        <tr><th>Usuario</th><th>Teléfono</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr>
       </thead>
       <tbody>
         {% for u in users %}
         <tr>
           <td>{{ u.username }}{% if u.username == user %} <span style="color:var(--text-muted); font-size:.85rem;">(tú)</span>{% endif %}</td>
+          <td>{{ u.phone or '—' }}</td>
           <td>
             {% if u.is_admin %}
             <span class="badge asignada">admin</span>

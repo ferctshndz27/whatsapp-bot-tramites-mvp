@@ -174,6 +174,7 @@ def register_submit(
     username: str = Form(...),
     password: str = Form(...),
     code: str = Form(...),
+    phone: str = Form(...),
 ):
     username = username.strip().lower()
     # ponytail: reusa el lockout del login con una llave global para frenar
@@ -189,6 +190,15 @@ def register_submit(
         _record_failed_login("__register__")
         logger.warning("Registro rechazado para %s: %s", username, error)
         return templates.TemplateResponse("register.html", {"request": request, "error": error})
+
+    normalized_phone = _normalize_mx_phone(phone)
+    if normalized_phone is None:
+        _record_failed_login("__register__")
+        logger.warning("Registro rechazado para %s: celular inválido", username)
+        return templates.TemplateResponse(
+            "register.html",
+            {"request": request, "error": "Celular inválido: escribe los 10 dígitos (ej. 3312345678)."},
+        )
 
     with get_session() as session:
         code_ok, invitation = _code_grants_registration(session, code)
@@ -209,10 +219,12 @@ def register_submit(
             )
 
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-        session.add(User(username=username, password_hash=hashed.decode()))
+        session.add(User(username=username, password_hash=hashed.decode(), phone=normalized_phone))
         if invitation is not None:
             invitation.used_at = utcnow()
             invitation.used_by = username
+            # El histórico de invitaciones muestra código + teléfono + quién lo usó.
+            invitation.phone = normalized_phone
             session.add(invitation)
         session.commit()
 
@@ -224,6 +236,19 @@ def register_submit(
 # El código de invitación se comparte manualmente (botón "Copiar código"):
 # el envío por WhatsApp se eliminó porque Meta solo entrega mensajes libres
 # a números con ventana de 24h abierta y fallaba en silencio con números nuevos.
+
+
+def _normalize_mx_phone(raw: str) -> str | None:
+    """Convierte lo tecleado al formato de WhatsApp para celulares mexicanos
+    (521 + 10 dígitos). Acepta 10 dígitos, 52+10 o 521+10; None si no cuadra."""
+    digits = "".join(c for c in raw if c.isdigit())
+    if len(digits) == 10:
+        return "521" + digits
+    if len(digits) == 12 and digits.startswith("52"):
+        return "521" + digits[2:]
+    if len(digits) == 13 and digits.startswith("521"):
+        return digits
+    return None
 
 
 @router.get("/invitations")

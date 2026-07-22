@@ -66,14 +66,34 @@ def test_register_submit_consumes_invitation(monkeypatch, session):
     session.add(Invitation(token="tok456", created_by="ana"))
     session.commit()
 
-    register_submit(_request(), username="carlos", password="clave1234", code="tok456")
+    register_submit(
+        _request(), username="carlos", password="clave1234", code="tok456", phone="33 1234 5678"
+    )
 
     user = session.exec(select(User).where(User.username == "carlos")).first()
     assert user is not None
+    assert user.phone == "5213312345678"  # se guarda normalizado con el usuario
 
     invitation = session.exec(select(Invitation).where(Invitation.token == "tok456")).first()
     assert invitation.used_at is not None
     assert invitation.used_by == "carlos"
+    assert invitation.phone == "5213312345678"  # el histórico muestra el teléfono
+
+
+def test_register_submit_rejects_invalid_phone(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(settings, "registration_code", "")
+    session.add(Invitation(token="tok999", created_by="ana"))
+    session.commit()
+
+    response = register_submit(
+        _request(), username="dora", password="clave1234", code="tok999", phone="12345"
+    )
+
+    assert session.exec(select(User).where(User.username == "dora")).first() is None
+    assert "10 dígitos" in response.body.decode()
+    invitation = session.exec(select(Invitation).where(Invitation.token == "tok999")).first()
+    assert invitation.used_at is None  # el código sigue disponible
 
 
 def test_register_submit_rejects_reused_invitation(monkeypatch, session):
@@ -82,7 +102,11 @@ def test_register_submit_rejects_reused_invitation(monkeypatch, session):
     session.add(Invitation(token="tok789", created_by="ana"))
     session.commit()
 
-    register_submit(_request(), username="primero", password="clave1234", code="tok789")
-    register_submit(_request(), username="segundo", password="clave1234", code="tok789")
+    register_submit(
+        _request(), username="primero", password="clave1234", code="tok789", phone="3312345678"
+    )
+    register_submit(
+        _request(), username="segundo", password="clave1234", code="tok789", phone="3387654321"
+    )
 
     assert session.exec(select(User).where(User.username == "segundo")).first() is None

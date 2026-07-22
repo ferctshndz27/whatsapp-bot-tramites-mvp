@@ -79,6 +79,9 @@ class User(SQLModel, table=True):
     habilitado: bool = True
     # Disponibilidad visible al equipo: disponible | ocupado | ausente
     estado: str = "disponible"
+    # Celular del colaborador (formato WhatsApp 521 + 10 dígitos), capturado
+    # en el registro.
+    phone: str | None = None
 
 
 class FollowUp(SQLModel, table=True):

@@ -34,7 +34,8 @@ ARCHIVE_DDL = [
     """CREATE TABLE app_users (
         source_id INTEGER PRIMARY KEY, username TEXT UNIQUE,
         password_hash TEXT, is_admin INTEGER DEFAULT 0,
-        habilitado INTEGER DEFAULT 1, estado TEXT DEFAULT 'disponible')""",
+        habilitado INTEGER DEFAULT 1, estado TEXT DEFAULT 'disponible',
+        phone TEXT)""",
     """CREATE TABLE followups (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT, note TEXT,
         due_at TIMESTAMP, done_at TIMESTAMP, habilitado INTEGER DEFAULT 1,
