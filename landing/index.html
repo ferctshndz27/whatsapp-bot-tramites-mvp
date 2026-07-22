@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consultoría y Soluciones Empresariales — Gestoría de trámites en México</title>
+<meta name="description" content="Consultoría y Soluciones Empresariales: gestión de trámites en México — actas, CURP, SAT, IMSS, Infonavit, Afore y más. Atención inmediata por WhatsApp.">
+<meta property="og:title" content="Consultoría y Soluciones Empresariales">
+<meta property="og:description" content="Tus trámites resueltos sin filas ni vueltas. Escríbenos por WhatsApp.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "ProfessionalService",
+  "name": "Consultoría y Soluciones Empresariales",
+  "description": "Gestoría y consultoría de trámites en México",
+  "telephone": "+52 56 5861 1307",
+  "areaServed": "MX"
+}
+</script>
+<style>
+  :root{
+    --black:#0b0b0d; --slate:#131316; --card:#1a1a1f;
+    --gold:#c9a227; --gold-2:#e9c767; --gold-soft:#f3dfa0;
+    --text:#eae7e0; --muted:#a7a29a; --line:rgba(201,162,39,.28);
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} *{transition:none!important;animation:none!important} }
+  body{
+    margin:0; background:var(--black); color:var(--text);
+    font-family:"Montserrat",system-ui,sans-serif; font-size:16px; line-height:1.65;
+  }
+  h1,h2,h3{font-family:"Cormorant Garamond",Georgia,serif; font-weight:600; line-height:1.15; margin:0}
+  a{color:var(--gold-2)}
+  a:focus-visible,button:focus-visible{outline:3px solid var(--gold-2); outline-offset:3px; border-radius:4px}
+  img{max-width:100%}
+  .wrap{max-width:1120px; margin:0 auto; padding:0 1.25rem}
+  .eyebrow{
+    display:inline-block; letter-spacing:.35em; text-transform:uppercase;
+    font-size:.72rem; font-weight:600; color:var(--gold-2); margin-bottom:1rem;
+  }
+  .gold-text{
+    background:linear-gradient(120deg,#f6e27a 0%, #c9a227 45%, #8a6a12 70%, #e9c767 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+
+  /* ---- Header ---- */
+  header{
+    position:sticky; top:0; z-index:20; background:rgba(11,11,13,.92);
+    backdrop-filter:blur(8px); border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  .nav{display:flex; align-items:center; gap:1.5rem; min-height:72px}
+  .brand{display:flex; align-items:center; gap:.7rem; text-decoration:none; color:var(--text)}
+  .monogram{
+    font-family:"Cormorant Garamond",serif; font-weight:700; font-size:1.7rem; line-height:1;
+    letter-spacing:-.05em;
+  }
+  .brand small{display:block; font-size:.62rem; letter-spacing:.22em; text-transform:uppercase; color:var(--muted)}
+  nav.menu{margin-left:auto; display:flex; gap:1.4rem}
+  nav.menu a{
+    color:var(--muted); text-decoration:none; font-size:.85rem; font-weight:500;
+    letter-spacing:.05em; padding:.5rem 0; transition:color .15s;
+  }
+  nav.menu a:hover{color:var(--gold-2)}
+  .btn{
+    display:inline-flex; align-items:center; gap:.55rem; text-decoration:none; cursor:pointer;
+    background:linear-gradient(120deg,var(--gold-2),var(--gold)); color:#171204;
+    font-weight:700; font-size:.9rem; letter-spacing:.03em;
+    padding:.8rem 1.6rem; border:0; border-radius:999px; min-height:44px;
+    transition:transform .15s, box-shadow .15s;
+  }
+  .btn:hover{transform:translateY(-1px); box-shadow:0 8px 24px rgba(201,162,39,.35)}
+  .btn.ghost{
+    background:transparent; color:var(--gold-2); border:1px solid var(--line);
+  }
+  .btn.ghost:hover{border-color:var(--gold-2); box-shadow:none}
+
+  /* ---- Hero ---- */
+  .hero{
+    position:relative; padding:6.5rem 0 5.5rem; overflow:hidden;
+    background:
+      radial-gradient(900px 420px at 85% -10%, rgba(201,162,39,.14), transparent 60%),
+      radial-gradient(700px 380px at -10% 110%, rgba(201,162,39,.08), transparent 60%),
+      var(--slate);
+    border-bottom:1px solid var(--line);
+  }
+  .hero .wrap{display:grid; grid-template-columns:1.25fr .75fr; gap:3rem; align-items:center}
+  .hero h1{font-size:clamp(2.4rem,5.2vw,4rem); margin:.25rem 0 1.25rem}
+  .hero p.lead{color:var(--muted); font-size:1.08rem; max-width:34rem; margin:0 0 2rem}
+  .hero .cta-row{display:flex; gap:1rem; flex-wrap:wrap}
+  .hero-badge{
+    justify-self:center; width:min(300px,80%); aspect-ratio:1; border-radius:50%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+    border:1px solid var(--line);
+    background:radial-gradient(circle at 30% 25%, #1e1e24, #101013 70%);
+    box-shadow:inset 0 0 60px rgba(201,162,39,.07), 0 30px 60px rgba(0,0,0,.5);
+  }
+  .hero-badge .monogram{font-size:5.2rem}
+  .hero-badge span{letter-spacing:.3em; font-size:.6rem; text-transform:uppercase; color:var(--muted); margin-top:.6rem}
+
+  /* ---- Sections ---- */
+  section{padding:5rem 0}
+  .section-head{text-align:center; max-width:620px; margin:0 auto 3rem}
+  .section-head h2{font-size:clamp(1.9rem,3.6vw,2.7rem)}
+  .section-head p{color:var(--muted); margin:.9rem 0 0}
+
+  /* ---- Servicios ---- */
+  .grid{display:grid; grid-template-columns:repeat(4,1fr); gap:1.1rem}
+  .card{
+    background:var(--card); border:1px solid rgba(255,255,255,.05);
+    border-radius:var(--radius); padding:1.7rem 1.4rem; text-align:center;
+    transition:border-color .2s, transform .2s;
+  }
+  .card:hover{border-color:var(--line); transform:translateY(-3px)}
+  .card .icon{
+    width:54px; height:54px; margin:0 auto 1rem; border-radius:14px;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(201,162,39,.1); border:1px solid var(--line);
+  }
+  .card .icon svg{width:26px; height:26px; stroke:var(--gold-2); fill:none; stroke-width:1.6}
+  .card h3{font-family:"Montserrat",sans-serif; font-size:.95rem; font-weight:600; letter-spacing:.02em}
+  .card p{color:var(--muted); font-size:.82rem; margin:.5rem 0 0}
+
+  /* ---- Banda CTA ---- */
+  .cta-band{
+    background:linear-gradient(115deg,#e9c767 0%, #c9a227 55%, #a37f16 100%);
+    border-radius:calc(var(--radius) + 4px); color:#171204;
+    display:flex; align-items:center; gap:2rem; flex-wrap:wrap;
+    padding:2rem 2.5rem; box-shadow:0 24px 60px rgba(201,162,39,.22);
+  }
+  .cta-band .phone{font-size:1.7rem; font-weight:700; font-family:"Montserrat",sans-serif; white-space:nowrap}
+  .cta-band small{display:block; text-transform:uppercase; letter-spacing:.2em; font-size:.65rem; font-weight:700; opacity:.75}
+  .cta-band p{margin:0; flex:1; min-width:220px; font-size:.95rem; font-weight:500}
+  .cta-band .btn{background:#171204; color:var(--gold-soft)}
+
+  /* ---- Proceso ---- */
+  .steps{display:grid; grid-template-columns:repeat(3,1fr); gap:1.5rem; counter-reset:paso}
+  .step{
+    position:relative; text-align:center; padding:2.4rem 1.5rem 1.8rem;
+    border:1px solid rgba(255,255,255,.06); border-radius:var(--radius); background:var(--slate);
+  }
+  .step::before{
+    counter-increment:paso; content:"0" counter(paso);
+    position:absolute; top:-1.1rem; left:50%; transform:translateX(-50%);
+    background:linear-gradient(120deg,var(--gold-2),var(--gold)); color:#171204;
+    font-weight:700; font-size:.85rem; padding:.35rem .85rem; border-radius:999px;
+  }
+  .step h3{font-family:"Montserrat",sans-serif; font-size:1rem; font-weight:600}
+  .step p{color:var(--muted); font-size:.88rem; margin:.6rem 0 0}
+
+  /* ---- Footer ---- */
+  footer{border-top:1px solid var(--line); background:var(--slate); padding:3.5rem 0 2rem}
+  .foot{display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:2.5rem}
+  .foot h3{font-family:"Montserrat",sans-serif; font-size:.8rem; letter-spacing:.18em; text-transform:uppercase; color:var(--gold-2)}
+  .foot ul{list-style:none; margin:1rem 0 0; padding:0}
+  .foot li{margin:.55rem 0; color:var(--muted); font-size:.9rem}
+  .foot a{color:var(--muted); text-decoration:none}
+  .foot a:hover{color:var(--gold-2)}
+  .copy{margin-top:2.6rem; padding-top:1.2rem; border-top:1px solid rgba(255,255,255,.06);
+        color:var(--muted); font-size:.78rem; text-align:center; letter-spacing:.04em}
+
+  /* ---- WhatsApp flotante ---- */
+  .wa-float{
+    position:fixed; right:1.2rem; bottom:1.2rem; z-index:30;
+    width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:#25d366; box-shadow:0 10px 26px rgba(0,0,0,.45);
+  }
+  .wa-float svg{width:30px; height:30px; fill:#fff}
+
+  @media (max-width:900px){
+    .hero .wrap{grid-template-columns:1fr}
+    .hero-badge{display:none}
+    .grid{grid-template-columns:repeat(2,1fr)}
+    .steps{grid-template-columns:1fr}
+    .foot{grid-template-columns:1fr}
+    nav.menu{display:none}
+  }
+  @media (max-width:480px){ .grid{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#inicio" aria-label="Consultoría y Soluciones Empresariales — inicio">
+      <span class="monogram gold-text" aria-hidden="true">CSE</span>
+      <span>
+        Consultoría y Soluciones
+        <small>Empresariales</small>
+      </span>
+    </a>
+    <nav class="menu" aria-label="Principal">
+      <a href="#servicios">Servicios</a>
+      <a href="#proceso">Proceso</a>
+      <a href="#contacto">Contacto</a>
+    </nav>
+    <a class="btn" href="https://wa.me/5215658611307?text=Hola%2C%20quiero%20informes%20de%20un%20tr%C3%A1mite" target="_blank" rel="noopener">WhatsApp</a>
+  </div>
+</header>
+
+<main id="inicio">
+  <!-- ===== Hero ===== -->
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Gestoría profesional en México</span>
+        <h1>Tus trámites, <span class="gold-text">resueltos</span><br>sin filas ni vueltas.</h1>
+        <p class="lead">
+          Gestionamos por ti actas, CURP, trámites del SAT, IMSS, Infonavit y más.
+          Escríbenos por WhatsApp: nuestro asistente te atiende al momento y un asesor
+          humano da seguimiento a tu caso de principio a fin.
+        </p>
+        <div class="cta-row">
+          <a class="btn" href="https://wa.me/5215658611307?text=Hola%2C%20quiero%20informes%20de%20un%20tr%C3%A1mite" target="_blank" rel="noopener">Iniciar mi trámite</a>
+          <a class="btn ghost" href="#servicios">Ver servicios</a>
+        </div>
+      </div>
+      <div class="hero-badge" aria-hidden="true">
+        <span class="monogram gold-text">CSE</span>
+        <span>Consultoría y Soluciones Empresariales</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Servicios ===== -->
+  <section id="servicios">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow">Lo que hacemos</span>
+        <h2>Servicios y trámites</h2>
+        <p>Atendemos tu solicitud por WhatsApp, cotizamos sin costo y te entregamos tu documento listo.</p>
+      </div>
+      <div class="grid">
+        <article class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4"/><path d="M10 12h6M10 16h6"/></svg></div>
+          <h3>Actas certificadas</h3>
+          <p>Nacimiento, matrimonio, defunción y divorcio.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="11" r="2"/><path d="M13 9h5M13 13h5M6 16h12"/></svg></div>
+          <h3>CURP y documentos</h3>
+          <p>Descarga y certificación de CURP y recibos CFE.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20h16M6 20V9l6-5 6 5v11"/><path d="M10 20v-5h4v5"/></svg></div>
+          <h3>Servicios SAT</h3>
+          <p>Constancias, RFC y situación fiscal.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div>
+          <h3>Servicios IMSS</h3>
+          <p>Semanas cotizadas, vigencia de derechos y NSS.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg></div>
+          <h3>Infonavit</h3>
+          <p>Precalificación, estados de cuenta y gestiones.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div>
+          <h3>Pensiones</h3>
+          <p>Asesoría y trámite de pensión ante IMSS e ISSSTE.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l3-3 3 2 5-6"/></svg></div>
+          <h3>Afore</h3>
+          <p>Localización, registro y retiros parciales.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg></div>
+          <h3>Buró de crédito</h3>
+          <p>Reporte especial y aclaraciones.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Banda CTA ===== -->
+  <div class="wrap">
+    <div class="cta-band">
+      <div>
+        <small>Atención inmediata</small>
+        <span class="phone">+52 56 5861 1307</span>
+      </div>
+      <p>Nuestro asistente virtual responde al instante, 24/7 — y un asesor humano toma tu caso en horario de oficina.</p>
+      <a class="btn" href="https://wa.me/5215658611307?text=Hola%2C%20necesito%20ayuda%20con%20un%20tr%C3%A1mite" target="_blank" rel="noopener">Escribir por WhatsApp</a>
+    </div>
+  </div>
+
+  <!-- ===== Proceso ===== -->
+  <section id="proceso">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow">Así trabajamos</span>
+        <h2>Tres pasos, cero filas</h2>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h3>Cuéntanos qué necesitas</h3>
+          <p>Escríbenos por WhatsApp. Nuestro asistente identifica tu trámite y registra tu solicitud con folio al momento.</p>
+        </div>
+        <div class="step">
+          <h3>Cotizamos y reunimos requisitos</h3>
+          <p>Un asesor te confirma costo y documentos necesarios, sin letras chiquitas.</p>
+        </div>
+        <div class="step">
+          <h3>Recibe tu trámite listo</h3>
+          <p>Te entregamos tu documento y damos seguimiento hasta que quede resuelto.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ===== Footer ===== -->
+<footer id="contacto">
+  <div class="wrap foot">
+    <div>
+      <a class="brand" href="#inicio" style="text-decoration:none">
+        <span class="monogram gold-text" aria-hidden="true">CSE</span>
+        <span>Consultoría y Soluciones<small>Empresariales</small></span>
+      </a>
+      <p style="color:var(--muted); font-size:.88rem; margin-top:1rem; max-width:26rem">
+        Consultoría y gestión de trámites en México. Atención personalizada por WhatsApp
+        con seguimiento de principio a fin.
+      </p>
+    </div>
+    <div>
+      <h3>Servicios</h3>
+      <ul>
+        <li><a href="#servicios">Actas certificadas</a></li>
+        <li><a href="#servicios">CURP y documentos</a></li>
+        <li><a href="#servicios">SAT · IMSS · Infonavit</a></li>
+        <li><a href="#servicios">Pensiones y Afore</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Contacto</h3>
+      <ul>
+        <li>WhatsApp: <a href="https://wa.me/5215658611307" target="_blank" rel="noopener">+52 56 5861 1307</a></li>
+        <!-- TODO: correo de dominio propio cuando el servidor de correo esté activo -->
+        <li>Horario: lunes a viernes, 9:00–18:00</li>
+        <li>México</li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap copy">
+    © 2026 Consultoría y Soluciones Empresariales. Todos los derechos reservados.
+  </div>
+</footer>
+
+<a class="wa-float" href="https://wa.me/5215658611307?text=Hola%2C%20quiero%20informes" target="_blank" rel="noopener" aria-label="Escribir por WhatsApp">
+  <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C9.4 3 4 8.3 4 14.9c0 2.6.8 5 2.3 7L4 29l7.3-2.2c1.9 1 3.9 1.6 4.7 1.6 6.6 0 12-5.3 12-11.9S22.6 3 16 3zm7 16.9c-.3.8-1.7 1.6-2.4 1.7-.6.1-1.4.2-4.6-1-3.9-1.6-6.4-5.6-6.6-5.8-.2-.3-1.6-2.1-1.6-4s1-2.9 1.4-3.3c.4-.4.8-.5 1.1-.5h.8c.3 0 .6-.1 1 .7l1.3 3.2c.1.2.2.5 0 .8l-.5.8-.7.8c-.2.2-.5.5-.2 1 .3.5 1.2 2 2.6 3.2 1.8 1.6 3.3 2.1 3.8 2.3.5.2.7.2 1-.1l1.5-1.8c.3-.4.6-.3 1-.2l3 1.4c.4.2.7.3.8.5.1.2.1.9-.2 1.7z"/></svg>
+</a>
+
+</body>
+</html>
