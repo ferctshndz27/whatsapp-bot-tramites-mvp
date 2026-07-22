@@ -4,9 +4,13 @@
 <h1>Invitar colaboradores</h1>
 
 <div class="card">
+  {% if error %}
+  <p class="error" role="alert">{{ error }}</p>
+  {% endif %}
   {% if new_token %}
   <div class="banner-warn" role="status">
     <strong>Código generado:</strong> {{ new_token }}<br>
+    {% if replaced %}El código pendiente anterior de ese número se canceló y este lo reemplaza.<br>{% endif %}
     {% if new_phone and sent %}
       Se envió por WhatsApp a {{ new_phone }}.
     {% elif new_phone and not sent %}
@@ -18,11 +22,14 @@
   {% endif %}
 
   <form method="post" action="/invitations">
-    <label for="phone">Número de WhatsApp del colaborador (opcional)</label>
-    <input type="text" id="phone" name="phone" placeholder="5215500000000" style="max-width: 260px;">
+    <label for="phone">Celular del colaborador — solo 10 dígitos (opcional)</label>
+    <input type="tel" id="phone" name="phone" placeholder="3312345678" inputmode="numeric"
+           pattern="[0-9\s\-]{10,15}" style="max-width: 260px;">
     <p style="color: var(--text-muted); font-size: .85rem; margin: .35rem 0 0;">
-      Si lo indicas, el bot le envía el código de invitación por WhatsApp automáticamente.
-      Si lo dejas vacío, el código se genera para que lo copies y lo compartas tú mismo.
+      La lada de WhatsApp (521) se agrega sola. Si el número ya tenía un código pendiente,
+      se cancela y se genera uno nuevo. <strong>Ojo:</strong> WhatsApp solo entrega mensajes
+      del bot a números que ya le han escrito antes — si es un colaborador nuevo, pídele que
+      primero mande "hola" al bot, o copia el código y compárteselo tú.
     </p>
     <button type="submit" style="margin-top: .75rem;">Generar invitación</button>
   </form>

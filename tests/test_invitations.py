@@ -56,6 +56,47 @@ def test_invitation_send_failure_still_creates_token(monkeypatch, session):
     assert response.context["sent"] is False
 
 
+def test_ten_digit_phone_is_normalized_and_sent_with_521(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    sent_to = []
+    monkeypatch.setattr(
+        whatsapp_client, "send_text", lambda phone, body: sent_to.append(phone) or "wamid.N1"
+    )
+    _make_admin(session, "ana")
+
+    response = invitations_create(_request("ana"), phone="33 1695 9912")
+
+    invitation = session.query(Invitation).one()
+    assert invitation.phone == "5213316959912"
+    assert sent_to == ["5213316959912"]  # se envía al número normalizado
+    assert response.context["sent"] is True
+
+
+def test_invalid_phone_shows_error_and_creates_nothing(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _make_admin(session, "ana")
+
+    response = invitations_create(_request("ana"), phone="12345")
+
+    assert session.query(Invitation).count() == 0
+    assert "10 dígitos" in response.context["error"]
+
+
+def test_regenerating_for_same_phone_cancels_previous_code(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.N2")
+    _make_admin(session, "ana")
+
+    invitations_create(_request("ana"), phone="3316959912")
+    response = invitations_create(_request("ana"), phone="5213316959912")
+
+    rows = session.query(Invitation).all()
+    assert len(rows) == 2
+    active = [i for i in rows if i.habilitado and i.used_at is None]
+    assert len(active) == 1  # un solo código activo por número
+    assert response.context["replaced"] is True
+
+
 def test_invitations_list_shows_pending_and_used(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     _make_admin(session, "ana")

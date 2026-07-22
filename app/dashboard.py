@@ -220,6 +220,19 @@ def register_submit(
     return RedirectResponse("/", status_code=303)
 
 
+def _normalize_mx_phone(raw: str) -> str | None:
+    """Convierte lo tecleado al formato de WhatsApp para celulares mexicanos
+    (521 + 10 dígitos). Acepta 10 dígitos, 52+10 o 521+10; None si no cuadra."""
+    digits = "".join(c for c in raw if c.isdigit())
+    if len(digits) == 10:
+        return "521" + digits
+    if len(digits) == 12 and digits.startswith("52"):
+        return "521" + digits[2:]
+    if len(digits) == 13 and digits.startswith("521"):
+        return digits
+    return None
+
+
 def _invitation_message(token: str, request: Request) -> str:
     base = str(request.base_url).rstrip("/")
     return (
@@ -275,21 +288,55 @@ def invitations_create(request: Request, phone: str = Form("")):
         return RedirectResponse("/", status_code=303)
 
     phone = phone.strip()
+    normalized = _normalize_mx_phone(phone) if phone else None
+    if phone and normalized is None:
+        with get_session() as session:
+            invitations = session.exec(
+                select(Invitation).order_by(Invitation.created_at.desc())
+            ).all()
+        return templates.TemplateResponse(
+            "invitations.html",
+            {
+                "request": request,
+                "user": user,
+                "invitations": invitations,
+                "error": "Número inválido: escribe solo los 10 dígitos del celular (ej. 3312345678).",
+            },
+        )
+
     token = secrets.token_urlsafe(9)
     sent = False
+    replaced_tokens: list[str] = []
 
     with get_session() as session:
-        session.add(Invitation(token=token, phone=phone or None, created_by=user))
+        if normalized:
+            # Un solo código activo por número: volver a generar para el mismo
+            # celular cancela el/los códigos pendientes anteriores (regenerar).
+            previous = session.exec(
+                select(Invitation).where(
+                    Invitation.phone == normalized,
+                    Invitation.used_at.is_(None),
+                    Invitation.habilitado == True,  # noqa: E712
+                )
+            ).all()
+            for prev in previous:
+                prev.habilitado = False
+                session.add(prev)
+                replaced_tokens.append(prev.token)
+        session.add(Invitation(token=token, phone=normalized, created_by=user))
         session.commit()
 
-        if phone:
-            sent = whatsapp_client.send_text(phone, _invitation_message(token, request)) is not None
+        if normalized:
+            sent = whatsapp_client.send_text(normalized, _invitation_message(token, request)) is not None
             if sent:
-                logger.info("Invitación enviada por WhatsApp a %s (por %s)", phone, user)
+                logger.info("Invitación enviada por WhatsApp a %s (por %s)", normalized, user)
             else:
-                logger.warning("No se pudo enviar la invitación por WhatsApp a %s", phone)
+                logger.warning("No se pudo enviar la invitación por WhatsApp a %s", normalized)
 
         invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
+
+    for prev_token in replaced_tokens:
+        log_admin(user, "invitacion:cancelada", prev_token)
 
     return templates.TemplateResponse(
         "invitations.html",
@@ -298,8 +345,9 @@ def invitations_create(request: Request, phone: str = Form("")):
             "user": user,
             "invitations": invitations,
             "new_token": token,
-            "new_phone": phone,
+            "new_phone": normalized or "",
             "sent": sent,
+            "replaced": bool(replaced_tokens),
         },
     )
 
