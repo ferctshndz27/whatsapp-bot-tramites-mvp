@@ -4,34 +4,22 @@
 <h1>Invitar colaboradores</h1>
 
 <div class="card">
-  {% if error %}
-  <p class="error" role="alert">{{ error }}</p>
-  {% endif %}
   {% if new_token %}
   <div class="banner-warn" role="status">
-    <strong>Código generado:</strong> {{ new_token }}<br>
-    {% if replaced %}El código pendiente anterior de ese número se canceló y este lo reemplaza.<br>{% endif %}
-    {% if new_phone and sent %}
-      Se envió por WhatsApp a {{ new_phone }}.
-    {% elif new_phone and not sent %}
-      No se pudo enviar por WhatsApp a {{ new_phone }} — copia el código y compártelo manualmente.
-    {% else %}
-      Copia el código y compártelo con el nuevo colaborador (WhatsApp, correo, etc.).
-    {% endif %}
+    <strong>Código generado:</strong> {{ new_token }}
+    <button type="button" class="btn-sm copy-code" data-code="{{ new_token }}"
+            style="margin-left:.5rem;">Copiar código</button>
+    <span class="badge cerrado" role="status" hidden>código copiado</span><br>
+    Compártelo con el nuevo colaborador (WhatsApp, correo, en persona…). Es de un solo uso.
   </div>
   {% endif %}
 
   <form method="post" action="/invitations">
-    <label for="phone">Celular del colaborador — solo 10 dígitos (opcional)</label>
-    <input type="tel" id="phone" name="phone" placeholder="3312345678" inputmode="numeric"
-           pattern="[0-9\s\-]{10,15}" style="max-width: 260px;">
-    <p style="color: var(--text-muted); font-size: .85rem; margin: .35rem 0 0;">
-      La lada de WhatsApp (521) se agrega sola. Si el número ya tenía un código pendiente,
-      se cancela y se genera uno nuevo. <strong>Ojo:</strong> WhatsApp solo entrega mensajes
-      del bot a números que ya le han escrito antes — si es un colaborador nuevo, pídele que
-      primero mande "hola" al bot, o copia el código y compárteselo tú.
+    <p style="color: var(--text-muted); font-size: .85rem; margin: 0 0 .5rem;">
+      Genera un código de un solo uso y compártelo tú mismo con el colaborador
+      (botón «Copiar código»). El registro se hace en <strong>/register</strong>.
     </p>
-    <button type="submit" style="margin-top: .75rem;">Generar invitación</button>
+    <button type="submit">Generar invitación</button>
   </form>
 </div>
 
@@ -63,6 +51,12 @@
           </td>
           <td>
             {% if not i.used_at %}
+            {% if i.habilitado %}
+            <button type="button" class="btn-sm btn-ghost copy-code" data-code="{{ i.token }}">
+              Copiar código
+            </button>
+            <span class="badge cerrado" role="status" hidden>código copiado</span>
+            {% endif %}
             <form method="post" action="/invitations/{{ i.id }}/toggle" style="display:inline;">
               <button type="submit" class="btn-sm {{ '' if i.habilitado else 'btn-danger' }}">
                 {{ 'Cancelar' if i.habilitado else 'Reactivar' }}
@@ -84,4 +78,31 @@
   La gestión de colaboradores (alta, contraseñas, roles, deshabilitar) está en
   <a href="/users">Usuarios</a>.
 </p>
+
+<script>
+  // Copiar al portapapeles con fallback para contextos no seguros (http local).
+  document.querySelectorAll('.copy-code').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var code = btn.dataset.code;
+      var done = function () {
+        var tag = btn.nextElementSibling;
+        if (tag) {
+          tag.hidden = false;
+          setTimeout(function () { tag.hidden = true; }, 2000);
+        }
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(code).then(done);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = code;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        done();
+      }
+    });
+  });
+</script>
 {% endblock %}

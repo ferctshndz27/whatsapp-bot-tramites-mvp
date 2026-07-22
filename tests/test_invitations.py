@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
 import app.db as db
-from app import whatsapp_client
 from app.dashboard import invitations_create, invitations_list
 from app.models import Invitation, User, utcnow
 
@@ -19,82 +18,20 @@ def _make_admin(session, username: str) -> None:
     session.commit()
 
 
-def test_creates_invitation_without_phone(monkeypatch, session):
+def test_creates_single_use_code_without_phone(monkeypatch, session):
+    """El envío por WhatsApp se eliminó: el código se genera para copiarse
+    y compartirse manualmente (botón "Copiar código")."""
     monkeypatch.setattr(db, "engine", session.get_bind())
     _make_admin(session, "ana")
 
-    response = invitations_create(_request("ana"), phone="")
+    response = invitations_create(_request("ana"))
 
     invitation = session.query(Invitation).one()
     assert invitation.created_by == "ana"
     assert invitation.phone is None
     assert invitation.used_at is None
     assert response.context["new_token"] == invitation.token
-    assert response.context["sent"] is False
-
-
-def test_creates_invitation_and_sends_whatsapp(monkeypatch, session):
-    monkeypatch.setattr(db, "engine", session.get_bind())
-    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.INV1")
-    _make_admin(session, "ana")
-
-    response = invitations_create(_request("ana"), phone="5215500001234")
-
-    invitation = session.query(Invitation).one()
-    assert invitation.phone == "5215500001234"
-    assert response.context["sent"] is True
-
-
-def test_invitation_send_failure_still_creates_token(monkeypatch, session):
-    monkeypatch.setattr(db, "engine", session.get_bind())
-    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: None)
-    _make_admin(session, "ana")
-
-    response = invitations_create(_request("ana"), phone="5215500009999")
-
-    assert session.query(Invitation).count() == 1
-    assert response.context["sent"] is False
-
-
-def test_ten_digit_phone_is_normalized_and_sent_with_521(monkeypatch, session):
-    monkeypatch.setattr(db, "engine", session.get_bind())
-    sent_to = []
-    monkeypatch.setattr(
-        whatsapp_client, "send_text", lambda phone, body: sent_to.append(phone) or "wamid.N1"
-    )
-    _make_admin(session, "ana")
-
-    response = invitations_create(_request("ana"), phone="33 1695 9912")
-
-    invitation = session.query(Invitation).one()
-    assert invitation.phone == "5213316959912"
-    assert sent_to == ["5213316959912"]  # se envía al número normalizado
-    assert response.context["sent"] is True
-
-
-def test_invalid_phone_shows_error_and_creates_nothing(monkeypatch, session):
-    monkeypatch.setattr(db, "engine", session.get_bind())
-    _make_admin(session, "ana")
-
-    response = invitations_create(_request("ana"), phone="12345")
-
-    assert session.query(Invitation).count() == 0
-    assert "10 dígitos" in response.context["error"]
-
-
-def test_regenerating_for_same_phone_cancels_previous_code(monkeypatch, session):
-    monkeypatch.setattr(db, "engine", session.get_bind())
-    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.N2")
-    _make_admin(session, "ana")
-
-    invitations_create(_request("ana"), phone="3316959912")
-    response = invitations_create(_request("ana"), phone="5213316959912")
-
-    rows = session.query(Invitation).all()
-    assert len(rows) == 2
-    active = [i for i in rows if i.habilitado and i.used_at is None]
-    assert len(active) == 1  # un solo código activo por número
-    assert response.context["replaced"] is True
+    assert "Copiar código" in response.body.decode()
 
 
 def test_invitations_list_shows_pending_and_used(monkeypatch, session):
@@ -108,6 +45,11 @@ def test_invitations_list_shows_pending_and_used(monkeypatch, session):
 
     tokens = {i.token for i in response.context["invitations"]}
     assert tokens == {"pend1", "used1"}
+    body = response.body.decode()
+    # Solo los códigos sin usar y habilitados muestran el botón de copiar.
+    assert body.count('data-code="pend1"') == 1
+    assert 'data-code="used1"' not in body
+    assert "código copiado" in body
 
 
 def test_non_admin_cannot_list_invitations(monkeypatch, session):
@@ -126,7 +68,7 @@ def test_non_admin_cannot_create_invitations(monkeypatch, session):
     session.add(User(username="colaborador", password_hash="x", is_admin=False))
     session.commit()
 
-    response = invitations_create(_request("colaborador"), phone="")
+    response = invitations_create(_request("colaborador"))
 
     assert response.status_code == 303
     assert response.headers["location"] == "/"
