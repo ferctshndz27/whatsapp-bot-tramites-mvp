@@ -70,8 +70,18 @@ IDENTITY_REPLY = (
 )
 ANNOYANCE_REPLY = "Lamento mucho la molestia 🙏 Te comunico con un asesor ahora mismo."
 NOT_RECOGNIZED_HINT = (
-    "No logré identificar el trámite 🤔 Cuéntame qué necesitas, "
-    "escribe *servicios* para ver la lista o *asesor* para hablar con una persona."
+    "Quiero ayudarte bien 😊 ¿Me dices qué trámite o servicio necesitas? "
+    "Escribe *servicios* para ver la lista o *asesor* para hablar con una persona."
+)
+# Pedidos de informes/cotización sin trámite concreto — se responden con
+# calidez, nunca con el aviso de "no te entendí" (comparar sin acentos).
+INFO_KEYWORDS = [
+    "informes", "informacion", "cotiza", "presupuesto",
+    "precio", "costo", "cuanto cuesta", "cuanto sale",
+]
+INFO_REPLY = (
+    "¡Con gusto te damos informes! 😊 Cuéntame qué trámite necesitas, "
+    "o escribe *servicios* para ver la lista completa."
 )
 ESCALATED_WAIT_REPLY = (
     "Recibimos tu mensaje. Un asesor te contactará muy pronto — gracias por tu paciencia.\n"
@@ -471,10 +481,20 @@ def _suggest_reply(session: Session, conv: Conversation, options: list) -> list[
     ]
 
 
+def _asks_info(text: str) -> bool:
+    folded = nlu._norm(text)
+    return any(keyword in folded for keyword in INFO_KEYWORDS)
+
+
 def _not_understood(session: Session, client: Client, conv: Conversation, text: str) -> list[str]:
     options = nlu.suggestions(text)
     if options:
         return _suggest_reply(session, conv, options)
+    if _asks_info(text):
+        # Pedir informes es interés, no un intento fallido: no suma al
+        # contador de reintentos ni suena a regaño.
+        _set_state(session, conv, "menu_categoria")
+        return [INFO_REPLY]
     return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
 
 

@@ -275,12 +275,36 @@ def test_escalated_client_with_vague_message_still_gets_wait_reply(session):
     assert "asesor te contactará" in replies[0].lower()
 
 
+def test_asking_for_info_gets_warm_reply_not_error(session):
+    """Captura 2026-07-22: "hola, quiero informes" recibía "No logré
+    identificar el trámite" — debe responder con calidez y sin sumar
+    intentos fallidos (pedir informes es interés, no un error)."""
+    handle_incoming(session, PHONE, "hola")
+
+    replies = handle_incoming(session, PHONE, "hola, quiero informes")
+
+    assert "con gusto" in replies[0].lower()
+    conv = session.get(Conversation, PHONE)
+    assert conv.failed_attempts == 0
+    assert conv.state != "escalado"
+
+
+def test_info_request_with_keyword_still_shows_suggestions(session):
+    handle_incoming(session, PHONE, "hola")
+
+    replies = handle_incoming(session, PHONE, "quiero informes de un acta")
+
+    assert "parecidos" in replies[0]  # la desambiguación gana al saludo genérico
+    assert "Acta de nacimiento" in replies[0]
+
+
 def test_gibberish_still_gets_not_recognized_hint(session):
     handle_incoming(session, PHONE, "hola")
 
     replies = handle_incoming(session, PHONE, "xyzk qwrt")
 
-    assert "no logré identificar" in replies[0].lower()
+    assert "ayudarte" in replies[0].lower()
+    assert "*servicios*" in replies[0]
 
 
 def test_starting_a_new_procedure_is_not_mistaken_for_status(session):
