@@ -60,6 +60,12 @@
     </select>
     <button type="submit">Actualizar</button>
   </form>
+  {% if ticket.status.value != 'cerrado' %}
+  <form method="post" action="/tickets/{{ ticket.id }}/finish" style="display:inline-block; margin-right:.5rem;"
+        onsubmit="return confirm('¿Terminar esta solicitud? Se cierra el ticket y se le avisa al cliente.');">
+    <button type="submit" class="btn-sm">✔ Terminar solicitud</button>
+  </form>
+  {% endif %}
   <form method="post" action="/tickets/{{ ticket.id }}/release" style="display:inline-block;">
     <button type="submit" class="btn-danger">Soltar solicitud</button>
   </form>

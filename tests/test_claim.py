@@ -5,8 +5,14 @@ from sqlmodel import select
 import app.dashboard as dashboard
 import app.db as db
 from app.conversation import handle_incoming
-from app.dashboard import claim_ticket, release_ticket, toggle_ticket_agent, update_ticket_status
-from app.models import Direction, Message, Ticket, TicketActivity, TicketStatus
+from app.dashboard import (
+    claim_ticket,
+    finish_ticket,
+    release_ticket,
+    toggle_ticket_agent,
+    update_ticket_status,
+)
+from app.models import Conversation, Direction, Message, Ticket, TicketActivity, TicketStatus, User
 
 
 def _request(user: str) -> SimpleNamespace:
@@ -186,6 +192,66 @@ def test_release_notice_skipped_when_24h_window_closed(monkeypatch, session):
     session.refresh(ticket)
     assert ticket.assigned_to is None
     assert sent == []
+
+
+def test_finish_closes_ticket_resets_flow_and_notifies(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    sent = []
+    monkeypatch.setattr(
+        dashboard.whatsapp_client, "send_text",
+        lambda phone, body: sent.append(body) or "wamid.FIN",
+    )
+    ticket = _make_ticket(
+        session, assigned_to="bob", status=TicketStatus.EN_PROCESO,
+        escalado=True, agent_active=False,
+    )
+    session.add(Message(phone=ticket.phone, direction=Direction.IN, body="hola"))
+    session.add(Conversation(phone=ticket.phone, state="escalado"))
+    session.commit()
+
+    finish_ticket(_request("bob"), ticket.id)
+
+    session.refresh(ticket)
+    assert ticket.status == TicketStatus.CERRADO
+    assert ticket.agent_active is True  # el bot vuelve a cubrir el chat
+    conv = session.get(Conversation, ticket.phone)
+    session.refresh(conv)
+    assert conv.state == "inicio"  # la conversación sale del modo escalado
+    assert len(sent) == 1 and "terminada" in sent[0] and "folio #" in sent[0]
+    actions = {
+        a.action
+        for a in session.query(TicketActivity).filter(TicketActivity.ticket_id == ticket.id)
+    }
+    assert "cerrado" in actions
+
+
+def test_finish_rejected_for_non_assignee(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    sent = []
+    monkeypatch.setattr(
+        dashboard.whatsapp_client, "send_text",
+        lambda phone, body: sent.append(body) or "wamid.X",
+    )
+    ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO)
+
+    finish_ticket(_request("ana"), ticket.id)
+
+    session.refresh(ticket)
+    assert ticket.status == TicketStatus.TOMADO  # sin cambios
+    assert sent == []
+
+
+def test_admin_can_finish_any_ticket(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(dashboard.whatsapp_client, "send_text", lambda phone, body: "wamid.F2")
+    session.add(User(username="jefa", password_hash="x", is_admin=True))
+    ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO)
+    session.commit()
+
+    finish_ticket(_request("jefa"), ticket.id)
+
+    session.refresh(ticket)
+    assert ticket.status == TicketStatus.CERRADO
 
 
 def test_duplicate_webhook_message_ignored(session):

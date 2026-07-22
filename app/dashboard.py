@@ -16,6 +16,7 @@ from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
 from app.models import (
+    Conversation,
     Direction,
     Invitation,
     Message,
@@ -508,6 +509,86 @@ def release_ticket(request: Request, ticket_id: int):
         logger.info("Ticket #%s soltado por %s", ticket_id, user)
         _notify_release(ticket_id)
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
+# Aviso de cierre: el cliente sabe que su trámite quedó listo y la puerta
+# queda abierta — nunca un cierre silencioso.
+FINISH_NOTICE_SERVICE = (
+    "✅ Tu solicitud de '{service}' (folio #{folio}) quedó terminada. "
+    "¡Gracias por tu confianza! Si necesitas otro trámite, aquí estamos."
+)
+FINISH_NOTICE_GENERIC = (
+    "✅ Tu solicitud quedó atendida. ¡Gracias por tu confianza! "
+    "Si necesitas otro trámite, aquí estamos."
+)
+
+
+@router.post("/tickets/{ticket_id}/finish")
+def finish_ticket(request: Request, ticket_id: int):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    with get_session() as session:
+        ticket = session.get(Ticket, ticket_id)
+        # Puede terminar el asignado o un admin; un ticket cerrado no se re-cierra.
+        allowed = (
+            ticket is not None
+            and ticket.status != TicketStatus.CERRADO
+            and (ticket.assigned_to == user or is_admin(user))
+        )
+        if not allowed:
+            if ticket is not None:
+                logger.warning("Terminar rechazado en #%s por %s", ticket_id, user)
+            return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+        ticket.status = TicketStatus.CERRADO
+        ticket.agent_active = True  # ciclo terminado: el bot vuelve a cubrir el chat
+        ticket.updated_at = utcnow()
+        session.add(ticket)
+        # La conversación regresa al flujo normal — sin esto el cliente seguiría
+        # recibiendo "un asesor te contactará" con el ticket ya cerrado.
+        conv = session.get(Conversation, ticket.phone)
+        if conv is not None and conv.state == "escalado":
+            conv.state = "inicio"
+            session.add(conv)
+        session.commit()
+
+    with get_session() as session:
+        _log_activity(session, ticket_id, user, "cerrado")
+    logger.info("Ticket #%s terminado por %s", ticket_id, user)
+    _notify_finish(ticket_id)
+    return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
+def _notify_finish(ticket_id: int) -> None:
+    """Aviso de cierre al cliente — best-effort, solo dentro de la ventana de 24h."""
+    from app.inbox import _window_open
+
+    with get_session() as session:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is None:
+            return
+        phone = ticket.phone
+        last_in = session.exec(
+            select(Message)
+            .where(Message.phone == phone, Message.direction == Direction.IN)
+            .order_by(Message.created_at.desc())
+        ).first()
+        if not _window_open(last_in.created_at if last_in else None):
+            logger.info("Sin aviso de cierre a %s: ventana de 24h cerrada", phone)
+            return
+        if ticket.service_id == "escalado":
+            body = FINISH_NOTICE_GENERIC
+        else:
+            body = FINISH_NOTICE_SERVICE.format(service=ticket.service_name, folio=ticket.id)
+        wamid = whatsapp_client.send_text(phone, body)
+        session.add(
+            Message(phone=phone, direction=Direction.OUT, body=body, wa_message_id=wamid)
+        )
+        session.commit()
+    if wamid is None:
+        logger.warning("Aviso de cierre a %s sin confirmación de envío", phone)
 
 
 def _notify_release(ticket_id: int) -> None:
