@@ -37,8 +37,11 @@ def send_text(to_phone: str, body: str) -> str | None:
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             if status not in RETRYABLE_STATUS or attempt == MAX_RETRIES:
+                # El cuerpo trae el código de error de Meta (p.ej. 131047 =
+                # fuera de la ventana de 24h) — sin él no se puede diagnosticar.
                 logger.error(
-                    "Fallo al enviar WhatsApp a %s (status=%s): %s", mask_phone(to_phone), status, exc
+                    "Fallo al enviar WhatsApp a %s (status=%s): %s",
+                    mask_phone(to_phone), status, exc.response.text[:500],
                 )
                 return None
         except httpx.RequestError as exc:
