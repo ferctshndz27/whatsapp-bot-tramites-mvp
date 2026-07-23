@@ -13,6 +13,10 @@ class Settings:
         self.app_secret = os.environ.get("WHATSAPP_APP_SECRET", "")
         self.db_path = os.environ.get("DB_PATH", "tramites.db")
         self.session_secret = os.environ.get("SESSION_SECRET", "")
+        # Cookie de sesión con flag Secure (solo viaja por HTTPS). Default
+        # activado para producción; en local sobre HTTP se apaga con
+        # SECURE_COOKIES=0 para que el login funcione.
+        self.secure_cookies = os.environ.get("SECURE_COOKIES", "1") != "0"
         self.dashboard_username = os.environ.get("DASHBOARD_USERNAME", "")
         self.dashboard_password = os.environ.get("DASHBOARD_PASSWORD", "")
         self.registration_code = os.environ.get("REGISTRATION_CODE", "")
