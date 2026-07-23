@@ -27,6 +27,91 @@
   </div>
 </div>
 
+<style>
+  .chart-filter { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: 1rem; }
+  .chart-filter label { display: block; font-size: .8rem; color: var(--text-muted); margin-bottom: .2rem; }
+  .chart-flex { display: flex; gap: 2rem; flex-wrap: wrap; align-items: center; }
+  .line-wrap { flex: 2; min-width: 320px; }
+  .line-wrap svg { width: 100%; height: auto; display: block; }
+  .donut-wrap { flex: 1; min-width: 230px; display: flex; gap: 1rem; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .chart-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: .5rem; font-size: .85rem; justify-content: flex-end; }
+  .chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .35rem; }
+  .donut-list { font-size: .85rem; display: flex; flex-direction: column; gap: .35rem; }
+  .donut-list i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .4rem; }
+</style>
+
+<div class="card">
+  <h2>Gráfica de actividades — despachadas por día</h2>
+  <form method="get" action="/activity" class="chart-filter">
+    {% if viewing != user %}<input type="hidden" name="user" value="{{ viewing }}">{% endif %}
+    <div>
+      <label for="desde">Desde</label>
+      <input type="date" id="desde" name="desde" value="{{ desde }}" max="{{ hasta }}">
+    </div>
+    <div>
+      <label for="hasta">Hasta</label>
+      <input type="date" id="hasta" name="hasta" value="{{ hasta }}">
+    </div>
+    <button type="submit" class="btn-sm">Aplicar filtro</button>
+    <a href="/activity{% if viewing != user %}?user={{ viewing }}{% endif %}" class="btn-sm" style="text-decoration:none;">Hoy</a>
+  </form>
+
+  {% if chart_total == 0 %}
+  <p class="empty">Sin solicitudes despachadas del {{ desde }} al {{ hasta }}.</p>
+  {% else %}
+  <div class="chart-flex">
+    <div class="line-wrap">
+      {% if chart_colors | length > 1 %}
+      <div class="chart-legend">
+        {% for u, color in chart_colors.items() %}<span><i style="background: {{ color }};"></i>{{ u }}</span>{% endfor %}
+      </div>
+      {% endif %}
+      <svg viewBox="0 0 {{ line_chart.width }} {{ line_chart.height }}" role="img"
+        aria-label="Despachadas por día del {{ desde }} al {{ hasta }}: {{ chart_total }} en total">
+        {% for y, val in line_chart.y_ticks %}
+        <line x1="{{ line_chart.pad_l }}" x2="{{ line_chart.width - line_chart.pad_r }}"
+          y1="{{ y }}" y2="{{ y }}" stroke="#eef0f3" stroke-width="1"/>
+        <text x="{{ line_chart.pad_l - 8 }}" y="{{ y + 4 }}" text-anchor="end" font-size="10" fill="#9aa0aa">{{ val }}</text>
+        {% endfor %}
+        {% for x, lbl in line_chart.x_labels %}
+        <text x="{{ x }}" y="{{ line_chart.height - 6 }}" text-anchor="middle" font-size="10" fill="#9aa0aa">{{ lbl }}</text>
+        {% endfor %}
+        {% for s in line_chart.series %}
+        <path d="{{ s.path }}" fill="none" stroke="{{ s.color }}" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round"/>
+        {% endfor %}
+        {% for s in line_chart.series %}
+        {% for p in s.points %}
+        <circle cx="{{ p.x }}" cy="{{ p.y }}" r="3" fill="{{ s.color }}"><title>{{ p.label }}</title></circle>
+        {% endfor %}
+        {% endfor %}
+      </svg>
+    </div>
+    <div class="donut-wrap">
+      <svg viewBox="0 0 140 140" width="150" height="150" role="img"
+        aria-label="Distribución por colaborador: {{ donut.total }} despachadas">
+        <circle cx="70" cy="70" r="54" fill="none" stroke="#eef0f3" stroke-width="14"/>
+        <g transform="rotate(-90 70 70)">
+          {% for s in donut.segments %}
+          <circle cx="70" cy="70" r="54" fill="none" stroke="{{ s.color }}" stroke-width="14"
+            stroke-linecap="round" stroke-dasharray="{{ s.dash }}" stroke-dashoffset="{{ s.offset }}">
+            <title>{{ s.user }}: {{ s.n }} ({{ s.pct }}%)</title>
+          </circle>
+          {% endfor %}
+        </g>
+        <text x="70" y="67" text-anchor="middle" font-size="24" font-weight="700" fill="#22242a">{{ donut.total }}</text>
+        <text x="70" y="85" text-anchor="middle" font-size="9" fill="#9aa0aa">despachadas</text>
+      </svg>
+      <div class="donut-list">
+        {% for s in donut.segments %}
+        <div><i style="background: {{ s.color }};"></i>{{ s.user }} — {{ s.n }} ({{ s.pct }}%)</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
 {% if team %}
 <div class="card">
   <h2>Equipo — solicitudes despachadas</h2>
