@@ -172,6 +172,27 @@ def test_synonyms_persist_via_admin_route(monkeypatch, session, tmp_path):
     assert cat.service_by_id("curp").synonyms == ("clave única", "curp certificada")
 
 
+def test_bot_uses_db_prices_and_synonyms(monkeypatch, tmp_path):
+    """El agente lee catalogcategory/catalogservice: un sinónimo y un precio
+    editados en las tablas se usan en el siguiente mensaje, sin reiniciar."""
+    import app.nlu as nlu
+
+    cat = _make_catalog(tmp_path)
+    monkeypatch.setattr(nlu, "catalog", cat)
+    monkeypatch.setattr(nlu.settings, "anthropic_api_key", "")  # capa keywords
+
+    cat.update_service(
+        "curp", "CURP certificada", "$150", ["clave única"], admin="jefa"
+    )
+
+    service, _ = nlu.deduce("ocupo mi clave unica por favor")
+    assert service is not None and service.id == "curp"  # sinónimo desde la tabla
+    assert service.price_info == "$150"  # costo desde la tabla
+
+    todos = nlu.deduce_all("necesito mi clave única y una constancia rfc")
+    assert {s.id for s in todos} == {"curp", "rfc"}  # multi-servicio vía sinónimo
+
+
 def test_catalog_page_renders_grid_and_history(monkeypatch, session, tmp_path):
     monkeypatch.setattr(db, "engine", session.get_bind())
     cat = _make_catalog(tmp_path)
