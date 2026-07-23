@@ -203,6 +203,45 @@ class IpGeoCache(SQLModel, table=True):
     resolved_at: datetime = Field(default_factory=utcnow)
 
 
+class CatalogCategory(SQLModel, table=True):
+    """Categoría del catálogo de servicios (antes vivía en catalog.json)."""
+
+    id: str = Field(primary_key=True)  # slug estable; los tickets guardan service_id/categoría
+    name: str
+    position: int = 0
+    habilitado: bool = True
+
+
+class CatalogService(SQLModel, table=True):
+    """Servicio del catálogo. synonyms_json es una lista JSON de frases con
+    que los clientes piden el servicio (usada por la deducción de intención)."""
+
+    id: str = Field(primary_key=True)  # slug estable
+    category_id: str = Field(index=True)
+    name: str
+    price_info: str
+    synonyms_json: str = "[]"
+    requirements: str = ""
+    position: int = 0
+    habilitado: bool = True
+
+
+class CatalogAudit(SQLModel, table=True):
+    """Auditoría campo a campo del catálogo: quién cambió qué, valor anterior
+    y nuevo. Append-only, visible en el panel Catálogo y espejada a MSSQL."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    admin: str = Field(index=True)
+    entity: str  # "categoria" | "servicio"
+    entity_id: str = Field(index=True)
+    # "name" | "price_info" | "synonyms" | "requirements" | "habilitado" | "creado"
+    field: str
+    old_value: str | None = None
+    new_value: str | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
 class Invitation(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     token: str = Field(unique=True, index=True)

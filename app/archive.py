@@ -211,6 +211,42 @@ _SCHEMA_DDL = [
     )
     """,
     """
+    IF OBJECT_ID('catalog_categories', 'U') IS NULL
+    CREATE TABLE catalog_categories (
+        id         NVARCHAR(64)  NOT NULL PRIMARY KEY,
+        name       NVARCHAR(200) NOT NULL,
+        position   INT           NOT NULL DEFAULT 0,
+        habilitado BIT           NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    IF OBJECT_ID('catalog_services', 'U') IS NULL
+    CREATE TABLE catalog_services (
+        id            NVARCHAR(64)  NOT NULL PRIMARY KEY,
+        category_id   NVARCHAR(64)  NOT NULL,
+        name          NVARCHAR(200) NOT NULL,
+        price_info    NVARCHAR(200) NOT NULL,
+        synonyms_json NVARCHAR(MAX) NOT NULL,
+        requirements  NVARCHAR(MAX) NOT NULL,
+        position      INT           NOT NULL DEFAULT 0,
+        habilitado    BIT           NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    IF OBJECT_ID('catalog_audit', 'U') IS NULL
+    CREATE TABLE catalog_audit (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        admin      NVARCHAR(64)  NOT NULL,
+        entity     NVARCHAR(20)  NOT NULL,
+        entity_id  NVARCHAR(64)  NOT NULL,
+        field      NVARCHAR(30)  NOT NULL,
+        old_value  NVARCHAR(MAX) NULL,
+        new_value  NVARCHAR(MAX) NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
     IF OBJECT_ID('conversations', 'U') IS NULL
     CREATE TABLE conversations (
         phone           NVARCHAR(32)  NOT NULL PRIMARY KEY,
@@ -576,6 +612,44 @@ def archive_web_session(w) -> None:
     )
 
 
+def archive_catalog_category(c) -> None:
+    _upsert(
+        "catalog_categories", "id", c.id,
+        {"name": c.name, "position": c.position, "habilitado": c.habilitado},
+    )
+
+
+def archive_catalog_service(s) -> None:
+    _upsert(
+        "catalog_services", "id", s.id,
+        {
+            "category_id": s.category_id,
+            "name": s.name,
+            "price_info": s.price_info,
+            "synonyms_json": s.synonyms_json,
+            "requirements": s.requirements,
+            "position": s.position,
+            "habilitado": s.habilitado,
+        },
+    )
+
+
+def archive_catalog_audit(a) -> None:
+    _upsert(
+        "catalog_audit", "source_id", a.id,
+        {
+            "admin": a.admin,
+            "entity": a.entity,
+            "entity_id": a.entity_id,
+            "field": a.field,
+            "old_value": a.old_value,
+            "new_value": a.new_value,
+            "habilitado": a.habilitado,
+            "created_at": _naive_utc(a.created_at),
+        },
+    )
+
+
 def archive_conversation(c) -> None:
     _upsert(
         "conversations", "phone", c.phone,
@@ -611,6 +685,9 @@ def backfill() -> None:
     from app.db import get_session
     from app.models import (
         AdminAudit,
+        CatalogAudit,
+        CatalogCategory,
+        CatalogService,
         Client,
         ClientNote,
         Conversation,
@@ -656,6 +733,12 @@ def backfill() -> None:
                 archive_login_event(e)
             for w in session.exec(select(WebSession)).all():
                 archive_web_session(w)
+            for cc in session.exec(select(CatalogCategory)).all():
+                archive_catalog_category(cc)
+            for cs in session.exec(select(CatalogService)).all():
+                archive_catalog_service(cs)
+            for ca in session.exec(select(CatalogAudit)).all():
+                archive_catalog_audit(ca)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -667,6 +750,9 @@ def _register_listeners() -> None:
     # mensajes por minuto.
     from app.models import (
         AdminAudit,
+        CatalogAudit,
+        CatalogCategory,
+        CatalogService,
         Client,
         ClientNote,
         Conversation,
@@ -757,6 +843,21 @@ def _register_listeners() -> None:
     @event.listens_for(WebSession, "after_update")
     def _web_session_upsert(mapper, connection, target):
         _safe(archive_web_session, target)
+
+    @event.listens_for(CatalogCategory, "after_insert")
+    @event.listens_for(CatalogCategory, "after_update")
+    def _catalog_category_upsert(mapper, connection, target):
+        _safe(archive_catalog_category, target)
+
+    @event.listens_for(CatalogService, "after_insert")
+    @event.listens_for(CatalogService, "after_update")
+    def _catalog_service_upsert(mapper, connection, target):
+        _safe(archive_catalog_service, target)
+
+    @event.listens_for(CatalogAudit, "after_insert")
+    @event.listens_for(CatalogAudit, "after_update")
+    def _catalog_audit_upsert(mapper, connection, target):
+        _safe(archive_catalog_audit, target)
 
 
 _register_listeners()

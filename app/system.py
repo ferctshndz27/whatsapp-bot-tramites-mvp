@@ -25,6 +25,9 @@ from app.config import settings
 from app.db import get_session
 from app.models import (
     AdminAudit,
+    CatalogAudit,
+    CatalogCategory,
+    CatalogService,
     Client,
     Conversation,
     Invitation,
@@ -58,6 +61,9 @@ MIRROR_TABLES = [
     (AdminAudit, "admin_audit"),
     (LoginEvent, "login_events"),
     (WebSession, "web_sessions"),
+    (CatalogCategory, "catalog_categories"),
+    (CatalogService, "catalog_services"),
+    (CatalogAudit, "catalog_audit"),
 ]
 
 

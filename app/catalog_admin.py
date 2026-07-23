@@ -1,9 +1,10 @@
 """Edición del catálogo de servicios desde el panel — solo administradores.
 
 Sin esto, cambiar un precio requiere commit + push + deploy. Todas las
-mutaciones pasan por la API de app.catalog (escritura atómica + recarga
-en caliente: el bot ve el cambio en el siguiente mensaje) y quedan en la
-bitácora de auditoría.
+mutaciones pasan por la API de app.catalog (SQLite: el bot ve el cambio en
+el siguiente mensaje) y quedan auditadas dos veces: la bitácora general
+(AdminAudit) y el detalle campo a campo con valor anterior/nuevo
+(CatalogAudit, visible al final de la página del catálogo).
 """
 
 import logging
@@ -33,10 +34,15 @@ def _admin_or_redirect(request: Request):
 
 
 def _render(request: Request, admin: str, error: str | None = None):
-    catalog._maybe_reload()
     return templates.TemplateResponse(
         "catalog.html",
-        {"request": request, "user": admin, "raw": catalog.raw, "error": error},
+        {
+            "request": request,
+            "user": admin,
+            "categories": catalog.admin_view(),
+            "changes": catalog.recent_changes(60),
+            "error": error,
+        },
     )
 
 
@@ -64,7 +70,9 @@ def category_create(request: Request, name: str = Form(...)):
         return redirect
     if not name.strip():
         return _render(request, admin, error="El nombre no puede estar vacío.")
-    return _apply(request, admin, "categoria_nueva", name.strip(), catalog.add_category(name))
+    return _apply(
+        request, admin, "categoria_nueva", name.strip(), catalog.add_category(name, admin=admin)
+    )
 
 
 @router.post("/catalog/categories/{category_id}/rename")
@@ -76,7 +84,7 @@ def category_rename(request: Request, category_id: str, name: str = Form(...)):
         return _render(request, admin, error="El nombre no puede estar vacío.")
     return _apply(
         request, admin, "categoria_renombrada", category_id,
-        catalog.rename_category(category_id, name),
+        catalog.rename_category(category_id, name, admin=admin),
     )
 
 
@@ -86,7 +94,8 @@ def category_toggle(request: Request, category_id: str):
     if redirect:
         return redirect
     return _apply(
-        request, admin, "categoria_toggle", category_id, catalog.toggle_category(category_id)
+        request, admin, "categoria_toggle", category_id,
+        catalog.toggle_category(category_id, admin=admin),
     )
 
 
@@ -104,7 +113,7 @@ def service_create(
         return _render(request, admin, error="Nombre y precio son obligatorios.")
     return _apply(
         request, admin, "servicio_nuevo", name.strip(),
-        catalog.add_service(category_id, name, price_info),
+        catalog.add_service(category_id, name, price_info, admin=admin),
     )
 
 
@@ -125,7 +134,9 @@ def service_update(
     synonym_list = [s for s in (part.strip() for part in synonyms.split(",")) if s]
     return _apply(
         request, admin, "servicio_editado", service_id,
-        catalog.update_service(service_id, name, price_info, synonym_list, requirements),
+        catalog.update_service(
+            service_id, name, price_info, synonym_list, requirements, admin=admin
+        ),
     )
 
 
@@ -135,5 +146,6 @@ def service_toggle(request: Request, service_id: str):
     if redirect:
         return redirect
     return _apply(
-        request, admin, "servicio_toggle", service_id, catalog.toggle_service(service_id)
+        request, admin, "servicio_toggle", service_id,
+        catalog.toggle_service(service_id, admin=admin),
     )

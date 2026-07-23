@@ -206,7 +206,7 @@ def unmatched_add_synonym(
     admin, redirect = _admin_or_redirect(request)
     if redirect:
         return redirect
-    error = catalog.add_synonym(service_id, synonym)
+    error = catalog.add_synonym(service_id, synonym, admin=admin)
     if error:
         return _render(request, admin, error=error)
     log_admin(admin, "catalogo:sinonimo", f"{service_id}:{synonym.strip()}")

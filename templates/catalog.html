@@ -5,6 +5,24 @@
 
 {% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
 
+<style>
+  .catalog-grid input, .catalog-grid textarea { width: 100%; box-sizing: border-box; }
+  .catalog-grid td { vertical-align: middle; }
+  .catalog-grid .col-price { width: 130px; }
+  .catalog-grid .col-state { width: 90px; text-align: center; }
+  .catalog-grid .col-actions { width: 210px; white-space: nowrap; }
+  .catalog-grid tr.row-dirty td { background: rgba(255, 196, 0, .07); }
+  .dirty-tag { color: var(--yellow, #d97706); font-size: .8rem; margin-left: .35rem; }
+  .req-row td { padding-top: 0; border-top: none; }
+  .req-row details summary { cursor: pointer; color: var(--text-muted); font-size: .85rem; }
+  .req-row textarea { min-height: 56px; margin-top: .35rem; }
+  .req-hint { color: var(--green, #16a34a); font-size: .8rem; margin-left: .5rem; }
+  .cat-head { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .75rem; }
+  .svc-off td { opacity: .55; }
+  .hist-old { color: var(--text-muted); text-decoration: line-through; }
+  .hist-new { font-weight: 600; }
+</style>
+
 <div class="card">
   <h2>Nueva categoría</h2>
   <form method="post" action="/catalog/categories" style="display:flex; gap:.5rem; flex-wrap:wrap;">
@@ -14,70 +32,83 @@
   </form>
   <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
     Los cambios se aplican al instante: el bot los usa en el siguiente mensaje, sin reiniciar.
-    Deshabilitar oculta del menú del bot sin borrar (las solicitudes históricas no se afectan).
+    Cada cambio queda registrado en el historial (al final de esta página) con quién lo hizo,
+    el valor anterior y el nuevo. Ocultar/deshabilitar no borra nada.
   </p>
 </div>
 
-{% for cat in raw.categories %}
-<div class="card" {% if not cat.get('habilitado', True) %}style="opacity:.6;"{% endif %}>
-  <h2>
-    {{ cat.name }}
-    {% if not cat.get('habilitado', True) %}<span class="badge caducada">deshabilitada</span>{% endif %}
-  </h2>
-  <div style="display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:.75rem;">
-    <form method="post" action="/catalog/categories/{{ cat.id }}/rename" style="display:flex; gap:.5rem;">
+{% for cat in categories %}
+<div class="card" {% if not cat.habilitado %}style="opacity:.7;"{% endif %}>
+  <div class="cat-head">
+    <h2 style="margin:0;">{{ cat.name }}</h2>
+    {% if not cat.habilitado %}<span class="badge caducada">deshabilitada</span>{% endif %}
+    <form method="post" action="/catalog/categories/{{ cat.id }}/rename" style="display:flex; gap:.5rem; margin-left:auto;">
       <label for="ren-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Nuevo nombre</label>
-      <input type="text" id="ren-{{ cat.id }}" name="name" value="{{ cat.name }}" required style="max-width:240px;">
+      <input type="text" id="ren-{{ cat.id }}" name="name" value="{{ cat.name }}" required style="max-width:220px;">
       <button type="submit" class="btn-sm">Renombrar</button>
     </form>
     <form method="post" action="/catalog/categories/{{ cat.id }}/toggle"
-      onsubmit="return confirm('{{ '¿Habilitar' if not cat.get('habilitado', True) else '¿Deshabilitar' }} la categoría {{ cat.name }}?');">
-      <button type="submit" class="btn-sm {{ 'btn-danger' if cat.get('habilitado', True) else '' }}">
-        {{ 'Deshabilitar' if cat.get('habilitado', True) else 'Habilitar' }}
+      onsubmit="return confirm('{{ '¿Habilitar' if not cat.habilitado else '¿Deshabilitar' }} la categoría {{ cat.name }}?');">
+      <button type="submit" class="btn-sm {{ 'btn-danger' if cat.habilitado else '' }}">
+        {{ 'Deshabilitar' if cat.habilitado else 'Habilitar' }}
       </button>
     </form>
   </div>
 
   <div class="table-wrap">
-    <table>
+    <table class="catalog-grid">
       <thead>
-        <tr><th>Servicio</th><th>Precio</th><th>Estado</th><th>Acciones</th></tr>
+        <tr>
+          <th>Servicio</th>
+          <th class="col-price">Precio</th>
+          <th>Sinónimos <span title="Frases con que los clientes lo piden; el bot las usa para entender." style="cursor:help;">ⓘ</span></th>
+          <th class="col-state">Estado</th>
+          <th class="col-actions">Acciones</th>
+        </tr>
       </thead>
       <tbody>
         {% for svc in cat.services %}
-        <tr {% if not svc.get('habilitado', True) %}style="opacity:.6;"{% endif %}>
-          <td colspan="2">
-            <form method="post" action="/catalog/services/{{ svc.id }}/update"
-              style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
-              <label for="n-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Nombre</label>
-              <input type="text" id="n-{{ svc.id }}" name="name" value="{{ svc.name }}" required style="min-width:260px; flex:1;">
-              <label for="p-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Precio</label>
-              <input type="text" id="p-{{ svc.id }}" name="price_info" value="{{ svc.price_info }}" required style="max-width:170px;">
-              <label for="syn-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Sinónimos</label>
-              <input type="text" id="syn-{{ svc.id }}" name="synonyms"
-                value="{{ svc.get('synonyms', []) | join(', ') }}"
-                placeholder="sinónimos, separados, por comas" style="min-width:240px; flex:1;"
-                title="Palabras o frases con que los clientes piden este servicio; el bot las usa para deducir la intención.">
-              <label for="req-{{ svc.id }}" class="sr-only" style="position:absolute; left:-9999px;">Requisitos</label>
-              <textarea id="req-{{ svc.id }}" name="requirements" rows="2"
-                placeholder="Requisitos del trámite (se muestran al equipo en la Guía de trámites)"
-                style="flex-basis:100%; min-height:52px;">{{ svc.get('requirements', '') }}</textarea>
-              <button type="submit" class="btn-sm">Guardar</button>
-            </form>
+        <tr class="svc-row {{ 'svc-off' if not svc.habilitado }}" data-form="f-{{ svc.id }}">
+          <td>
+            <input type="text" form="f-{{ svc.id }}" name="name" value="{{ svc.name }}" required
+              aria-label="Nombre de {{ svc.name }}">
+          </td>
+          <td class="col-price">
+            <input type="text" form="f-{{ svc.id }}" name="price_info" value="{{ svc.price_info }}" required
+              aria-label="Precio de {{ svc.name }}">
           </td>
           <td>
-            {% if svc.get('habilitado', True) %}
+            <input type="text" form="f-{{ svc.id }}" name="synonyms" value="{{ svc.synonyms }}"
+              placeholder="separados, por, comas" aria-label="Sinónimos de {{ svc.name }}">
+          </td>
+          <td class="col-state">
+            {% if svc.habilitado %}
             <span class="badge cerrado">visible</span>
             {% else %}
             <span class="badge caducada">oculto</span>
             {% endif %}
           </td>
-          <td>
+          <td class="col-actions">
+            <button type="submit" form="f-{{ svc.id }}" class="btn-sm">Guardar</button>
+            <span class="dirty-tag" data-for="f-{{ svc.id }}" hidden>● sin guardar</span>
             <form method="post" action="/catalog/services/{{ svc.id }}/toggle" style="display:inline;">
-              <button type="submit" class="btn-sm {{ 'btn-danger' if svc.get('habilitado', True) else '' }}">
-                {{ 'Ocultar' if svc.get('habilitado', True) else 'Mostrar' }}
+              <button type="submit" class="btn-sm {{ 'btn-danger' if svc.habilitado else '' }}">
+                {{ 'Ocultar' if svc.habilitado else 'Mostrar' }}
               </button>
             </form>
+          </td>
+        </tr>
+        <tr class="req-row" data-form="f-{{ svc.id }}">
+          <td colspan="5">
+            <details {% if svc.requirements %}open{% endif %}>
+              <summary>
+                Requisitos del trámite
+                {% if svc.requirements %}<span class="req-hint">✓ capturados</span>{% endif %}
+              </summary>
+              <textarea form="f-{{ svc.id }}" name="requirements" rows="2"
+                placeholder="Documentos y requisitos (se muestran al equipo en la Guía de trámites)"
+                aria-label="Requisitos de {{ svc.name }}">{{ svc.requirements }}</textarea>
+            </details>
           </td>
         </tr>
         {% endfor %}
@@ -85,15 +116,92 @@
     </table>
   </div>
 
-  <h2 style="margin-top:1rem; font-size:.95rem;">Agregar servicio a {{ cat.name }}</h2>
-  <form method="post" action="/catalog/services" style="display:flex; gap:.5rem; flex-wrap:wrap;">
+  {# Formularios de actualización: los inputs del grid les pertenecen vía el atributo form. #}
+  {% for svc in cat.services %}
+  <form id="f-{{ svc.id }}" method="post" action="/catalog/services/{{ svc.id }}/update"></form>
+  {% endfor %}
+
+  <form method="post" action="/catalog/services" style="display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem;">
     <input type="hidden" name="category_id" value="{{ cat.id }}">
     <label for="ns-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Nombre del servicio</label>
-    <input type="text" id="ns-{{ cat.id }}" name="name" required placeholder="Nombre del servicio" style="min-width:260px;">
+    <input type="text" id="ns-{{ cat.id }}" name="name" required placeholder="Nuevo servicio en {{ cat.name }}" style="min-width:260px;">
     <label for="np-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Precio</label>
-    <input type="text" id="np-{{ cat.id }}" name="price_info" required placeholder="$500" style="max-width:170px;">
+    <input type="text" id="np-{{ cat.id }}" name="price_info" required placeholder="$500" style="max-width:130px;">
     <button type="submit" class="btn-sm">Agregar</button>
   </form>
 </div>
 {% endfor %}
+
+<div class="card">
+  <h2>Historial de cambios</h2>
+  {% if changes %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Fecha (UTC)</th><th>Quién</th><th>Elemento</th><th>Campo</th><th>Cambio</th></tr>
+      </thead>
+      <tbody>
+        {% for c in changes %}
+        <tr>
+          <td>{{ c.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+          <td>{{ c.admin }}</td>
+          <td>{{ c.kind }} · {{ c.target }}</td>
+          <td>{{ c.field }}</td>
+          <td>
+            {% if c.field == 'creación' %}
+            <span class="hist-new">{{ c.new }}</span>
+            {% else %}
+            <span class="hist-old">{{ c.old if c.old else '(vacío)' }}</span>
+            → <span class="hist-new">{{ c.new if c.new else '(vacío)' }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Aún no hay cambios registrados. A partir de ahora, cada edición queda aquí.</p>
+  {% endif %}
+</div>
+
+<script>
+  // Detección de cambios sin guardar: resalta la fila, muestra "● sin guardar"
+  // y avisa antes de salir de la página si hay ediciones pendientes.
+  (function () {
+    var dirty = new Set();
+
+    function formIsDirty(fid) {
+      var els = document.querySelectorAll('[form="' + fid + '"][name]');
+      for (var i = 0; i < els.length; i++) {
+        if (els[i].dataset.orig !== undefined && els[i].value !== els[i].dataset.orig) return true;
+      }
+      return false;
+    }
+
+    function refresh(fid) {
+      var isDirty = formIsDirty(fid);
+      isDirty ? dirty.add(fid) : dirty.delete(fid);
+      document.querySelectorAll('.dirty-tag[data-for="' + fid + '"]').forEach(function (t) {
+        t.hidden = !isDirty;
+      });
+      document.querySelectorAll('tr[data-form="' + fid + '"]').forEach(function (r) {
+        r.classList.toggle('row-dirty', isDirty);
+      });
+    }
+
+    document.querySelectorAll('input[form][name], textarea[form][name]').forEach(function (el) {
+      el.dataset.orig = el.value;
+      el.addEventListener('input', function () { refresh(el.getAttribute('form')); });
+    });
+
+    document.querySelectorAll('form[id^="f-"]').forEach(function (f) {
+      f.addEventListener('submit', function () { dirty.delete(f.id); });
+    });
+
+    window.addEventListener('beforeunload', function (e) {
+      if (dirty.size) { e.preventDefault(); e.returnValue = ''; }
+    });
+  })();
+</script>
 {% endblock %}
