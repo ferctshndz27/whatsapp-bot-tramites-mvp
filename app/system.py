@@ -33,6 +33,7 @@ from app.models import (
     Invitation,
     LoginEvent,
     Message,
+    NluEvent,
     TeamMessage,
     Ticket,
     TicketActivity,
@@ -64,6 +65,7 @@ MIRROR_TABLES = [
     (CatalogCategory, "catalog_categories"),
     (CatalogService, "catalog_services"),
     (CatalogAudit, "catalog_audit"),
+    (NluEvent, "nlu_events"),
 ]
 
 

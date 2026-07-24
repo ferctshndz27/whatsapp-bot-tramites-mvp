@@ -7,7 +7,16 @@ from sqlmodel import Session, select
 
 from app import nlu
 from app.catalog import catalog
-from app.models import Client, Conversation, Direction, Message, Ticket, TicketStatus, utcnow
+from app.models import (
+    Client,
+    Conversation,
+    Direction,
+    Message,
+    NluEvent,
+    Ticket,
+    TicketStatus,
+    utcnow,
+)
 from app.utils import mask_phone
 
 logger = logging.getLogger(__name__)
@@ -266,14 +275,13 @@ def _handle_inicio(session: Session, client: Client, conv: Conversation, text: s
 
     # Varios servicios en un mismo mensaje ("quiero acta de nacimiento y mi
     # curp"): se confirman juntos y se crea un ticket por cada uno.
-    multi = nlu.deduce_all(text)
+    multi, service, category, options = _deduce_and_log(session, client.phone, text)
     if multi:
         _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
         return ["¡Hola! 😊 " + _confirm_multi_message(multi)]
 
     # Regla: si el primer mensaje ya trae el servicio ("necesito mi CURP, soy
     # Juan…"), no se listan servicios: saludo breve y directo a confirmar.
-    service, category = nlu.deduce(text)
     if service is not None:
         _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
         return ["¡Hola! 😊 " + _confirm_message(service)]
@@ -283,7 +291,6 @@ def _handle_inicio(session: Session, client: Client, conv: Conversation, text: s
 
     # "quiero un acta": una palabra que coincide con varios servicios no debe
     # terminar en "no te entendí" — se ofrece el mini-menú de parecidos.
-    options = nlu.suggestions(text)
     if options:
         return _suggest_reply(session, conv, options)
 
@@ -326,12 +333,10 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
                 )
             return [menu]
 
-    multi = nlu.deduce_all(text)
+    multi, service, category, options = _deduce_and_log(session, client.phone, text)
     if multi:
         _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
         return [_confirm_multi_message(multi)]
-
-    service, category = nlu.deduce(text)
     if service is not None:
         _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
         return [_confirm_message(service)]
@@ -339,7 +344,7 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
 
-    return _not_understood(session, client, conv, text)
+    return _not_understood(session, client, conv, text, options=options)
 
 
 def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -381,12 +386,10 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
 
     # Texto libre dentro del submenú: intentar deducir igual que en el menú
     # principal ("mejor quiero una CURP" debe funcionar desde cualquier lado).
-    multi = nlu.deduce_all(text)
+    multi, service, deduced_category, options = _deduce_and_log(session, client.phone, text)
     if multi:
         _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
         return [_confirm_multi_message(multi)]
-
-    service, deduced_category = nlu.deduce(text)
     if service is not None:
         _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
         return [_confirm_message(service)]
@@ -394,7 +397,7 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
         _set_state(session, conv, "menu_servicio", {"category_id": deduced_category.id, "page": 0})
         return [catalog.format_service_menu(deduced_category.id)]
 
-    return _not_understood(session, client, conv, text)
+    return _not_understood(session, client, conv, text, options=options)
 
 
 def _handle_confirmar(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -419,6 +422,7 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
             )
             session.add(ticket)
             tickets.append(ticket)
+        _mark_nlu_ticket(session, client.phone)
         session.commit()
         for ticket in tickets:
             session.refresh(ticket)
@@ -448,21 +452,82 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     return _bump_or_escalate(session, client, conv, text, "¿Puedes confirmar con 'sí' o 'no'?\n" + confirm_text)
 
 
+# Mensajes de cortesía que no son un intento de pedir un trámite: no se
+# registran en la bitácora del agente para no inflar los "no entendidos".
+COURTESY_WORDS = {
+    "gracias", "muchas gracias", "si gracias", "ok", "okay", "va", "vale",
+    "listo", "perfecto", "de acuerdo", "buen dia", "buenas", "adios",
+}
+
+
+def _log_nlu(
+    session: Session, phone: str, text: str, capa: str,
+    service_id: str | None = None, confianza: float | None = None,
+) -> None:
+    normalized = nlu._norm(text)
+    if len(normalized) < 3 or normalized in COURTESY_WORDS:
+        return
+    session.add(
+        NluEvent(
+            phone=phone, text=text[:200], capa=capa,
+            service_id=service_id, confianza=confianza,
+        )
+    )
+
+
+def _deduce_and_log(session: Session, phone: str, text: str):
+    """Corre la cascada de deducción UNA sola vez por mensaje y deja
+    constancia en nluevent (capa que entendió, o "ninguna"). Devuelve
+    (multi, service, category, options) para que cada handler arme su UX."""
+    multi = nlu.deduce_all(text)
+    if multi:
+        _log_nlu(session, phone, text, "multi", ",".join(s.id for s in multi))
+        return multi, None, None, []
+    service, category, capa, confianza = nlu.deduce_explained(text)
+    if service is not None:
+        _log_nlu(session, phone, text, capa, service.id, confianza)
+        return [], service, None, []
+    if category is not None:
+        _log_nlu(session, phone, text, "categoria", category.id)
+        return [], None, category, []
+    options = nlu.suggestions(text)
+    if options:
+        _log_nlu(session, phone, text, "sugerencia", ",".join(s.id for s in options))
+        return [], None, None, options
+    _log_nlu(session, phone, text, "ninguna")
+    return [], None, None, []
+
+
+def _mark_nlu_ticket(session: Session, phone: str) -> None:
+    """Marca la última deducción del cliente como convertida en solicitud.
+
+    ponytail: sin ventana de tiempo — a este volumen, la última no convertida
+    del mismo teléfono es la correcta; afinar con timestamp si algún día hay
+    ambigüedad real."""
+    event = session.exec(
+        select(NluEvent)
+        .where(NluEvent.phone == phone)
+        .where(NluEvent.termino_en_ticket == False)  # noqa: E712
+        .order_by(NluEvent.id.desc())
+    ).first()
+    if event is not None:
+        event.termino_en_ticket = True
+        session.add(event)
+
+
 def _try_service_request(session: Session, conv: Conversation, text: str) -> list[str] | None:
     """Resuelve el texto como pedido de servicio: varios de golpe, uno claro,
     una categoría o parecidos por palabra clave. None si no pide nada."""
-    multi = nlu.deduce_all(text)
+    multi, service, category, options = _deduce_and_log(session, conv.phone, text)
     if multi:
         _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
         return [_confirm_multi_message(multi)]
-    service, category = nlu.deduce(text)
     if service is not None:
         _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
         return [_confirm_message(service)]
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
-    options = nlu.suggestions(text)
     if options:
         return _suggest_reply(session, conv, options)
     return None
@@ -486,8 +551,14 @@ def _asks_info(text: str) -> bool:
     return any(keyword in folded for keyword in INFO_KEYWORDS)
 
 
-def _not_understood(session: Session, client: Client, conv: Conversation, text: str) -> list[str]:
-    options = nlu.suggestions(text)
+def _not_understood(
+    session: Session, client: Client, conv: Conversation, text: str,
+    options: list | None = None,
+) -> list[str]:
+    # options: sugerencias ya calculadas (y registradas) por _deduce_and_log;
+    # None = calcularlas aquí (para llamadas fuera de la cascada instrumentada).
+    if options is None:
+        options = nlu.suggestions(text)
     if options:
         return _suggest_reply(session, conv, options)
     if _asks_info(text):

@@ -1,10 +1,80 @@
 {% extends "base.html" %}
 {% block title %}No entendidos{% endblock %}
 {% block content %}
-<h1>Mensajes no entendidos (últimos 30 días)</h1>
+<h1>Agente IA — métricas y mensajes no entendidos</h1>
 
 {% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
 {% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}
+
+{% if metrics.total %}
+<div class="stats">
+  <div class="stat-card green">
+    <div class="label">Entendidos (últimos {{ metrics.days }} días)</div>
+    <div class="value">{{ metrics.entendidos_pct }}%</div>
+  </div>
+  <div class="stat-card blue">
+    <div class="label">Deducciones registradas</div>
+    <div class="value">{{ metrics.total }}</div>
+  </div>
+  <div class="stat-card orange">
+    <div class="label">Terminaron en solicitud</div>
+    <div class="value">{{ metrics.ticket_pct }}%</div>
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:center;">
+    <div style="flex:2; min-width:320px;">
+      <h2>Entendidos vs no entendidos por día</h2>
+      <div style="display:flex; gap:1rem; font-size:.85rem; margin-bottom:.5rem;">
+        {% for u, color in metrics.line_colors.items() %}
+        <span><i style="display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:.35rem; background: {{ color }};"></i>{{ u }}</span>
+        {% endfor %}
+      </div>
+      <svg viewBox="0 0 {{ metrics.line.width }} {{ metrics.line.height }}" style="width:100%; height:auto;" role="img"
+        aria-label="Deducciones por día: {{ metrics.total }} en {{ metrics.days }} días">
+        {% for y, val in metrics.line.y_ticks %}
+        <line x1="{{ metrics.line.pad_l }}" x2="{{ metrics.line.width - metrics.line.pad_r }}"
+          y1="{{ y }}" y2="{{ y }}" stroke="#eef0f3" stroke-width="1"/>
+        <text x="{{ metrics.line.pad_l - 8 }}" y="{{ y + 4 }}" text-anchor="end" font-size="10" fill="#9aa0aa">{{ val }}</text>
+        {% endfor %}
+        {% for x, lbl in metrics.line.x_labels %}
+        <text x="{{ x }}" y="{{ metrics.line.height - 6 }}" text-anchor="middle" font-size="10" fill="#9aa0aa">{{ lbl }}</text>
+        {% endfor %}
+        {% for s in metrics.line.series %}
+        <path d="{{ s.path }}" fill="none" stroke="{{ s.color }}" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round"/>
+        {% endfor %}
+        {% for s in metrics.line.series %}{% for p in s.points %}
+        <circle cx="{{ p.x }}" cy="{{ p.y }}" r="3" fill="{{ s.color }}"><title>{{ p.label }}</title></circle>
+        {% endfor %}{% endfor %}
+      </svg>
+    </div>
+    <div style="flex:1; min-width:230px; display:flex; gap:1rem; align-items:center; justify-content:center; flex-wrap:wrap;">
+      <svg viewBox="0 0 140 140" width="150" height="150" role="img" aria-label="Deducciones por capa">
+        <circle cx="70" cy="70" r="54" fill="none" stroke="#eef0f3" stroke-width="14"/>
+        <g transform="rotate(-90 70 70)">
+          {% for s in metrics.donut.segments %}
+          <circle cx="70" cy="70" r="54" fill="none" stroke="{{ s.color }}" stroke-width="14"
+            stroke-linecap="round" stroke-dasharray="{{ s.dash }}" stroke-dashoffset="{{ s.offset }}">
+            <title>{{ s.user }}: {{ s.n }} ({{ s.pct }}%)</title>
+          </circle>
+          {% endfor %}
+        </g>
+        <text x="70" y="67" text-anchor="middle" font-size="22" font-weight="700" fill="#22242a">{{ metrics.donut.total }}</text>
+        <text x="70" y="85" text-anchor="middle" font-size="9" fill="#9aa0aa">por capa</text>
+      </svg>
+      <div style="font-size:.85rem; display:flex; flex-direction:column; gap:.35rem;">
+        {% for s in metrics.donut.segments %}
+        <div><i style="display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:.4rem; background: {{ s.color }};"></i>{{ s.user }} — {{ s.n }} ({{ s.pct }}%)</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="card"><p class="empty">Aún sin deducciones registradas — las métricas aparecen conforme los clientes escriben.</p></div>
+{% endif %}
 
 <div class="card">
   <p style="margin-top:0;">

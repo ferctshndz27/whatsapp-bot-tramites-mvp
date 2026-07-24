@@ -242,6 +242,25 @@ class CatalogAudit(SQLModel, table=True):
     habilitado: bool = True
 
 
+class NluEvent(SQLModel, table=True):
+    """Bitácora de deducción del agente: qué entendió (o no) de cada texto
+    libre, con qué capa, y si terminó en solicitud. Alimenta las métricas
+    del panel Agente IA (/unmatched). Append-only."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    phone: str = Field(index=True)
+    text: str  # truncado a 200 caracteres
+    # llm | nombre | sinonimo | keyword | fuzzy | categoria | multi |
+    # sugerencia | ninguna
+    capa: str = Field(index=True)
+    # Uno o varios service_id separados por coma (multi/sugerencia).
+    service_id: str | None = None
+    confianza: float | None = None  # solo capa fuzzy (score 0-1)
+    termino_en_ticket: bool = False
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
 class Invitation(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     token: str = Field(unique=True, index=True)

@@ -247,6 +247,20 @@ _SCHEMA_DDL = [
     )
     """,
     """
+    IF OBJECT_ID('nlu_events', 'U') IS NULL
+    CREATE TABLE nlu_events (
+        source_id          BIGINT        NOT NULL PRIMARY KEY,
+        phone              NVARCHAR(32)  NOT NULL,
+        text               NVARCHAR(200) NOT NULL,
+        capa               NVARCHAR(20)  NOT NULL,
+        service_id         NVARCHAR(300) NULL,
+        confianza          FLOAT         NULL,
+        termino_en_ticket  BIT           NOT NULL DEFAULT 0,
+        habilitado         BIT           NOT NULL DEFAULT 1,
+        created_at         DATETIME2     NOT NULL
+    )
+    """,
+    """
     IF OBJECT_ID('conversations', 'U') IS NULL
     CREATE TABLE conversations (
         phone           NVARCHAR(32)  NOT NULL PRIMARY KEY,
@@ -650,6 +664,22 @@ def archive_catalog_audit(a) -> None:
     )
 
 
+def archive_nlu_event(e) -> None:
+    _upsert(
+        "nlu_events", "source_id", e.id,
+        {
+            "phone": e.phone,
+            "text": e.text,
+            "capa": e.capa,
+            "service_id": e.service_id,
+            "confianza": e.confianza,
+            "termino_en_ticket": e.termino_en_ticket,
+            "habilitado": e.habilitado,
+            "created_at": _naive_utc(e.created_at),
+        },
+    )
+
+
 def archive_conversation(c) -> None:
     _upsert(
         "conversations", "phone", c.phone,
@@ -694,6 +724,7 @@ def backfill() -> None:
         FollowUp,
         Invitation,
         LoginEvent,
+        NluEvent,
         SavedReply,
         Ticket,
         TicketActivity,
@@ -739,6 +770,8 @@ def backfill() -> None:
                 archive_catalog_service(cs)
             for ca in session.exec(select(CatalogAudit)).all():
                 archive_catalog_audit(ca)
+            for ne in session.exec(select(NluEvent)).all():
+                archive_nlu_event(ne)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -760,6 +793,7 @@ def _register_listeners() -> None:
         Invitation,
         LoginEvent,
         Message,
+        NluEvent,
         SavedReply,
         TeamMessage,
         Ticket,
@@ -858,6 +892,11 @@ def _register_listeners() -> None:
     @event.listens_for(CatalogAudit, "after_update")
     def _catalog_audit_upsert(mapper, connection, target):
         _safe(archive_catalog_audit, target)
+
+    @event.listens_for(NluEvent, "after_insert")
+    @event.listens_for(NluEvent, "after_update")
+    def _nlu_event_upsert(mapper, connection, target):
+        _safe(archive_nlu_event, target)
 
 
 _register_listeners()

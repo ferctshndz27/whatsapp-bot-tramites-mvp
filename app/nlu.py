@@ -51,17 +51,28 @@ Reglas:
 
 def deduce(text: str) -> tuple[Service | None, Category | None]:
     """Devuelve (servicio, categoría) deducidos del texto; (None, None) si no se pudo."""
+    service, category, _, _ = deduce_explained(text)
+    return service, category
+
+
+def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, float | None]:
+    """Como deduce(), más la capa que decidió ("llm", "nombre", "sinonimo",
+    "keyword", "fuzzy", "categoria", "ninguna") y la confianza (solo fuzzy,
+    0-1). Alimenta la bitácora nluevent del panel Agente IA."""
     cleaned = text.strip()
     if len(cleaned) < 3:
-        return None, None
+        return None, None, "ninguna", None
 
     if settings.anthropic_api_key:
         try:
-            return _deduce_llm(cleaned[:MAX_INPUT_CHARS])
+            service, category = _deduce_llm(cleaned[:MAX_INPUT_CHARS])
+            if service is not None or category is not None:
+                return service, category, "llm", None
+            return None, None, "ninguna", None
         except Exception as exc:
             logger.warning("Deducción con Claude falló, usando keywords: %s", exc)
 
-    return _deduce_keywords(cleaned)
+    return _deduce_keywords_explained(cleaned)
 
 
 def _get_client():
@@ -163,8 +174,17 @@ def _service_terms() -> list[tuple[Service, list[str]]]:
 
 
 def _deduce_keywords(text: str) -> tuple[Service | None, Category | None]:
+    service, category, _, _ = _deduce_keywords_explained(text)
+    return service, category
+
+
+def _deduce_keywords_explained(
+    text: str,
+) -> tuple[Service | None, Category | None, str, float | None]:
     normalized = _norm(text)
     terms = _service_terms()
+    capa: str = "literal"
+    confianza: float | None = None
 
     # Capa 1: nombre o sinónimo mencionado dentro de la frase ("necesito un
     # acta de divorcio", "ocupo mi clave única") — el caso más común.
@@ -172,6 +192,7 @@ def _deduce_keywords(text: str) -> tuple[Service | None, Category | None]:
     if not matches:
         # Capa 2: frase corta contenida en el nombre ("divorcio") — matching clásico.
         matches = {s.id: s for s in catalog.search_by_keyword(text)}
+        capa = "keyword"
     if not matches and len(normalized) >= FUZZY_MIN_CHARS:
         # Capa 3: difuso — tolera faltas de ortografía ("nesesito mi kurp").
         # Solo gana si hay UN servicio claramente arriba del umbral.
@@ -185,11 +206,17 @@ def _deduce_keywords(text: str) -> tuple[Service | None, Category | None]:
             leaders = [s for score, s in scored if score >= top_score - 2]
             if len(leaders) == 1:
                 matches = {leaders[0].id: leaders[0]}
+                capa, confianza = "fuzzy", round(top_score / 100, 2)
 
     if len(matches) == 1:
-        return next(iter(matches.values())), None
+        service = next(iter(matches.values()))
+        if capa == "literal":
+            # Distinguir si acertó el nombre oficial o un sinónimo aprendido:
+            # el panel mide si el catálogo de sinónimos está rindiendo.
+            capa = "nombre" if _norm(service.name) in normalized else "sinonimo"
+        return service, None, capa, confianza
 
     for c in catalog.categories:
         if _norm(c.name) in normalized:
-            return None, c
-    return None, None
+            return None, c, "categoria", None
+    return None, None, "ninguna", None

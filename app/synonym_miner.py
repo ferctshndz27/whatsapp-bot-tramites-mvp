@@ -154,6 +154,72 @@ def mine_synonyms(texts: list[str]) -> list[dict]:
     return proposals
 
 
+# Colores por capa de deducción para la dona del panel (el color nunca es el
+# único indicador: leyenda y tooltips llevan nombre y número).
+METRICS_DAYS = 14
+CAPA_COLORS = {
+    "llm": "#8b5cf6", "nombre": "#2563eb", "sinonimo": "#10b981",
+    "keyword": "#22d3ee", "fuzzy": "#f59e0b", "multi": "#ec4899",
+    "categoria": "#14b8a6", "sugerencia": "#64748b", "ninguna": "#f43f5e",
+}
+
+
+def nlu_metrics(days: int = METRICS_DAYS) -> dict:
+    """KPIs y gráficas de la bitácora nluevent (últimos N días, horario de
+    negocio). Reusa los builders SVG del panel de Actividad."""
+    # ponytail: imports locales — reuso puntual de app.activity sin mover los
+    # builders a un módulo aparte hasta que un tercer panel los necesite.
+    from datetime import datetime, timezone
+
+    from app.activity import BUSINESS_TZ, _as_naive_utc, build_donut, build_line_chart
+    from app.models import NluEvent
+
+    today = datetime.now(BUSINESS_TZ).date()
+    start = today - timedelta(days=days - 1)
+    with get_session() as session:
+        events = session.exec(select(NluEvent)).all()
+
+    day_buckets = {
+        start + timedelta(days=i): {"entendidos": 0, "no entendidos": 0}
+        for i in range((today - start).days + 1)
+    }
+    capa_totals: dict[str, int] = {}
+    total = entendidos = tickets = 0
+    for e in events:
+        local_day = (
+            _as_naive_utc(e.created_at)
+            .replace(tzinfo=timezone.utc)
+            .astimezone(BUSINESS_TZ)
+            .date()
+        )
+        bucket = day_buckets.get(local_day)
+        if bucket is None:
+            continue
+        total += 1
+        ok = e.capa != "ninguna"
+        entendidos += ok
+        tickets += e.termino_en_ticket
+        bucket["entendidos" if ok else "no entendidos"] += 1
+        capa_totals[e.capa] = capa_totals.get(e.capa, 0) + 1
+
+    chart = [
+        {"date": d, "total": sum(v.values()), "by_user": v} for d, v in day_buckets.items()
+    ]
+    line_colors = {"entendidos": "#10b981", "no entendidos": "#f43f5e"}
+    capa_colors = {c: CAPA_COLORS.get(c, "#64748b") for c in sorted(capa_totals)}
+    return {
+        "days": days,
+        "total": total,
+        "entendidos_pct": round(entendidos / total * 100) if total else 0,
+        "ticket_pct": round(tickets / total * 100) if total else 0,
+        "line": build_line_chart(chart, line_colors),
+        "line_colors": line_colors,
+        "donut": build_donut(
+            [{"date": today, "total": total, "by_user": capa_totals}], capa_colors
+        ),
+    }
+
+
 def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
     with get_session() as session:
         pending = unmatched_messages(session)
@@ -166,6 +232,7 @@ def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
             "pending": pending,
             "services": services,
             "proposals": proposals or [],
+            "metrics": nlu_metrics(),
             "mining_available": bool(settings.anthropic_api_key),
             "error": error,
             "ok": ok,
