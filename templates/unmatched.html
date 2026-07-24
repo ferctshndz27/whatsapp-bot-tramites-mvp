@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}No entendidos{% endblock %}
+{% block title %}Agente WhatsApp{% endblock %}
 {% block content %}
-<h1>Agente IA — métricas y mensajes no entendidos</h1>
+<h1>Agente WhatsApp — métricas y aprendizaje</h1>
 
 {% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
 {% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}
@@ -77,8 +77,8 @@
 {% endif %}
 
 <div class="card">
+  <h2>Mensajes no entendidos (últimos 30 días)</h2>
   <p style="margin-top:0;">
-    <a href="/system">← Volver a Sistema</a> ·
     <a href="/export/no-entendidos.csv">⬇ Descargar CSV</a>
   </p>
   {% if pending %}
