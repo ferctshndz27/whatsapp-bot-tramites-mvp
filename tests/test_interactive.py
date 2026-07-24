@@ -87,9 +87,9 @@ def test_greeting_stays_plain_text(monkeypatch, session):
     assert outbound == replies  # sin menú ni confirmación: texto tal cual
 
 
-def test_big_service_menu_stays_text(monkeypatch, session):
+def test_big_service_menu_paginates_as_list(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
-    # Infonavit tiene 12 servicios: página llena (10) + Volver no cabe en Meta.
+    # Infonavit tiene 12 servicios: página de 8 + "Ver más" + "Volver" = 10 filas.
     session.add(
         Conversation(
             phone=PHONE, state="menu_servicio",
@@ -102,7 +102,41 @@ def test_big_service_menu_stays_text(monkeypatch, session):
     replies = [catalog.format_service_menu("infonavit")]
     outbound = presentation(session, PHONE, replies)
 
-    assert outbound[-1] == replies[-1]  # se queda el texto con paginación
+    last = outbound[-1]
+    assert isinstance(last, dict) and "list" in last
+    ids = [r[0] for r in last["list"]]
+    assert len(ids) == 10  # tope exacto de Meta
+    assert ids[:2] == ["1", "2"]
+    assert "mas" in ids  # pagina en nativo ("mas" = lo que teclearía)
+    assert ids[-1] == "0"  # Volver siempre presente
+
+
+def test_last_page_list_has_no_more_row(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    session.add(
+        Conversation(
+            phone=PHONE, state="menu_servicio",
+            context_json=json.dumps({"category_id": "infonavit", "page": 1}),
+        )
+    )
+    session.commit()
+    from app.catalog import catalog
+
+    outbound = presentation(session, PHONE, [catalog.format_service_menu("infonavit", page=1)])
+
+    ids = [r[0] for r in outbound[-1]["list"]]
+    assert ids == ["9", "10", "11", "12", "0"]  # última página: sin "Ver más"
+
+
+def test_list_payload_adds_description_for_long_titles():
+    rows = [("1", "Constancia de situación fiscal con CURP"), ("2", "Corto")]
+
+    built = _list_payload("5215500000000", "b", "Ver opciones", rows)
+    built_rows = built["interactive"]["action"]["sections"][0]["rows"]
+
+    assert len(built_rows[0]["title"]) <= 24
+    assert built_rows[0]["description"].startswith("Constancia de situación fiscal")
+    assert "description" not in built_rows[1]  # título corto: sin descripción
 
 
 def test_feedback_button_records_once(monkeypatch, session):

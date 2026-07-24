@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 
 SEED_PATH = Path(__file__).parent / "catalog.json"
 
-PAGE_SIZE = 10
+# 8 servicios por página: cada página cabe en una lista nativa de WhatsApp
+# (8 + "Ver más opciones" + "Volver" = 10 filas, el tope de Meta).
+PAGE_SIZE = 8
 
 # Etiquetas en español para el historial de cambios del panel.
 FIELD_LABELS = {

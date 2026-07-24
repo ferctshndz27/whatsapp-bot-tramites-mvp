@@ -17,6 +17,7 @@ REQUEST_TIMEOUT_SECONDS = 10
 # un título largo no debe tirar el envío completo).
 MAX_LIST_ROWS = 10
 LIST_TITLE_MAX = 24
+LIST_DESC_MAX = 72
 MAX_BUTTONS = 3
 BUTTON_TITLE_MAX = 20
 
@@ -71,6 +72,15 @@ def _list_payload(to_phone: str, body: str, button: str, rows: list[tuple[str, s
     """Mensaje de lista nativa: el cliente toca una opción en vez de teclear
     el número. El id de cada fila ES el texto que habría tecleado ("1", "2"),
     así la máquina de estados no cambia."""
+    built = []
+    for row_id, title in rows[:MAX_LIST_ROWS]:
+        row = {"id": str(row_id)[:200], "title": str(title)[:LIST_TITLE_MAX]}
+        if len(str(title)) > LIST_TITLE_MAX:
+            # Título recortado por el tope de 24 de Meta: el nombre completo
+            # va en la descripción (72) para que opciones parecidas —
+            # "Constancia de situación…" ×4 — se distingan.
+            row["description"] = str(title)[:LIST_DESC_MAX]
+        built.append(row)
     return {
         "messaging_product": "whatsapp",
         "to": to_phone,
@@ -80,14 +90,7 @@ def _list_payload(to_phone: str, body: str, button: str, rows: list[tuple[str, s
             "body": {"text": body},
             "action": {
                 "button": button[:BUTTON_TITLE_MAX],
-                "sections": [
-                    {
-                        "rows": [
-                            {"id": str(row_id)[:200], "title": str(title)[:LIST_TITLE_MAX]}
-                            for row_id, title in rows[:MAX_LIST_ROWS]
-                        ]
-                    }
-                ],
+                "sections": [{"rows": built}],
             },
         },
     }

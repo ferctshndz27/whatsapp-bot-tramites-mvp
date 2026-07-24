@@ -500,11 +500,12 @@ def _menu_rows(conv: Conversation) -> list[tuple[str, str]]:
         page = context.get("page", 0)
         start = page * PAGE_SIZE
         chunk = category.services[start : start + PAGE_SIZE]
-        if not chunk or len(chunk) > 9:
-            # 10 servicios + "Volver" no caben en las 10 filas de Meta:
-            # se queda el menú de texto con paginación ('más').
-            return []
+        if not chunk or len(chunk) > 8:
+            return []  # no debería pasar con PAGE_SIZE=8; fallback defensivo a texto
         rows = [(str(start + i), s.name) for i, s in enumerate(chunk, start=1)]
+        if start + PAGE_SIZE < len(category.services):
+            # "mas" es lo que el cliente habría tecleado: pagina en nativo.
+            rows.append(("mas", "➡ Ver más opciones"))
         rows.append(("0", "⬅ Volver al menú"))
         return rows
     if conv.state == "eligiendo_sugerencia":

@@ -38,10 +38,13 @@ def test_infonavit_pagination_over_ten_items():
     category = catalog.category_by_id("infonavit")
     assert len(category.services) == 12
 
+    # Páginas de 8: cada una cabe en la lista nativa de WhatsApp (8 + Ver más
+    # + Volver = 10 filas, tope de Meta).
     page0 = catalog.format_service_menu("infonavit", page=0)
-    assert "10." in page0
+    assert "8." in page0
+    assert "9." not in page0
     assert "más" in page0.lower()
 
     page1 = catalog.format_service_menu("infonavit", page=1)
-    assert "11." in page1
+    assert "9." in page1
     assert "12." in page1
