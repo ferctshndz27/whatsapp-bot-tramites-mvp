@@ -535,12 +535,11 @@ def presentation(session: Session, phone: str, replies: list[str]) -> list:
     if MENU_MARKER in last:
         rows = _menu_rows(conv)
         if rows:
-            header = last.split("\n")[0]
-            out[-1] = {
-                "text": f"{header}\nElige una opción del menú 👇",
-                "list": rows,
-                "button": LIST_BUTTON_LABEL,
-            }
+            # Meta no permite auto-abrir la lista: el desplegable siempre llega
+            # cerrado. Por eso las opciones numeradas van VISIBLES en el cuerpo
+            # (auto-despliegue de facto) y "Ver opciones" queda para elegir con
+            # un toque — o el cliente teclea el número, como siempre.
+            out[-1] = {"text": last, "list": rows, "button": LIST_BUTTON_LABEL}
     return out
 
 

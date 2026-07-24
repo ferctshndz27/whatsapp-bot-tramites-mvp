@@ -75,6 +75,7 @@ def test_category_menu_becomes_list(monkeypatch, session):
     assert isinstance(last, dict) and "list" in last
     assert last["list"][0][0] == "1"  # el id es el número que se teclearía
     assert len(last["list"]) == 9  # las 9 categorías del catálogo semilla
+    assert "1." in last["text"]  # opciones visibles en el cuerpo (Meta no auto-abre la lista)
 
 
 def test_greeting_stays_plain_text(monkeypatch, session):

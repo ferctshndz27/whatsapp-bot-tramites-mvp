@@ -18,6 +18,7 @@ REQUEST_TIMEOUT_SECONDS = 10
 MAX_LIST_ROWS = 10
 LIST_TITLE_MAX = 24
 LIST_DESC_MAX = 72
+LIST_BODY_MAX = 1024
 MAX_BUTTONS = 3
 BUTTON_TITLE_MAX = 20
 
@@ -87,7 +88,7 @@ def _list_payload(to_phone: str, body: str, button: str, rows: list[tuple[str, s
         "type": "interactive",
         "interactive": {
             "type": "list",
-            "body": {"text": body},
+            "body": {"text": body[:LIST_BODY_MAX]},
             "action": {
                 "button": button[:BUTTON_TITLE_MAX],
                 "sections": [{"rows": built}],
