@@ -30,6 +30,7 @@ from app.models import (
     CatalogService,
     Client,
     Conversation,
+    Feedback,
     Invitation,
     LoginEvent,
     Message,
@@ -66,6 +67,7 @@ MIRROR_TABLES = [
     (CatalogService, "catalog_services"),
     (CatalogAudit, "catalog_audit"),
     (NluEvent, "nlu_events"),
+    (Feedback, "feedback"),
 ]
 
 

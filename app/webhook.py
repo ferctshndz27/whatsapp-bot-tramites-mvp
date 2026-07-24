@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlmodel import select
 
-from app import whatsapp_client
+from app import conversation, whatsapp_client
 from app.config import settings
 from app.conversation import handle_incoming
 from app.db import get_session
@@ -71,19 +71,45 @@ def _process_message(message: dict) -> None:
             logger.info("Mensaje de %s ignorado: cliente bloqueado", phone)
             return
 
-    msg_type = message.get("type")
-    is_media = msg_type != "text"
-    text = message.get("text", {}).get("body", "") if not is_media else ""
+    text, is_media = _extract_text(message)
 
     with get_session() as session:
         replies = handle_incoming(
             session, phone, text, is_media=is_media, wa_message_id=message.get("id")
         )
+        outbound = conversation.presentation(session, phone, replies)
 
-    for reply in replies:
-        wa_message_id = whatsapp_client.send_text(phone, reply)
+    for item in outbound:
+        wa_message_id = _deliver(phone, item)
         if wa_message_id:
             _tag_sent_message(phone, wa_message_id)
+
+
+def _extract_text(message: dict) -> tuple[str, bool]:
+    """(texto, is_media). Una respuesta interactiva (lista/botón) llega como
+    su id — el mismo texto que el cliente habría tecleado ("1", "si")."""
+    msg_type = message.get("type")
+    if msg_type == "text":
+        return message.get("text", {}).get("body", ""), False
+    if msg_type == "interactive":
+        inner = message.get("interactive", {})
+        reply = inner.get("list_reply") or inner.get("button_reply") or {}
+        return reply.get("id", ""), False
+    return "", True
+
+
+def _deliver(phone: str, item) -> str | None:
+    """Envía texto plano o interactivo; si el interactivo falla, cae al texto
+    (el cliente nunca se queda sin respuesta por un error de formato)."""
+    if isinstance(item, str):
+        return whatsapp_client.send_text(phone, item)
+    if "buttons" in item:
+        wamid = whatsapp_client.send_buttons(phone, item["text"], item["buttons"])
+    else:
+        wamid = whatsapp_client.send_list(
+            phone, item["text"], item.get("button", "Ver opciones"), item["list"]
+        )
+    return wamid or whatsapp_client.send_text(phone, item["text"])
 
 
 def _tag_sent_message(phone: str, wa_message_id: str) -> None:

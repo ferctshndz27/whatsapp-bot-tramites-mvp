@@ -550,6 +550,23 @@ def _notify_finish(ticket_id: int) -> None:
         session.add(
             Message(phone=phone, direction=Direction.OUT, body=body, wa_message_id=wamid)
         )
+        # Feedback del cliente: botones 👍/👎. Los ids fb:<folio>:up|down los
+        # procesa conversation.handle_incoming al tocar el botón.
+        fb_body = "¿Te sirvió nuestro servicio?"
+        fb_wamid = whatsapp_client.send_buttons(
+            phone,
+            fb_body,
+            [
+                (f"fb:{ticket.id}:up", "👍 Sí, excelente"),
+                (f"fb:{ticket.id}:down", "👎 Puede mejorar"),
+            ],
+        )
+        session.add(
+            Message(
+                phone=phone, direction=Direction.OUT,
+                body=fb_body + " (👍/👎)", wa_message_id=fb_wamid,
+            )
+        )
         session.commit()
     if wamid is None:
         logger.warning("Aviso de cierre a %s sin confirmación de envío", phone)

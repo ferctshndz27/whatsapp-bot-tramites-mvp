@@ -13,18 +13,20 @@ MAX_RETRIES = 3
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 REQUEST_TIMEOUT_SECONDS = 10
 
+# Límites de la API de Meta para mensajes interactivos (se truncan defensivo:
+# un título largo no debe tirar el envío completo).
+MAX_LIST_ROWS = 10
+LIST_TITLE_MAX = 24
+MAX_BUTTONS = 3
+BUTTON_TITLE_MAX = 20
 
-def send_text(to_phone: str, body: str) -> str | None:
+
+def _send(to_phone: str, payload: dict) -> str | None:
+    """POST a /messages con reintentos y backoff. Devuelve el wamid o None."""
     if not settings.whatsapp_token or not settings.whatsapp_phone_number_id:
         return None
 
     url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{settings.whatsapp_phone_number_id}/messages"
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to_phone,
-        "type": "text",
-        "text": {"body": body},
-    }
     headers = {"Authorization": f"Bearer {settings.whatsapp_token}"}
 
     delay = 1.0
@@ -51,6 +53,73 @@ def send_text(to_phone: str, body: str) -> str | None:
         time.sleep(delay)
         delay *= 2
     return None
+
+
+def send_text(to_phone: str, body: str) -> str | None:
+    return _send(
+        to_phone,
+        {
+            "messaging_product": "whatsapp",
+            "to": to_phone,
+            "type": "text",
+            "text": {"body": body},
+        },
+    )
+
+
+def _list_payload(to_phone: str, body: str, button: str, rows: list[tuple[str, str]]) -> dict:
+    """Mensaje de lista nativa: el cliente toca una opción en vez de teclear
+    el número. El id de cada fila ES el texto que habría tecleado ("1", "2"),
+    así la máquina de estados no cambia."""
+    return {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": body},
+            "action": {
+                "button": button[:BUTTON_TITLE_MAX],
+                "sections": [
+                    {
+                        "rows": [
+                            {"id": str(row_id)[:200], "title": str(title)[:LIST_TITLE_MAX]}
+                            for row_id, title in rows[:MAX_LIST_ROWS]
+                        ]
+                    }
+                ],
+            },
+        },
+    }
+
+
+def _buttons_payload(to_phone: str, body: str, buttons: list[tuple[str, str]]) -> dict:
+    return {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {"id": str(btn_id)[:200], "title": str(title)[:BUTTON_TITLE_MAX]},
+                    }
+                    for btn_id, title in buttons[:MAX_BUTTONS]
+                ]
+            },
+        },
+    }
+
+
+def send_list(to_phone: str, body: str, button: str, rows: list[tuple[str, str]]) -> str | None:
+    return _send(to_phone, _list_payload(to_phone, body, button, rows))
+
+
+def send_buttons(to_phone: str, body: str, buttons: list[tuple[str, str]]) -> str | None:
+    return _send(to_phone, _buttons_payload(to_phone, body, buttons))
 
 
 def send_media(

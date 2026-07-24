@@ -18,7 +18,7 @@ from sqlmodel import select
 
 from app.auth import is_admin
 from app.db import get_session
-from app.models import Ticket, TicketActivity, TicketStatus, User
+from app.models import Feedback, Ticket, TicketActivity, TicketStatus, User
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,22 @@ def build_donut(chart: list[dict], colors: dict[str, str]) -> dict:
     return {"total": total, "segments": segments}
 
 
+def feedback_counts(session) -> dict[str, dict[str, int]]:
+    """{colaborador: {"up": n, "down": n}} — opiniones 👍/👎 de clientes sobre
+    tickets atendidos por cada quien (botones del aviso de cierre)."""
+    rows = session.exec(
+        select(Feedback, Ticket).where(Feedback.ticket_id == Ticket.id)
+    ).all()
+    counts: dict[str, dict[str, int]] = {}
+    for fb, ticket in rows:
+        if not ticket.assigned_to:
+            continue
+        row = counts.setdefault(ticket.assigned_to, {"up": 0, "down": 0})
+        if fb.rating in row:
+            row[fb.rating] += 1
+    return counts
+
+
 def backfill_closed_tickets() -> None:
     """Puebla el histórico una sola vez con los cierres previos a esta función.
 
@@ -303,8 +319,14 @@ def activity_view(
         team = None
         if admin:
             usernames = [u.username for u in session.exec(select(User)).all()]
+            fb = feedback_counts(session)
             team = [
-                {"username": name, **counts.get(name, {"day": 0, "week": 0, "month": 0, "total": 0})}
+                {
+                    "username": name,
+                    **counts.get(name, {"day": 0, "week": 0, "month": 0, "total": 0}),
+                    "fb_up": fb.get(name, {}).get("up", 0),
+                    "fb_down": fb.get(name, {}).get("down", 0),
+                }
                 for name in sorted(usernames)
             ]
 

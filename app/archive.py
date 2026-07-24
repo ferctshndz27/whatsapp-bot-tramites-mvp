@@ -247,6 +247,17 @@ _SCHEMA_DDL = [
     )
     """,
     """
+    IF OBJECT_ID('feedback', 'U') IS NULL
+    CREATE TABLE feedback (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        ticket_id  BIGINT       NOT NULL,
+        phone      NVARCHAR(32) NOT NULL,
+        rating     NVARCHAR(8)  NOT NULL,
+        habilitado BIT          NOT NULL DEFAULT 1,
+        created_at DATETIME2    NOT NULL
+    )
+    """,
+    """
     IF OBJECT_ID('nlu_events', 'U') IS NULL
     CREATE TABLE nlu_events (
         source_id          BIGINT        NOT NULL PRIMARY KEY,
@@ -664,6 +675,19 @@ def archive_catalog_audit(a) -> None:
     )
 
 
+def archive_feedback(f) -> None:
+    _upsert(
+        "feedback", "source_id", f.id,
+        {
+            "ticket_id": f.ticket_id,
+            "phone": f.phone,
+            "rating": f.rating,
+            "habilitado": f.habilitado,
+            "created_at": _naive_utc(f.created_at),
+        },
+    )
+
+
 def archive_nlu_event(e) -> None:
     _upsert(
         "nlu_events", "source_id", e.id,
@@ -721,6 +745,7 @@ def backfill() -> None:
         Client,
         ClientNote,
         Conversation,
+        Feedback,
         FollowUp,
         Invitation,
         LoginEvent,
@@ -772,6 +797,8 @@ def backfill() -> None:
                 archive_catalog_audit(ca)
             for ne in session.exec(select(NluEvent)).all():
                 archive_nlu_event(ne)
+            for f in session.exec(select(Feedback)).all():
+                archive_feedback(f)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -790,6 +817,7 @@ def _register_listeners() -> None:
         ClientNote,
         Conversation,
         FollowUp,
+        Feedback,
         Invitation,
         LoginEvent,
         Message,
@@ -897,6 +925,11 @@ def _register_listeners() -> None:
     @event.listens_for(NluEvent, "after_update")
     def _nlu_event_upsert(mapper, connection, target):
         _safe(archive_nlu_event, target)
+
+    @event.listens_for(Feedback, "after_insert")
+    @event.listens_for(Feedback, "after_update")
+    def _feedback_upsert(mapper, connection, target):
+        _safe(archive_feedback, target)
 
 
 _register_listeners()

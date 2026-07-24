@@ -118,7 +118,9 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Colaborador</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th><th></th></tr>
+        <tr><th>Colaborador</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th>
+          <th title="Opiniones positivas de clientes">👍</th>
+          <th title="Opiniones negativas de clientes">👎</th><th></th></tr>
       </thead>
       <tbody>
         {% for m in team %}
@@ -128,6 +130,8 @@
           <td>{{ m.week }}</td>
           <td>{{ m.month }}</td>
           <td>{{ m.total }}</td>
+          <td>{{ m.fb_up }}</td>
+          <td>{{ m.fb_down }}</td>
           <td><a href="/activity?user={{ m.username }}">ver histórico</a></td>
         </tr>
         {% endfor %}

@@ -6,11 +6,12 @@ from datetime import timedelta
 from sqlmodel import Session, select
 
 from app import nlu
-from app.catalog import catalog
+from app.catalog import PAGE_SIZE, catalog
 from app.models import (
     Client,
     Conversation,
     Direction,
+    Feedback,
     Message,
     NluEvent,
     Ticket,
@@ -137,6 +138,10 @@ def handle_incoming(
 
     if is_media:
         replies = ["Por ahora no puedo recibir documentos en este chat. Un asesor te indicará cómo enviarlos."]
+    elif (fb := FEEDBACK_RE.match(text.strip())):
+        # Botón 👍/👎 del aviso de cierre: se registra y se agradece, en
+        # cualquier estado (no pasa por la máquina de estados ni por nluevent).
+        replies = _record_feedback(session, phone, int(fb.group(1)), fb.group(2))
     elif conv.state == "escalado":
         normalized = text.strip().lower()
         ticket = _latest_open_ticket(session, phone)
@@ -450,6 +455,92 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     else:
         confirm_text = catalog.format_category_menu()
     return _bump_or_escalate(session, client, conv, text, "¿Puedes confirmar con 'sí' o 'no'?\n" + confirm_text)
+
+
+# Botones 👍/👎 del aviso de cierre (ids emitidos por dashboard._notify_finish).
+FEEDBACK_RE = re.compile(r"^fb:(\d+):(up|down)$")
+FEEDBACK_THANKS = {
+    "up": "¡Gracias por tu opinión! 🙌 Nos alegra haberte ayudado.",
+    "down": "Gracias por decírnoslo 🙏 Vamos a revisar tu caso para mejorar.",
+}
+
+
+def _record_feedback(session: Session, phone: str, ticket_id: int, rating: str) -> list[str]:
+    ticket = session.get(Ticket, ticket_id)
+    if ticket is None or ticket.phone != phone:
+        # Botón viejo o de otro chat: se agradece sin registrar nada.
+        return [FEEDBACK_THANKS[rating]]
+    existing = session.exec(
+        select(Feedback).where(Feedback.ticket_id == ticket_id)
+    ).first()
+    if existing is None:
+        session.add(Feedback(ticket_id=ticket_id, phone=phone, rating=rating))
+    return [FEEDBACK_THANKS[rating]]
+
+
+# ---- Capa de presentación WhatsApp (listas y botones nativos) ----
+# La máquina de estados sigue hablando en texto plano (lo que se guarda y
+# espeja); aquí solo se decide CÓMO se ve la última respuesta en WhatsApp.
+
+MENU_MARKER = "esponde con el número"  # cubre "Responde/responde con el número"
+LIST_BUTTON_LABEL = "Ver opciones"
+CONFIRM_BUTTONS = [("si", "✅ Sí, confirmar"), ("no", "❌ No")]
+
+
+def _menu_rows(conv: Conversation) -> list[tuple[str, str]]:
+    """Filas (id, título) del menú según el estado; [] = quedarse en texto.
+    El id es el número que el cliente habría tecleado."""
+    context = _get_context(conv)
+    if conv.state == "menu_categoria":
+        return [(str(i), c.name) for i, c in enumerate(catalog.categories, start=1)][:10]
+    if conv.state == "menu_servicio":
+        category = catalog.category_by_id(context.get("category_id", ""))
+        if category is None:
+            return []
+        page = context.get("page", 0)
+        start = page * PAGE_SIZE
+        chunk = category.services[start : start + PAGE_SIZE]
+        if not chunk or len(chunk) > 9:
+            # 10 servicios + "Volver" no caben en las 10 filas de Meta:
+            # se queda el menú de texto con paginación ('más').
+            return []
+        rows = [(str(start + i), s.name) for i, s in enumerate(chunk, start=1)]
+        rows.append(("0", "⬅ Volver al menú"))
+        return rows
+    if conv.state == "eligiendo_sugerencia":
+        options = [
+            s for s in (catalog.service_by_id(i) for i in context.get("suggestion_ids", []))
+            if s is not None
+        ]
+        return [(str(i), s.name) for i, s in enumerate(options, start=1)][:10]
+    return []
+
+
+def presentation(session: Session, phone: str, replies: list[str]) -> list:
+    """Convierte la última respuesta en mensaje interactivo según el estado:
+    confirmación → botones Sí/No; menús → lista nativa. Devuelve strings
+    (texto normal) y/o dicts {"text", "buttons"} | {"text", "list", "button"}."""
+    if not replies:
+        return list(replies)
+    conv = session.get(Conversation, phone)
+    if conv is None:
+        return list(replies)
+
+    out: list = list(replies)
+    last = out[-1]
+    if conv.state == "confirmar":
+        out[-1] = {"text": last, "buttons": list(CONFIRM_BUTTONS)}
+        return out
+    if MENU_MARKER in last:
+        rows = _menu_rows(conv)
+        if rows:
+            header = last.split("\n")[0]
+            out[-1] = {
+                "text": f"{header}\nElige una opción del menú 👇",
+                "list": rows,
+                "button": LIST_BUTTON_LABEL,
+            }
+    return out
 
 
 # Mensajes de cortesía que no son un intento de pedir un trámite: no se

@@ -242,6 +242,18 @@ class CatalogAudit(SQLModel, table=True):
     habilitado: bool = True
 
 
+class Feedback(SQLModel, table=True):
+    """Opinión del cliente al cerrar su solicitud (botones 👍/👎 enviados por
+    WhatsApp al terminar el ticket). Una sola opinión por ticket."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    ticket_id: int = Field(index=True)
+    phone: str = Field(index=True)
+    rating: str  # "up" | "down"
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
 class NluEvent(SQLModel, table=True):
     """Bitácora de deducción del agente: qué entendió (o no) de cada texto
     libre, con qué capa, y si terminó en solicitud. Alimenta las métricas
