@@ -9,6 +9,7 @@ from app import nlu
 from app.catalog import PAGE_SIZE, catalog
 from app.models import (
     Client,
+    ClientNote,
     Conversation,
     Direction,
     Feedback,
@@ -131,6 +132,8 @@ def handle_incoming(
     _log_message(
         session, phone, Direction.IN, "[archivo adjunto]" if is_media else text, wa_message_id
     )
+    if not is_media:
+        _extract_client_data(session, phone, text)
 
     if _is_rate_limited(session, phone):
         logger.warning("Rate limit alcanzado para %s — mensaje ignorado", mask_phone(phone))
@@ -455,6 +458,38 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     else:
         confirm_text = catalog.format_category_menu()
     return _bump_or_escalate(session, client, conv, text, "¿Puedes confirmar con 'sí' o 'no'?\n" + confirm_text)
+
+
+# Datos estructurados que el cliente suelta en el chat (Fase 2): se anexan a
+# su ficha como nota para que el colaborador no los vuelva a pedir.
+CURP_RE = re.compile(r"\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b")
+RFC_RE = re.compile(r"\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b")
+EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+
+
+def _extract_client_data(session: Session, phone: str, text: str) -> None:
+    upper = text.upper()
+    found: list[tuple[str, str]] = []
+    curps = CURP_RE.findall(upper)
+    found += [("CURP", c) for c in curps]
+    found += [
+        ("RFC", r) for r in RFC_RE.findall(upper)
+        if not any(r in c for c in curps)  # el prefijo de una CURP no es un RFC
+    ]
+    found += [("Email", e.lower()) for e in EMAIL_RE.findall(text)]
+    for tipo, valor in found[:3]:  # tope defensivo por mensaje
+        exists = session.exec(
+            select(ClientNote)
+            .where(ClientNote.phone == phone)
+            .where(ClientNote.body.contains(valor))  # type: ignore[attr-defined]
+        ).first()
+        if exists is None:
+            session.add(
+                ClientNote(
+                    phone=phone, author="agente-ia",
+                    body=f"📎 {tipo} detectado en el chat: {valor}",
+                )
+            )
 
 
 # Botones 👍/👎 del aviso de cierre (ids emitidos por dashboard._notify_finish).

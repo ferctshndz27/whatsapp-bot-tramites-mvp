@@ -35,6 +35,7 @@ from app.models import (
     LoginEvent,
     Message,
     NluEvent,
+    SynonymProposal,
     TeamMessage,
     Ticket,
     TicketActivity,
@@ -68,6 +69,7 @@ MIRROR_TABLES = [
     (CatalogAudit, "catalog_audit"),
     (NluEvent, "nlu_events"),
     (Feedback, "feedback"),
+    (SynonymProposal, "synonym_proposals"),
 ]
 
 

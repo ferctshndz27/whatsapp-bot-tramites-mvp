@@ -115,22 +115,64 @@
   {% endif %}
 </div>
 
-{% if proposals %}
+{% if db_proposals %}
 <div class="card">
-  <h2>Propuestas de Claude</h2>
+  <h2>Propuestas pendientes de aprobación</h2>
+  <p style="color:var(--text-muted); font-size:.85rem; margin-top:0;">
+    De la minería con Claude (manual o nocturna). Nada se agrega al catálogo
+    sin tu aprobación; cada decisión queda registrada con quién y cuándo.
+  </p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Servicio</th><th>Sinónimo propuesto</th><th></th></tr></thead>
+      <thead><tr><th>Servicio</th><th>Sinónimo propuesto</th><th>Origen</th><th>Fecha</th><th>Acciones</th></tr></thead>
       <tbody>
-        {% for p in proposals %}
+        {% for p in db_proposals %}
         <tr>
           <td>{{ p.service_name }}</td>
-          <td>{{ p.synonym }}</td>
+          <td><strong>{{ p.synonym }}</strong></td>
+          <td>{{ p.origin }}</td>
+          <td>{{ p.created_at.strftime('%d/%m %H:%M') }}</td>
           <td>
-            <form method="post" action="/unmatched/synonyms" style="display:inline;">
-              <input type="hidden" name="service_id" value="{{ p.service_id }}">
-              <input type="hidden" name="synonym" value="{{ p.synonym }}">
-              <button type="submit" class="btn-sm">Aprobar</button>
+            <form method="post" action="/unmatched/proposals/{{ p.id }}/approve" style="display:inline;">
+              <button type="submit" class="btn-sm">✔ Aprobar</button>
+            </form>
+            <form method="post" action="/unmatched/proposals/{{ p.id }}/reject" style="display:inline;">
+              <button type="submit" class="btn-sm btn-danger">Descartar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if clusters %}
+<div class="card">
+  <h2>Grupos de mensajes no entendidos (14 días)</h2>
+  <p style="color:var(--text-muted); font-size:.85rem; margin-top:0;">
+    Mensajes parecidos agrupados por frecuencia: elige el servicio al que se
+    refieren y conviértelos en sinónimo con un clic.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Veces</th><th>Lo que escriben los clientes</th><th>Convertir en sinónimo de…</th></tr></thead>
+      <tbody>
+        {% for c in clusters %}
+        <tr>
+          <td><strong>{{ c.count }}×</strong></td>
+          <td {% if c.examples %}title="También: {{ c.examples | join(' · ') }}"{% endif %}>
+            {{ c.rep }}
+          </td>
+          <td>
+            <form method="post" action="/unmatched/synonyms" style="display:flex; gap:.5rem; align-items:center;">
+              <input type="hidden" name="synonym" value="{{ c.rep }}">
+              <label for="cl-{{ loop.index }}" class="sr-only" style="position:absolute; left:-9999px;">Servicio</label>
+              <select name="service_id" id="cl-{{ loop.index }}" required style="max-width:240px;">
+                {% for sid, sname in services %}<option value="{{ sid }}">{{ sname }}</option>{% endfor %}
+              </select>
+              <button type="submit" class="btn-sm">✔ Aprobar</button>
             </form>
           </td>
         </tr>

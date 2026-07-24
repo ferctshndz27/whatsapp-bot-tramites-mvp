@@ -247,6 +247,20 @@ _SCHEMA_DDL = [
     )
     """,
     """
+    IF OBJECT_ID('synonym_proposals', 'U') IS NULL
+    CREATE TABLE synonym_proposals (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        service_id NVARCHAR(64)  NOT NULL,
+        synonym    NVARCHAR(200) NOT NULL,
+        origin     NVARCHAR(20)  NOT NULL,
+        status     NVARCHAR(12)  NOT NULL,
+        decided_by NVARCHAR(64)  NULL,
+        decided_at DATETIME2     NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
     IF OBJECT_ID('feedback', 'U') IS NULL
     CREATE TABLE feedback (
         source_id  BIGINT       NOT NULL PRIMARY KEY,
@@ -675,6 +689,22 @@ def archive_catalog_audit(a) -> None:
     )
 
 
+def archive_synonym_proposal(p) -> None:
+    _upsert(
+        "synonym_proposals", "source_id", p.id,
+        {
+            "service_id": p.service_id,
+            "synonym": p.synonym,
+            "origin": p.origin,
+            "status": p.status,
+            "decided_by": p.decided_by,
+            "decided_at": _naive_utc(p.decided_at) if p.decided_at else None,
+            "habilitado": p.habilitado,
+            "created_at": _naive_utc(p.created_at),
+        },
+    )
+
+
 def archive_feedback(f) -> None:
     _upsert(
         "feedback", "source_id", f.id,
@@ -751,6 +781,7 @@ def backfill() -> None:
         LoginEvent,
         NluEvent,
         SavedReply,
+        SynonymProposal,
         Ticket,
         TicketActivity,
         User,
@@ -799,6 +830,8 @@ def backfill() -> None:
                 archive_nlu_event(ne)
             for f in session.exec(select(Feedback)).all():
                 archive_feedback(f)
+            for sp in session.exec(select(SynonymProposal)).all():
+                archive_synonym_proposal(sp)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -823,6 +856,7 @@ def _register_listeners() -> None:
         Message,
         NluEvent,
         SavedReply,
+        SynonymProposal,
         TeamMessage,
         Ticket,
         TicketActivity,
@@ -930,6 +964,11 @@ def _register_listeners() -> None:
     @event.listens_for(Feedback, "after_update")
     def _feedback_upsert(mapper, connection, target):
         _safe(archive_feedback, target)
+
+    @event.listens_for(SynonymProposal, "after_insert")
+    @event.listens_for(SynonymProposal, "after_update")
+    def _synonym_proposal_upsert(mapper, connection, target):
+        _safe(archive_synonym_proposal, target)
 
 
 _register_listeners()

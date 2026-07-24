@@ -16,6 +16,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Form, Request
 from fastapi.templating import Jinja2Templates
+from rapidfuzz import fuzz
 from sqlmodel import Session, select
 
 from app import nlu
@@ -25,7 +26,7 @@ from app.catalog import catalog
 from app.config import settings
 from app.conversation import NOT_RECOGNIZED_HINT
 from app.db import get_session
-from app.models import Direction, Message, utcnow
+from app.models import Direction, Message, NluEvent, SynonymProposal, utcnow
 from app.system import _admin_or_redirect, _csv_response
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,70 @@ def mine_synonyms(texts: list[str]) -> list[dict]:
     return proposals
 
 
+def persist_proposals(session: Session, proposals: list[dict], origin: str) -> int:
+    """Guarda propuestas nuevas como pendientes; se saltan las duplicadas y
+    las que el catálogo ya cubre. Devuelve cuántas se crearon. Nada se
+    aprueba solo: el admin decide en el panel."""
+    existing = {
+        (p.service_id, p.synonym.lower())
+        for p in session.exec(select(SynonymProposal)).all()
+    }
+    created = 0
+    for p in proposals:
+        service = catalog.service_by_id(p.get("service_id", ""))
+        synonym = p.get("synonym", "").strip().lower()
+        if service is None or not synonym:
+            continue
+        key = (service.id, synonym)
+        if key in existing or synonym in (s.lower() for s in service.synonyms):
+            continue
+        session.add(SynonymProposal(service_id=service.id, synonym=synonym, origin=origin))
+        existing.add(key)
+        created += 1
+    return created
+
+
+CLUSTER_DAYS = 14
+CLUSTER_THRESHOLD = 80  # token_set_ratio: tolera orden y palabras extra
+CLUSTER_TOP = 10
+
+
+def cluster_unmatched(days: int = CLUSTER_DAYS) -> list[dict]:
+    """Agrupa los textos que el agente no entendió (nluevent capa='ninguna')
+    por similitud difusa y los ordena por frecuencia: "17 clientes pidieron
+    'constancia de semanas cotizadas'" en vez de una lista plana."""
+    from datetime import timezone
+
+    cutoff = (utcnow() - timedelta(days=days)).astimezone(timezone.utc).replace(tzinfo=None)
+    with get_session() as session:
+        events = session.exec(select(NluEvent).where(NluEvent.capa == "ninguna")).all()
+
+    counts: dict[str, int] = {}
+    for e in events:
+        created_at = e.created_at
+        if created_at.tzinfo is not None:
+            created_at = created_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if created_at < cutoff:
+            continue
+        text = nlu._norm(e.text)
+        if len(text) < 4:
+            continue
+        counts[text] = counts.get(text, 0) + 1
+
+    clusters: list[dict] = []
+    for text, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        for c in clusters:
+            if fuzz.token_set_ratio(text, c["rep"]) >= CLUSTER_THRESHOLD:
+                c["count"] += n
+                if len(c["examples"]) < 3:
+                    c["examples"].append(text)
+                break
+        else:
+            clusters.append({"rep": text, "count": n, "examples": []})
+    clusters.sort(key=lambda c: -c["count"])
+    return clusters[:CLUSTER_TOP]
+
+
 # Colores por capa de deducción para la dona del panel (el color nunca es el
 # único indicador: leyenda y tooltips llevan nombre y número).
 METRICS_DAYS = 14
@@ -223,6 +288,12 @@ def nlu_metrics(days: int = METRICS_DAYS) -> dict:
 def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
     with get_session() as session:
         pending = unmatched_messages(session)
+        db_proposals = session.exec(
+            select(SynonymProposal)
+            .where(SynonymProposal.status == "pendiente")
+            .order_by(SynonymProposal.created_at.desc())
+        ).all()
+    names = {s.id: s.name for c in catalog.categories for s in c.services}
     services = [(s.id, s.name) for c in catalog.categories for s in c.services]
     return templates.TemplateResponse(
         "unmatched.html",
@@ -232,6 +303,17 @@ def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
             "pending": pending,
             "services": services,
             "proposals": proposals or [],
+            "db_proposals": [
+                {
+                    "id": p.id,
+                    "service_name": names.get(p.service_id, p.service_id),
+                    "synonym": p.synonym,
+                    "origin": p.origin,
+                    "created_at": p.created_at,
+                }
+                for p in db_proposals
+            ],
+            "clusters": cluster_unmatched(),
             "metrics": nlu_metrics(),
             "mining_available": bool(settings.anthropic_api_key),
             "error": error,
@@ -260,10 +342,60 @@ def unmatched_mine(request: Request):
     except Exception as exc:
         logger.warning("Minería de sinónimos falló: %s", exc)
         return _render(request, admin, error="No se pudo consultar a Claude. Intenta de nuevo.")
-    log_admin(admin, "catalogo:mineria", f"{len(texts)} mensajes → {len(proposals)} propuestas")
-    if not proposals:
+    with get_session() as session:
+        created = persist_proposals(session, proposals, origin="claude")
+        session.commit()
+    log_admin(admin, "catalogo:mineria", f"{len(texts)} mensajes → {created} propuestas nuevas")
+    if created == 0:
         return _render(request, admin, ok="Claude no encontró sinónimos nuevos que proponer.")
-    return _render(request, admin, proposals=proposals)
+    return _render(
+        request, admin,
+        ok=f"{created} propuesta{'s' if created != 1 else ''} nueva{'s' if created != 1 else ''} "
+           "pendiente de tu aprobación (abajo).",
+    )
+
+
+@router.post("/unmatched/proposals/{proposal_id}/approve")
+def proposal_approve(request: Request, proposal_id: int):
+    admin, redirect = _admin_or_redirect(request)
+    if redirect:
+        return redirect
+    with get_session() as session:
+        prop = session.get(SynonymProposal, proposal_id)
+        if prop is None or prop.status != "pendiente":
+            return _render(request, admin, error="Propuesta no encontrada o ya decidida.")
+        error = catalog.add_synonym(prop.service_id, prop.synonym, admin=admin)
+        # Si el catálogo la rechaza (p.ej. ya existe), se descarta para
+        # sacarla de la cola en vez de dejarla atorada.
+        prop.status = "aprobada" if error is None else "rechazada"
+        prop.decided_by = admin
+        prop.decided_at = utcnow()
+        session.add(prop)
+        session.commit()
+        synonym, status = prop.synonym, prop.status
+    log_admin(admin, "catalogo:propuesta", f"{status}:{synonym}")
+    if error:
+        return _render(request, admin, ok=f"Propuesta descartada: {error}")
+    return _render(request, admin, ok=f"Sinónimo '{synonym}' agregado al catálogo.")
+
+
+@router.post("/unmatched/proposals/{proposal_id}/reject")
+def proposal_reject(request: Request, proposal_id: int):
+    admin, redirect = _admin_or_redirect(request)
+    if redirect:
+        return redirect
+    with get_session() as session:
+        prop = session.get(SynonymProposal, proposal_id)
+        if prop is None or prop.status != "pendiente":
+            return _render(request, admin, error="Propuesta no encontrada o ya decidida.")
+        prop.status = "rechazada"
+        prop.decided_by = admin
+        prop.decided_at = utcnow()
+        session.add(prop)
+        session.commit()
+        synonym = prop.synonym
+    log_admin(admin, "catalogo:propuesta", f"rechazada:{synonym}")
+    return _render(request, admin, ok=f"Propuesta '{synonym}' descartada.")
 
 
 @router.post("/unmatched/synonyms")

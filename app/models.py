@@ -242,6 +242,22 @@ class CatalogAudit(SQLModel, table=True):
     habilitado: bool = True
 
 
+class SynonymProposal(SQLModel, table=True):
+    """Propuesta de sinónimo para el catálogo (minería nocturna con Claude o
+    clustering de no-entendidos). Nada se aplica sin aprobación humana: el
+    admin decide en el panel Agente WhatsApp y queda quién y cuándo."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    service_id: str = Field(index=True)
+    synonym: str
+    origin: str = "claude"  # claude | claude-nocturno | cluster
+    status: str = Field(default="pendiente", index=True)  # pendiente|aprobada|rechazada
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
 class Feedback(SQLModel, table=True):
     """Opinión del cliente al cerrar su solicitud (botones 👍/👎 enviados por
     WhatsApp al terminar el ticket). Una sola opinión por ticket."""
