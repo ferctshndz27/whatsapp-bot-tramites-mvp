@@ -57,6 +57,24 @@
         <tr><th scope="row">Base SQLite</th><td>{{ info.db_mb }} MB (+ {{ info.wal_mb }} MB WAL)</td></tr>
         <tr><th scope="row">Archivos multimedia</th><td>{{ info.media_mb }} MB</td></tr>
         <tr>
+          <th scope="row">Disco libre</th>
+          <td>
+            {{ info.disk.free_pct }}% ({{ info.disk.free_gb }} GB)
+            {% if info.disk.low %}<span class="badge escalado">poco espacio</span>{% else %}<span class="badge cerrado">ok</span>{% endif %}
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Último respaldo</th>
+          <td>
+            {% if info.backup.exists %}
+            hace {{ info.backup.age_hours }} h
+            {% if info.backup.stale %}<span class="badge escalado">antiguo (&gt;48 h)</span>{% else %}<span class="badge cerrado">reciente</span>{% endif %}
+            {% else %}
+            <span class="badge escalado">sin respaldo configurado</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
           <th scope="row">WhatsApp</th>
           <td>
             {% if info.whatsapp_configured %}

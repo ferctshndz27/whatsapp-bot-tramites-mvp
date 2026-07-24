@@ -116,7 +116,7 @@ def _deduce_llm(text: str) -> tuple[Service | None, Category | None]:
     return None, category
 
 
-FUZZY_THRESHOLD = 85
+# FUZZY_THRESHOLD ahora es configurable (settings.fuzzy_threshold, .env).
 FUZZY_MIN_CHARS = 4
 # Tope de servicios por mensaje ("quiero acta, curp, rfc…"): más de esto huele
 # a texto sin sentido y es mejor que lo vea un humano.
@@ -201,7 +201,7 @@ def _deduce_keywords_explained(
             key=lambda pair: pair[0],
             reverse=True,
         )
-        if scored and scored[0][0] >= FUZZY_THRESHOLD:
+        if scored and scored[0][0] >= settings.fuzzy_threshold:
             top_score = scored[0][0]
             leaders = [s for score, s in scored if score >= top_score - 2]
             if len(leaders) == 1:

@@ -30,6 +30,10 @@ class Settings:
         # usa el matching por palabras clave de siempre.
         self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         self.nlu_model = os.environ.get("NLU_MODEL", "claude-opus-4-8")
+        # Umbral de la capa difusa (rapidfuzz) para aceptar un servicio con
+        # faltas de ortografía. Barandal 70-95: bajarlo de más dispara falsos
+        # positivos que cotizan el trámite equivocado a un cliente real.
+        self.fuzzy_threshold = max(70, min(95, int(os.environ.get("FUZZY_THRESHOLD", "85"))))
         # Geolocalización de IPs en la bitácora de accesos (ipwho.is,
         # best-effort con cache local). GEOIP_ENABLED=0 la apaga.
         self.geoip_enabled = os.environ.get("GEOIP_ENABLED", "1") != "0"

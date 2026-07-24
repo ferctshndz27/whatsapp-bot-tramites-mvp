@@ -190,8 +190,15 @@ def cluster_unmatched(days: int = CLUSTER_DAYS) -> list[dict]:
     from datetime import timezone
 
     cutoff = (utcnow() - timedelta(days=days)).astimezone(timezone.utc).replace(tzinfo=None)
+    # WHERE en SQL para no escanear la tabla completa (nluevent es append-only);
+    # +1 día de margen y el corte fino por fecha lo hace el filtro de abajo.
+    where_cutoff = utcnow() - timedelta(days=days + 1)
     with get_session() as session:
-        events = session.exec(select(NluEvent).where(NluEvent.capa == "ninguna")).all()
+        events = session.exec(
+            select(NluEvent)
+            .where(NluEvent.capa == "ninguna")
+            .where(NluEvent.created_at >= where_cutoff)
+        ).all()
 
     counts: dict[str, int] = {}
     for e in events:
@@ -241,8 +248,13 @@ def nlu_metrics(days: int = METRICS_DAYS) -> dict:
 
     today = datetime.now(BUSINESS_TZ).date()
     start = today - timedelta(days=days - 1)
+    # WHERE en SQL (no traer toda la tabla append-only): +1 día de margen y el
+    # bucketing por día de negocio de abajo hace el corte fino.
+    where_cutoff = utcnow() - timedelta(days=days + 1)
     with get_session() as session:
-        events = session.exec(select(NluEvent)).all()
+        events = session.exec(
+            select(NluEvent).where(NluEvent.created_at >= where_cutoff)
+        ).all()
 
     day_buckets = {
         start + timedelta(days=i): {"entendidos": 0, "no entendidos": 0}

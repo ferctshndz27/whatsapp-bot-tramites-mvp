@@ -9,6 +9,7 @@ bajar reportes para Excel.
 import csv
 import io
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -129,6 +130,31 @@ def _deploy_info() -> str:
         return "n/d (aún sin registro del deploy)"
 
 
+def _backup_info() -> dict:
+    """Antigüedad del último respaldo de la base. El backup automático está
+    pendiente (infra del VPS); esto lo hace OBSERVABLE: si algún día se escribe
+    un dump en data/backups/, aquí se ve su antigüedad y si está viejo."""
+    backups = Path(settings.db_path).parent / "backups"
+    latest = None
+    if backups.is_dir():
+        files = [f for f in backups.iterdir() if f.is_file()]
+        latest = max(files, key=lambda f: f.stat().st_mtime, default=None)
+    if latest is None:
+        return {"exists": False, "age_hours": None, "stale": True}
+    age_h = (datetime.now(timezone.utc).timestamp() - latest.stat().st_mtime) / 3600
+    return {"exists": True, "age_hours": round(age_h, 1), "stale": age_h > 48}
+
+
+def _disk_free() -> dict:
+    usage = shutil.disk_usage(Path(settings.db_path).parent)
+    free_pct = round(usage.free / usage.total * 100)
+    return {
+        "free_pct": free_pct,
+        "free_gb": round(usage.free / 1_073_741_824, 1),
+        "low": free_pct < 15,
+    }
+
+
 @router.get("/system")
 def system_view(request: Request):
     admin, redirect = _admin_or_redirect(request)
@@ -143,6 +169,8 @@ def system_view(request: Request):
         "db_mb": round(_dir_size_mb(db_file), 2),
         "wal_mb": round(_dir_size_mb(db_file.with_name(db_file.name + "-wal")), 2),
         "media_mb": round(_dir_size_mb(Path(settings.media_dir)), 2),
+        "backup": _backup_info(),
+        "disk": _disk_free(),
         "mssql_enabled": archive.enabled(),
         "whatsapp_configured": bool(settings.whatsapp_token and settings.whatsapp_phone_number_id),
     }

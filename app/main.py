@@ -68,11 +68,35 @@ async def _security_headers(request, call_next):
     return response
 
 
+async def _nav_context(request, call_next):
+    # Contador de propuestas pendientes para el badge del nav (solo lo ve el
+    # admin en base.html). Best-effort: si falla, el nav no muestra badge y el
+    # request sigue normal. Corre DENTRO de SessionMiddleware (usa la sesión).
+    request.state.pending_proposals = 0
+    try:
+        if request.session.get("user"):
+            from sqlmodel import func, select
+
+            from app.db import get_session
+            from app.models import SynonymProposal
+
+            with get_session() as s:
+                request.state.pending_proposals = s.exec(
+                    select(func.count())
+                    .select_from(SynonymProposal)
+                    .where(SynonymProposal.status == "pendiente")
+                ).one()
+    except Exception:  # noqa: BLE001 — el badge nunca debe tumbar una página
+        pass
+    return await call_next(request)
+
+
 # Orden de registro (Starlette: el último agregado queda más afuera):
 #  - session_activity: necesita request.session → dentro de SessionMiddleware.
 #  - _security_headers: se registra al final para envolver todo y sellar la
 #    respuesta final con las cabeceras.
 app.middleware("http")(authlog.session_activity_middleware)
+app.middleware("http")(_nav_context)  # dentro de SessionMiddleware, usa la sesión
 app.add_middleware(
     SessionMiddleware,
     secret_key=session_secret,
