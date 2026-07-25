@@ -1,0 +1,143 @@
+    /* ---- Stat cards: pasteles con texto oscuro ---- */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .stat-card {
+      border-radius: var(--radius-lg); padding: 1.15rem 1.3rem; color: var(--text);
+      box-shadow: var(--shadow); background: var(--card-bg);
+    }
+    .stat-card .label { font-size: .85rem; color: #6d7280; }
+    .stat-card .value { font-size: 2rem; font-weight: 800; margin-top: .25rem; }
+    .stat-card.green  { background: #e3f7f0; }
+    .stat-card.blue   { background: #efeafc; }
+    .stat-card.orange { background: #fdeedd; color: var(--text); }
+    .stat-card.red    { background: #fde7ef; }
+
+    /* ---- Cards / panels ---- */
+    .card {
+      background: var(--card-bg); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+      padding: 1.3rem 1.5rem; margin-bottom: 1.4rem;
+    }
+
+    /* ---- Filter pills ---- */
+    .pills { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+    .pills a {
+      text-decoration: none; color: var(--text-muted); background: var(--card-bg);
+      border: 1px solid transparent; border-radius: 999px; padding: .45rem 1rem; min-height: 40px;
+      display: inline-flex; align-items: center; font-size: .85rem; box-shadow: var(--shadow);
+    }
+    .pills a:hover { color: var(--text); border-color: var(--border); }
+    .pills a[aria-current="true"] { background: var(--lime); color: var(--lime-ink); font-weight: 700; }
+
+    /* ---- Table ---- */
+    .table-wrap { overflow-x: auto; border-radius: 14px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: .75rem .6rem; text-align: left; border-bottom: 1px solid #f0f1f3; vertical-align: middle; }
+    th { color: var(--text-muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .5px; font-weight: 700; }
+    tbody tr:nth-child(even) { background: #fafafb; }
+    tbody tr:hover { background: #f4f6f2; }
+
+    .avatar {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; border-radius: 50%; color: #fff; font-weight: 700; font-size: .8rem;
+      margin-right: .6rem; flex-shrink: 0;
+    }
+    .cell-person { display: flex; align-items: center; }
+    .cell-person .sub { color: var(--text-muted); font-size: .8rem; }
+
+    /* ---- Badges (estados con color + texto, como la referencia) ---- */
+    .badge {
+      display: inline-block; padding: .25rem .7rem; border-radius: 999px;
+      font-size: .75rem; font-weight: 700; letter-spacing: .3px;
+    }
+    .badge.nuevo      { background: #fde7ef; color: #be1e51; }
+    .badge.tomado     { background: #fdeedd; color: #92590a; }
+    .badge.en_proceso { background: #e6ecfd; color: #1d4fd7; }
+    .badge.cerrado    { background: #e3f7f0; color: #0b6e5d; }
+    .badge.escalado   { background: #22242a; color: #ffd35c; }
+    .badge.disponible { background: #e3f7f0; color: #0b6e5d; }
+    .badge.ocupado    { background: #fdeedd; color: #92590a; }
+    .badge.ausente    { background: #eef0f3; color: #666; }
+    .badge.urgente    { background: #be1e51; color: #fff; }
+
+    /* ---- Forms & buttons ---- */
+    label { display: block; margin-bottom: .35rem; font-size: .85rem; color: var(--text-muted); }
+    input[type=text], input[type=password], input[type=tel], input[type=date], select, textarea {
+      width: 100%; max-width: 320px; padding: .6rem .85rem; border: 1px solid var(--border);
+      border-radius: 12px; font-size: .95rem; background: #fff; min-height: 44px; font-family: inherit;
+    }
+    textarea { max-width: none; min-height: 70px; resize: vertical; }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px rgba(37, 99, 235, .13);
+    }
+    button {
+      background: #22242a; color: #fff; border: 0; border-radius: 999px;
+      padding: .6rem 1.4rem; font-size: .92rem; font-weight: 600; cursor: pointer; min-height: 44px;
+    }
+    button:hover { background: #3a3d45; }
+    .btn-sm {
+      padding: .35rem 1rem; font-size: .82rem; min-height: 36px;
+      background: var(--card-bg); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow);
+    }
+    .btn-sm:hover { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+    .btn-danger { background: #fde7ef; color: #be1e51; border: 1px solid #f8cfdd; }
+    .btn-danger:hover { background: #fbd3e1; border-color: #f3b6cc; color: #a01141; }
+    .btn-ghost { background: transparent; color: var(--blue-2); border: 1px solid var(--blue); }
+    .btn-ghost:hover { background: #e6ecfd; }
+    .error {
+      background: #fde7ef; color: #be1e51; border-radius: 12px; padding: .75rem 1rem; margin-bottom: 1rem;
+    }
+
+    /* ---- Inbox ---- */
+    .convo-list { display: flex; flex-direction: column; gap: .6rem; }
+    .convo-card {
+      display: flex; align-items: center; gap: .75rem; text-decoration: none; color: inherit;
+      background: var(--card-bg); border: 1px solid transparent; border-radius: var(--radius);
+      padding: .8rem 1rem; box-shadow: var(--shadow);
+    }
+    .convo-card:hover { border-color: var(--lime); }
+    .convo-card .body { flex: 1; min-width: 0; }
+    .convo-card .preview {
+      color: var(--text-muted); font-size: .85rem; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .convo-card .when { color: var(--text-muted); font-size: .78rem; flex-shrink: 0; align-self: flex-start; }
+    .convo-card .badges { display: flex; gap: .35rem; margin-top: .3rem; flex-wrap: wrap; }
+    .badge.esperando { background: #fdeedd; color: #92590a; }
+    .badge.caducada  { background: #fde7ef; color: #be1e51; }
+    .badge.pausado   { background: #22242a; color: #9fd8ff; }
+    .badge.asignada  { background: #eef0f3; color: #444; }
+
+    /* ---- Composer ---- */
+    .composer { border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem; }
+    .composer textarea {
+      width: 100%; min-height: 70px; padding: .6rem .85rem; border: 1px solid var(--border);
+      border-radius: 12px; font: inherit; resize: vertical;
+    }
+    .composer .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-top: .5rem; }
+    .qr-bar { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .5rem; }
+    .qr-bar button {
+      background: var(--card-bg); color: var(--text); border: 1px solid var(--border);
+      padding: .3rem .9rem; font-size: .8rem; min-height: 36px;
+    }
+    .qr-bar button:hover { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+    .banner-warn {
+      background: #fdeedd; color: #92590a; border-radius: 12px; padding: .75rem 1rem; margin: .75rem 0;
+    }
+    .bubble img { max-width: 220px; border-radius: 10px; display: block; margin-top: .3rem; }
+
+    /* ---- Chat ---- */
+    .chat { display: flex; flex-direction: column; gap: .5rem; }
+    .bubble {
+      max-width: 70%; padding: .6rem .9rem; border-radius: 16px; line-height: 1.45;
+      overflow-wrap: break-word;
+    }
+    .bubble .meta { display: block; font-size: .72rem; color: var(--text-muted); margin-top: .25rem; }
+    .bubble.in  { background: #f0f1f4; align-self: flex-start; border-bottom-left-radius: 4px; }
+    .bubble.out { background: #eef7cf; align-self: flex-end; border-bottom-right-radius: 4px; }
+
+    /* ---- Login (sin sidebar) ---- */
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .login-card { width: 100%; max-width: 380px; }
+    .login-card input { max-width: none; }
+    .login-card button { width: 100%; margin-top: .5rem; }
+
+    .empty { color: var(--text-muted); padding: 2rem 0; text-align: center; }

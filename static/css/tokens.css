@@ -1,0 +1,34 @@
+    :root {
+      --page-bg: #d0d2d7;
+      --card-bg: #ffffff;
+      --text: #22242a;
+      --text-muted: #7c828d;
+      --border: #e6e7ea;
+      --lime: #dcf24c;      --lime-ink: #23260f;
+      --green: #10b981;     --green-2: #0c9b6c;
+      --blue: #2563eb;      --blue-2: #1d4fd7;
+      --red: #f43f5e;       --red-2: #e11d48;
+      --orange: #f59e0b;    --orange-2: #d97706;
+      --purple: #8b5cf6;    --cyan: #22d3ee;
+      --radius: 18px;
+      --radius-lg: 24px;
+      --shadow: 0 2px 10px rgba(20, 22, 28, .06);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--text); font-size: 15px;
+      /* Banda de color al pie (violeta→azul→verde→lima). Sobre el gris plata
+         (--page-bg, NO blanco) las cards blancas y el lavado resaltan. */
+      background:
+        radial-gradient(1000px 620px at 4% 102%, rgba(139, 92, 246, .42), transparent 64%),
+        radial-gradient(1150px 680px at 36% 108%, rgba(59, 130, 246, .34), transparent 64%),
+        radial-gradient(1150px 680px at 66% 108%, rgba(16, 185, 129, .32), transparent 64%),
+        radial-gradient(1000px 620px at 97% 102%, rgba(220, 242, 76, .48), transparent 64%),
+        var(--page-bg);
+      background-attachment: fixed;
+    }
+    a { color: var(--blue-2); }
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 3px solid var(--blue); outline-offset: 2px;
+    }

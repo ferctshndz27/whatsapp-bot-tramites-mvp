@@ -2,6 +2,7 @@ import logging
 import secrets
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app import (
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 SESSION_MAX_AGE = 12 * 60 * 60
 
 app = FastAPI(title="Bot de trámites — MVP")
+
+# CSS/JS estáticos del panel (el CSS vive en static/css/*.css). No es un
+# middleware: no altera el orden de los cuatro middlewares de abajo.
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 session_secret = settings.session_secret
 if not session_secret:
