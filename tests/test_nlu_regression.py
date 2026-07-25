@@ -328,6 +328,41 @@ def test_frases_vagas_ofrecen_minimenu_y_no_eligen_a_ciegas(caso, catalogo_produ
 
 
 @pytest.mark.parametrize(
+    "palabra, minimo",
+    [("acta", 4), ("constancia", 6), ("sindo", 6)],
+)
+def test_una_palabra_que_matchea_varios_servicios_no_elige_ninguno(
+    palabra, minimo, catalogo_produccion
+):
+    # REGLA (la razón de ser de este archivo): la guarda `len(matches) == 1` de
+    # _deduce_keywords_explained. Cuando la capa LITERAL/keyword encuentra 2+
+    # servicios, la cascada debe rendirse — no quedarse con el primero.
+    #
+    # Las frases vagas del corpus llegan al fuzzy, cuya guarda gemela
+    # (`len(leaders) == 1`) sí estaba cubierta; estas tres palabras sueltas son
+    # las únicas que fuerzan la ambigüedad en la capa de arriba. Sin ellas,
+    # cambiar `if len(matches) == 1:` por `if matches:` pasaba VERDE en las 558
+    # pruebas, y "acta" abría un acta de nacimiento cuando el cliente quería la
+    # de defunción: el asesor cotiza el trámite equivocado.
+    service, category, capa, _ = nlu.deduce_explained(palabra)
+
+    assert service is None, f"'{palabra}' eligió {service.id} a ciegas entre varios candidatos"
+    assert category is None
+    assert capa == "ninguna"
+    # Y el cliente no se queda sin salida: ve el mini-menú de los parecidos.
+    assert len(nlu.suggestions(palabra)) >= minimo
+
+
+def test_los_topes_de_lista_son_los_acordados():
+    # Ancla de VALORES, no de coherencia interna: las pruebas que asserteaban
+    # `len(x) == nlu.SUGGESTIONS_MAX` comparaban el código contra sí mismo, así
+    # que mover 6 a 9 pasaba invisible aunque el mini-menú dejara de caber en la
+    # lista nativa de WhatsApp (6 + "Ver más" + "Volver" ya roza el tope de 10
+    # filas de Meta). Si el negocio los cambia, se actualiza esta línea a mano.
+    assert (nlu.SUGGESTIONS_MAX, nlu.MULTI_MAX_SERVICES, nlu.FUZZY_MIN_CHARS) == (6, 5, 4)
+
+
+@pytest.mark.parametrize(
     "texto",
     ["", " ", "a", "ab", "hi", "😀😀", "😀😀😀", "..."],
     ids=["vacio", "espacio", "una-letra", "dos-letras", "hi", "dos-emojis",

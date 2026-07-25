@@ -39,6 +39,24 @@ from app.whatsapp_client import (
 PHONE = "5215544443333"
 
 
+def test_los_limites_de_meta_son_los_del_contrato_externo():
+    # Ancla de VALORES. El resto del archivo assertea contra las constantes
+    # importadas (`len(title) <= LIST_TITLE_MAX`), que es lo correcto para la
+    # coherencia interna entre _menu_rows y whatsapp_client — pero se
+    # autocancela: encoger LIST_TITLE_MAX a 12 mutila todos los títulos Y
+    # relaja el assert en el mismo paso. Estos seis números NO son nuestros,
+    # son el contrato de la API de Meta: se anclan al literal. Si Meta los
+    # cambia, se actualiza ESTA línea a mano.
+    assert (
+        MAX_LIST_ROWS,
+        LIST_TITLE_MAX,
+        LIST_DESC_MAX,
+        LIST_BODY_MAX,
+        MAX_BUTTONS,
+        BUTTON_TITLE_MAX,
+    ) == (10, 24, 72, 1024, 3, 20)
+
+
 # ---- Fixtures locales ----
 # El autouse _isolated_db de conftest parcha app.db.engine con una base en
 # memoria; el fixture "session" del conftest usa OTRO engine. Aquí se abre la
@@ -217,10 +235,14 @@ def test_titulos_que_colisionan_al_recortar_se_desambiguan_por_descripcion(catal
                         f"{cat.id}: '{titulo}' se repite con descripciones iguales"
                     )
 
-    # Documenta el riesgo latente en vez de dejarlo invisible: hoy los 4
-    # "Constancia de situación fiscal…" y las 2 "Alta para retiro por
+    # Hoy los 4 "Constancia de situación fiscal…" y las 2 "Alta para retiro por
     # desempleo…" se ven idénticas en negrita y solo la descripción las separa.
-    assert {"servicios-sat", "afore"} <= colisionan
+    # Antes esto se asserteaba (`{"servicios-sat","afore"} <= colisionan`), lo
+    # que EXIGÍA que el defecto siguiera existiendo: renombrar los servicios
+    # para distinguirlos dentro de 24 chars —una mejora de UX— ponía la prueba
+    # en rojo. Queda como registro; el invariante que importa es el de arriba
+    # (si colisionan, la descripción los distingue), no que colisionen.
+    print(f"\ncategorías con títulos que colisionan al recortar: {sorted(colisionan)}")
 
 
 @pytest.mark.parametrize(

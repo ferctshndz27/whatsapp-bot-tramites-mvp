@@ -39,6 +39,7 @@ from app import nlu, webhook, whatsapp_client
 from app.catalog import catalog
 from app.config import settings
 from app.conversation import (
+    MAX_FAILED_ATTEMPTS,
     RATE_LIMIT_MAX_MESSAGES,
     RATE_LIMIT_WINDOW_SECONDS,
     handle_incoming,
@@ -651,8 +652,13 @@ def test_rate_limit_frontera_exacta_veinte_pasa_veintiuno_se_bloquea(
     # REGLA: _is_rate_limited usa `len(recent) > RATE_LIMIT_MAX_MESSAGES` y el
     # mensaje actual YA está logueado al evaluarlo → el 20 de la ventana pasa
     # y el 21 se bloquea. Bajarlo por accidente silenciaría clientes legítimos.
+    #
+    # El 19 va como LITERAL a propósito: sembrar con `RATE_LIMIT_MAX_MESSAGES - 1`
+    # movía la siembra junto con la constante, así que cambiar el límite pasaba
+    # en verde. El 20 es una decisión de producto, no un detalle interno: se
+    # ancla, no se deriva.
     _sembrar_cliente(engine_produccion)
-    _sembrar_entrantes(engine_produccion, PHONE, RATE_LIMIT_MAX_MESSAGES - 1)
+    _sembrar_entrantes(engine_produccion, PHONE, 19)
 
     with Session(engine_produccion) as s:
         veinte = handle_incoming(s, PHONE, "necesito acta de nacimiento", wa_message_id="wamid.20")
@@ -773,9 +779,13 @@ def test_escrituras_concurrentes_no_lanzan_database_is_locked(engine_produccion,
 
 
 def test_tag_sent_message_respeta_el_orden_fifo_documentado(engine_produccion):
-    # REGLA (caracterización del "# ponytail:"): con varias filas OUT sin
-    # taggear, el wamid va a la MÁS VIEJA. Si alguien cambia el order_by, los
-    # estados de entrega se pegarían al mensaje equivocado.
+    # CARACTERIZACIÓN del "# ponytail:", no un contrato deseado: con varias
+    # filas OUT sin taggear, el wamid va a la MÁS VIEJA. Documenta el heurístico
+    # frágil para que un cambio accidental del order_by se note.
+    #
+    # OJO: si alguien ARREGLA _tag_sent_message de verdad (casar el wamid contra
+    # el mensaje realmente enviado en vez de "la fila OUT más vieja"), esta
+    # prueba va a fallar y NO es una regresión: BÓRRALA junto con el fix.
     with Session(engine_produccion) as s:
         s.add(Message(phone=PHONE, direction=Direction.OUT, body="A"))
         s.commit()
@@ -926,11 +936,23 @@ def test_el_indice_unico_de_idempotencia_existe_en_el_engine_de_produccion(engin
     # REGLA: init_db() crea ux_message_wa_message_id. Es la única red real
     # contra webhooks duplicados concurrentes; si desapareciera, la
     # idempotencia dependería solo del chequeo secuencial.
+    # row[1] = nombre, row[2] = bandera de unicidad. Mirar solo el nombre dejaba
+    # pasar una degradación a CREATE INDEX (sigue llamándose igual), justo la
+    # propiedad que esta guardia existe para proteger.
     with engine_produccion.connect() as conn:
-        indices = [
-            row[1] for row in conn.exec_driver_sql("PRAGMA index_list(message)")
-        ]
+        indices = {
+            row[1]: row[2] for row in conn.exec_driver_sql("PRAGMA index_list(message)")
+        }
     assert "ux_message_wa_message_id" in indices
+    assert indices["ux_message_wa_message_id"] == 1, "el índice existe pero dejó de ser UNIQUE"
+
+
+def test_los_limites_de_producto_son_los_acordados():
+    # Ancla de valores, no de coherencia interna. Estas dos cifras las decidió
+    # el negocio; derivarlas de la propia constante en cada assert dejaba que
+    # un cambio accidental se colara en verde. Si el negocio las cambia a
+    # propósito, hay que actualizar ESTA línea a mano — ese es el punto.
+    assert (RATE_LIMIT_MAX_MESSAGES, RATE_LIMIT_WINDOW_SECONDS, MAX_FAILED_ATTEMPTS) == (20, 60, 2)
 
 
 def test_el_llm_esta_apagado_en_estas_pruebas(catalogo_tibio):

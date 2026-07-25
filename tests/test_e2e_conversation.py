@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import itertools
 import json
+import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -645,14 +646,15 @@ def test_fallback_a_texto_plano_cuando_el_interactivo_no_sale(wa):
         assert salidas[0].wa_message_id == "wamid.OUT1"  # el wamid del texto que sí salió
 
 
-def test_reintento_de_meta_con_el_mismo_wamid_no_duplica_nada(wa):
+def test_reintento_de_meta_con_el_mismo_wamid_no_duplica_nada(wa, caplog):
     """Regla: idempotencia — un reintento de Meta no registra otro mensaje, no
     vuelve a deducir y no reenvía nada (dos tickets del mismo trámite a un
     cliente que va a pagar sería grave)."""
     payload = _envelope(_text_msg("necesito un acta de divorcio", wamid="wamid.DUP"))
 
-    assert _post(payload).status_code == 200
-    assert _post(payload).status_code == 200  # reintento idéntico
+    with caplog.at_level(logging.ERROR):
+        assert _post(payload).status_code == 200
+        assert _post(payload).status_code == 200  # reintento idéntico
 
     assert wa.kinds == ["buttons"]  # un solo envío
 
@@ -660,6 +662,13 @@ def test_reintento_de_meta_con_el_mismo_wamid_no_duplica_nada(wa):
         rows = _messages(session)
         assert [m.direction for m in rows] == [Direction.IN, Direction.OUT]
         assert len(session.exec(select(NluEvent)).all()) == 1
+
+    # El resultado observable es idéntico lo maneje el guard `_already_processed`
+    # o lo atrape el índice único con un IntegrityError que el try/except del
+    # webhook se traga. No son lo mismo: si el guard desaparece, CADA reintento
+    # de Meta (que son comunes) pasa a ser un error logueado, y la defensa queda
+    # solo en un índice que el _isolated_db de conftest ni siquiera crea.
+    assert caplog.records == [], f"el reintento se manejó vía excepción: {caplog.text}"
 
 
 def test_cliente_bloqueado_no_recibe_respuesta_ni_deja_rastro(wa):
