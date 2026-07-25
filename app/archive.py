@@ -261,6 +261,20 @@ _SCHEMA_DDL = [
     )
     """,
     """
+    IF OBJECT_ID('alerts', 'U') IS NULL
+    CREATE TABLE alerts (
+        source_id    BIGINT        NOT NULL PRIMARY KEY,
+        code         NVARCHAR(64)  NOT NULL,
+        level        NVARCHAR(12)  NOT NULL,
+        title        NVARCHAR(200) NOT NULL,
+        detail       NVARCHAR(MAX) NOT NULL,
+        metric_value FLOAT         NULL,
+        active       BIT           NOT NULL DEFAULT 1,
+        resolved_at  DATETIME2     NULL,
+        created_at   DATETIME2     NOT NULL
+    )
+    """,
+    """
     IF OBJECT_ID('feedback', 'U') IS NULL
     CREATE TABLE feedback (
         source_id  BIGINT       NOT NULL PRIMARY KEY,
@@ -705,6 +719,22 @@ def archive_synonym_proposal(p) -> None:
     )
 
 
+def archive_alert(a) -> None:
+    _upsert(
+        "alerts", "source_id", a.id,
+        {
+            "code": a.code,
+            "level": a.level,
+            "title": a.title,
+            "detail": a.detail,
+            "metric_value": a.metric_value,
+            "active": a.active,
+            "resolved_at": _naive_utc(a.resolved_at) if a.resolved_at else None,
+            "created_at": _naive_utc(a.created_at),
+        },
+    )
+
+
 def archive_feedback(f) -> None:
     _upsert(
         "feedback", "source_id", f.id,
@@ -769,6 +799,7 @@ def backfill() -> None:
     from app.db import get_session
     from app.models import (
         AdminAudit,
+        Alert,
         CatalogAudit,
         CatalogCategory,
         CatalogService,
@@ -832,6 +863,8 @@ def backfill() -> None:
                 archive_feedback(f)
             for sp in session.exec(select(SynonymProposal)).all():
                 archive_synonym_proposal(sp)
+            for al in session.exec(select(Alert)).all():
+                archive_alert(al)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -843,6 +876,7 @@ def _register_listeners() -> None:
     # mensajes por minuto.
     from app.models import (
         AdminAudit,
+        Alert,
         CatalogAudit,
         CatalogCategory,
         CatalogService,
@@ -969,6 +1003,11 @@ def _register_listeners() -> None:
     @event.listens_for(SynonymProposal, "after_update")
     def _synonym_proposal_upsert(mapper, connection, target):
         _safe(archive_synonym_proposal, target)
+
+    @event.listens_for(Alert, "after_insert")
+    @event.listens_for(Alert, "after_update")
+    def _alert_upsert(mapper, connection, target):
+        _safe(archive_alert, target)
 
 
 _register_listeners()

@@ -289,6 +289,26 @@ class NluEvent(SQLModel, table=True):
     habilitado: bool = True
 
 
+class Alert(SQLModel, table=True):
+    """Alerta de salud del agente (Fase 4b). Una sola fila ACTIVA por `code`
+    (regla): mientras la condición se sostiene se actualiza en su lugar, y al
+    desaparecer se marca resuelta (active=False, resolved_at). Solo se muestra
+    en el panel /unmatched (admin) — nunca se envía por WhatsApp.
+
+    La evalúa el job nocturno (ver app.alerts.evaluate_alerts). Append-only en
+    la práctica salvo el toggle de active/resolved_at."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    code: str = Field(index=True)  # id de regla; a lo más una fila active por code
+    level: str  # "warn" | "critical"
+    title: str
+    detail: str
+    metric_value: float | None = None
+    active: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+    resolved_at: datetime | None = None
+
+
 class Invitation(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     token: str = Field(unique=True, index=True)

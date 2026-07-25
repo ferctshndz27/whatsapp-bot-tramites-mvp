@@ -1,7 +1,75 @@
 {% extends "base.html" %}
 {% block title %}Agente WhatsApp{% endblock %}
+{% block head %}
+<style>
+  /* Salud del agente (Fase 4b). El color nunca es el único indicador: cada
+     estado lleva ícono + texto; el borde izquierdo refuerza el nivel. */
+  .health-banner {
+    display: flex; align-items: center; gap: .75rem;
+    border-radius: var(--radius); padding: .9rem 1.15rem; margin-bottom: 1.4rem;
+    font-weight: 600; box-shadow: var(--shadow); border-left: 6px solid var(--green);
+    background: #e3f7f0; color: #0b6e5d;
+  }
+  .health-banner .ico { font-size: 1.35rem; line-height: 1; }
+  .health-banner .sub { display: block; font-weight: 400; font-size: .85rem; opacity: .85; }
+  .health-banner.warn     { background: #fdeedd; color: #92590a; border-left-color: var(--orange); }
+  .health-banner.critical { background: #fde7ef; color: #be1e51; border-left-color: var(--red); }
+
+  .alert-list { display: flex; flex-direction: column; gap: .75rem; }
+  .alert-row {
+    display: flex; gap: .85rem; align-items: flex-start;
+    border: 1px solid var(--border); border-radius: var(--radius); padding: .9rem 1.1rem;
+    border-left: 5px solid var(--orange);
+  }
+  .alert-row.critical { border-left-color: var(--red); }
+  .alert-row .a-body { flex: 1; min-width: 0; }
+  .alert-row .a-title { font-weight: 700; margin: 0 0 .2rem; }
+  .alert-row .a-detail { color: var(--text-muted); font-size: .9rem; margin: 0; }
+  .alert-row .a-since { color: var(--text-muted); font-size: .78rem; margin-top: .35rem; display: block; }
+  .badge.warn     { background: #fdeedd; color: #92590a; }
+  .badge.critical { background: #fde7ef; color: #be1e51; }
+</style>
+{% endblock %}
 {% block content %}
 <h1>Agente WhatsApp — métricas y aprendizaje</h1>
+
+{# Fase 4b: banner de salud + alertas activas (color + ícono + texto). #}
+{% if health == "critical" %}
+<div class="health-banner critical" role="status">
+  <span class="ico" aria-hidden="true">🔴</span>
+  <span>Atención requerida<span class="sub">Hay alertas críticas que conviene resolver ya.</span></span>
+</div>
+{% elif health == "warn" %}
+<div class="health-banner warn" role="status">
+  <span class="ico" aria-hidden="true">🟡</span>
+  <span>Revisar cuando puedas<span class="sub">Hay avisos abiertos sobre el agente.</span></span>
+</div>
+{% else %}
+<div class="health-banner" role="status">
+  <span class="ico" aria-hidden="true">🟢</span>
+  <span>Todo en orden<span class="sub">El agente está sano; no hay alertas activas.</span></span>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Alertas activas</h2>
+  {% if alerts %}
+  <div class="alert-list">
+    {% for a in alerts %}
+    <div class="alert-row {{ a.level }}">
+      <span class="badge {{ a.level }}" aria-hidden="true">{% if a.level == "critical" %}Crítica{% else %}Aviso{% endif %}</span>
+      <div class="a-body">
+        <p class="a-title">{{ a.title }}</p>
+        <p class="a-detail">{{ a.detail }}</p>
+        <span class="a-since">Activa desde {{ a.created_at | local }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">Sin alertas — el agente está sano.</p>
+  {% endif %}
+</div>
 
 {% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
 {% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}

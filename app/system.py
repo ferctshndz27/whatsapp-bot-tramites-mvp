@@ -26,6 +26,7 @@ from app.config import settings
 from app.db import get_session
 from app.models import (
     AdminAudit,
+    Alert,
     CatalogAudit,
     CatalogCategory,
     CatalogService,
@@ -69,6 +70,7 @@ MIRROR_TABLES = [
     (NluEvent, "nlu_events"),
     (Feedback, "feedback"),
     (SynonymProposal, "synonym_proposals"),
+    (Alert, "alerts"),
 ]
 
 

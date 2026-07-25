@@ -296,6 +296,8 @@ def nlu_metrics(days: int = METRICS_DAYS) -> dict:
 
 
 def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
+    from app.alerts import active_alerts, health_level
+
     with get_session() as session:
         pending = unmatched_messages(session)
         db_proposals = session.exec(
@@ -303,6 +305,9 @@ def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
             .where(SynonymProposal.status == "pendiente")
             .order_by(SynonymProposal.created_at.desc())
         ).all()
+        # Salud del agente (Fase 4b): banner + lista, solo en este panel admin.
+        alerts = active_alerts(session)
+    health = health_level(alerts)
     names = {s.id: s.name for c in catalog.categories for s in c.services}
     services = [(s.id, s.name) for c in catalog.categories for s in c.services]
     return templates.TemplateResponse(
@@ -325,6 +330,8 @@ def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
             ],
             "clusters": cluster_unmatched(),
             "metrics": nlu_metrics(),
+            "alerts": alerts,
+            "health": health,
             "mining_available": bool(settings.anthropic_api_key),
             "error": error,
             "ok": ok,
