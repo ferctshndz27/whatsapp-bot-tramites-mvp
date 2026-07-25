@@ -1,0 +1,492 @@
+"""Autorización de las rutas admin del panel, ruta por ruta y por HTTP real.
+
+REGLA de negocio que protege este archivo: el panel tiene DOS roles y la
+frontera entre ellos es dura. Un colaborador puede atender solicitudes, pero
+NO puede administrar el sistema: no se hace admin a sí mismo, no edita el
+catálogo (que fija los precios que se le cotizan a un cliente real), no
+aprueba sinónimos (REGLA DE ORO: nada auto-aprende — un sinónimo mal
+aprobado mal-cotiza), no borra solicitudes, no bloquea clientes y no ve las
+bitácoras ni las exportaciones completas.
+
+Cada ruta se verifica en TRES tiempos, porque un redirect por sí solo no
+prueba nada (una ruta inexistente también "no cambia nada"):
+  1. el colaborador es rechazado con el redirect que corresponde — y ojo:
+     cinco rutas NO mandan a "/" sino a /tickets/{id} o /inbox/{phone};
+  2. el estado que esa ruta muta NO cambió (rol, habilitado, precio, status
+     de la propuesta, conteos...) o el dato sensible no se filtró en el
+     cuerpo de la respuesta;
+  3. CONTROL POSITIVO: el MISMO request hecho por un admin SÍ surte efecto.
+     Sin (3), un typo en el path haría pasar (1) y (2) por 404.
+
+Se ejercita por la URL real (TestClient sobre app.main), no llamando a la
+función del router: así el path forma parte del contrato probado.
+"""
+
+import inspect
+import json
+from dataclasses import dataclass, field
+from datetime import timedelta
+from typing import Callable
+
+import bcrypt
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
+from sqlmodel import create_engine, select
+
+import app.db as db
+import app.nlu as nlu
+import app.synonym_miner as miner
+import app.whatsapp_client as whatsapp_client
+from app.config import settings
+from app.db import get_session
+from app.main import app
+from app.models import (
+    AdminAudit,
+    CatalogCategory,
+    CatalogService,
+    Client,
+    ClientNote,
+    Direction,
+    Invitation,
+    LoginEvent,
+    Message,
+    SynonymProposal,
+    Ticket,
+    TicketActivity,
+    TicketStatus,
+    User,
+    utcnow,
+)
+
+ADMIN = "jefa"
+COLAB = "colab"
+VICTIMA = "victima"  # colaborador objetivo de las rutas de /users
+
+PHONE = "5215500000000"
+PHONE_NO_ENTENDIDO = "5215599998888"  # otro teléfono: no debe tener IN el del ticket
+
+CLAVE = "clave-de-prueba-1234"
+# rounds=4: el hash solo tiene que ser válido, no seguro — con el costo por
+# defecto (12) cada login del test costaría ~0.3 s.
+HASH_CLAVE = bcrypt.hashpw(CLAVE.encode(), bcrypt.gensalt(rounds=4)).decode()
+
+# Marcadores sembrados en la base: datos sensibles que SOLO el admin puede ver.
+TELEFONO_COLABORADOR = "5215544443333"  # dato personal listado en /users
+TOKEN_INVITACION = "tok-authz"
+IP_ACCESO = "203.0.113.77"  # rango de documentación (RFC 5737), nunca real
+MARCA_ACTIVIDAD = "marca-secreta-actividad"
+MARCA_BITACORA = "secreto-en-bitacora"
+CLIENTE_SECRETO = "Cliente Secreto"
+PRECIO_SEMBRADO = "$777"
+TEXTO_NO_ENTENDIDO = "quiero rentar un zeppelin para el domingo"
+SINONIMO_MINADO = "sinonimo minado por claude"
+
+
+# ---- Dobles: nada de red en este archivo ----
+
+
+def _sin_llm(*_args, **_kwargs):
+    raise AssertionError("una prueba de autorización no debe hablar con Claude")
+
+
+def _sin_whatsapp(*_args, **_kwargs):
+    raise AssertionError("una prueba de autorización no debe enviar WhatsApp")
+
+
+def _mineria_falsa(_texts):
+    """Doble de synonym_miner.mine_synonyms: lo que se prueba aquí es el
+    guard de la ruta, no la minería (que iría a la API de Claude)."""
+    return [{"service_id": "curp", "synonym": SINONIMO_MINADO}]
+
+
+# ---- Sondas de estado (cada una abre su propia sesión sobre el engine parchado) ----
+
+
+def _campo(modelo, pk, nombre_campo) -> Callable[[], object]:
+    """Sonda: valor de un campo de una fila por PK; None si la fila no existe."""
+
+    def sonda():
+        with get_session() as s:
+            fila = s.get(modelo, pk)
+            return getattr(fila, nombre_campo) if fila is not None else None
+
+    return sonda
+
+
+def _conteo(modelo, *filtros) -> Callable[[], int]:
+    """Sonda: cuántas filas cumplen los filtros."""
+
+    def sonda():
+        with get_session() as s:
+            consulta = select(modelo)
+            for f in filtros:
+                consulta = consulta.where(f)
+            return len(s.exec(consulta).all())
+
+    return sonda
+
+
+def _sinonimos_de_curp() -> list[str]:
+    with get_session() as s:
+        return json.loads(s.get(CatalogService, "curp").synonyms_json)
+
+
+def _clave_de_victima_es_nueva() -> bool:
+    """True solo si la contraseña quedó reseteada al valor que manda el request."""
+    with get_session() as s:
+        fila = s.exec(select(User).where(User.username == VICTIMA)).one()
+    return bcrypt.checkpw(b"contrasena-impuesta", fila.password_hash.encode())
+
+
+# ---- La tabla de rutas ----
+
+
+@dataclass(frozen=True)
+class Ruta:
+    nombre: str
+    metodo: str
+    path: str
+    redirige_a: str  # Location que debe recibir el colaborador
+    data: dict = field(default_factory=dict)
+    sonda: Callable[[], object] | None = None  # estado que NO debe cambiar
+    tras_admin: object = None  # valor de la sonda después del request del admin
+    filtracion: str | None = None  # dato que solo el admin puede ver en el cuerpo
+
+
+RUTAS: list[Ruta] = [
+    # --- Colaboradores: la escalada de privilegios vive aquí ---
+    Ruta(
+        "GET /users", "GET", "/users", "/",
+        filtracion=TELEFONO_COLABORADOR,
+    ),
+    Ruta(
+        "POST /users", "POST", "/users", "/",
+        data={"username": "intruso", "password": "contrasena-larga-123", "role": "admin"},
+        sonda=_conteo(User, User.username == "intruso"), tras_admin=1,
+    ),
+    Ruta(
+        "POST /users/{u}/password", "POST", f"/users/{VICTIMA}/password", "/",
+        data={"password": "contrasena-impuesta"},
+        sonda=_clave_de_victima_es_nueva, tras_admin=True,
+    ),
+    Ruta(  # la ruta de escalada a admin
+        "POST /users/{u}/role", "POST", f"/users/{VICTIMA}/role", "/",
+        sonda=_conteo(User, User.username == VICTIMA, User.is_admin == True),  # noqa: E712
+        tras_admin=1,
+    ),
+    Ruta(
+        "POST /users/{u}/toggle", "POST", f"/users/{VICTIMA}/toggle", "/",
+        sonda=_conteo(User, User.username == VICTIMA, User.habilitado == True),  # noqa: E712
+        tras_admin=0,
+    ),
+    # --- Catálogo: quien lo edita decide el precio que se le cotiza al cliente ---
+    Ruta(
+        "GET /catalog", "GET", "/catalog", "/",
+        filtracion=PRECIO_SEMBRADO,
+    ),
+    Ruta(
+        "POST /catalog/categories", "POST", "/catalog/categories", "/",
+        data={"name": "Categoria Nueva"},
+        sonda=_conteo(CatalogCategory, CatalogCategory.id == "categoria_nueva"), tras_admin=1,
+    ),
+    Ruta(
+        "POST /catalog/categories/{id}/rename", "POST", "/catalog/categories/basicos/rename", "/",
+        data={"name": "Renombrada por intruso"},
+        sonda=_campo(CatalogCategory, "basicos", "name"), tras_admin="Renombrada por intruso",
+    ),
+    Ruta(
+        "POST /catalog/categories/{id}/toggle", "POST", "/catalog/categories/basicos/toggle", "/",
+        sonda=_campo(CatalogCategory, "basicos", "habilitado"), tras_admin=False,
+    ),
+    Ruta(
+        "POST /catalog/services", "POST", "/catalog/services", "/",
+        data={"category_id": "basicos", "name": "Servicio Nuevo", "price_info": "$1"},
+        sonda=_conteo(CatalogService, CatalogService.id == "servicio_nuevo"), tras_admin=1,
+    ),
+    Ruta(
+        "POST /catalog/services/{id}/update", "POST", "/catalog/services/curp/update", "/",
+        data={"name": "CURP", "price_info": "$0", "synonyms": "", "requirements": ""},
+        sonda=_campo(CatalogService, "curp", "price_info"), tras_admin="$0",
+    ),
+    Ruta(
+        "POST /catalog/services/{id}/toggle", "POST", "/catalog/services/curp/toggle", "/",
+        sonda=_campo(CatalogService, "curp", "habilitado"), tras_admin=False,
+    ),
+    # --- Agente WhatsApp: la REGLA DE ORO (nada auto-aprende) se defiende aquí ---
+    Ruta(
+        "GET /unmatched", "GET", "/unmatched", "/",
+        filtracion=TEXTO_NO_ENTENDIDO,
+    ),
+    Ruta(
+        "POST /unmatched/mine", "POST", "/unmatched/mine", "/",
+        sonda=_conteo(SynonymProposal, SynonymProposal.synonym == SINONIMO_MINADO), tras_admin=1,
+    ),
+    Ruta(  # aprobar una propuesta la mete al catálogo que cotiza el bot
+        "POST /unmatched/proposals/{id}/approve", "POST", "/unmatched/proposals/1/approve", "/",
+        sonda=_campo(SynonymProposal, 1, "status"), tras_admin="aprobada",
+    ),
+    Ruta(
+        "POST /unmatched/proposals/{id}/reject", "POST", "/unmatched/proposals/2/reject", "/",
+        sonda=_campo(SynonymProposal, 2, "status"), tras_admin="rechazada",
+    ),
+    Ruta(
+        "POST /unmatched/synonyms", "POST", "/unmatched/synonyms", "/",
+        data={"service_id": "curp", "synonym": "acta de curp"},
+        sonda=_sinonimos_de_curp, tras_admin=["acta de curp"],
+    ),
+    Ruta(
+        "GET /export/no-entendidos.csv", "GET", "/export/no-entendidos.csv", "/",
+        filtracion=TEXTO_NO_ENTENDIDO,
+    ),
+    # --- Sistema, bitácoras y exportaciones ---
+    Ruta("GET /system", "GET", "/system", "/"),
+    Ruta(
+        "POST /system/sync", "POST", "/system/sync", "/",
+        sonda=_conteo(AdminAudit, AdminAudit.action == "espejo:sync"), tras_admin=1,
+    ),
+    Ruta("GET /audit", "GET", "/audit", "/", filtracion=MARCA_BITACORA),
+    Ruta("GET /logins", "GET", "/logins", "/", filtracion=IP_ACCESO),
+    Ruta("GET /export/logins.csv", "GET", "/export/logins.csv", "/", filtracion=IP_ACCESO),
+    Ruta("GET /export/tickets.csv", "GET", "/export/tickets.csv", "/", filtracion=CLIENTE_SECRETO),
+    Ruta(
+        "GET /export/activity.csv", "GET", "/export/activity.csv", "/",
+        filtracion=MARCA_ACTIVIDAD,
+    ),
+    # --- Invitaciones: quien las emite decide quién entra al panel ---
+    Ruta("GET /invitations", "GET", "/invitations", "/", filtracion=TOKEN_INVITACION),
+    Ruta(
+        "POST /invitations", "POST", "/invitations", "/",
+        sonda=_conteo(Invitation), tras_admin=2,
+    ),
+    Ruta(
+        "POST /invitations/{id}/toggle", "POST", "/invitations/1/toggle", "/",
+        sonda=_campo(Invitation, 1, "habilitado"), tras_admin=False,
+    ),
+    # --- Las cinco que NO redirigen a "/" ---
+    Ruta(
+        "POST /tickets/{id}/delete", "POST", "/tickets/1/delete", "/tickets/1",
+        sonda=_campo(Ticket, 1, "habilitado"), tras_admin=False,
+    ),
+    Ruta(
+        "POST /inbox/{phone}/block", "POST", f"/inbox/{PHONE}/block", f"/inbox/{PHONE}",
+        sonda=_campo(Client, PHONE, "habilitado"), tras_admin=False,
+    ),
+    # Éxito y rechazo redirigen al MISMO lugar: aquí el redirect no prueba
+    # nada y la sonda es el único testigo real.
+    Ruta(
+        "POST /tickets/{id}/finish", "POST", "/tickets/1/finish", "/tickets/1",
+        sonda=_campo(Ticket, 1, "status"), tras_admin=TicketStatus.CERRADO,
+    ),
+    Ruta(
+        "POST /clients/{phone}/notes/{id}/delete", "POST",
+        f"/clients/{PHONE}/notes/1/delete", f"/clients/{PHONE}",
+        sonda=_campo(ClientNote, 1, "habilitado"), tras_admin=False,
+    ),
+]
+
+
+# ---- Infraestructura local ----
+
+
+def _sembrar() -> None:
+    """Estado mínimo para que cada ruta de la tabla tenga algo real que tocar."""
+    with get_session() as s:
+        s.add(User(username=ADMIN, password_hash=HASH_CLAVE, is_admin=True))
+        s.add(User(username=COLAB, password_hash=HASH_CLAVE, is_admin=False))
+        s.add(
+            User(
+                username=VICTIMA, password_hash=HASH_CLAVE, is_admin=False,
+                habilitado=True, phone=TELEFONO_COLABORADOR,
+            )
+        )
+        s.add(Client(phone=PHONE, name=CLIENTE_SECRETO, habilitado=True))
+        # assigned_to=None a propósito: así el admin pasa el guard de
+        # /finish por ser admin, no por ser el asignado.
+        s.add(
+            Ticket(
+                id=1, phone=PHONE, client_name=CLIENTE_SECRETO, category="Servicios básicos",
+                service_id="curp", service_name="CURP certificada",
+                price_info=PRECIO_SEMBRADO, status=TicketStatus.NUEVO, assigned_to=None,
+            )
+        )
+        s.add(TicketActivity(ticket_id=1, username=ADMIN, action=MARCA_ACTIVIDAD))
+        # Autor "tercero": el admin borra la nota por ser admin, no por autoría.
+        s.add(ClientNote(id=1, phone=PHONE, author="tercero", body="ya pagó anticipo"))
+        s.add(Invitation(id=1, token=TOKEN_INVITACION, created_by=ADMIN, used_at=None))
+        s.add(AdminAudit(admin=ADMIN, action="usuario:password", target=MARCA_BITACORA))
+        s.add(LoginEvent(username="fantasma", success=False, reason="x", ip=IP_ACCESO))
+        s.add(SynonymProposal(id=1, service_id="curp", synonym="clave unica"))
+        s.add(SynonymProposal(id=2, service_id="curp", synonym="mi curp"))
+        # Catálogo propio: sembrarlo evita que app.catalog importe catalog.json
+        # y ata la prueba a datos controlados.
+        s.add(CatalogCategory(id="basicos", name="Servicios básicos", position=0))
+        s.add(
+            CatalogService(
+                id="curp", category_id="basicos", name="CURP certificada",
+                price_info=PRECIO_SEMBRADO, synonyms_json="[]", position=0,
+            )
+        )
+        # Par IN + "No reconocí…" que alimenta /unmatched y su CSV. Va en OTRO
+        # teléfono: un IN reciente en el del ticket abriría la ventana de 24 h
+        # y /finish intentaría avisarle al cliente por WhatsApp.
+        ayer = utcnow() - timedelta(days=1)
+        s.add(
+            Message(
+                phone=PHONE_NO_ENTENDIDO, direction=Direction.IN,
+                body=TEXTO_NO_ENTENDIDO, created_at=ayer,
+            )
+        )
+        s.add(
+            Message(
+                phone=PHONE_NO_ENTENDIDO, direction=Direction.OUT,
+                body=miner._HINT_PREFIX + " Elige del menú.",
+                created_at=ayer + timedelta(seconds=1),
+            )
+        )
+        s.commit()
+
+
+@pytest.fixture(autouse=True)
+def entorno(_isolated_db, monkeypatch):
+    """Engine compartido entre hilos + semilla + todo lo que salga a la red apagado.
+
+    Depende de _isolated_db (autouse del conftest) para correr DESPUÉS y pisar
+    su engine. StaticPool es obligatorio: TestClient atiende la app en el hilo
+    del portal de anyio y el SingletonThreadPool por defecto le daría a ese
+    hilo una base :memory: distinta y VACÍA.
+    """
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    monkeypatch.setattr(db, "engine", engine)
+    db.init_db()
+    monkeypatch.setattr(settings, "mssql_host", "")  # apaga archive.enabled()
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "geoip_enabled", False)
+    monkeypatch.setattr(nlu, "_get_client", _sin_llm)
+    monkeypatch.setattr(whatsapp_client, "send_text", _sin_whatsapp)
+    monkeypatch.setattr(whatsapp_client, "send_buttons", _sin_whatsapp)
+    monkeypatch.setattr(miner, "mine_synonyms", _mineria_falsa)
+    _sembrar()
+    yield
+
+
+def _sesion_de(username: str) -> TestClient:
+    """Cliente con la cookie de sesión real, obtenida por POST /login.
+
+    base_url https: la cookie de sesión lleva el flag Secure cuando
+    SECURE_COOKIES no es 0 y sobre http el navegador (y httpx) no la mandaría.
+    """
+    cliente = TestClient(app, base_url="https://testserver")
+    r = cliente.post(
+        "/login", data={"username": username, "password": CLAVE}, follow_redirects=False
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/", "el login de la prueba falló"
+    return cliente
+
+
+def _pedir(cliente: TestClient, ruta: Ruta):
+    if ruta.metodo == "GET":
+        return cliente.get(ruta.path, follow_redirects=False)
+    return cliente.post(ruta.path, data=ruta.data, follow_redirects=False)
+
+
+# ---- Las pruebas ----
+
+
+@pytest.mark.parametrize("ruta", RUTAS, ids=lambda r: r.nombre)
+def test_colaborador_es_rechazado_y_no_cambia_nada(ruta: Ruta):
+    """(a) rechazo con el redirect correcto y (b) el efecto NO ocurrió."""
+    antes = ruta.sonda() if ruta.sonda else None
+    if ruta.sonda is not None:
+        # Sin esto la sonda podría ser tautológica (medir algo que el admin
+        # tampoco cambia) y la prueba pasaría con el guard quitado.
+        assert antes != ruta.tras_admin, f"sonda inútil en {ruta.nombre}"
+
+    respuesta = _pedir(_sesion_de(COLAB), ruta)
+
+    assert respuesta.status_code == 303, f"{ruta.nombre} no rechazó al colaborador"
+    assert respuesta.headers["location"] == ruta.redirige_a
+    if ruta.sonda is not None:
+        assert ruta.sonda() == antes, f"{ruta.nombre} mutó el estado sin ser admin"
+    if ruta.filtracion is not None:
+        assert ruta.filtracion not in respuesta.text
+
+
+@pytest.mark.parametrize("ruta", RUTAS, ids=lambda r: r.nombre)
+def test_control_positivo_el_admin_si_surte_efecto(ruta: Ruta):
+    """(c) sin esto, un typo en el path haría pasar la prueba de arriba por 404."""
+    respuesta = _pedir(_sesion_de(ADMIN), ruta)
+
+    assert respuesta.status_code != 404, f"{ruta.nombre} no existe: el path está mal"
+    assert respuesta.headers.get("location") not in ("/", "/login"), (
+        f"{ruta.nombre} rechazó a un admin"
+    )
+    if ruta.sonda is not None:
+        assert ruta.sonda() == ruta.tras_admin, f"{ruta.nombre} no surtió efecto siendo admin"
+    else:
+        assert respuesta.status_code == 200
+    if ruta.filtracion is not None:
+        assert ruta.filtracion in respuesta.text
+
+
+def test_activity_no_cierra_la_puerta_pero_filtra_los_datos():
+    """Caso especial, NO es un agujero: /activity responde 200 a un
+    colaborador a propósito — ahí is_admin FILTRA datos en vez de cerrar la
+    puerta. Lo que no debe pasar es que ?user= le sirva el historial ajeno.
+    """
+    with get_session() as s:
+        s.add(TicketActivity(ticket_id=1, username=ADMIN, action="cerrado-por-la-jefa"))
+        s.add(TicketActivity(ticket_id=1, username=COLAB, action="cerrado-por-el-colab"))
+        s.commit()
+
+    como_colab = _sesion_de(COLAB).get(f"/activity?user={ADMIN}", follow_redirects=False)
+    como_admin = _sesion_de(ADMIN).get(f"/activity?user={COLAB}", follow_redirects=False)
+
+    assert como_colab.status_code == 200  # la puerta está abierta a propósito
+    assert "cerrado-por-el-colab" in como_colab.text  # ve lo suyo
+    assert "cerrado-por-la-jefa" not in como_colab.text  # ignoró el ?user= ajeno
+    assert "cerrado-por-el-colab" in como_admin.text  # el admin sí puede mirar a otro
+
+
+def _plantilla_de(metodo: str, path: str) -> str | None:
+    """Plantilla del router ('/users/{username}/role') que atiende un path
+    concreto ('/users/victima/role'), o None si ninguna lo atiende."""
+    for route in app.routes:
+        regex = getattr(route, "path_regex", None)
+        if regex is None or metodo not in getattr(route, "methods", set()):
+            continue
+        if regex.match(path):
+            return route.path
+    return None
+
+
+def test_la_tabla_cubre_toda_ruta_con_guard_de_admin():
+    """Guardia de cobertura: si mañana se agrega una ruta que llama a
+    is_admin/_admin_or_redirect y nadie le escribe su fila, esta prueba lo
+    canta. Sin esto la tabla se queda congelada en las rutas de hoy.
+    """
+    # Única ruta con guard propio deliberadamente fuera de la tabla: ahí
+    # is_admin filtra datos en vez de cerrar la puerta (tiene su prueba arriba).
+    fuera_de_tabla = {("GET", "/activity")}
+
+    cubiertas = {(r.metodo, _plantilla_de(r.metodo, r.path)) for r in RUTAS}
+    assert None not in {p for _, p in cubiertas}, "hay filas cuyo path no existe en el router"
+
+    con_guard = set()
+    for route in app.routes:
+        endpoint = getattr(route, "endpoint", None)
+        if endpoint is None or not hasattr(route, "methods"):
+            continue
+        try:
+            fuente = inspect.getsource(endpoint)
+        except (OSError, TypeError):  # pragma: no cover — endpoints sin fuente
+            continue
+        if "is_admin(" not in fuente and "_admin_or_redirect(" not in fuente:
+            continue
+        con_guard |= {(m, route.path) for m in route.methods & {"GET", "POST"}}
+
+    assert con_guard, "la detección de guards dejó de encontrar rutas"
+    faltantes = sorted(f"{m} {p}" for m, p in con_guard - cubiertas - fuera_de_tabla)
+    assert faltantes == [], f"rutas admin sin fila en RUTAS: {faltantes}"
