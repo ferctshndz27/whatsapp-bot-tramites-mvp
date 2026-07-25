@@ -31,12 +31,15 @@ from app.models import (
     CatalogCategory,
     CatalogService,
     Client,
+    ClientNote,
     Conversation,
     Feedback,
+    FollowUp,
     Invitation,
     LoginEvent,
     Message,
     NluEvent,
+    SavedReply,
     SynonymProposal,
     TeamMessage,
     Ticket,
@@ -71,6 +74,13 @@ MIRROR_TABLES = [
     (Feedback, "feedback"),
     (SynonymProposal, "synonym_proposals"),
     (Alert, "alerts"),
+    # Estas tres ya se espejaban (DDL + archive_* + listener + backfill) pero
+    # faltaban aquí, así que /system las daba por buenas sin contarlas: una
+    # divergencia en las notas del cliente era invisible. Ver los CINCO lugares
+    # que hay que tocar al agregar una tabla espejada (CLAUDE.md).
+    (ClientNote, "client_notes"),
+    (FollowUp, "followups"),
+    (SavedReply, "saved_replies"),
 ]
 
 

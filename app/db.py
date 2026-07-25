@@ -1,6 +1,12 @@
 from sqlalchemy import event, text
 from sqlmodel import Session, SQLModel, create_engine
 
+# Importar los modelos aquí es lo que puebla SQLModel.metadata: sin esto,
+# el create_all() de init_db() es un no-op para quien no haya importado
+# app.models por su cuenta. El arranque web funcionaba de rebote, pero el cron
+# (`python -m app.jobs`) llama init_db() ANTES de importar los módulos que
+# traen los modelos: creaba cero tablas y las alertas fallaban en silencio.
+from app import models  # noqa: F401
 from app.config import settings
 
 engine = create_engine(f"sqlite:///{settings.db_path}", connect_args={"check_same_thread": False})
