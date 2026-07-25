@@ -81,6 +81,24 @@ BARRERA_TIMEOUT = 20.0
 # --------------------------------------------------------------------------
 
 
+class RedProhibida(BaseException):
+    """Se dispara si algo de este archivo intenta usar el cliente de Anthropic.
+
+    NO hereda de `Exception` a propósito: `nlu.deduce_explained` envuelve la
+    capa LLM en un `except Exception` que cae a keywords, así que una excepción
+    normal se tragaría en silencio y la fuga de red se vería exactamente igual
+    que un fallback legítimo. Con BaseException el escape es imposible de
+    disimular.
+    """
+
+
+class _ClienteAnthropicProhibido:
+    """Doble que revienta ante CUALQUIER acceso de atributo (`.messages`, …)."""
+
+    def __getattr__(self, nombre: str):
+        raise RedProhibida(f"una prueba intentó usar el cliente de Anthropic (.{nombre})")
+
+
 @pytest.fixture(autouse=True)
 def sin_dependencias_externas(monkeypatch):
     """Apaga el espejo MSSQL y el LLM: sin esto `archive.enabled()` es True
@@ -89,6 +107,13 @@ def sin_dependencias_externas(monkeypatch):
     `_engine`/`_ready` que tampoco son thread-safe."""
     monkeypatch.setattr(settings, "mssql_host", "")
     monkeypatch.setattr(settings, "anthropic_api_key", "")
+    # Cortafuegos de red. `nlu._get_client()` cachea en el global `nlu._client`
+    # y solo construye `anthropic.Anthropic(...)` cuando ese global está en
+    # None; dejando ahí un doble que explota, ninguna prueba de este archivo
+    # puede instanciar el cliente real ni abrir un socket — ni aunque alguien
+    # reactive la API key. La guardia se auto-verifica en
+    # test_ninguna_prueba_de_este_archivo_puede_salir_a_la_red.
+    monkeypatch.setattr(nlu, "_client", _ClienteAnthropicProhibido())
 
 
 @pytest.fixture()
@@ -380,12 +405,25 @@ def test_dos_post_identicos_a_la_ruta_webhook_responden_200_y_entregan_una_sola_
 # --------------------------------------------------------------------------
 
 
-def test_cliente_nuevo_en_paralelo_no_duplica_client_ni_conversation(
+def test_la_carrera_de_alta_no_desincroniza_respuesta_bitacora_y_estado(
     engine_produccion, catalogo_tibio
 ):
-    # REGLA: _get_or_create_client/_get_or_create_conversation son
-    # read-then-write sin upsert; la PK debe garantizar que jamás existan dos
-    # filas para el mismo teléfono.
+    # REGLA: bajo la carrera del alta de un cliente nuevo, las tres cosas que
+    # ve el negocio tienen que contar la MISMA historia: lo que se le contestó
+    # al cliente, lo que quedó en la bitácora y el estado guardado. Un hilo que
+    # muere a media conversación no puede dejar una respuesta sin registrar, un
+    # registro sin respuesta, ni una Conversation en un estado que no
+    # corresponde al último mensaje enviado — si el bot pide confirmar y el
+    # estado no quedó en "confirmar", el "sí" del cliente se lee mal y se abre
+    # el folio equivocado (o ninguno).
+    #
+    # Lo que esta prueba NO assertea, a propósito: que exista UN solo Client y
+    # UNA sola Conversation. `Client.phone` y `Conversation.phone` son PRIMARY
+    # KEY en app/models.py, así que esa unicidad la garantiza el esquema de
+    # SQLite y ninguna mutación de la lógica de app/ podría romperla. El efecto
+    # observable de esta carrera —que el mensaje del hilo perdedor se pierde—
+    # lo mide la prueba hermana
+    # test_primer_mensaje_de_un_cliente_nuevo_no_se_pierde_por_la_carrera_de_alta.
     barrera = threading.Barrier(2)
 
     def _procesar(i):
@@ -394,10 +432,35 @@ def test_cliente_nuevo_en_paralelo_no_duplica_client_ni_conversation(
                 s, PHONE, "necesito acta de nacimiento", wa_message_id=f"wamid.N{i}"
             )
 
-    en_paralelo(_procesar, 2)
+    resultados, errores = en_paralelo(_procesar, 2)
 
-    assert len(_filas(engine_produccion, Client)) == 1
-    assert len(_filas(engine_produccion, Conversation)) == 1
+    # Hoy gana un hilo y el otro choca contra la PK; el día que se arregle el
+    # get-or-create ganarán los dos. Todo lo de abajo vale en ambos mundos a
+    # propósito: la prueba documenta coherencia, no castiga el arreglo.
+    assert all(isinstance(exc, IntegrityError) for _, exc in errores), errores
+    contestados = {i: r for i, r in resultados.items() if r}
+    assert contestados, "ningún hilo llegó a atender al cliente"
+
+    # 1) Bitácora de ENTRADA == mensajes que de verdad se atendieron.
+    entrantes = _entrantes(engine_produccion, PHONE)
+    assert {m.wa_message_id for m in entrantes} == {f"wamid.N{i}" for i in contestados}
+
+    # 2) Bitácora de SALIDA == respuestas devueltas, ni una de más ni una de
+    #    menos (una salida fantasma sería un WhatsApp que el cliente nunca
+    #    recibió; una faltante, evidencia perdida para el asesor). Se compara
+    #    como multiconjunto: el orden entre hilos no es determinista, el
+    #    contenido sí.
+    salientes = _salientes(engine_produccion, PHONE)
+    assert sorted(m.body for m in salientes) == sorted(
+        texto for respuestas in contestados.values() for texto in respuestas
+    )
+    assert all("Acta de nacimiento" in m.body for m in salientes), [m.body for m in salientes]
+
+    # 3) El estado guardado corresponde a esa respuesta: se pidió confirmar UN
+    #    servicio, así que el "sí" siguiente debe encontrar ese folio pendiente.
+    conv = _filas(engine_produccion, Conversation)[0]
+    assert conv.state == "confirmar"
+    assert json.loads(conv.context_json)["pending_service_ids"] == ["sb-acta-nacimiento"]
 
 
 @pytest.mark.xfail(
@@ -955,8 +1018,21 @@ def test_los_limites_de_producto_son_los_acordados():
     assert (RATE_LIMIT_MAX_MESSAGES, RATE_LIMIT_WINDOW_SECONDS, MAX_FAILED_ATTEMPTS) == (20, 60, 2)
 
 
-def test_el_llm_esta_apagado_en_estas_pruebas(catalogo_tibio):
-    # Guardia: si alguien deja ANTHROPIC_API_KEY viva, la cascada de nlu
-    # llamaría a la red desde N hilos y estas pruebas dejarían de ser locales.
-    assert settings.anthropic_api_key == ""
+def test_ninguna_prueba_de_este_archivo_puede_salir_a_la_red(catalogo_tibio, monkeypatch):
+    # REGLA de la suite: este archivo corre N hilos por prueba. Si la capa LLM
+    # se activara, cada corrida haría N llamadas HTTP reales a Anthropic y las
+    # pruebas dejarían de ser deterministas (y de ser gratis).
+    #
+    # (a) Camino normal: la deducción se resuelve con el catálogo local, capa
+    #     literal por nombre. Mide comportamiento de nlu, no el valor que el
+    #     propio fixture acaba de escribir.
     assert nlu.deduce_explained("necesito acta de nacimiento")[2] == "nombre"
+
+    # (b) La guardia MUERDE: con una API key viva la cascada intenta usar el
+    #     cliente y el doble revienta con una BaseException — justo lo que el
+    #     `except Exception` de deduce_explained NO puede tragarse. Sin este
+    #     detalle, una fuga de red se vería idéntica a un fallback legítimo a
+    #     keywords y nadie se enteraría.
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-de-mentiras")
+    with pytest.raises(RedProhibida):
+        nlu.deduce_explained("necesito acta de nacimiento")

@@ -89,6 +89,9 @@ class FakeWhatsApp:
         self.sent: list[dict] = []
         self.list_returns_none = False  # simula un interactivo rechazado por Meta
         self.text_fails_once = False    # simula el error 131047 en el primer envío
+        # Números a los que Meta rechaza TODO envío (interactivo y texto): es el
+        # caso real del 131047 cuando se venció la ventana de 24 h de ese chat.
+        self.fail_sends_to: set[str] = set()
         self._wamids = itertools.count(1)
         self._text_calls = 0
 
@@ -98,6 +101,8 @@ class FakeWhatsApp:
     def send_text(self, to_phone: str, body: str) -> str | None:
         self._text_calls += 1
         self.sent.append({"kind": "text", "to": to_phone, "text": body})
+        if to_phone in self.fail_sends_to:
+            return None
         if self.text_fails_once and self._text_calls == 1:
             return None
         return self._wamid()
@@ -106,7 +111,7 @@ class FakeWhatsApp:
         self.sent.append(
             {"kind": "list", "to": to_phone, "text": body, "button": button, "rows": list(rows)}
         )
-        if self.list_returns_none:
+        if self.list_returns_none or to_phone in self.fail_sends_to:
             return None
         return self._wamid()
 
@@ -114,6 +119,8 @@ class FakeWhatsApp:
         self.sent.append(
             {"kind": "buttons", "to": to_phone, "text": body, "buttons": list(buttons)}
         )
+        if to_phone in self.fail_sends_to:
+            return None
         return self._wamid()
 
     # -- lecturas cómodas para las aserciones --
@@ -600,7 +607,7 @@ def test_un_mensaje_que_revienta_no_tumba_el_webhook_ni_al_siguiente(wa, monkeyp
     assert "ayudarte" in wa.texts[0].lower()
 
 
-def test_statuses_de_meta_actualizan_el_mensaje_del_wamid_correspondiente(wa):
+def test_statuses_de_meta_actualizan_el_mensaje_del_wamid_correspondiente(wa, caplog):
     """Regla: value.statuses[] actualiza wa_status/wa_status_at de la fila del
     wamid correspondiente; un wamid desconocido se ignora sin romper."""
     _send_text("hola")
@@ -614,8 +621,17 @@ def test_statuses_de_meta_actualizan_el_mensaje_del_wamid_correspondiente(wa):
     for estado, ts in [("sent", 1700000000), ("delivered", 1700000060), ("read", 1700000120)]:
         assert _post(_envelope(statuses=[_status(wamid, estado, ts)])).status_code == 200
 
-    # wamid que no existe en la base: se ignora en silencio
-    assert _post(_envelope(statuses=[_status("wamid.DESCONOCIDO", "read", 1700009999)])).status_code == 200
+    # wamid que no existe en la base: se ignora en silencio. "Sin romper" no se
+    # puede medir con el 200 — _process_status corre dentro de un try/except que
+    # loguea y sigue, así que una AttributeError sobre `row=None` daría 200 igual
+    # y esta prueba seguiría verde mintiendo. Los statuses de wamids ajenos son
+    # rutina (mensajes que el asesor manda desde WhatsApp Manager): tienen que
+    # salir por el `return` temprano, no por el manejador de excepciones.
+    with caplog.at_level(logging.ERROR):
+        respuesta = _post(_envelope(statuses=[_status("wamid.DESCONOCIDO", "read", 1700009999)]))
+    assert respuesta.status_code == 200
+    errores_webhook = [r for r in caplog.records if r.name == "app.webhook"]
+    assert errores_webhook == [], f"el wamid desconocido se manejó vía excepción: {caplog.text}"
 
     with _db() as session:
         rows = _messages(session)
@@ -718,8 +734,22 @@ def test_lote_de_meta_con_varios_mensajes_del_mismo_telefono_avanza_la_maquina(w
 
 
 def test_lote_con_dos_telefonos_no_cruza_respuestas_ni_wamids(wa):
-    """Regla de privacidad del canal: cada cliente recibe SU respuesta y su
-    wamid se asigna a su propia fila — nunca se filtra el chat de uno a otro."""
+    """Regla de privacidad del canal: cada cliente recibe SU respuesta y el acuse
+    (wamid) que devuelve Meta se asigna a la fila de ESE teléfono — nunca se
+    filtra el chat de uno a otro ni se le acredita a uno lo que salió para otro.
+
+    El lote lleva a propósito un envío FALLIDO de PHONE: Meta rechaza todo lo que
+    va a ese número (131047, ventana de 24 h vencida), así que el interactivo y su
+    fallback en texto devuelven None y su fila OUT queda HUÉRFANA (sin wamid).
+    Esa fila es el punto de la prueba: cuando después llega el wamid de PHONE2 ya
+    existe una fila OUT más vieja y sin taggear, pero de OTRO teléfono, y lo único
+    que impide que se robe el acuse es el `.where(Message.phone == phone)` de
+    webhook._tag_sent_message. Sin el envío fallido el orden secuencial
+    sobredetermina el resultado (a esas alturas no queda ninguna fila pendiente de
+    PHONE) y el filtro por teléfono no decidiría nada.
+    """
+    wa.fail_sends_to = {PHONE}
+
     _post(
         _envelope(
             _text_msg("necesito un acta de nacimiento", phone=PHONE),
@@ -727,16 +757,27 @@ def test_lote_con_dos_telefonos_no_cruza_respuestas_ni_wamids(wa):
         )
     )
 
-    assert [s["to"] for s in wa.sent] == [PHONE, PHONE2]
+    # (a) lo que ve cada cliente: nada del chat del otro. A PHONE se le intentó
+    # dos veces (interactivo + fallback a texto plano) y a PHONE2 una sola.
+    assert [s["to"] for s in wa.sent] == [PHONE, PHONE, PHONE2]
+    assert wa.kinds == ["buttons", "text", "buttons"]
     assert "Acta de nacimiento" in wa.texts[0]
-    assert "Acta de divorcio" in wa.texts[1]
     assert "Acta de divorcio" not in wa.texts[0]
+    assert "Acta de divorcio" in wa.texts[2]
+    assert "Acta de nacimiento" not in wa.texts[2]
 
+    # (b) el acuse cae en la fila del teléfono al que Meta sí le entregó
     with _db() as session:
-        for phone, wamid in [(PHONE, "wamid.OUT1"), (PHONE2, "wamid.OUT2")]:
-            rows = _messages(session, phone)
-            assert [m.direction for m in rows] == [Direction.IN, Direction.OUT], phone
-            assert rows[1].wa_message_id == wamid, phone
+        filas_a = _messages(session, PHONE)
+        assert [m.direction for m in filas_a] == [Direction.IN, Direction.OUT]
+        # A PHONE no le salió NADA: su fila OUT se queda sin acuse. Marcarla como
+        # entregada sería mentirle al panel sobre un mensaje que nunca llegó.
+        assert filas_a[1].wa_message_id is None
+
+        filas_b = _messages(session, PHONE2)
+        assert [m.direction for m in filas_b] == [Direction.IN, Direction.OUT]
+        # Único wamid emitido en todo el lote (un envío rechazado no gasta id).
+        assert filas_b[1].wa_message_id == "wamid.OUT1"
 
 
 @pytest.mark.xfail(
