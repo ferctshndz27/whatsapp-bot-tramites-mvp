@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Form, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from app.templating import templates
 from sqlmodel import select
 
 from app import whatsapp_client
@@ -29,8 +29,6 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-templates.env.globals["is_admin"] = is_admin
 
 WINDOW_HOURS = 24
 QUICK_REPLIES = json.loads((Path(__file__).parent / "quick_replies.json").read_text())

@@ -9,7 +9,7 @@ import logging
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
+from app.templating import templates
 from sqlmodel import select
 
 from app.auth import is_admin
@@ -19,8 +19,6 @@ from app.models import SavedReply
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-templates.env.globals["is_admin"] = is_admin
 
 MAX_REPLIES = 30
 

@@ -7,14 +7,12 @@ la alimenta desde el panel Catálogo (campo requisitos).
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
+from app.templating import templates
 
 from app.auth import is_admin
 from app.catalog import catalog
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-templates.env.globals["is_admin"] = is_admin
 
 
 @router.get("/kb")

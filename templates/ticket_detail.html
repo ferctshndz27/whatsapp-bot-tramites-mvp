@@ -147,7 +147,7 @@
       {{ m.body }}
       <span class="meta">
         {{ 'Cliente' if m.direction.value == 'in' else 'Bot' }}
-        · {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
+        · {{ m.created_at | local }}
         {% if m.direction.value == 'out' and m.wa_status %} · {{ m.wa_status }}{% endif %}
       </span>
     </div>

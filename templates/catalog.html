@@ -138,12 +138,12 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Fecha (UTC)</th><th>Quién</th><th>Elemento</th><th>Campo</th><th>Cambio</th></tr>
+        <tr><th>Fecha</th><th>Quién</th><th>Elemento</th><th>Campo</th><th>Cambio</th></tr>
       </thead>
       <tbody>
         {% for c in changes %}
         <tr>
-          <td>{{ c.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+          <td>{{ c.created_at | local('%d/%m/%Y %H:%M') }}</td>
           <td>{{ c.admin }}</td>
           <td>{{ c.kind }} · {{ c.target }}</td>
           <td>{{ c.field }}</td>

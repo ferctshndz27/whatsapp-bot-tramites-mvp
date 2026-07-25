@@ -89,3 +89,12 @@ def test_fuzzy_threshold_clamped_to_safe_range(monkeypatch):
 
     monkeypatch.setenv("FUZZY_THRESHOLD", "88")
     assert Settings().fuzzy_threshold == 88
+
+
+def test_local_dt_converts_utc_to_cdmx():
+    from datetime import datetime
+
+    from app.templating import local_dt
+
+    assert local_dt(datetime(2026, 7, 25, 0, 32)) == "2026-07-24 18:32"
+    assert local_dt(None) == ""

@@ -9,12 +9,12 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Fecha (UTC)</th><th>Admin</th><th>Acción</th><th>Objetivo</th></tr>
+        <tr><th>Fecha</th><th>Admin</th><th>Acción</th><th>Objetivo</th></tr>
       </thead>
       <tbody>
         {% for e in entries %}
         <tr>
-          <td>{{ e.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td>{{ e.created_at | local('%Y-%m-%d %H:%M:%S') }}</td>
           <td>{{ e.admin }}</td>
           <td>{{ e.action }}</td>
           <td>{{ e.target or '—' }}</td>

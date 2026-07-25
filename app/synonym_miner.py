@@ -15,7 +15,7 @@ import logging
 from datetime import timedelta
 
 from fastapi import APIRouter, Form, Request
-from fastapi.templating import Jinja2Templates
+from app.templating import templates
 from rapidfuzz import fuzz
 from sqlmodel import Session, select
 
@@ -32,8 +32,6 @@ from app.system import _admin_or_redirect, _csv_response
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-templates.env.globals["is_admin"] = is_admin
 
 DAYS_BACK = 30
 MAX_MESSAGES = 100

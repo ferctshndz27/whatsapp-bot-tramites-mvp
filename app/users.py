@@ -10,7 +10,7 @@ import logging
 import bcrypt
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
+from app.templating import templates
 from sqlmodel import select
 
 from app.audit import log_admin
@@ -22,8 +22,6 @@ from app.models import User
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-templates.env.globals["is_admin"] = is_admin
 
 
 def _admin_or_redirect(request: Request):

@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.templating import Jinja2Templates
+from app.templating import templates
 from sqlmodel import select
 from starlette.concurrency import run_in_threadpool
 
@@ -29,8 +29,6 @@ from app.models import IpGeoCache, LoginEvent, WebSession, utcnow
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-templates.env.globals["is_admin"] = is_admin
 
 # Ventana para considerar una sesión "conectada ahora"
 ACTIVE_WINDOW = timedelta(minutes=5)

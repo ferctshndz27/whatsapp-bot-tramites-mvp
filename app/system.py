@@ -15,7 +15,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse, Response
-from fastapi.templating import Jinja2Templates
+from app.templating import templates
 from sqlalchemy import func, text
 from sqlmodel import select
 
@@ -47,8 +47,6 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-templates.env.globals["is_admin"] = is_admin
 
 _STARTED_AT = datetime.now(timezone.utc)
 

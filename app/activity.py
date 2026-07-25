@@ -9,11 +9,10 @@ completo y pueden abrir el histórico de cualquiera.
 import logging
 import math
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
+from app.templating import BUSINESS_TZ, templates
 from sqlmodel import select
 
 from app.auth import is_admin
@@ -23,12 +22,7 @@ from app.models import Feedback, Ticket, TicketActivity, TicketStatus, User
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-templates.env.globals["is_admin"] = is_admin
 
-# Los cortes de "hoy/semana/mes" usan la zona horaria del negocio, no UTC —
-# si no, un cierre a las 20:00 de México contaría para el día siguiente.
-BUSINESS_TZ = ZoneInfo("America/Mexico_City")
 RECENT_LIMIT = 50
 
 # Gráfica de despachos: tope del rango para que la página no crezca sin

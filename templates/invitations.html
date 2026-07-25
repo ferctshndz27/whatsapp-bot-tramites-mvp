@@ -39,7 +39,7 @@
           <td>{{ i.token }}</td>
           <td>{{ i.phone or '—' }}</td>
           <td>{{ i.created_by }}</td>
-          <td>{{ i.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ i.created_at | local }}</td>
           <td>
             {% if i.used_at %}
             <span class="badge cerrado">usado por {{ i.used_by }}</span>

@@ -152,7 +152,7 @@
       <tbody>
         {% for a in recent %}
         <tr>
-          <td>{{ a.at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ a.at | local }}</td>
           <td><a href="/tickets/{{ a.ticket_id }}">#{{ a.ticket_id }}</a></td>
           <td>{{ a.label }}</td>
         </tr>

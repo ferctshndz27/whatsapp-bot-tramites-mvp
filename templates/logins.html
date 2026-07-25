@@ -26,7 +26,7 @@
           <td>{{ a.s.ip or '—' }}</td>
           <td>{{ a.s.geo or '—' }}</td>
           <td>{% if a.mins == 0 %}ahora mismo{% else %}hace {{ a.mins }} min{% endif %}</td>
-          <td>{{ a.s.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ a.s.created_at | local }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -49,12 +49,12 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Fecha (UTC)</th><th>Usuario</th><th>Resultado</th><th>IP</th><th>Ubicación</th><th>Dispositivo</th></tr>
+        <tr><th>Fecha</th><th>Usuario</th><th>Resultado</th><th>IP</th><th>Ubicación</th><th>Dispositivo</th></tr>
       </thead>
       <tbody>
         {% for e in entries %}
         <tr>
-          <td>{{ e.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td>{{ e.created_at | local('%Y-%m-%d %H:%M:%S') }}</td>
           <td>{{ e.username }}</td>
           <td>
             {% if e.success %}
