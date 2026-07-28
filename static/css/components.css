@@ -81,6 +81,10 @@
     .badge.ocupado    { background: #fdeedd; color: #92590a; }
     .badge.ausente    { background: #eef0f3; color: #666; }
     .badge.urgente    { background: #be1e51; color: #fff; }
+    /* Canal: qué cuenta atiende esta conversación. El color NO es el único
+       indicador — el texto dice el nombre del canal (WCAG 1.4.1). */
+    .badge.canal-twilio { background: #e6ecfd; color: #1d4fd7; }
+    .badge.canal-meta   { background: #e3f7f0; color: #0b6e5d; }
 
     /* ---- Forms & buttons ---- */
     label { display: block; margin-bottom: .35rem; font-size: .85rem; color: var(--text-muted); }

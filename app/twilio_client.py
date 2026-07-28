@@ -24,11 +24,13 @@ import hashlib
 import hmac
 import logging
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 import httpx
 
 from app.config import settings
+from app.media_store import signed_media_path
 from app.utils import mask_phone, normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -223,20 +225,28 @@ def send_media(
     caption: str = "",
     filename: str | None = None,
 ) -> str | None:
-    """No implementado todavía: Twilio no acepta subir el archivo.
+    """Manda un adjunto vía URL pública firmada.
 
     A diferencia de Meta —que recibe el binario y devuelve un media id— Twilio
-    exige `MediaUrl`, una URL PÚBLICA de la que él descarga el archivo. Los
-    adjuntos del panel viven en MEDIA_DIR, dentro del contenedor y sin exponer.
+    exige `MediaUrl`: una URL de la que ÉL descarga el archivo. Como MEDIA_DIR
+    guarda documentos de clientes, no se publica abierto: se genera una URL
+    firmada y de vida corta (ver app/media_store.signed_media_path).
 
-    Se devuelve None (mismo camino que un envío no configurado) y se registra el
-    error, en vez de reventar la petición del asesor. La solución es servir
-    MEDIA_DIR bajo una URL firmada y de vida corta — Fase 4.
+    Devuelve None sin enviar si falta PUBLIC_BASE_URL o SESSION_SECRET. Preferir
+    no entregar el archivo antes que publicarlo sin protección; el asesor ve que
+    el mensaje quedó sin acuse y el motivo queda en el log.
     """
-    logger.error(
-        "Adjunto para %s NO enviado: Twilio necesita una URL pública (MediaUrl) "
-        "y MEDIA_DIR no está expuesto. Archivo: %s",
-        mask_phone(to_phone),
-        filename or file_path,
-    )
-    return None
+    ruta = signed_media_path(Path(file_path).name)
+    if not ruta or not settings.public_base_url:
+        logger.error(
+            "Adjunto para %s NO enviado: falta PUBLIC_BASE_URL o SESSION_SECRET "
+            "para firmar la URL que Twilio necesita. Archivo: %s",
+            mask_phone(to_phone),
+            filename or file_path,
+        )
+        return None
+
+    data = {"MediaUrl": f"{settings.public_base_url}{ruta}"}
+    if caption:
+        data["Body"] = caption[:BODY_MAX]
+    return _post_message(to_phone, data)

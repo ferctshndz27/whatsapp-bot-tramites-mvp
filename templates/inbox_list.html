@@ -26,7 +26,8 @@
         <div class="preview">{{ '📎 ' if i.last_direction == 'out' and not i.last_body else '' }}{{ i.last_body[:70] }}</div>
         <span class="badges">
           {% if i.waiting %}<span class="badge esperando">esperando respuesta</span>{% endif %}
-          {% if not i.window_open %}<span class="badge caducada">caducó</span>{% endif %}
+          {% if i.provider == 'twilio' %}<span class="badge canal-twilio" title="Se atiende por la cuenta de Twilio">Twilio</span>{% endif %}
+{% if not i.window_open %}<span class="badge caducada">caducó</span>{% endif %}
           {% if i.bot_paused %}<span class="badge pausado">bot pausado</span>{% endif %}
           {% if i.assigned_to %}<span class="badge asignada">{{ i.assigned_to }}</span>{% endif %}
         </span>

@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from app.templating import templates
 from sqlmodel import select
@@ -14,8 +14,9 @@ from app.auth import is_admin
 from app.config import settings
 from app.conversation import _latest_open_ticket, _log_message
 from app.db import get_session
-from app.media_store import MEDIA_NAME_RE, save_upload
+from app.media_store import MEDIA_NAME_RE, save_upload, verify_media_token
 from app.models import (
+    PROVIDER_META,
     Client,
     Conversation,
     Direction,
@@ -95,6 +96,11 @@ def build_conversation_items(session) -> list[dict]:
         item["bot_paused"] = bool(conv and conv.state == "escalado")
         item["assigned_to"] = ticket.assigned_to if ticket else None
         item["ticket_id"] = ticket.id if ticket else None
+        # Cuenta por la que se atiende a este cliente. El asesor tiene que verlo:
+        # la ventana de 24 h es por número, así que "hace 3 h" en un canal no
+        # significa lo mismo que en el otro, y el remitente que ve el cliente
+        # cambia según la cuenta.
+        item["provider"] = conv.provider if conv else PROVIDER_META
         result.append(item)
     return result
 
@@ -170,6 +176,10 @@ def inbox_chat(request: Request, phone: str, err: str | None = None):
             "messages": messages,
             "ticket": ticket,
             "bot_paused": bool(conv and conv.state == "escalado"),
+            # La vista muestra por cuál de las dos cuentas se responde: la
+            # ventana de 24 h es por número y el remitente que ve el cliente
+            # cambia según el canal.
+            "conversation": conv,
             "window_open": _window_open(last_in),
             "quick_replies": QUICK_REPLIES,
             "my_replies": my_replies,
@@ -338,6 +348,25 @@ def inbox_bot_on(request: Request, phone: str):
         session.commit()
         logger.info("Bot reactivado para %s por %s", phone, user)
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
+
+
+@router.get("/media/publico/{name}")
+def media_file_publico(request: Request, name: str, exp: str = "", sig: str = ""):
+    """Adjunto servido SIN sesión, solo con firma vigente.
+
+    Existe para Twilio, que no acepta subir el archivo y exige una URL de la que
+    él lo descarga (ver app/media_store.signed_media_path). Es la única ruta del
+    panel sin autenticación, así que la firma y la expiración son lo único que
+    separa un acta de cliente de internet abierto: se responde 404 —sin
+    distinguir entre firma mala, vencida o archivo inexistente— para no
+    confirmarle a nadie qué archivos hay.
+    """
+    if not verify_media_token(name, exp, sig):
+        raise HTTPException(status_code=404, detail="No encontrado")
+    path = Path(settings.media_dir) / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="No encontrado")
+    return FileResponse(path)
 
 
 @router.get("/media/{name}")
