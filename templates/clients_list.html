@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Clientes{% endblock %}
+{% block content %}
+<h1>Clientes</h1>
+
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+{% if alta == 'alta' %}
+<div class="banner-warn" role="status">✅ Cliente dado de alta.</div>
+{% elif alta == 'actualizado' %}
+<div class="banner-warn" role="status">✏️ Nombre actualizado. El historial y la conversación quedaron intactos.</div>
+{% elif alta == 'sin-cambio' %}
+<div class="banner-warn" role="status">Ese cliente ya estaba registrado con ese mismo nombre.</div>
+{% endif %}
+
+<div class="card">
+  <h2>Registrar cliente</h2>
+  <p class="sub">Si el número ya existe, se actualiza el nombre — no se reinicia su conversación ni se pierde su historial.</p>
+  <form method="post" action="/clients">
+    <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end;">
+      <div>
+        <label for="alta-phone">Teléfono</label>
+        <input type="tel" id="alta-phone" name="phone" required
+               placeholder="55 0000 0000" autocomplete="off"
+               aria-describedby="alta-phone-ayuda">
+        <small id="alta-phone-ayuda" class="sub">10 dígitos, o 52 + 10 dígitos.</small>
+      </div>
+      <div>
+        <label for="alta-name">Nombre</label>
+        <input type="text" id="alta-name" name="name" required
+               placeholder="Ana Ruiz" maxlength="200" autocomplete="off">
+      </div>
+      <div><button type="submit">Guardar</button></div>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Directorio</h2>
+
+  <form method="get" action="/clients" role="search">
+    <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+      <label for="q" style="margin:0;">Buscar</label>
+      <input type="text" id="q" name="q" value="{{ q }}"
+             placeholder="Nombre o teléfono" autocomplete="off">
+      <button type="submit" class="btn-sm">Buscar</button>
+      {% if q %}<a class="btn-sm" href="/clients" style="text-decoration:none; display:inline-flex; align-items:center;">Limpiar</a>{% endif %}
+    </div>
+  </form>
+
+  {% if clients %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Cliente</th><th>Teléfono</th><th>Alta</th></tr>
+      </thead>
+      <tbody>
+        {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
+        {% for c in clients %}
+        <tr>
+          <td>
+            <a class="cell-person" href="/clients/{{ c.phone }}" style="text-decoration:none; color:inherit;">
+              <span class="avatar" style="background: {{ palette[loop.index0 % 5] }}" aria-hidden="true">
+                {{ (c.name or c.phone)[:2] | upper }}
+              </span>
+              <span><strong>{{ c.name or 'Sin nombre' }}</strong></span>
+            </a>
+          </td>
+          <td>{{ c.phone }}</td>
+          <td>{{ c.created_at | local }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if truncada %}
+  <p class="sub">Se muestran los {{ clients | length }} más recientes. Usa la búsqueda para encontrar a alguien más antiguo.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty">
+    {% if q %}Ningún cliente coincide con «{{ q }}».{% else %}Todavía no hay clientes registrados.{% endif %}
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

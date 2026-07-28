@@ -11,6 +11,7 @@ from app.config import settings
 from app.conversation import handle_incoming
 from app.db import get_session
 from app.models import Client, Message
+from app.utils import normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,10 @@ def _valid_signature(raw_body: bytes, signature_header: str) -> bool:
 
 
 def _process_message(message: dict) -> None:
-    phone = message.get("from")
+    # Se normaliza AQUÍ, en el borde: el formato crudo de cada proveedor no
+    # entra a la base. Sin esto, el mismo humano por Meta y por Twilio serían
+    # dos clientes distintos (la PK de `client` es el teléfono).
+    phone = normalize_phone(message.get("from"))
     if not phone:
         return
 
