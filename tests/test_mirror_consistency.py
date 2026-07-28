@@ -328,6 +328,108 @@ def test_lo_que_system_reporta_lo_puede_reparar_sincronizar_ahora():
     )
 
 
+# --------------------------------------------------------------------------
+# Candado a nivel COLUMNA
+# --------------------------------------------------------------------------
+# Las pruebas de arriba auditan TABLAS. Una columna nueva sobre una tabla ya
+# espejada pasa por otro checklist —dict de app/db.py, dict de app/archive.py, y
+# el archive_*() que la escribe— y ninguna prueba vigilaba el tercero: se podía
+# crear la columna en MSSQL y olvidar meterla en el upsert. La columna existiría,
+# siempre en NULL, y ningún reporte se quejaría. Es el bug de
+# client_notes/saved_replies (5921bfd) pero un nivel más abajo.
+
+# Columna -> tipo, dentro del cuerpo del CREATE TABLE. Se descartan las líneas
+# de CONSTRAINT/PRIMARY KEY, que no son columnas.
+_COLUMNA_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s+[A-Z]", re.MULTILINE)
+_NO_ES_COLUMNA = frozenset({"CONSTRAINT", "PRIMARY", "FOREIGN", "CREATE", "IF"})
+
+# Columnas que a propósito NUNCA escribe el código: las genera el motor.
+COLUMNAS_QUE_ESCRIBE_MSSQL = {
+    ("wa_messages", "id"),  # BIGINT IDENTITY(1,1)
+    ("team_messages", "id"),  # BIGINT IDENTITY(1,1)
+}
+
+
+def _columnas_declaradas(tabla: str) -> frozenset[str]:
+    """Columnas de la tabla: las del CREATE TABLE MÁS las agregadas después.
+
+    Las dos fuentes son obligatorias. Una columna nueva sobre una tabla que YA
+    existe en producción no se agrega al CREATE TABLE (el guard IF OBJECT_ID lo
+    saltaría): entra por _COLUMNS_ADDED_AFTER_LAUNCH. Mirar solo el DDL dejaría
+    ciega a esta prueba justo para el caso que la motivó — `provider`.
+    """
+    columnas: set[str] = set(archive._COLUMNS_ADDED_AFTER_LAUNCH.get(tabla, {}))
+    for ddl in archive._SCHEMA_DDL:
+        creada = _CREATE_TABLE_RE.search(ddl)
+        if not creada or creada.group(1) != tabla:
+            continue
+        cuerpo = ddl[creada.end() :]
+        columnas |= {c for c in _COLUMNA_RE.findall(cuerpo) if c.upper() not in _NO_ES_COLUMNA}
+        break
+    return frozenset(columnas)
+
+
+def _columnas_que_escribe(tabla: str) -> frozenset[str]:
+    """Columnas de `tabla` nombradas en algún literal de las funciones que la escriben.
+
+    Con cierre transitivo por la misma razón que _tablas_que_escribe: no toda
+    función nombra sus columnas. `sync_client_name` delega en `_upsert_client`, y
+    es ahí donde aparecen 'name' y 'habilitado'.
+    """
+    declaradas = _columnas_declaradas(tabla)
+    escritas: set[str] = set()
+    for nombre, tablas in FUNCIONES_ESPEJO.items():
+        if tabla not in tablas:
+            continue
+        vistos: set[str] = set()
+        pendientes = [nombre]
+        while pendientes:
+            actual = pendientes.pop()
+            if actual in vistos or actual not in _FUNCS:
+                continue
+            vistos.add(actual)
+            for sub in ast.walk(_FUNCS[actual]):
+                if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                    escritas |= {t for t in _IDENT_RE.findall(sub.value) if t in declaradas}
+            pendientes.extend(_llamadas(_FUNCS[actual]))
+    return frozenset(escritas)
+
+
+@pytest.mark.parametrize("tabla", sorted(TABLAS_DDL))
+def test_toda_columna_del_espejo_la_escribe_alguna_funcion(tabla):
+    """REGLA: crear la columna en MSSQL no basta — alguien tiene que ESCRIBIRLA.
+
+    Si el CREATE TABLE (o el ALTER de _COLUMNS_ADDED_AFTER_LAUNCH) declara una
+    columna que ningún archive_*() incluye, esa columna queda en NULL para
+    siempre y cualquier reporte que la use sale mal, en silencio. Fue el riesgo
+    real al agregar `provider` a wa_messages/tickets/conversations.
+    """
+    huerfanas = sorted(
+        _columnas_declaradas(tabla)
+        - _columnas_que_escribe(tabla)
+        - {c for t, c in COLUMNAS_QUE_ESCRIBE_MSSQL if t == tabla}
+    )
+
+    assert not huerfanas, (
+        f"Columnas de {tabla} que el DDL declara pero ningún archive_*/sync_* escribe: "
+        f"{huerfanas}. Existirían en MSSQL siempre en NULL. Agrégalas al upsert de "
+        f"esa tabla, o declara la excepción en COLUMNAS_QUE_ESCRIBE_MSSQL si de "
+        f"verdad las genera el motor."
+    )
+
+
+def test_las_excepciones_de_columna_siguen_existiendo_en_el_ddl():
+    """REGLA: misma razón que la lista blanca de tablas — una excepción que
+    apunta a una columna fantasma deja de proteger y tapa un olvido real."""
+    fantasma = sorted(
+        (tabla, columna)
+        for tabla, columna in COLUMNAS_QUE_ESCRIBE_MSSQL
+        if columna not in _columnas_declaradas(tabla)
+    )
+
+    assert not fantasma, f"Excepciones de columna que ya no existen en _SCHEMA_DDL: {fantasma}."
+
+
 def test_mirror_status_sin_mssql_reporta_una_fila_por_tabla_sin_reventar(monkeypatch):
     """REGLA: /system es la única ventana a la salud del espejo. Con MSSQL apagado
     (o caído) tiene que seguir renderizando: una fila por cada entrada de

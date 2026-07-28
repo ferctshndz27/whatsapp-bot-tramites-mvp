@@ -35,6 +35,13 @@ _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     "media_path": "VARCHAR",
     "sent_by": "VARCHAR",
     "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
+    # DEFAULT 'meta': todo lo que ya existe entró o salió por la cuenta de Meta,
+    # que es la única que hubo hasta ahora. Ponerlo NULL dejaría el histórico sin
+    # canal y los reportes por cuenta saldrían mal para siempre.
+    "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
+}
+_CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
 }
 _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
@@ -55,6 +62,7 @@ _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     # migrar no debe inventarlos (además SQLite rechaza ADD COLUMN NOT NULL sin
     # DEFAULT sobre una tabla con datos: tumbaría el arranque en el VPS).
     "requirements_json": "VARCHAR",
+    "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
 }
 
 
@@ -99,6 +107,7 @@ def init_db() -> None:
     _add_missing_columns("teammessage", _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("user", _USER_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("ticket", _TICKET_COLUMNS_ADDED_AFTER_LAUNCH)
+    _add_missing_columns("conversation", _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH)
     for table in _TABLES_NEEDING_HABILITADO:
         _add_missing_columns(table, _HABILITADO_COLUMN)
     with engine.begin() as conn:

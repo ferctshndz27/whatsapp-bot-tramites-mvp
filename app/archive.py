@@ -303,6 +303,25 @@ _SCHEMA_DDL = [
         created_at         DATETIME2     NOT NULL
     )
     """,
+    # Catálogo de plantillas aprobadas. Una fila por plantilla, con su
+    # identificador en CADA proveedor: es lo que impide que las dos cuentas
+    # diverjan cuando alguien actualiza solo una.
+    """
+    IF OBJECT_ID('message_templates', 'U') IS NULL
+    CREATE TABLE message_templates (
+        codigo             NVARCHAR(64)  NOT NULL PRIMARY KEY,
+        categoria          NVARCHAR(20)  NOT NULL,
+        texto_referencia   NVARCHAR(MAX) NOT NULL,
+        num_variables      INT           NOT NULL DEFAULT 0,
+        meta_template_name NVARCHAR(128) NULL,
+        twilio_content_sid NVARCHAR(64)  NULL,
+        aprobada_meta      BIT           NOT NULL DEFAULT 0,
+        aprobada_twilio    BIT           NOT NULL DEFAULT 0,
+        habilitado         BIT           NOT NULL DEFAULT 1,
+        created_at         DATETIME2     NOT NULL,
+        updated_at         DATETIME2     NOT NULL
+    )
+    """,
     """
     IF OBJECT_ID('conversations', 'U') IS NULL
     CREATE TABLE conversations (
@@ -489,7 +508,12 @@ _SCHEMA_DDL = [
 # ponytail: igual que db.py, sin alembic — columnas agregadas después del
 # lanzamiento se suman a mano vía ALTER TABLE si no existen.
 _COLUMNS_ADDED_AFTER_LAUNCH = {
-    "wa_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    # DEFAULT 'meta': el histórico completo entró por la única cuenta que hubo
+    # hasta ahora. Dejarlo NULL rompería cualquier reporte por cuenta.
+    "wa_messages": {
+        "habilitado": "BIT NOT NULL DEFAULT 1",
+        "provider": "NVARCHAR(20) NOT NULL DEFAULT 'meta'",
+    },
     "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "wa_clients": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "app_users": {
@@ -502,9 +526,13 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "agent_active": "BIT NOT NULL DEFAULT 1",
         "requirements_json": "NVARCHAR(MAX) NULL",
+        "provider": "NVARCHAR(20) NOT NULL DEFAULT 'meta'",
     },
     "ticket_activity": {"habilitado": "BIT NOT NULL DEFAULT 1"},
-    "conversations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "conversations": {
+        "habilitado": "BIT NOT NULL DEFAULT 1",
+        "provider": "NVARCHAR(20) NOT NULL DEFAULT 'meta'",
+    },
 }
 
 
@@ -619,8 +647,8 @@ def archive_wa_message(m) -> None:
         conn.execute(
             text(
                 "INSERT INTO wa_messages (source_id, phone, direction, body, wa_message_id,"
-                " wa_status, media_path, sent_by, habilitado, created_at)"
-                " VALUES (:sid, :p, :d, :b, :wid, :ws, :mp, :sb, :hab, :c)"
+                " wa_status, media_path, sent_by, habilitado, provider, created_at)"
+                " VALUES (:sid, :p, :d, :b, :wid, :ws, :mp, :sb, :hab, :prov, :c)"
             ),
             {
                 "sid": m.id,
@@ -632,6 +660,7 @@ def archive_wa_message(m) -> None:
                 "mp": m.media_path,
                 "sb": m.sent_by,
                 "hab": m.habilitado,
+                "prov": m.provider,
                 "c": _naive_utc(m.created_at),
             },
         )
@@ -791,6 +820,7 @@ def archive_ticket(t) -> None:
             "habilitado": t.habilitado,
             "agent_active": t.agent_active,
             "requirements_json": t.requirements_json,
+            "provider": t.provider,
         },
     )
 
@@ -964,6 +994,25 @@ def archive_conversation(c) -> None:
             "failed_attempts": c.failed_attempts,
             "updated_at": _naive_utc(c.updated_at),
             "habilitado": c.habilitado,
+            "provider": c.provider,
+        },
+    )
+
+
+def archive_plantilla(p) -> None:
+    _upsert(
+        "message_templates", "codigo", p.codigo,
+        {
+            "categoria": p.categoria,
+            "texto_referencia": p.texto_referencia,
+            "num_variables": p.num_variables,
+            "meta_template_name": p.meta_template_name,
+            "twilio_content_sid": p.twilio_content_sid,
+            "aprobada_meta": p.aprobada_meta,
+            "aprobada_twilio": p.aprobada_twilio,
+            "habilitado": p.habilitado,
+            "created_at": _naive_utc(p.created_at),
+            "updated_at": _naive_utc(p.updated_at),
         },
     )
 
@@ -1243,6 +1292,7 @@ def backfill() -> None:
         NluEvent,
         PaymentMethod,
         PlanCobro,
+        Plantilla,
         SavedReply,
         SynonymProposal,
         Ticket,
@@ -1307,6 +1357,8 @@ def backfill() -> None:
                 archive_plan_cobro(pc)
             for pm in session.exec(select(PaymentMethod)).all():
                 archive_payment_method(pm)
+            for pl in session.exec(select(Plantilla)).all():
+                archive_plantilla(pl)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -1336,6 +1388,7 @@ def _register_listeners() -> None:
         NluEvent,
         PaymentMethod,
         PlanCobro,
+        Plantilla,
         SavedReply,
         SynonymProposal,
         TeamMessage,
@@ -1488,6 +1541,11 @@ def _register_listeners() -> None:
     @event.listens_for(PaymentMethod, "after_update")
     def _payment_method_upsert(mapper, connection, target):
         _safe(archive_payment_method, target)
+
+    @event.listens_for(Plantilla, "after_insert")
+    @event.listens_for(Plantilla, "after_update")
+    def _plantilla_upsert(mapper, connection, target):
+        _safe(archive_plantilla, target)
 
 
 _register_listeners()

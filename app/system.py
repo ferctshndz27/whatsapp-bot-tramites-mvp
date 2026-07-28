@@ -44,6 +44,7 @@ from app.models import (
     NluEvent,
     PaymentMethod,
     PlanCobro,
+    Plantilla,
     SavedReply,
     SynonymProposal,
     TeamMessage,
@@ -79,6 +80,7 @@ MIRROR_TABLES = [
     (Feedback, "feedback"),
     (SynonymProposal, "synonym_proposals"),
     (Alert, "alerts"),
+    (Plantilla, "message_templates"),
     # Estas tres ya se espejaban (DDL + archive_* + listener + backfill) pero
     # faltaban aquí, así que /system las daba por buenas sin contarlas: una
     # divergencia en las notas del cliente era invisible. Ver los CINCO lugares

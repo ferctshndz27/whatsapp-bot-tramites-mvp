@@ -25,7 +25,8 @@ ARCHIVE_DDL = [
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         phone TEXT REFERENCES wa_clients(phone), direction TEXT, body TEXT,
         wa_message_id TEXT, wa_status TEXT, media_path TEXT, sent_by TEXT,
-        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
+        habilitado INTEGER DEFAULT 1, provider TEXT DEFAULT 'meta',
+        created_at TIMESTAMP)""",
     "CREATE TABLE team_users (username TEXT PRIMARY KEY)",
     """CREATE TABLE team_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
@@ -56,13 +57,15 @@ ARCHIVE_DDL = [
         escalado INTEGER DEFAULT 0, notes TEXT, assigned_to TEXT,
         habilitado INTEGER DEFAULT 1, agent_active INTEGER DEFAULT 1,
         requirements_json TEXT,
+        provider TEXT DEFAULT 'meta',
         created_at TIMESTAMP, updated_at TIMESTAMP)""",
     """CREATE TABLE ticket_activity (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT,
         action TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
     """CREATE TABLE conversations (
         phone TEXT PRIMARY KEY, state TEXT, context_json TEXT,
-        failed_attempts INTEGER, habilitado INTEGER DEFAULT 1, updated_at TIMESTAMP)""",
+        failed_attempts INTEGER, habilitado INTEGER DEFAULT 1,
+        provider TEXT DEFAULT 'meta', updated_at TIMESTAMP)""",
     """CREATE TABLE admin_audit (
         source_id INTEGER PRIMARY KEY, admin TEXT, action TEXT, target TEXT,
         habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
