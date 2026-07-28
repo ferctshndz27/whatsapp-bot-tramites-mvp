@@ -17,7 +17,7 @@ FASE 2: todavía solo existe Meta. La resolución de canal ya está completa y
 
 import logging
 
-from app import whatsapp_client
+from app import twilio_client, whatsapp_client
 from app.db import get_session
 from app.models import PROVIDER_META, PROVIDER_TWILIO, Conversation
 
@@ -44,13 +44,7 @@ def _adaptador(provider: str):
     `whatsapp_client.send_text` sin conocer este puerto.
     """
     if provider == PROVIDER_TWILIO:
-        # Fase 3/4. Hasta entonces, mandar por Meta a alguien cuya conversación
-        # dice Twilio sería escribirle desde un número que no reconoce; mejor
-        # reventar ruidosamente que entregar el mensaje por el canal equivocado.
-        raise NotImplementedError(
-            "El adaptador de Twilio llega en la Fase 3; ninguna conversación "
-            "debería tener provider='twilio' todavía."
-        )
+        return twilio_client
     return whatsapp_client
 
 

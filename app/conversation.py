@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from app import nlu
 from app.catalog import PAGE_SIZE, catalog, requisitos_del_ticket, requisitos_iniciales
 from app.models import (
+    PROVIDER_META,
     Client,
     ClientNote,
     Conversation,
@@ -209,13 +210,16 @@ def handle_incoming(
     text: str,
     is_media: bool = False,
     wa_message_id: str | None = None,
+    provider: str = PROVIDER_META,
 ) -> list[str]:
     if wa_message_id and _already_processed(session, wa_message_id):
-        logger.info("Mensaje duplicado ignorado (reintento de Meta): %s", wa_message_id)
+        logger.info("Mensaje duplicado ignorado (reintento del proveedor): %s", wa_message_id)
         return []
 
     client = _get_or_create_client(session, phone)
-    conv = _get_or_create_conversation(session, phone)
+    # Se fija ANTES de registrar nada: todo lo que se escriba en este request
+    # —el entrante y las respuestas— hereda de aquí el canal correcto.
+    conv = _get_or_create_conversation(session, phone, provider)
     _log_message(
         session, phone, Direction.IN, "[archivo adjunto]" if is_media else text, wa_message_id
     )
@@ -1092,10 +1096,20 @@ def _get_or_create_client(session: Session, phone: str) -> Client:
     return client
 
 
-def _get_or_create_conversation(session: Session, phone: str) -> Conversation:
+def _get_or_create_conversation(
+    session: Session, phone: str, provider: str = PROVIDER_META
+) -> Conversation:
     conv = session.get(Conversation, phone)
     if conv is None:
-        conv = Conversation(phone=phone)
+        conv = Conversation(phone=phone, provider=provider)
+        session.add(conv)
+        session.commit()
+        session.refresh(conv)
+    elif conv.provider != provider:
+        # El cliente escribió al otro número: a partir de ahora se le contesta
+        # por ahí. Una persona = una conversación, así que el avance del trámite
+        # continúa donde estaba — cambiar de canal no reinicia nada.
+        conv.provider = provider
         session.add(conv)
         session.commit()
         session.refresh(conv)
@@ -1103,11 +1117,26 @@ def _get_or_create_conversation(session: Session, phone: str) -> Conversation:
 
 
 def _log_message(
-    session: Session, phone: str, direction: Direction, body: str, wa_message_id: str | None = None
+    session: Session,
+    phone: str,
+    direction: Direction,
+    body: str,
+    wa_message_id: str | None = None,
+    provider: str | None = None,
 ) -> None:
+    if provider is None:
+        # Se hereda de la conversación, que handle_incoming ya dejó apuntando al
+        # canal de ESTE mensaje. Así los salientes quedan marcados con el canal
+        # correcto sin pasar el proveedor por cada punto de registro.
+        conv = session.get(Conversation, phone)
+        provider = conv.provider if conv else PROVIDER_META
     session.add(
         Message(
-            phone=phone, direction=direction, body=body[:MAX_STORED_TEXT], wa_message_id=wa_message_id
+            phone=phone,
+            direction=direction,
+            body=body[:MAX_STORED_TEXT],
+            wa_message_id=wa_message_id,
+            provider=provider,
         )
     )
     session.commit()
