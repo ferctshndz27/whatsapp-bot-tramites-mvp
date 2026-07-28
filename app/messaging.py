@@ -1,0 +1,91 @@
+"""Puerto único de mensajería: el resto de la app manda por aquí, no por un
+proveedor concreto.
+
+Son DOS cuentas de WhatsApp independientes —una en Meta, otra en Twilio— que
+comparten este CRM. No hay failover entre ellas: se responde SIEMPRE por el
+número donde entró el mensaje, porque la ventana de 24 h es POR NÚMERO y
+contestar por el otro deja al negocio fuera de ventana con un remitente que el
+cliente no reconoce.
+
+Esa decisión vive aquí y en ningún otro lado: quien envía dice a QUIÉN, nunca
+POR DÓNDE. Así la Fase 4 (alta de Twilio) se resuelve agregando una rama en
+`_adaptador()` y ni el webhook, ni la bandeja, ni cobranza se enteran.
+
+FASE 2: todavía solo existe Meta. La resolución de canal ya está completa y
+`_adaptador()` siempre devuelve el adaptador de Meta.
+"""
+
+import logging
+
+from app import whatsapp_client
+from app.db import get_session
+from app.models import PROVIDER_META, PROVIDER_TWILIO, Conversation
+
+logger = logging.getLogger(__name__)
+
+
+def canal_de(phone: str) -> str:
+    """Canal por el que hay que contestarle a `phone`.
+
+    Es el del ÚLTIMO mensaje entrante (Conversation.provider). Un cliente sin
+    conversación —por ejemplo uno dado de alta a mano desde el panel— cae en
+    Meta, que es la cuenta que existía primero.
+    """
+    with get_session() as session:
+        conversacion = session.get(Conversation, phone)
+        return conversacion.provider if conversacion else PROVIDER_META
+
+
+def _adaptador(provider: str):
+    """Módulo que sabe hablarle a ese proveedor.
+
+    Se devuelve el MÓDULO, no la función: así la resolución del atributo ocurre
+    en cada llamada, que es lo que permite que las pruebas sigan parchando
+    `whatsapp_client.send_text` sin conocer este puerto.
+    """
+    if provider == PROVIDER_TWILIO:
+        # Fase 3/4. Hasta entonces, mandar por Meta a alguien cuya conversación
+        # dice Twilio sería escribirle desde un número que no reconoce; mejor
+        # reventar ruidosamente que entregar el mensaje por el canal equivocado.
+        raise NotImplementedError(
+            "El adaptador de Twilio llega en la Fase 3; ninguna conversación "
+            "debería tener provider='twilio' todavía."
+        )
+    return whatsapp_client
+
+
+def _resolver(phone: str, provider: str | None):
+    return _adaptador(provider or canal_de(phone))
+
+
+# ponytail: `canal_de` es un SELECT por llave primaria en cada envío. A este
+# volumen es ruido; si algún día se mandan miles de mensajes por minuto, el
+# canal se pasa explícito desde quien ya tiene la conversación en la mano
+# (el parámetro `provider` existe justo para eso).
+
+
+def send_text(phone: str, body: str, provider: str | None = None) -> str | None:
+    return _resolver(phone, provider).send_text(phone, body)
+
+
+def send_list(
+    phone: str, body: str, button: str, rows: list[tuple[str, str]], provider: str | None = None
+) -> str | None:
+    return _resolver(phone, provider).send_list(phone, body, button, rows)
+
+
+def send_buttons(
+    phone: str, body: str, buttons: list[tuple[str, str]], provider: str | None = None
+) -> str | None:
+    return _resolver(phone, provider).send_buttons(phone, body, buttons)
+
+
+def send_media(
+    phone: str,
+    file_path: str,
+    mime_type: str,
+    caption: str = "",
+    filename: str | None = None,
+    provider: str | None = None,
+) -> str | None:
+    return _resolver(phone, provider).send_media(phone, file_path, mime_type, caption, filename)

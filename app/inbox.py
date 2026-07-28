@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from app.templating import templates
 from sqlmodel import select
 
-from app import whatsapp_client
+from app import messaging
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
@@ -243,7 +243,7 @@ def inbox_send(
 
         media_path = None
         if adjunto is None:
-            wamid = whatsapp_client.send_text(phone, body)
+            wamid = messaging.send_text(phone, body)
             registro = body
         else:
             media_path, disk_path, error = save_upload(adjunto)
@@ -251,7 +251,7 @@ def inbox_send(
                 return RedirectResponse(f"/inbox/{phone}?err={error}", status_code=303)
             # El texto del composer viaja como pie del archivo, igual que en
             # WhatsApp; si no hay texto se registra el tipo y el nombre.
-            wamid = whatsapp_client.send_media(
+            wamid = messaging.send_media(
                 phone, disk_path, adjunto.content_type, body, adjunto.filename
             )
             kind = "imagen" if (adjunto.content_type or "").startswith("image/") else "documento"

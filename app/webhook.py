@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlmodel import select
 
-from app import conversation, whatsapp_client
+from app import conversation, messaging
 from app.config import settings
 from app.conversation import handle_incoming
 from app.db import get_session
@@ -106,14 +106,14 @@ def _deliver(phone: str, item) -> str | None:
     """Envía texto plano o interactivo; si el interactivo falla, cae al texto
     (el cliente nunca se queda sin respuesta por un error de formato)."""
     if isinstance(item, str):
-        return whatsapp_client.send_text(phone, item)
+        return messaging.send_text(phone, item)
     if "buttons" in item:
-        wamid = whatsapp_client.send_buttons(phone, item["text"], item["buttons"])
+        wamid = messaging.send_buttons(phone, item["text"], item["buttons"])
     else:
-        wamid = whatsapp_client.send_list(
+        wamid = messaging.send_list(
             phone, item["text"], item.get("button", "Ver opciones"), item["list"]
         )
-    return wamid or whatsapp_client.send_text(phone, item["text"])
+    return wamid or messaging.send_text(phone, item["text"])
 
 
 def _tag_sent_message(phone: str, wa_message_id: str) -> None:

@@ -88,7 +88,7 @@ def _mudo(monkeypatch):
     from app import webhook
 
     for fn in ("send_text", "send_list", "send_buttons"):
-        monkeypatch.setattr(webhook.whatsapp_client, fn, lambda *a, **k: None)
+        monkeypatch.setattr(webhook.messaging, fn, lambda *a, **k: None)
     return webhook
 
 
