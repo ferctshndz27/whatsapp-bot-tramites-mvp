@@ -21,6 +21,8 @@ LIST_DESC_MAX = 72
 LIST_BODY_MAX = 1024
 MAX_BUTTONS = 3
 BUTTON_TITLE_MAX = 20
+# Pie de imagen/documento: Meta rechaza el envío completo si se pasa.
+CAPTION_MAX = 1024
 
 
 def _send(to_phone: str, payload: dict) -> str | None:
@@ -153,7 +155,9 @@ def send_media(
         kind = "image" if mime_type.startswith("image/") else "document"
         media_obj: dict = {"id": media_id}
         if caption:
-            media_obj["caption"] = caption
+            # Meta rechaza el mensaje completo si el pie pasa de 1024
+            # caracteres: mejor recortar el texto que perder el archivo.
+            media_obj["caption"] = caption[:CAPTION_MAX]
         if kind == "document" and filename:
             media_obj["filename"] = filename
 

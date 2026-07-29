@@ -112,13 +112,73 @@
     .badge.pausado   { background: #22242a; color: #9fd8ff; }
     .badge.asignada  { background: #eef0f3; color: #444; }
 
-    /* ---- Composer ---- */
+    /* ---- Composer (estilo WhatsApp: adjuntar + escribir + enviar en una barra) ---- */
     .composer { border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem; }
-    .composer textarea {
-      width: 100%; min-height: 70px; padding: .6rem .85rem; border: 1px solid var(--border);
-      border-radius: 12px; font: inherit; resize: vertical;
-    }
     .composer .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-top: .5rem; }
+
+    /* Texto solo para lectores de pantalla. Con clip (no display:none) para que
+       el input de archivo siga siendo enfocable con teclado. */
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+
+    .composer-bar { display: flex; align-items: flex-end; gap: .5rem; }
+    /* La "píldora" que contiene clip + texto, como la barra de WhatsApp. */
+    .composer-bar .field {
+      flex: 1; min-width: 0; display: flex; align-items: flex-end; gap: .25rem;
+      background: #fff; border: 1px solid var(--border); border-radius: 22px;
+      padding: .2rem .2rem .2rem .35rem;
+    }
+    .composer-bar .field:focus-within {
+      border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, .13);
+    }
+    .composer-bar textarea {
+      flex: 1; min-width: 0; max-width: none; min-height: 40px; max-height: 140px;
+      border: 0; background: transparent; resize: none; padding: .55rem .35rem;
+      font: inherit; line-height: 1.4; overflow-y: auto;
+    }
+    .composer-bar textarea:focus { outline: none; box-shadow: none; border: 0; }
+
+    /* Clip de adjuntar: botón redondo dentro de la barra. */
+    .attach {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 40px; height: 40px; flex-shrink: 0; margin: 0; border-radius: 50%;
+      font-size: 1.15rem; cursor: pointer; color: var(--text-muted);
+      background: transparent; border: 1px solid transparent; line-height: 1;
+    }
+    .attach:hover { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+    /* El input real está oculto: el foco del teclado se refleja en el clip. */
+    .composer-bar input[type=file]:focus-visible + .field .attach { outline: 3px solid var(--blue); outline-offset: 2px; }
+
+    .btn-send {
+      flex-shrink: 0; background: #22242a; color: #fff; border: 0; border-radius: 999px;
+      padding: .6rem 1.3rem; min-height: 44px; font-weight: 600; cursor: pointer;
+    }
+    .btn-send:hover { background: #3a3d45; }
+
+    /* Ficha del archivo adjunto: el color no es el único indicador (nombre,
+       peso y botón de quitar con texto). */
+    .attach-chip {
+      display: flex; align-items: center; gap: .6rem; margin-top: .6rem;
+      background: #eef7cf; border: 1px solid #dcf24c; border-radius: 14px;
+      padding: .5rem .7rem; font-size: .85rem; color: var(--lime-ink);
+    }
+    /* Sin esto la regla de arriba (origen autor) le gana al [hidden] del
+       navegador y queda una barra lima vacía bajo el composer para siempre. */
+    .attach-chip[hidden] { display: none; }
+    .attach-chip img { width: 40px; height: 40px; object-fit: cover; border-radius: 8px; }
+    .attach-chip .name { font-weight: 700; word-break: break-all; }
+    .attach-chip .peso { color: #55611f; }
+    .attach-chip .chip-x {
+      margin-left: auto; flex-shrink: 0; background: #fff; color: var(--text);
+      border: 1px solid var(--border); border-radius: 999px; min-height: 32px;
+      padding: .2rem .7rem; font-size: .8rem; cursor: pointer;
+    }
+    .attach-chip .chip-x:hover { background: #fde7ef; border-color: #f8cfdd; color: #be1e51; }
+    /* #5f6572 sobre blanco = 5.85:1. Con --text-muted quedaba en 3.86:1, por
+       debajo del 4.5:1 que pide WCAG AA para texto de este tamaño. */
+    .composer-hint { color: #5f6572; font-size: .78rem; margin: .5rem 0 0; }
     .qr-bar { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .5rem; }
     .qr-bar button {
       background: var(--card-bg); color: var(--text); border: 1px solid var(--border);

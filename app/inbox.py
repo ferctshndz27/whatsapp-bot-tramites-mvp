@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from app.templating import templates
 from sqlmodel import select
@@ -205,13 +205,31 @@ def _pause_bot(session, phone: str, user: str) -> None:
 
 
 @router.post("/inbox/{phone}/send")
-def inbox_send(request: Request, phone: str, body: str = Form(...)):
+def inbox_send(
+    request: Request,
+    phone: str,
+    body: str = Form(""),
+    file: UploadFile | None = File(None),
+):
+    """Composer unificado (como WhatsApp): texto, archivo, o archivo con pie.
+
+    La decisión la toma el servidor según lo que llegue, NO el navegador: así
+    el composer sigue funcionando con JavaScript deshabilitado. Un input de
+    archivo vacío llega como parte sin filename — eso cuenta como "sin
+    adjunto"."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
 
     body = body.strip()
-    if not body:
+    # Duck typing y NO isinstance(file, UploadFile): por HTTP real FastAPI
+    # entrega el UploadFile de Starlette (fastapi.UploadFile es una subclase
+    # suya, y el validador solo hace cast), así que el isinstance daba False
+    # SIEMPRE y todos los adjuntos se descartaban en silencio. Con `filename`
+    # se cubren los cuatro casos: sin parte, parte vacía (input sin elegir),
+    # marcador File(None) al llamar la función directo, y archivo real.
+    adjunto = file if getattr(file, "filename", "") else None
+    if not body and adjunto is None:
         return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
     with get_session() as session:
@@ -223,13 +241,29 @@ def inbox_send(request: Request, phone: str, body: str = Form(...)):
         if not _window_open(last_in.created_at if last_in else None):
             return RedirectResponse(f"/inbox/{phone}?err=window", status_code=303)
 
-        wamid = whatsapp_client.send_text(phone, body)
+        media_path = None
+        if adjunto is None:
+            wamid = whatsapp_client.send_text(phone, body)
+            registro = body
+        else:
+            media_path, disk_path, error = save_upload(adjunto)
+            if error:
+                return RedirectResponse(f"/inbox/{phone}?err={error}", status_code=303)
+            # El texto del composer viaja como pie del archivo, igual que en
+            # WhatsApp; si no hay texto se registra el tipo y el nombre.
+            wamid = whatsapp_client.send_media(
+                phone, disk_path, adjunto.content_type, body, adjunto.filename
+            )
+            kind = "imagen" if (adjunto.content_type or "").startswith("image/") else "documento"
+            registro = body or f"[{kind}: {adjunto.filename}]"
+
         session.add(
             Message(
                 phone=phone,
                 direction=Direction.OUT,
-                body=body,
+                body=registro,
                 wa_message_id=wamid,
+                media_path=media_path,
                 sent_by=user,
             )
         )
@@ -238,45 +272,6 @@ def inbox_send(request: Request, phone: str, body: str = Form(...)):
 
     if wamid is None:
         logger.warning("Mensaje a %s registrado pero sin confirmación de envío", phone)
-    return RedirectResponse(f"/inbox/{phone}", status_code=303)
-
-
-@router.post("/inbox/{phone}/send-media")
-def inbox_send_media(request: Request, phone: str, file: UploadFile, caption: str = Form("")):
-    user = _current_user(request)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-
-    with get_session() as session:
-        last_in = session.exec(
-            select(Message)
-            .where(Message.phone == phone, Message.direction == Direction.IN)
-            .order_by(Message.created_at.desc())
-        ).first()
-        if not _window_open(last_in.created_at if last_in else None):
-            return RedirectResponse(f"/inbox/{phone}?err=window", status_code=303)
-
-        web_path, disk_path, error = save_upload(file)
-        if error:
-            return RedirectResponse(f"/inbox/{phone}?err={error}", status_code=303)
-
-        wamid = whatsapp_client.send_media(
-            phone, disk_path, file.content_type, caption, file.filename
-        )
-        kind = "imagen" if file.content_type.startswith("image/") else "documento"
-        session.add(
-            Message(
-                phone=phone,
-                direction=Direction.OUT,
-                body=caption or f"[{kind}: {file.filename}]",
-                wa_message_id=wamid,
-                media_path=web_path,
-                sent_by=user,
-            )
-        )
-        session.commit()
-        _pause_bot(session, phone, user)
-
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
 
