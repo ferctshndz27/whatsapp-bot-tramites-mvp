@@ -362,9 +362,6 @@ def ticket_detail(request: Request, ticket_id: int):
         ticket = session.get(Ticket, ticket_id)
         if ticket is None:
             return RedirectResponse("/", status_code=303)
-        messages = session.exec(
-            select(Message).where(Message.phone == ticket.phone).order_by(Message.created_at)
-        ).all()
         teammates = [
             (u.username, u.estado)
             for u in session.exec(
@@ -391,7 +388,6 @@ def ticket_detail(request: Request, ticket_id: int):
             "request": request,
             "user": user,
             "ticket": ticket,
-            "messages": messages,
             "statuses": [s.value for s in TicketStatus],
             "teammates": teammates,
             "followups": followups,
