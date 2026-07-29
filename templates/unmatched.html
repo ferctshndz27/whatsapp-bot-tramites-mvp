@@ -202,7 +202,7 @@
           <td>{{ p.created_at.strftime('%d/%m %H:%M') }}</td>
           <td>
             <form method="post" action="/unmatched/proposals/{{ p.id }}/approve" style="display:inline;">
-              <button type="submit" class="btn-sm">✔ Aprobar</button>
+              <button type="submit" class="btn-sm btn-approve">✔ Aprobar</button>
             </form>
             <form method="post" action="/unmatched/proposals/{{ p.id }}/reject" style="display:inline;">
               <button type="submit" class="btn-sm btn-danger">Descartar</button>
@@ -234,14 +234,25 @@
             {{ c.rep }}
           </td>
           <td>
-            <form method="post" action="/unmatched/synonyms" style="display:flex; gap:.5rem; align-items:center;">
-              <input type="hidden" name="synonym" value="{{ c.rep }}">
-              <label for="cl-{{ loop.index }}" class="sr-only" style="position:absolute; left:-9999px;">Servicio</label>
-              <select name="service_id" id="cl-{{ loop.index }}" required style="max-width:240px;">
-                {% for sid, sname in services %}<option value="{{ sid }}">{{ sname }}</option>{% endfor %}
-              </select>
-              <button type="submit" class="btn-sm">✔ Aprobar</button>
-            </form>
+            <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
+              <form method="post" action="/unmatched/synonyms" style="display:flex; gap:.5rem; align-items:center;">
+                <input type="hidden" name="synonym" value="{{ c.rep }}">
+                <label for="cl-{{ loop.index }}" class="sr-only" style="position:absolute; left:-9999px;">Servicio</label>
+                <select name="service_id" id="cl-{{ loop.index }}" required style="max-width:240px;">
+                  {% for sid, sname in services %}<option value="{{ sid }}">{{ sname }}</option>{% endfor %}
+                </select>
+                <button type="submit" class="btn-sm btn-approve">✔ Aprobar</button>
+              </form>
+              {# No era un trámite (saludo, cortesía, ruido): sale del panel y de
+                 las estadísticas, pero la fila se conserva en la base. #}
+              <form method="post" action="/unmatched/clusters/ignore" style="display:inline;">
+                <input type="hidden" name="synonym" value="{{ c.rep }}">
+                <button type="submit" class="btn-sm btn-ignore"
+                  title="No es un trámite: quítalo del panel y de las estadísticas (no se borra de la base)">
+                  🚫 Ignorar
+                </button>
+              </form>
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -264,7 +275,13 @@
       <label for="synonym">Sinónimo</label>
       <input type="text" id="synonym" name="synonym" required placeholder="como lo escribe el cliente" style="min-width:240px;">
     </div>
-    <button type="submit" class="btn-sm">Agregar</button>
+    <button type="submit" class="btn-sm btn-approve">✔ Agregar</button>
+    {# Misma frase, decisión contraria: no es un trámite. Soft delete de los
+       mensajes parecidos (salen del panel y de las estadísticas). #}
+    <button type="submit" class="btn-sm btn-ignore" formaction="/unmatched/clusters/ignore"
+      title="No es un trámite: quita del panel y de las estadísticas los mensajes parecidos (no se borra de la base)">
+      🚫 Ignorar
+    </button>
   </form>
 </div>
 {% endblock %}

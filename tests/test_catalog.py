@@ -1,4 +1,35 @@
-from app.catalog import catalog
+from app.catalog import catalog, parse_requirements, requisitos_del_ticket, requisitos_iniciales
+
+
+def test_parse_requirements_una_linea_un_dato():
+    # Una línea = un dato a pedir; las viñetas y la numeración se limpian.
+    assert parse_requirements("") == []
+    assert parse_requirements("   \n  ") == []
+    assert parse_requirements("clave curp") == ["clave curp"]
+    assert parse_requirements("- clave curp\n2) nss\n• acta") == ["clave curp", "nss", "acta"]
+    # Una frase con comas NO se trocea: "original y copia" no son dos requisitos.
+    assert parse_requirements("acta de nacimiento, original y copia") == [
+        "acta de nacimiento, original y copia"
+    ]
+    assert len(parse_requirements("\n".join(f"dato {i}" for i in range(20)))) == 5
+
+
+def test_requisitos_iniciales_y_lectura_tolerante():
+    congelado = requisitos_iniciales("clave curp\nnss")
+    assert requisitos_del_ticket(congelado) == [
+        {"req": "clave curp", "valor": None, "pedido": False},
+        {"req": "nss", "valor": None, "pedido": False},
+    ]
+    # Folio congelado antes de que existiera "pedido": se lee como no pedido.
+    assert requisitos_del_ticket('[{"req": "nss", "valor": null}]') == [
+        {"req": "nss", "valor": None, "pedido": False}
+    ]
+    # Sin requisitos documentados no se congela nada: el agente no pregunta.
+    assert requisitos_iniciales("   ") is None
+    # Folio viejo o JSON corrupto: sin requisitos que mostrar, sin reventar.
+    assert requisitos_del_ticket(None) == []
+    assert requisitos_del_ticket("{no es json") == []
+    assert requisitos_del_ticket('[{"sin_req": 1}, "basura"]') == []
 
 
 def test_loads_all_categories():

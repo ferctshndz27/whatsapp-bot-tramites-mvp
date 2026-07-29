@@ -78,6 +78,12 @@
       background: var(--card-bg); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow);
     }
     .btn-sm:hover { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+    /* Aprobar (verde) / Ignorar (gris): el color acompaña al ícono + texto,
+       nunca es el único indicador. */
+    .btn-approve { background: #e3f7f0; color: #0b6e5d; border: 1px solid #b3e6d5; }
+    .btn-approve:hover { background: #cdf0e3; border-color: #93dbc3; color: #08533f; }
+    .btn-ignore { background: #eef0f3; color: #4b5563; border: 1px solid #dcdfe4; }
+    .btn-ignore:hover { background: #e1e4e9; border-color: #cbcfd6; color: #22242a; }
     .btn-danger { background: #fde7ef; color: #be1e51; border: 1px solid #f8cfdd; }
     .btn-danger:hover { background: #fbd3e1; border-color: #f3b6cc; color: #a01141; }
     .btn-ghost { background: transparent; color: var(--blue-2); border: 1px solid var(--blue); }

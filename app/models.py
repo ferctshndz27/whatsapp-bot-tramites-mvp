@@ -61,6 +61,11 @@ class Ticket(SQLModel, table=True):
     status: TicketStatus = TicketStatus.NUEVO
     escalado: bool = False
     notes: str | None = None
+    # Requisitos del servicio congelados al crear el folio, con lo que el
+    # cliente contestó por WhatsApp: [{"req": "clave curp", "valor": "..."},
+    # {"req": "nss", "valor": null}]. valor null = el cliente no lo dio (lo
+    # pide el asesor). Columna nula = trámite sin requisitos documentados.
+    requirements_json: str | None = None
     assigned_to: str | None = None
     # Si el ticket está escalado, controla si el bot le sigue respondiendo al
     # cliente. Tomar el ticket YA NO lo apaga por sí solo — debe apagarlo el

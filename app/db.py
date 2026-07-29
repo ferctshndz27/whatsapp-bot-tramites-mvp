@@ -45,7 +45,13 @@ _USER_COLUMNS_ADDED_AFTER_LAUNCH = {
 # message/teammessage/user ya lo tienen en sus dicts propios de arriba.
 _HABILITADO_COLUMN = {"habilitado": "BOOLEAN NOT NULL DEFAULT 1"}
 _TABLES_NEEDING_HABILITADO = ("client", "conversation", "ticket", "invitation", "ticketactivity")
-_TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {"agent_active": "BOOLEAN NOT NULL DEFAULT 1"}
+_TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "agent_active": "BOOLEAN NOT NULL DEFAULT 1",
+    # Nullable a propósito: los folios viejos no tienen requisitos capturados y
+    # migrar no debe inventarlos (además SQLite rechaza ADD COLUMN NOT NULL sin
+    # DEFAULT sobre una tabla con datos: tumbaría el arranque en el VPS).
+    "requirements_json": "VARCHAR",
+}
 
 
 def init_db() -> None:

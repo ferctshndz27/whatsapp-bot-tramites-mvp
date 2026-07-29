@@ -2,7 +2,7 @@
 
 Fase 0 — reporte de mensajes NO entendidos: se derivan de la tabla message
 existente (el mensaje IN inmediatamente anterior a cada respuesta OUT que
-empieza con "No reconocí…"). Cero migración: ninguna tabla nueva.
+lleva el aviso de "no te entendí"). Cero migración: ninguna tabla nueva.
 
 Fase 1 — minería de sinónimos: con ANTHROPIC_API_KEY, Claude analiza esos
 mensajes por lote y propone sinónimos para el catálogo; el admin aprueba
@@ -24,7 +24,7 @@ from app.audit import log_admin
 from app.auth import is_admin
 from app.catalog import catalog
 from app.config import settings
-from app.conversation import NOT_RECOGNIZED_HINT
+from app.conversation import NOT_RECOGNIZED_MARKER
 from app.db import get_session
 from app.models import Direction, Message, NluEvent, SynonymProposal, utcnow
 from app.system import _admin_or_redirect, _csv_response
@@ -36,7 +36,9 @@ router = APIRouter()
 DAYS_BACK = 30
 MAX_MESSAGES = 100
 
-_HINT_PREFIX = NOT_RECOGNIZED_HINT.split("\n")[0]  # "No reconocí esa opción."
+# Se busca por el fragmento estable del aviso, no por su inicio: así los
+# mensajes ya enviados siguen contando aunque se retoque la cortesía inicial.
+_HINT_MARKER = NOT_RECOGNIZED_MARKER
 
 _MINE_SCHEMA = {
     "type": "object",
@@ -81,7 +83,7 @@ def unmatched_messages(session: Session, days: int = DAYS_BACK, limit: int = MAX
         select(Message)
         .where(Message.direction == Direction.OUT)
         .where(Message.created_at >= cutoff)
-        .where(Message.body.like(f"{_HINT_PREFIX}%"))  # type: ignore[attr-defined]
+        .where(Message.body.contains(_HINT_MARKER))  # type: ignore[attr-defined]
         .order_by(Message.created_at.desc())
         .limit(limit * 2)
     ).all()
@@ -181,30 +183,42 @@ CLUSTER_THRESHOLD = 80  # token_set_ratio: tolera orden y palabras extra
 CLUSTER_TOP = 10
 
 
-def cluster_unmatched(days: int = CLUSTER_DAYS) -> list[dict]:
-    """Agrupa los textos que el agente no entendió (nluevent capa='ninguna')
-    por similitud difusa y los ordena por frecuencia: "17 clientes pidieron
-    'constancia de semanas cotizadas'" en vez de una lista plana."""
+def _unmatched_events(session: Session, days: int) -> list[NluEvent]:
+    """Eventos "no entendidos" vigentes de la ventana: respeta el soft delete
+    de los grupos ignorados (habilitado=False). Fuente única de los grupos del
+    panel y de lo que marca `ignore_cluster`."""
     from datetime import timezone
 
     cutoff = (utcnow() - timedelta(days=days)).astimezone(timezone.utc).replace(tzinfo=None)
     # WHERE en SQL para no escanear la tabla completa (nluevent es append-only);
     # +1 día de margen y el corte fino por fecha lo hace el filtro de abajo.
     where_cutoff = utcnow() - timedelta(days=days + 1)
-    with get_session() as session:
-        events = session.exec(
-            select(NluEvent)
-            .where(NluEvent.capa == "ninguna")
-            .where(NluEvent.created_at >= where_cutoff)
-        ).all()
+    events = session.exec(
+        select(NluEvent)
+        .where(NluEvent.capa == "ninguna")
+        .where(NluEvent.habilitado == True)  # noqa: E712
+        .where(NluEvent.created_at >= where_cutoff)
+    ).all()
 
-    counts: dict[str, int] = {}
+    vigentes: list[NluEvent] = []
     for e in events:
         created_at = e.created_at
         if created_at.tzinfo is not None:
             created_at = created_at.astimezone(timezone.utc).replace(tzinfo=None)
-        if created_at < cutoff:
-            continue
+        if created_at >= cutoff:
+            vigentes.append(e)
+    return vigentes
+
+
+def cluster_unmatched(days: int = CLUSTER_DAYS) -> list[dict]:
+    """Agrupa los textos que el agente no entendió (nluevent capa='ninguna')
+    por similitud difusa y los ordena por frecuencia: "17 clientes pidieron
+    'constancia de semanas cotizadas'" en vez de una lista plana."""
+    with get_session() as session:
+        events = _unmatched_events(session, days)
+
+    counts: dict[str, int] = {}
+    for e in events:
         text = nlu._norm(e.text)
         if len(text) < 4:
             continue
@@ -222,6 +236,25 @@ def cluster_unmatched(days: int = CLUSTER_DAYS) -> list[dict]:
             clusters.append({"rep": text, "count": n, "examples": []})
     clusters.sort(key=lambda c: -c["count"])
     return clusters[:CLUSTER_TOP]
+
+
+def ignore_cluster(rep: str, days: int = CLUSTER_DAYS) -> int:
+    """Ignora un grupo de no-entendidos: soft delete (habilitado=False) de los
+    nluevent parecidos al representante, con la MISMA regla difusa que los
+    agrupó. Nada se borra de la base; simplemente dejan de verse en el panel y
+    de contar en las métricas. Devuelve cuántos se marcaron."""
+    target = nlu._norm(rep)
+    with get_session() as session:
+        hits = [
+            e
+            for e in _unmatched_events(session, days)
+            if fuzz.token_set_ratio(nlu._norm(e.text), target) >= CLUSTER_THRESHOLD
+        ]
+        for event in hits:
+            event.habilitado = False
+            session.add(event)
+        session.commit()
+    return len(hits)
 
 
 # Colores por capa de deducción para la dona del panel (el color nunca es el
@@ -251,7 +284,10 @@ def nlu_metrics(days: int = METRICS_DAYS) -> dict:
     where_cutoff = utcnow() - timedelta(days=days + 1)
     with get_session() as session:
         events = session.exec(
-            select(NluEvent).where(NluEvent.created_at >= where_cutoff)
+            select(NluEvent)
+            .where(NluEvent.created_at >= where_cutoff)
+            # Los grupos ignorados a mano (soft delete) no cuentan en los KPIs.
+            .where(NluEvent.habilitado == True)  # noqa: E712
         ).all()
 
     day_buckets = {
@@ -413,6 +449,27 @@ def proposal_reject(request: Request, proposal_id: int):
         synonym = prop.synonym
     log_admin(admin, "catalogo:propuesta", f"rechazada:{synonym}")
     return _render(request, admin, ok=f"Propuesta '{synonym}' descartada.")
+
+
+@router.post("/unmatched/clusters/ignore")
+def cluster_ignore(request: Request, synonym: str = Form(...)):
+    """"Ignorar": el texto no era un trámite (saludo, cortesía, ruido). Soft
+    delete — las filas se conservan en la base, pero salen del panel y de las
+    estadísticas. Sirve desde los grupos (un clic) y desde el alta a mano
+    (escribiendo la frase), por eso comparte el campo `synonym`."""
+    admin, redirect = _admin_or_redirect(request)
+    if redirect:
+        return redirect
+    texto = synonym.strip()
+    marcados = ignore_cluster(texto) if texto else 0
+    if marcados == 0:
+        return _render(request, admin, error=f"No hay mensajes pendientes parecidos a '{texto}'.")
+    log_admin(admin, "agente:ignorar", f"{texto[:120]} ({marcados})")
+    return _render(
+        request, admin,
+        ok=f"'{texto}' ignorado: {marcados} mensaje{'s' if marcados != 1 else ''} "
+           "fuera del panel y de las estadísticas (nada se borró de la base).",
+    )
 
 
 @router.post("/unmatched/synonyms")

@@ -99,6 +99,37 @@ def test_single_number_selection_still_works(session):
     assert [t.service_name for t in _tickets(session)] == ["Acta de nacimiento"]
 
 
+def test_max_cola_deja_los_requisitos_sobrantes_como_no_preguntados(session):
+    """Dos folios con 5 requisitos cada uno rebasan MAX_COLA=8: los dos últimos
+    del segundo folio jamás se preguntan y deben quedar como pedido=False
+    ("sin preguntar"), no como si el cliente los hubiera negado."""
+    from app.catalog import catalog, requisitos_del_ticket
+
+    for sid in ("sb-acta-nacimiento", "sb-acta-matrimonio"):
+        svc = catalog.service_by_id(sid)
+        catalog.update_service(
+            svc.id, svc.name, svc.price_info,
+            requirements="\n".join(f"dato {i}" for i in range(1, 6)), admin="prueba",
+        )
+    _go_to_service_menu(session)
+    handle_incoming(session, PHONE, "1 y 2")
+    handle_incoming(session, PHONE, "sí")
+
+    for i in range(8):  # solo caben 8 preguntas en la cola
+        handle_incoming(session, PHONE, f"respuesta {i + 1}")
+
+    session.expire_all()
+    segundo = _tickets(session)[1]
+    estados = [
+        (r["valor"] is not None, r["pedido"])
+        for r in requisitos_del_ticket(segundo.requirements_json)
+    ]
+    assert estados == [
+        (True, True), (True, True), (True, True),  # preguntados y contestados
+        (False, False), (False, False),            # nunca se preguntaron
+    ]
+
+
 def test_legacy_pending_service_id_context_still_confirms(session):
     """Conversaciones que quedaron a media confirmación con el formato viejo
     del contexto (pending_service_id) deben seguir funcionando tras el deploy."""

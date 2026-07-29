@@ -382,7 +382,7 @@ def ticket_detail(request: Request, ticket_id: int):
             .order_by(FollowUp.due_at)
         ).all()
 
-    from app.catalog import catalog
+    from app.catalog import catalog, requisitos_del_ticket
 
     service = catalog.service_by_id(ticket.service_id)
     return templates.TemplateResponse(
@@ -396,6 +396,9 @@ def ticket_detail(request: Request, ticket_id: int):
             "teammates": teammates,
             "followups": followups,
             "requirements": service.requirements if service else "",
+            # Lo que el agente pidió por WhatsApp en ESTE folio (congelado al
+            # darlo de alta), con lo que el cliente contestó y lo que falta.
+            "requisitos": requisitos_del_ticket(ticket.requirements_json),
         },
     )
 

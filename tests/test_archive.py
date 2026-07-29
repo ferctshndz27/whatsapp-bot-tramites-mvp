@@ -55,6 +55,7 @@ ARCHIVE_DDL = [
         service_id TEXT, service_name TEXT, price_info TEXT, status TEXT,
         escalado INTEGER DEFAULT 0, notes TEXT, assigned_to TEXT,
         habilitado INTEGER DEFAULT 1, agent_active INTEGER DEFAULT 1,
+        requirements_json TEXT,
         created_at TIMESTAMP, updated_at TIMESTAMP)""",
     """CREATE TABLE ticket_activity (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT,

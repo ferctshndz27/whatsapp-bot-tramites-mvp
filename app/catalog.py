@@ -67,6 +67,56 @@ class Category:
     services: list[Service]
 
 
+# ---- Requisitos: del catálogo al folio ----
+# Fuente única para el agente (los pide por WhatsApp) y para el panel (el
+# asesor ve cuáles llegaron). UNA LÍNEA = UN dato a pedir: quien edita el
+# catálogo decide cómo separarlos, sin heurísticas que troceen una frase
+# ("acta de nacimiento, original y copia" es un solo requisito).
+MAX_REQUISITOS = 5
+_VINETA_RE = re.compile(r"^\s*(?:[-*•·–]|\d+[.)])\s*")
+
+
+def parse_requirements(text: str) -> list[str]:
+    """Requisitos del catálogo como lista de datos a pedir (sin viñetas)."""
+    items = []
+    for linea in (text or "").splitlines():
+        item = _VINETA_RE.sub("", linea).strip()
+        if item:
+            items.append(item)
+    return items[:MAX_REQUISITOS]
+
+
+def requisitos_iniciales(requirements: str) -> str | None:
+    """JSON para congelar en el ticket al darlo de alta; None si el servicio no
+    tiene requisitos documentados (entonces el agente no pregunta nada).
+    `pedido` se vuelve True cuando el agente emite la pregunta: así el panel
+    distingue "sin respuesta" (se preguntó) de "sin preguntar"."""
+    items = parse_requirements(requirements)
+    if not items:
+        return None
+    return json.dumps(
+        [{"req": i, "valor": None, "pedido": False} for i in items], ensure_ascii=False
+    )
+
+
+def requisitos_del_ticket(requirements_json: str | None) -> list[dict]:
+    """Lee el JSON congelado en el folio. Tolera nulo o corrupto (folios viejos,
+    escritura a medias): en ese caso no hay requisitos que mostrar."""
+    if not requirements_json:
+        return []
+    try:
+        data = json.loads(requirements_json)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [
+        {"req": str(d["req"]), "valor": d.get("valor"), "pedido": bool(d.get("pedido"))}
+        for d in data
+        if isinstance(d, dict) and d.get("req")
+    ]
+
+
 def slugify(name: str) -> str:
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "item"
