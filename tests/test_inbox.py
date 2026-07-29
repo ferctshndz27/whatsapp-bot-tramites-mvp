@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from sqlmodel import Session
+
 import app.db as db
-from app import whatsapp_client
+from app import media_store, whatsapp_client
 from app.inbox import build_conversation_items, inbox_bot_on, inbox_chat, inbox_delete_message, inbox_send
 from app.models import Conversation, Direction, Message, Ticket, TicketActivity, TicketStatus
 
@@ -124,6 +126,160 @@ def test_send_logs_message_and_pauses_bot(monkeypatch, session):
     conv = session.get(Conversation, "333")
     session.refresh(conv)
     assert conv.state == "escalado"
+
+
+def _upload(nombre: str = "acta.pdf", tipo: str = "application/pdf", datos: bytes = b"%PDF-1.4 x"):
+    """UploadFile como el que produce el parser multipart real.
+
+    OJO: se importa de starlette, no de fastapi. `fastapi.UploadFile` es una
+    subclase suya y FastAPI NO convierte: usar la de fastapi aquí haría que
+    estas pruebas ejercitaran un objeto que en producción no existe."""
+    import io
+
+    from starlette.datastructures import UploadFile
+
+    return UploadFile(filename=nombre, file=io.BytesIO(datos), headers={"content-type": tipo})
+
+
+def test_composer_envia_archivo_con_el_texto_como_pie(monkeypatch, session, tmp_path):
+    """Un solo formulario: si viene archivo, el texto viaja como pie (WhatsApp)."""
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(media_store.settings, "media_dir", str(tmp_path))
+    enviados = []
+    monkeypatch.setattr(
+        whatsapp_client, "send_media", lambda *a: enviados.append(a) or "wamid.MEDIA1"
+    )
+    monkeypatch.setattr(
+        whatsapp_client, "send_text",
+        lambda *a: (_ for _ in ()).throw(AssertionError("con archivo NO se manda texto suelto")),
+    )
+    session.add(_msg("777", Direction.IN, "hola", hours_ago=1))
+    session.commit()
+
+    inbox_send(_request("ana"), "777", body="aquí está tu acta", file=_upload())
+
+    sent = session.query(Message).filter(
+        Message.phone == "777", Message.direction == Direction.OUT
+    ).one()
+    assert sent.body == "aquí está tu acta"       # el pie queda como cuerpo
+    assert sent.media_path is not None            # y el archivo queda ligado
+    assert sent.wa_message_id == "wamid.MEDIA1"
+    assert enviados[0][3] == "aquí está tu acta"  # caption enviado a Meta
+
+
+def test_composer_sin_texto_registra_el_tipo_de_archivo(monkeypatch, session, tmp_path):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(media_store.settings, "media_dir", str(tmp_path))
+    monkeypatch.setattr(whatsapp_client, "send_media", lambda *a: "wamid.MEDIA2")
+    session.add(_msg("778", Direction.IN, "hola", hours_ago=1))
+    session.commit()
+
+    inbox_send(_request("ana"), "778", body="", file=_upload("foto.png", "image/png", b"\x89PNG.."))
+
+    sent = session.query(Message).filter(
+        Message.phone == "778", Message.direction == Direction.OUT
+    ).one()
+    assert sent.body == "[imagen: foto.png]"
+
+
+def test_composer_ignora_el_input_de_archivo_vacio(monkeypatch, session):
+    """El navegador manda la parte del archivo aunque esté vacía: eso es
+    "sin adjunto" y debe irse por el camino de texto."""
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.TXT")
+    session.add(_msg("779", Direction.IN, "hola", hours_ago=1))
+    session.commit()
+
+    inbox_send(
+        _request("ana"), "779", body="solo texto",
+        file=_upload("", "application/octet-stream", b""),
+    )
+
+    sent = session.query(Message).filter(
+        Message.phone == "779", Message.direction == Direction.OUT
+    ).one()
+    assert sent.body == "solo texto"
+    assert sent.media_path is None
+
+
+def test_composer_vacio_no_envia_nada(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(
+        whatsapp_client, "send_text",
+        lambda *a: (_ for _ in ()).throw(AssertionError("no hay nada que enviar")),
+    )
+    session.add(_msg("780", Direction.IN, "hola", hours_ago=1))
+    session.commit()
+
+    inbox_send(_request("ana"), "780", body="   ")
+
+    assert session.query(Message).filter(
+        Message.phone == "780", Message.direction == Direction.OUT
+    ).all() == []
+
+
+def test_composer_manda_el_adjunto_por_http_real(monkeypatch, tmp_path):
+    """La prueba que faltaba: POST multipart de verdad, cruzando el parser.
+
+    Las otras llaman a inbox_send() en proceso, y ahí el objeto de archivo lo
+    fabrica el test. Solo por HTTP se ve lo que FastAPI entrega realmente — un
+    fallo aquí significa que el asesor adjunta y el cliente no recibe nada."""
+    import bcrypt
+    from fastapi.testclient import TestClient
+    from sqlmodel import SQLModel, create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from app import media_store
+    from app.config import settings
+    from app.main import app
+    from app.models import User
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(db, "engine", engine)
+    monkeypatch.setattr(media_store.settings, "media_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "mssql_host", "")  # sin espejo en pruebas
+    enviados = []
+    monkeypatch.setattr(
+        whatsapp_client, "send_media", lambda *a: enviados.append(a) or "wamid.HTTP1"
+    )
+    monkeypatch.setattr(
+        whatsapp_client, "send_text",
+        lambda *a: (_ for _ in ()).throw(AssertionError("el adjunto se degradó a texto")),
+    )
+    clave = "clave-de-prueba-1234"
+    with Session(engine) as s:
+        s.add(User(
+            username="ana", is_admin=True,
+            password_hash=bcrypt.hashpw(clave.encode(), bcrypt.gensalt(rounds=4)).decode(),
+        ))
+        s.add(_msg("900", Direction.IN, "hola", hours_ago=1))
+        s.commit()
+
+    cliente = TestClient(app, base_url="https://testserver")
+    login = cliente.post(
+        "/login", data={"username": "ana", "password": clave}, follow_redirects=False
+    )
+    assert login.status_code == 303
+
+    respuesta = cliente.post(
+        "/inbox/900/send",
+        data={"body": "aquí está tu acta"},
+        files={"file": ("acta.pdf", b"%PDF-1.4 contenido", "application/pdf")},
+        follow_redirects=False,
+    )
+
+    assert respuesta.status_code == 303
+    assert enviados, "send_media nunca se llamó: el adjunto se perdió en el camino"
+    assert enviados[0][3] == "aquí está tu acta"  # el texto viaja como pie
+    with Session(engine) as s:
+        sent = s.query(Message).filter(
+            Message.phone == "900", Message.direction == Direction.OUT
+        ).one()
+    assert sent.media_path is not None
+    assert sent.wa_message_id == "wamid.HTTP1"
 
 
 def test_send_blocked_when_window_expired(monkeypatch, session):

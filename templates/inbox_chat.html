@@ -82,30 +82,138 @@
       <button type="button" class="qr" data-text="{{ r.body }}" title="Respuesta guardada personal">★ {{ r.title }}</button>
       {% endfor %}
     </div>
-    <form method="post" action="/inbox/{{ phone }}/send">
-      <label for="body" class="sr-only" style="position:absolute; left:-9999px;">Mensaje</label>
-      <textarea id="body" name="body" placeholder="Escribe un mensaje…" required></textarea>
-      <div class="row">
-        <button type="submit">Enviar</button>
+    {# Un solo formulario: texto, archivo o archivo con pie. Quien decide es el
+       servidor según lo que llegue, así el envío funciona aunque el navegador
+       no ejecute JavaScript (el JS de abajo solo agrega comodidades). #}
+    <form method="post" action="/inbox/{{ phone }}/send" enctype="multipart/form-data" id="composer">
+      <div class="composer-bar">
+        <input type="file" id="file" name="file" class="sr-only"
+          accept=".jpg,.jpeg,.png,.webp,.pdf" aria-describedby="composer-hint">
+        <div class="field">
+          <label for="file" class="attach" title="Adjuntar imagen o PDF">
+            <span aria-hidden="true">📎</span>
+            <span class="sr-only">Adjuntar archivo: JPG, PNG, WebP o PDF</span>
+          </label>
+          <label for="body" class="sr-only">Mensaje</label>
+          <textarea id="body" name="body" rows="1" placeholder="Escribe un mensaje…"></textarea>
+        </div>
+        <button type="submit" class="btn-send">Enviar</button>
       </div>
-    </form>
-    <form method="post" action="/inbox/{{ phone }}/send-media" enctype="multipart/form-data" style="margin-top:.75rem;">
-      <div class="row">
-        <label for="file" style="margin:0;">Adjuntar:</label>
-        <input type="file" id="file" name="file" accept=".jpg,.jpeg,.png,.webp,.pdf" required>
-        <input type="text" name="caption" placeholder="Texto opcional" style="max-width:220px;">
-        <button type="submit" class="btn-sm">Enviar archivo</button>
-      </div>
+      <div id="attach-chip" class="attach-chip" role="status" aria-live="polite" hidden></div>
+      <p class="composer-hint" id="composer-hint">
+        Adjunta JPG, PNG, WebP o PDF (máx. 5 MB imágenes, 16 MB PDF).
+        Si adjuntas un archivo, tu texto se envía como pie.
+      </p>
     </form>
     <script>
-      document.querySelectorAll('.qr').forEach(function (b) {
-        b.addEventListener('click', function () {
-          var ta = document.getElementById('body');
-          ta.value = b.dataset.text;
-          ta.focus();
+      (function () {
+        var form = document.getElementById('composer');
+        var ta = document.getElementById('body');
+        var file = document.getElementById('file');
+        var chip = document.getElementById('attach-chip');
+
+        document.querySelectorAll('.qr').forEach(function (b) {
+          b.addEventListener('click', function () {
+            ta.value = b.dataset.text;
+            ta.focus();
+            crecer();
+          });
         });
-      });
+
+        // El textarea crece con el contenido y se detiene en max-height (CSS).
+        function crecer() {
+          ta.style.height = 'auto';
+          ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+        }
+        ta.addEventListener('input', crecer);
+
+        // Enter envía, Shift+Enter salta de línea (como WhatsApp Web). Solo con
+        // teclado físico: en un teclado táctil no hay Shift+Enter y el asesor
+        // se quedaría sin poder escribir varias líneas desde el celular.
+        var tecladoFisico = window.matchMedia('(pointer: fine)').matches;
+        ta.addEventListener('keydown', function (e) {
+          if (tecladoFisico && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            form.requestSubmit();
+          }
+        });
+
+        function peso(bytes) {
+          return bytes < 1048576
+            ? Math.max(1, Math.round(bytes / 1024)) + ' KB'
+            : (bytes / 1048576).toFixed(1) + ' MB';
+        }
+
+        function pintarChip() {
+          chip.textContent = '';
+          var f = file.files && file.files[0];
+          if (!f) {
+            chip.hidden = true;
+            ta.placeholder = 'Escribe un mensaje…';
+            return;
+          }
+          // Se revela ANTES de llenarlo: lo que cambia dentro de un subárbol
+          // oculto no lo anuncia la región aria-live.
+          chip.hidden = false;
+          if (f.type.indexOf('image/') === 0) {
+            // data: y no blob: — el CSP del panel es `img-src 'self' data:`
+            // (app/main.py), así que una URL blob: no se pintaría.
+            var img = document.createElement('img');
+            img.alt = '';
+            var lector = new FileReader();
+            lector.onload = function () { img.src = lector.result; };
+            lector.readAsDataURL(f);
+            chip.appendChild(img);
+          } else {
+            var ico = document.createElement('span');
+            ico.textContent = '📄';
+            ico.setAttribute('aria-hidden', 'true');
+            chip.appendChild(ico);
+          }
+          var nombre = document.createElement('span');
+          nombre.className = 'name';
+          nombre.textContent = f.name;
+          var tam = document.createElement('span');
+          tam.className = 'peso';
+          tam.textContent = peso(f.size);
+          var quitar = document.createElement('button');
+          quitar.type = 'button';
+          quitar.className = 'chip-x';
+          quitar.textContent = '✕ Quitar';
+          quitar.addEventListener('click', function () {
+            file.value = '';
+            pintarChip();
+            file.focus();
+          });
+          chip.appendChild(nombre);
+          chip.appendChild(tam);
+          chip.appendChild(quitar);
+          ta.placeholder = 'Agrega un texto (opcional)…';
+        }
+        file.addEventListener('change', pintarChip);
+
+        // Sin texto ni archivo no hay nada que enviar: se dice por qué en vez
+        // de cancelar en silencio (el textarea ya no lleva `required`).
+        form.addEventListener('submit', function (e) {
+          if (!ta.value.trim() && !(file.files && file.files.length)) {
+            e.preventDefault();
+            chip.textContent = 'Escribe un mensaje o adjunta un archivo.';
+            chip.hidden = false;
+            ta.focus();
+          }
+        });
+      })();
     </script>
+    <noscript>
+      {# Sin JS no hay ficha del adjunto: se muestra el input tal cual, en su
+         propio renglón para que en móvil no empuje al botón Enviar fuera de
+         la pantalla. #}
+      <style>
+        .attach { display: none; }
+        .composer-bar { flex-wrap: wrap; }
+        #file { position: static; width: auto; height: auto; clip: auto; flex: 1 0 100%; order: -1; margin: 0 0 .5rem; }
+      </style>
+    </noscript>
     {% else %}
     <div class="banner-warn" role="status">
       La ventana de 24h de WhatsApp está cerrada: solo puedes responder cuando el cliente
