@@ -99,6 +99,24 @@ def test_cluster_groups_similar_texts(monkeypatch, session):
     assert any("pasaporte" in c["rep"] for c in clusters)
 
 
+def test_ignorar_grupo_es_soft_delete_y_sale_de_las_estadisticas(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    session.add(User(username="jefa", password_hash="x", is_admin=True))
+    for text in ["hola buen dia", "hola buenos dias", "quiero renovar mi pasaporte"]:
+        session.add(NluEvent(phone=PHONE, text=text, capa="ninguna"))
+    session.commit()
+
+    miner.cluster_ignore(_request("jefa"), synonym="hola buen dia")
+
+    session.expire_all()  # la ruta escribió con su propia sesión
+    eventos = session.exec(select(NluEvent)).all()
+    ignorados = [e for e in eventos if not e.habilitado]
+    assert len(eventos) == 3            # nada se borró de la base
+    assert len(ignorados) == 2          # las dos variantes del saludo
+    assert [c["rep"] for c in miner.cluster_unmatched()] == ["quiero renovar mi pasaporte"]
+    assert miner.nlu_metrics()["total"] == 1  # los ignorados no cuentan
+
+
 def test_extracted_data_becomes_client_notes_once(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     monkeypatch.setattr(nlu.settings, "anthropic_api_key", "")

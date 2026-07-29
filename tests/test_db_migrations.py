@@ -210,7 +210,7 @@ _COLUMNAS_QUE_AGREGA_LA_MIGRACION = {
     ),
     "teammessage": ("habilitado",),
     "user": ("is_admin", "habilitado", "estado", "phone"),
-    "ticket": ("agent_active", "habilitado"),
+    "ticket": ("agent_active", "habilitado", "requirements_json"),
     "client": ("habilitado",),
     "conversation": ("habilitado",),
     "invitation": ("habilitado",),

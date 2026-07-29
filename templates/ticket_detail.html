@@ -36,9 +36,41 @@
     · <a href="/clients/{{ ticket.phone }}">Ficha del cliente</a>
   </p>
 
-  {% if requirements %}
+  {% if requisitos or requirements %}
   <h2>Requisitos del trámite</h2>
-  <p style="white-space: pre-line; background:#f8fafc; border-radius:6px; padding:.75rem 1rem;">{{ requirements }}</p>
+  {% if requisitos %}
+  <p style="color:var(--text-muted); font-size:.85rem; margin:-.4rem 0 .6rem;">
+    Capturados por el agente al registrar la solicitud.
+    Lo que no diga “Recibido” hay que pedírselo al cliente.
+  </p>
+  <ul style="list-style:none; padding:0; margin:0 0 .75rem; display:flex; flex-direction:column; gap:.5rem;">
+    {% for r in requisitos %}
+    <li style="background:#f8fafc; border-radius:6px; padding:.6rem .9rem; display:flex; gap:.6rem; align-items:baseline; flex-wrap:wrap;">
+      {% if r.valor %}
+      <span class="badge cerrado">Recibido</span>
+      <strong>{{ r.req }}</strong>
+      <span style="word-break:break-word;">{{ r.valor }}</span>
+      {% elif r.pedido %}
+      <span class="badge nuevo">Sin respuesta</span>
+      <strong>{{ r.req }}</strong>
+      <span style="color:var(--text-muted);">— se le preguntó y no lo dio</span>
+      {% else %}
+      <span class="badge tomado">Sin preguntar</span>
+      <strong>{{ r.req }}</strong>
+      <span style="color:var(--text-muted);">— el agente no llegó a pedirlo</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if requirements %}
+  {# Referencia siempre visible: el catálogo puede tener más requisitos que los
+     congelados en el folio (tope de captura o ediciones posteriores). #}
+  <p style="white-space: pre-line; background:#f8fafc; border-radius:6px; padding:.75rem 1rem; {% if requisitos %}color:var(--text-muted); font-size:.9rem;{% endif %}">
+    {%- if requisitos %}<strong>Según el catálogo:</strong>{{ '\n' }}{% endif -%}
+    {{ requirements }}
+  </p>
+  {% endif %}
   {% endif %}
 
   {% if ticket.notes %}

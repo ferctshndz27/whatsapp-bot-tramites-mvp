@@ -472,7 +472,9 @@ def test_presentation_solo_transforma_la_ultima_respuesta_y_no_muta_la_lista(db_
     assert replies[-1] == out[-1]["text"]
 
 
-@pytest.mark.parametrize("state", ["inicio", "esperando_nombre", "escalado"])
+@pytest.mark.parametrize(
+    "state", ["inicio", "esperando_nombre", "pidiendo_requisitos", "escalado"]
+)
 def test_estados_sin_menu_se_quedan_en_texto_plano(db_session, state):
     # REGLA: solo menu_categoria / menu_servicio / eligiendo_sugerencia producen
     # lista nativa. En cualquier otro estado el bot cae a texto: mandar una

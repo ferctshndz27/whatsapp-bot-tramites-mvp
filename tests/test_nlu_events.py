@@ -59,6 +59,32 @@ def test_courtesy_words_are_not_logged(monkeypatch, session):
     assert session.exec(select(NluEvent)).all() == []
 
 
+def test_saludos_y_despedidas_compuestos_no_son_tramite(monkeypatch, session):
+    """El bug del panel: "hola buen dia" caía como 'no entendido' y el panel
+    ofrecía convertirlo en sinónimo de un servicio."""
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _keywords_only(monkeypatch)
+
+    saludo = handle_incoming(session, PHONE, "hola buen dia")
+    despedida = handle_incoming(session, PHONE, "muchas gracias, hasta luego 👋")
+
+    assert session.exec(select(NluEvent)).all() == []  # ninguno es deducción
+    assert "hola" in saludo[0].lower()
+    assert "gracias a ti" in despedida[0].lower()
+
+
+def test_saludo_con_tramite_si_deduce_servicio(monkeypatch, session):
+    """El recorte de frases sociales no puede tragarse una petición real."""
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _keywords_only(monkeypatch)
+
+    handle_incoming(session, PHONE, "hola buen dia, necesito un acta de nacimiento")
+
+    event = session.exec(select(NluEvent)).one()
+    assert event.capa == "nombre"
+    assert event.service_id and "nacimiento" in event.service_id
+
+
 def _controlled_catalog(monkeypatch, tmp_path):
     """Catálogo propio del test: capas verificables sin depender de los
     sinónimos que existan en la semilla del repo o en producción."""

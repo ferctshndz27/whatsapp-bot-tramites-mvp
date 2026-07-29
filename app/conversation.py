@@ -1,12 +1,12 @@
 import json
 import logging
 import re
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from sqlmodel import Session, select
 
 from app import nlu
-from app.catalog import PAGE_SIZE, catalog
+from app.catalog import PAGE_SIZE, catalog, requisitos_del_ticket, requisitos_iniciales
 from app.models import (
     Client,
     ClientNote,
@@ -36,11 +36,48 @@ ESCALATION_KEYWORDS = [
 YES_WORDS = {"si", "sí", "s", "yes", "confirmo"}
 NO_WORDS = {"no", "n"}
 MENU_KEYWORDS = {"menu", "menú", "inicio", "reiniciar"}
-GREETING_WORDS = {
-    "hola", "holaa", "holaaa", "buenas", "buen dia", "buen día",
-    "buenos dias", "buenos días", "buenas tardes", "buenas noches",
-    "hey", "que tal", "qué tal", "saludos",
+
+# ---- Trato social: saludos y despedidas ----
+# Fuente única: de estos conjuntos salen tanto la respuesta del agente como el
+# filtro de la bitácora nluevent. Un "hola buen día" no es un trámite: no debe
+# contar como "no entendido" ni aparecer en los grupos del panel.
+# Se comparan sobre el texto normalizado (minúsculas, sin acentos ni emojis —
+# ver nlu._norm), así "¿Qué tal?" == "que tal".
+GREETING_PHRASES = {
+    "hola", "holaa", "holaaa", "holi", "ola", "buenas", "buen dia",
+    "buenos dias", "buena tarde", "buenas tardes", "buena noche",
+    "buenas noches", "hey", "que tal", "que onda", "que hay", "saludos",
+    "como estas", "como esta", "como estan", "disculpa", "disculpe",
 }
+FAREWELL_PHRASES = {
+    "gracias", "muchas gracias", "mil gracias", "gracias por todo",
+    "gracias por su atencion", "muy amable", "muy amables", "adios",
+    "hasta luego", "hasta pronto", "hasta manana", "nos vemos", "bye", "bay",
+    "chao", "chau", "que tengas buen dia", "que tenga buen dia",
+    "excelente dia", "buen fin de semana", "estamos en contacto",
+    "que estes bien", "quedo atento", "quedo atenta",
+    # Cierres de cortesía: no piden nada, cierran el turno.
+    "ok", "okay", "oki", "va", "vale", "sale", "listo", "perfecto",
+    "de acuerdo", "esta bien", "entendido", "enterado", "correcto",
+}
+# Frases largas primero: "que tengas buen dia" (despedida) debe recortarse
+# antes que "buen dia" (saludo).
+_SOCIAL_PHRASES = sorted(
+    [(p, "saludo") for p in GREETING_PHRASES] + [(p, "despedida") for p in FAREWELL_PHRASES],
+    key=lambda pair: -len(pair[0]),
+)
+# Relleno que puede acompañar a un saludo sin convertirlo en petición ("muchas
+# gracias señor", "hola, buen día"). Ninguna palabra de servicio vive aquí: si
+# algo distinto sobrevive al recorte, el mensaje sí pide algo.
+_SOCIAL_FILLER = {
+    "si", "no", "y", "e", "o", "a", "de", "del", "la", "el", "lo", "los",
+    "las", "un", "una", "me", "te", "le", "les", "se", "su", "muy", "mucho",
+    "muchas", "muchos", "pues", "ps", "por", "favor", "porfa", "porfavor",
+    "senor", "senora", "senorita", "amigo", "amiga", "estimado", "estimada",
+    "todo", "todos", "ya", "ah", "eh", "oye", "jaja", "jeje", "dia", "dias",
+    "tarde", "tardes", "noche", "noches", "bien", "tenga", "tengas", "que",
+}
+_SOCIAL_WORD_RE = re.compile(r"[a-z0-9]+")
 # Intención de estatus: se busca sobre el texto normalizado (minúsculas, sin
 # acentos — ver nlu._norm), así "¿Cómo va?" == "como va". Palabras directas
 # (estatus, avance, folio…) o giros comunes ("como va", "que paso con", "ya
@@ -80,8 +117,16 @@ IDENTITY_REPLY = (
     "ayudo a nuestros clientes con sus trámites 🤖 ¿Qué necesitas?"
 )
 ANNOYANCE_REPLY = "Lamento mucho la molestia 🙏 Te comunico con un asesor ahora mismo."
+FAREWELL_REPLY = (
+    "¡Gracias a ti! 😊 Que tengas excelente día. "
+    "Aquí estaré si necesitas otro trámite."
+)
+# Parte estable del aviso: por ella se reconocen en la base los "no entendidos"
+# YA enviados (app.synonym_miner). Vive aparte para que retocar el saludo de
+# cortesía no borre el historial de 30 días del panel.
+NOT_RECOGNIZED_MARKER = "¿Me dices qué trámite o servicio necesitas?"
 NOT_RECOGNIZED_HINT = (
-    "Quiero ayudarte bien 😊 ¿Me dices qué trámite o servicio necesitas? "
+    f"Estoy para ayudarte 😊 {NOT_RECOGNIZED_MARKER} "
     "Escribe *servicios* para ver la lista o *asesor* para hablar con una persona."
 )
 # Pedidos de informes/cotización sin trámite concreto — se responden con
@@ -115,6 +160,48 @@ MAX_NOTE_TEXT = 500
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_MAX_MESSAGES = 20
 
+# ---- Captura de requisitos (estado "pidiendo_requisitos") ----
+# Al registrar el folio, si el servicio tiene requisitos documentados en el
+# catálogo el agente los pide uno por uno y guarda la respuesta EN EL TICKET,
+# para que el asesor vea al tomarlo qué datos ya tiene y cuáles debe pedir.
+TICKET_ALTA_CIERRE = "Su solicitud está siendo procesada, en breve le resolvemos."
+TICKET_ALTA_CIERRE_MULTI = "Sus solicitudes están siendo procesadas, en breve le resolvemos."
+REQ_PREGUNTA = (
+    "Para avanzar con '{servicio}' (folio #{folio}) necesito *{requisito}*. "
+    "¿Me lo compartes? Si no lo tienes a la mano, escribe *omitir*."
+)
+REQ_CIERRE = "¡Gracias! 🙌 Ya guardé tus datos. " + TICKET_ALTA_CIERRE
+# El cliente puede saltarse un dato: se marca como faltante y lo pide el asesor.
+OMIT_WORDS = {
+    "omitir", "omitelo", "saltar", "despues", "luego", "no lo tengo",
+    "no la tengo", "no lo se", "no la se", "no se", "no tengo",
+}
+# Tolerancia de cola en la omisión: "no lo tengo aun" / "no la tengo todavia"
+# cuentan como omitir, pero "despues de buscar la encontre: ABC123" (cola larga:
+# ahí viene el dato) no.
+OMIT_TAIL_CHARS = 10
+# Tope de preguntas encadenadas (multi-servicio): el rate limit son 20 mensajes
+# entrantes por minuto y nadie contesta un interrogatorio.
+MAX_COLA = 8
+# Un requisito absurdamente largo pegado en el catálogo no debe reventar el
+# envío (Meta rechaza cuerpos >4096): la pregunta se trunca, el asesor ve el
+# texto íntegro en el folio.
+REQ_MAX_CHARS = 300
+# La captura caduca: si el cliente respondió días después, ese mensaje ya no es
+# "el dato que le pedí" — se atiende como mensaje nuevo y lo faltante queda
+# para el asesor.
+CAPTURE_TTL_HOURS = 6
+# Durante la captura la respuesta es texto libre y palabras como "persona" o
+# "queja" aparecen dentro de datos legítimos ("persona fisica", "la queja 4412
+# que levante"). El escape a humano sigue vivo, pero exige intención explícita
+# (palabra completa), y la molestia solo dispara con términos inequívocos.
+CAPTURE_ESCALATION_RE = re.compile(r"\basesora?\b|\bhumano\b|\bhablar con\b")
+CAPTURE_ANNOYANCE = [
+    "molesto", "molesta", "enojado", "enojada", "pesimo", "pésimo",
+    "mal servicio", "no sirve", "harto", "harta", "indignado", "indignada",
+]
+_OMIT_PUNCT_RE = re.compile(r"[^\w\s]")
+
 
 def handle_incoming(
     session: Session,
@@ -145,15 +232,15 @@ def handle_incoming(
         # Botón 👍/👎 del aviso de cierre: se registra y se agradece, en
         # cualquier estado (no pasa por la máquina de estados ni por nluevent).
         replies = _record_feedback(session, phone, int(fb.group(1)), fb.group(2))
+    elif (apagado := _latest_open_ticket(session, phone)) is not None and not apagado.agent_active:
+        # El colaborador asignado apagó el agente IA para este folio: silencio
+        # total en CUALQUIER estado — antes solo aplicaba en "escalado" y el
+        # bot seguía pidiendo requisitos con el agente apagado. Tomar el
+        # ticket (asignarlo) sigue sin callar al bot por sí solo.
+        replies = []
     elif conv.state == "escalado":
         normalized = text.strip().lower()
-        ticket = _latest_open_ticket(session, phone)
-        if ticket is not None and not ticket.agent_active:
-            # El colaborador asignado apagó el agente explícitamente para este
-            # ticket: silencio total, ni siquiera responde el estatus. Tomar
-            # el ticket (asignarlo) YA NO basta para callar al bot por sí solo.
-            replies = []
-        elif normalized in MENU_KEYWORDS:
+        if normalized in MENU_KEYWORDS:
             _set_state(session, conv, "menu_categoria")
             replies = ["Claro, continuemos aquí. " + catalog.format_category_menu()]
         elif _asks_status(text):
@@ -165,10 +252,24 @@ def handle_incoming(
             replies = _try_service_request(session, conv, text) or [ESCALATED_WAIT_REPLY]
     else:
         normalized = text.strip().lower()
-        if _mentions_any(normalized, ANNOYANCE_KEYWORDS):
+        # Captura caducada (CAPTURE_TTL_HOURS sin respuesta): este mensaje ya
+        # no es el dato pedido — se atiende como nuevo. Lo capturado ya vive
+        # en el folio; lo que falte lo pide el asesor.
+        if conv.state == "pidiendo_requisitos" and _captura_caducada(conv):
+            _set_state(session, conv, "menu_categoria")
+        capturando = conv.state == "pidiendo_requisitos"
+        molesto = _mentions_any(
+            normalized, CAPTURE_ANNOYANCE if capturando else ANNOYANCE_KEYWORDS
+        )
+        pide_humano = (
+            CAPTURE_ESCALATION_RE.search(normalized) is not None
+            if capturando
+            else _is_escalation(normalized)
+        )
+        if molesto:
             # Cliente molesto: disculpa breve y directo con un humano.
             replies = _escalate(session, client, conv, text, reply=ANNOYANCE_REPLY)
-        elif _is_escalation(normalized):
+        elif pide_humano:
             replies = _escalate(session, client, conv, text)
         else:
             replies = _dispatch(session, client, conv, text, normalized)
@@ -237,26 +338,36 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
     if _mentions_any(normalized, IDENTITY_KEYWORDS):
         return [IDENTITY_REPLY]
 
+    # Los atajos que hacen match por SUBSTRING se apagan mientras se capturan
+    # requisitos: la respuesta del cliente es texto libre y palabras como
+    # "lista", "precios" o "folio" aparecen dentro de un dato legítimo
+    # ("mi folio de INE es…"). "menu" (match exacto) y "asesor" siguen vivos.
+    capturando = conv.state == "pidiendo_requisitos"
+
     # Pidieron el catálogo explícitamente: única situación donde sí se lista.
-    if _mentions_any(normalized, SERVICES_KEYWORDS):
+    if not capturando and _mentions_any(normalized, SERVICES_KEYWORDS):
         _set_state(session, conv, "menu_categoria")
         return [catalog.format_category_menu()]
 
     # "¿Cómo va mi trámite?" — funciona desde cualquier estado, sin tocarlo.
-    if _asks_status(text):
+    if not capturando and _asks_status(text):
         return [_status_reply(session, client.phone)]
 
-    # Un saludo en medio del flujo se responde con pregunta abierta, sin
-    # listar servicios. Se excluye "inicio" (lo maneja su handler) y
-    # "esperando_nombre" (para no confundir un saludo con el nombre real).
-    if normalized in GREETING_WORDS and conv.state not in {"inicio", "esperando_nombre"}:
+    # Saludo o despedida: trato social, no un trámite. Al saludo se responde
+    # con pregunta abierta (sin listar servicios) y a la despedida con un
+    # cierre cálido; ninguno pasa por la deducción ni ensucia la bitácora.
+    # Exclusiones: "esperando_nombre" (un saludo podría ser el nombre real) y
+    # "pidiendo_requisitos" (un "ok" o un "hola" ahí es la respuesta al dato).
+    # En "confirmar" solo aplica el saludo — "ok"/"listo" son intentos de
+    # confirmar y los reatiende su handler con el re-prompt de sí/no.
+    social = _social_kind(text)
+    if social == "saludo" and conv.state not in {"esperando_nombre", "pidiendo_requisitos"}:
         _set_state(session, conv, "menu_categoria")
-        saludo = (
-            f"¡Hola de nuevo, {client.name}! ¿En qué te ayudo hoy?"
-            if client.name
-            else GREETING_REPLY
-        )
-        return [saludo]
+        return [_greeting_for(client)]
+    if social == "despedida" and conv.state not in {
+        "esperando_nombre", "confirmar", "pidiendo_requisitos"
+    }:
+        return [FAREWELL_REPLY]
 
     handlers = {
         "inicio": _handle_inicio,
@@ -265,21 +376,44 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
         "menu_servicio": _handle_menu_servicio,
         "confirmar": _handle_confirmar,
         "eligiendo_sugerencia": _handle_sugerencia,
+        "pidiendo_requisitos": _handle_requisitos,
     }
     handler = handlers.get(conv.state, _handle_inicio)
     return handler(session, client, conv, text, normalized)
 
 
-def _handle_inicio(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
-    saludo = (
+def _greeting_for(client: Client) -> str:
+    return (
         f"¡Hola de nuevo, {client.name}! ¿En qué te ayudo hoy?"
         if client.name
         else GREETING_REPLY
     )
-    if normalized in GREETING_WORDS:
-        # Regla: al saludo se responde con pregunta abierta, sin listar servicios.
-        _set_state(session, conv, "menu_categoria")
-        return [saludo]
+
+
+def _social_kind(text: str) -> str | None:
+    """"saludo" | "despedida" | None (el mensaje pide algo).
+
+    Recorta del texto normalizado las frases sociales conocidas; si lo que
+    queda es puro relleno ("hola buen día" → nada), el mensaje es trato social
+    y NO un intento de pedir un trámite. "hola quiero mi CURP" deja "quiero mi
+    curp" en pie, así que sigue su camino normal a la deducción."""
+    rest = " ".join(_SOCIAL_WORD_RE.findall(nlu._norm(text)))
+    if not rest:
+        return None
+    kinds: set[str] = set()
+    for phrase, kind in _SOCIAL_PHRASES:
+        pattern = rf"\b{re.escape(phrase)}\b"
+        if re.search(pattern, rest):
+            rest = re.sub(pattern, " ", rest)
+            kinds.add(kind)
+    if not kinds or any(w not in _SOCIAL_FILLER for w in rest.split()):
+        return None
+    # "gracias, buen día" es una despedida aunque traiga un saludo dentro.
+    return "despedida" if "despedida" in kinds else "saludo"
+
+
+def _handle_inicio(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
+    # Los saludos y despedidas ya los atajó _dispatch (también en este estado).
 
     # Varios servicios en un mismo mensaje ("quiero acta de nacimiento y mi
     # curp"): se confirman juntos y se crea un ticket por cada uno.
@@ -427,6 +561,9 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
                 service_name=service.name,
                 price_info=service.price_info,
                 status=TicketStatus.NUEVO,
+                # Los requisitos se congelan aquí: editar el catálogo después no
+                # reescribe lo que se le pidió a este cliente.
+                requirements_json=requisitos_iniciales(service.requirements),
             )
             session.add(ticket)
             tickets.append(ticket)
@@ -434,18 +571,36 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         session.commit()
         for ticket in tickets:
             session.refresh(ticket)
-        _set_state(session, conv, "menu_categoria")
+
+        # Cola plana de preguntas: [[folio, índice del requisito], …] en orden
+        # de folio. Vacía = ningún servicio tiene requisitos → flujo de siempre.
+        cola = [
+            [t.id, i]
+            for t in tickets
+            for i in range(len(requisitos_del_ticket(t.requirements_json)))
+        ][:MAX_COLA]
+
         if len(tickets) == 1:
-            return [
+            alta = (
                 f"¡Listo! ✅ Registré tu solicitud de '{tickets[0].service_name}' "
-                f"(folio #{tickets[0].id}). "
-                "Un asesor te contactará pronto, gracias por tu confianza."
-            ]
-        lines = "\n".join(f"• '{t.service_name}' — folio #{t.id}" for t in tickets)
-        return [
-            f"¡Listo! ✅ Registré tus {len(tickets)} solicitudes:\n{lines}\n"
-            "Un asesor te contactará pronto. ¿Otro trámite? Escribe *menu*."
-        ]
+                f"(folio #{tickets[0].id}). {TICKET_ALTA_CIERRE}"
+            )
+        else:
+            lines = "\n".join(f"• '{t.service_name}' — folio #{t.id}" for t in tickets)
+            cierre = TICKET_ALTA_CIERRE_MULTI if cola else (
+                TICKET_ALTA_CIERRE_MULTI + " ¿Otro trámite? Escribe *menu*."
+            )
+            alta = f"¡Listo! ✅ Registré tus {len(tickets)} solicitudes:\n{lines}\n{cierre}"
+
+        pregunta, cola = _siguiente_pregunta(session, cola)
+        if pregunta is None:
+            _set_state(session, conv, "menu_categoria")
+            return [alta]
+        # Un solo mensaje (alta + primera pregunta): presentation() solo
+        # transforma el último, y así el pareo IN/OUT sigue siendo 1:1.
+        _marcar_pedido(session, cola)
+        _set_state(session, conv, "pidiendo_requisitos", {"cola": cola})
+        return [f"{alta}\n\n{pregunta}"]
 
     if normalized in NO_WORDS:
         _set_state(session, conv, "menu_categoria")
@@ -458,6 +613,104 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     else:
         confirm_text = catalog.format_category_menu()
     return _bump_or_escalate(session, client, conv, text, "¿Puedes confirmar con 'sí' o 'no'?\n" + confirm_text)
+
+
+def _siguiente_pregunta(session: Session, cola: list) -> tuple[str | None, list]:
+    """Primera pregunta pendiente de la cola y la cola desde ese punto.
+
+    Salta folios eliminados por el asesor (soft delete, habilitado=False) o ya
+    cerrados, e índices fuera del JSON: a media captura la base puede haber
+    cambiado y el cliente no debe quedarse contestando a un folio muerto."""
+    while cola:
+        ticket_id, idx = cola[0]
+        ticket = session.get(Ticket, ticket_id)
+        vivo = (
+            ticket is not None
+            and ticket.habilitado
+            and ticket.status != TicketStatus.CERRADO
+        )
+        requisitos = requisitos_del_ticket(ticket.requirements_json) if vivo else []
+        if 0 <= idx < len(requisitos):
+            return (
+                REQ_PREGUNTA.format(
+                    servicio=ticket.service_name,
+                    folio=ticket.id,
+                    requisito=requisitos[idx]["req"][:REQ_MAX_CHARS],
+                ),
+                cola,
+            )
+        cola = cola[1:]
+    return None, cola
+
+
+def _editar_requisito(session: Session, ticket_id: int, idx: int, cambios: dict) -> None:
+    """Actualiza un requisito EN EL FOLIO, de inmediato: si la conversación se
+    corta a media captura, lo que ya llegó no se pierde. `pedido` se marca al
+    emitir la pregunta; `valor` al recibir la respuesta."""
+    ticket = session.get(Ticket, ticket_id)
+    if ticket is None:
+        return
+    requisitos = requisitos_del_ticket(ticket.requirements_json)
+    if not 0 <= idx < len(requisitos):
+        return
+    requisitos[idx].update(cambios)
+    ticket.requirements_json = json.dumps(requisitos, ensure_ascii=False)
+    ticket.updated_at = utcnow()
+    session.add(ticket)
+    session.commit()
+
+
+def _es_omision(text: str) -> bool:
+    """"omitir", "No lo tengo.", "no la tengo todavia" → el cliente no tiene el
+    dato. Se quita puntuación y se tolera una cola corta ("aun", "todavia");
+    una cola larga suele traer el dato ("despues de buscar la encontre: X")."""
+    limpio = " ".join(_OMIT_PUNCT_RE.sub(" ", nlu._norm(text)).split())
+    if limpio in OMIT_WORDS:
+        return True
+    return any(
+        limpio.startswith(w + " ") and len(limpio) <= len(w) + 1 + OMIT_TAIL_CHARS
+        for w in OMIT_WORDS
+    )
+
+
+def _handle_requisitos(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
+    """Captura los requisitos del trámite recién registrado.
+
+    Aquí NO existe "no te entendí": cualquier texto es la respuesta al dato
+    pedido, así que nunca se pasa por _bump_or_escalate (escalar dejaría el
+    contexto vacío y mataría la captura). Si el cliente no lo tiene, *omitir*
+    lo marca como faltante para que el asesor lo pida."""
+    cola_original = _get_context(conv).get("cola") or []
+    pregunta_vigente, cola = _siguiente_pregunta(session, cola_original)
+    if pregunta_vigente is None:
+        _set_state(session, conv, "menu_categoria")
+        return [REQ_CIERRE]
+    if cola != cola_original:
+        # La pregunta que el cliente contestó ya no existe (el asesor eliminó o
+        # cerró ese folio a media captura): su respuesta no es de nadie, así
+        # que no se guarda en el folio equivocado — se re-pregunta el frente.
+        _marcar_pedido(session, cola)
+        _set_state(session, conv, "pidiendo_requisitos", {"cola": cola})
+        return [pregunta_vigente]
+
+    ticket_id, idx = cola[0]
+    valor = None if _es_omision(text) else text.strip()[:MAX_NOTE_TEXT]
+    _editar_requisito(session, ticket_id, idx, {"valor": valor, "pedido": True})
+
+    pregunta, resto = _siguiente_pregunta(session, cola[1:])
+    if pregunta is None:
+        _set_state(session, conv, "menu_categoria")
+        return [REQ_CIERRE]
+    _marcar_pedido(session, resto)
+    _set_state(session, conv, "pidiendo_requisitos", {"cola": resto})
+    return [pregunta]
+
+
+def _marcar_pedido(session: Session, cola: list) -> None:
+    """Deja constancia en el folio de que la pregunta del frente se emitió:
+    el panel distingue "sin respuesta" (se preguntó) de "sin preguntar"."""
+    if cola:
+        _editar_requisito(session, cola[0][0], cola[0][1], {"pedido": True})
 
 
 # Datos estructurados que el cliente suelta en el chat (Fase 2): se anexan a
@@ -578,20 +831,14 @@ def presentation(session: Session, phone: str, replies: list[str]) -> list:
     return out
 
 
-# Mensajes de cortesía que no son un intento de pedir un trámite: no se
-# registran en la bitácora del agente para no inflar los "no entendidos".
-COURTESY_WORDS = {
-    "gracias", "muchas gracias", "si gracias", "ok", "okay", "va", "vale",
-    "listo", "perfecto", "de acuerdo", "buen dia", "buenas", "adios",
-}
-
-
 def _log_nlu(
     session: Session, phone: str, text: str, capa: str,
     service_id: str | None = None, confianza: float | None = None,
 ) -> None:
-    normalized = nlu._norm(text)
-    if len(normalized) < 3 or normalized in COURTESY_WORDS:
+    # Saludos, despedidas y cortesías no son un intento de pedir un trámite:
+    # no se registran en la bitácora para no inflar los "no entendidos"
+    # (mismas frases que atiende _dispatch — ver _social_kind).
+    if len(nlu._norm(text)) < 3 or _social_kind(text) is not None:
         return
     session.add(
         NluEvent(
@@ -800,8 +1047,28 @@ def _set_state(session: Session, conv: Conversation, state: str, context: dict |
     conv.state = state
     conv.context_json = json.dumps(context or {})
     conv.failed_attempts = 0
+    # Último movimiento real de la conversación: de aquí se mide la caducidad
+    # de la captura de requisitos (antes updated_at se quedaba en la fecha de
+    # creación para siempre).
+    conv.updated_at = utcnow()
     session.add(conv)
     session.commit()
+
+
+def _captura_caducada(conv: Conversation) -> bool:
+    """True si el último movimiento fue hace más de CAPTURE_TTL_HOURS.
+
+    SQLite devuelve datetimes naive y utcnow() es aware: se normalizan ambos a
+    naive-UTC antes de comparar (mismo criterio que app.alerts)."""
+    updated = conv.updated_at
+    if updated.tzinfo is not None:
+        updated = updated.astimezone(timezone.utc).replace(tzinfo=None)
+    limite = (
+        (utcnow() - timedelta(hours=CAPTURE_TTL_HOURS))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    return updated < limite
 
 
 def _get_context(conv: Conversation) -> dict:

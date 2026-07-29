@@ -67,6 +67,7 @@ ESTADOS_CONOCIDOS = {
     "menu_servicio",
     "confirmar",
     "eligiendo_sugerencia",
+    "pidiendo_requisitos",
     "escalado",
 }
 

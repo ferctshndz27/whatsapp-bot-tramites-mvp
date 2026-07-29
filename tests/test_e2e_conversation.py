@@ -448,12 +448,9 @@ def test_agente_apagado_guarda_silencio_total_pero_deja_registro_del_mensaje(wa)
         assert "sigo esperando" in bodies  # el asesor sí lo ve en la bandeja
 
 
-@pytest.mark.xfail(
-    reason="BUG: el guard de agent_active vive solo en la rama conv.state=='escalado' "
-    "(app/conversation.py:148-155); si la conversación avanza a 'confirmar' el bot "
-    "vuelve a hablar y crea tickets aunque el asesor lo haya apagado",
-    strict=True,
-)
+# Era xfail(strict): documentaba que el guard de agent_active vivía solo en la
+# rama "escalado". Corregido — el silencio aplica en cualquier estado — y esta
+# prueba pasó a ser la regresión que lo protege.
 def test_agente_apagado_sigue_silenciado_cuando_la_conversacion_avanza_de_estado(wa):
     """Regla: el 'silencio total' depende del ticket (agent_active=False), no
     del estado de la conversación."""

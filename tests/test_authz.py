@@ -51,6 +51,7 @@ from app.models import (
     Invitation,
     LoginEvent,
     Message,
+    NluEvent,
     SynonymProposal,
     Ticket,
     TicketActivity,
@@ -235,6 +236,11 @@ RUTAS: list[Ruta] = [
         data={"service_id": "curp", "synonym": "acta de curp"},
         sonda=_sinonimos_de_curp, tras_admin=["acta de curp"],
     ),
+    Ruta(  # ignorar = soft delete del grupo; un colaborador no debe poder
+        "POST /unmatched/clusters/ignore", "POST", "/unmatched/clusters/ignore", "/",
+        data={"synonym": TEXTO_NO_ENTENDIDO},
+        sonda=_campo(NluEvent, 1, "habilitado"), tras_admin=False,
+    ),
     Ruta(
         "GET /export/no-entendidos.csv", "GET", "/export/no-entendidos.csv", "/",
         filtracion=TEXTO_NO_ENTENDIDO,
@@ -318,6 +324,8 @@ def _sembrar() -> None:
         s.add(LoginEvent(username="fantasma", success=False, reason="x", ip=IP_ACCESO))
         s.add(SynonymProposal(id=1, service_id="curp", synonym="clave unica"))
         s.add(SynonymProposal(id=2, service_id="curp", synonym="mi curp"))
+        # Grupo "no entendido" que el admin puede ignorar (soft delete).
+        s.add(NluEvent(id=1, phone=PHONE_NO_ENTENDIDO, text=TEXTO_NO_ENTENDIDO, capa="ninguna"))
         # Catálogo propio: sembrarlo evita que app.catalog importe catalog.json
         # y ata la prueba a datos controlados.
         s.add(CatalogCategory(id="basicos", name="Servicios básicos", position=0))
@@ -340,7 +348,7 @@ def _sembrar() -> None:
         s.add(
             Message(
                 phone=PHONE_NO_ENTENDIDO, direction=Direction.OUT,
-                body=miner._HINT_PREFIX + " Elige del menú.",
+                body=miner._HINT_MARKER + " Elige del menú.",
                 created_at=ayer + timedelta(seconds=1),
             )
         )

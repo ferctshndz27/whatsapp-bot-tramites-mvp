@@ -119,3 +119,34 @@ def test_kb_requires_login_and_lists_catalog(monkeypatch, session):
 
     view = knowledge_base(_request("ana", "/kb"))
     assert len(view.context["categories"]) > 0
+
+
+def test_detalle_del_folio_distingue_los_tres_estados_de_requisitos(monkeypatch, session):
+    """Recibido (con valor) · Sin respuesta (pedido, sin valor) · Sin preguntar
+    (ni pedido): el asesor no debe leer "el cliente no lo dio" de una pregunta
+    que el agente nunca hizo. La referencia del catálogo sigue disponible."""
+    import json
+
+    from app.dashboard import ticket_detail
+
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    session.add(User(username="ana", password_hash="x"))
+    session.add(Client(phone=PHONE, name="María"))
+    ticket = Ticket(
+        phone=PHONE, category="Servicios básicos", service_id="sb-curp",
+        service_name="Descarga de CURP", price_info="$10",
+        requirements_json=json.dumps([
+            {"req": "clave curp", "valor": "PEGF900101HDFRRN09", "pedido": True},
+            {"req": "nss", "valor": None, "pedido": True},
+            {"req": "correo", "valor": None, "pedido": False},
+        ]),
+    )
+    session.add(ticket)
+    session.commit()
+    session.refresh(ticket)
+
+    view = ticket_detail(_request("ana", path="/"), ticket.id)
+
+    estados = [(r["valor"] is not None, r["pedido"]) for r in view.context["requisitos"]]
+    assert estados == [(True, True), (False, True), (False, False)]
+    assert isinstance(view.context["requirements"], str)  # referencia del catálogo

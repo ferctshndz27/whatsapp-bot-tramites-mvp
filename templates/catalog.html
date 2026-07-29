@@ -106,8 +106,8 @@
                 {% if svc.requirements %}<span class="req-hint">✓ capturados</span>{% endif %}
               </summary>
               <textarea form="f-{{ svc.id }}" name="requirements" rows="2"
-                placeholder="Documentos y requisitos (se muestran al equipo en la Guía de trámites)"
-                aria-label="Requisitos de {{ svc.name }}">{{ svc.requirements }}</textarea>
+                placeholder="Un requisito por línea: el agente pide cada uno por WhatsApp al registrar la solicitud"
+                aria-label="Requisitos de {{ svc.name }}, uno por línea">{{ svc.requirements }}</textarea>
             </details>
           </td>
         </tr>

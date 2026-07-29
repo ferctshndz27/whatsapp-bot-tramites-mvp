@@ -1,9 +1,33 @@
+from datetime import timedelta
+
+import pytest
 from sqlmodel import select
 
-from app.conversation import handle_incoming
-from app.models import Conversation, Ticket, TicketStatus
+from app.catalog import catalog, requisitos_del_ticket
+from app.conversation import CAPTURE_TTL_HOURS, handle_incoming
+from app.models import Conversation, Ticket, TicketStatus, utcnow
 
 PHONE = "5215500000000"
+
+SERVICIO_CON_REQUISITOS = "sb-acta-divorcio"
+
+
+def _con_requisitos(texto: str = "clave curp\nnumero de servicio") -> None:
+    """Documenta requisitos en un servicio real del catálogo (la semilla no
+    trae ninguno, así que sin esto el agente no tendría qué pedir)."""
+    svc = catalog.service_by_id(SERVICIO_CON_REQUISITOS)
+    assert catalog.update_service(
+        svc.id, svc.name, svc.price_info, requirements=texto, admin="prueba"
+    ) is None
+
+
+def _pedir_y_confirmar(session) -> list[str]:
+    handle_incoming(session, PHONE, "Necesito un acta de divorcio")
+    return handle_incoming(session, PHONE, "sí")
+
+
+def _ticket(session) -> Ticket:
+    return session.exec(select(Ticket).where(Ticket.phone == PHONE)).first()
 
 
 def test_greeting_gets_open_question_not_service_list(session):
@@ -27,6 +51,225 @@ def test_direct_service_request_skips_menu_and_creates_ticket(session):
     assert ticket is not None
     assert ticket.service_name == "Acta de divorcio"
     assert ticket.status == TicketStatus.NUEVO
+
+
+def test_alta_sin_requisitos_conserva_el_flujo_de_siempre(session):
+    # REGLA: la captura es data-gated. Sin requisitos documentados el cliente
+    # queda en menu_categoria y el folio no guarda nada.
+    replies = _pedir_y_confirmar(session)
+
+    assert "Su solicitud está siendo procesada, en breve le resolvemos" in replies[0]
+    assert "necesito" not in replies[0].lower()
+    assert session.get(Conversation, PHONE).state == "menu_categoria"
+    assert _ticket(session).requirements_json is None
+
+
+def test_agente_pide_los_requisitos_y_los_guarda_en_el_folio(session):
+    _con_requisitos()
+
+    alta = _pedir_y_confirmar(session)
+    # Un solo mensaje: alta + primera pregunta (el pareo IN/OUT sigue 1:1).
+    assert len(alta) == 1
+    assert "folio" in alta[0].lower() and "clave curp" in alta[0]
+    assert session.get(Conversation, PHONE).state == "pidiendo_requisitos"
+
+    segunda = handle_incoming(session, PHONE, "PEGF900101HDFRRN09")
+    assert "numero de servicio" in segunda[0]
+
+    cierre = handle_incoming(session, PHONE, "0012345678")
+
+    assert "gracias" in cierre[0].lower()
+    assert session.get(Conversation, PHONE).state == "menu_categoria"
+    session.expire_all()
+    assert requisitos_del_ticket(_ticket(session).requirements_json) == [
+        {"req": "clave curp", "valor": "PEGF900101HDFRRN09", "pedido": True},
+        {"req": "numero de servicio", "valor": "0012345678", "pedido": True},
+    ]
+
+
+def test_omitir_deja_el_requisito_como_faltante(session):
+    _con_requisitos("clave curp")
+
+    _pedir_y_confirmar(session)
+    handle_incoming(session, PHONE, "omitir")
+
+    session.expire_all()
+    assert requisitos_del_ticket(_ticket(session).requirements_json) == [
+        {"req": "clave curp", "valor": None, "pedido": True}
+    ]
+
+
+def test_respuestas_ambiguas_no_secuestran_la_captura(session):
+    # REGLA: en captura de texto libre no existe "no te entendí". Palabras que
+    # en otro estado son atajos (folio → estatus, "ok" → despedida) aquí son
+    # el dato del cliente, y una respuesta rara NO debe escalar.
+    _con_requisitos("clave curp\nnumero de servicio")
+
+    _pedir_y_confirmar(session)
+    handle_incoming(session, PHONE, "mi folio de la CFE es 12345")
+    handle_incoming(session, PHONE, "ok")
+
+    session.expire_all()
+    assert [r["valor"] for r in requisitos_del_ticket(_ticket(session).requirements_json)] == [
+        "mi folio de la CFE es 12345",
+        "ok",
+    ]
+    assert _ticket(session).escalado is False
+    assert session.get(Conversation, PHONE).state == "menu_categoria"
+
+
+def test_menu_aborta_la_captura_sin_perder_lo_capturado(session):
+    _con_requisitos("clave curp\nnumero de servicio")
+
+    _pedir_y_confirmar(session)
+    handle_incoming(session, PHONE, "PEGF900101HDFRRN09")
+    handle_incoming(session, PHONE, "menu")  # escape explícito
+
+    session.expire_all()
+    assert session.get(Conversation, PHONE).state == "menu_categoria"
+    assert requisitos_del_ticket(_ticket(session).requirements_json) == [
+        {"req": "clave curp", "valor": "PEGF900101HDFRRN09", "pedido": True},
+        # Se preguntó y el cliente escapó con *menu*: "sin respuesta".
+        {"req": "numero de servicio", "valor": None, "pedido": True},
+    ]
+
+
+def test_palabras_de_escalado_dentro_del_dato_no_escalan(session):
+    # BUG confirmado: "persona" por substring escalaba, borraba la cola y el
+    # dato que el cliente SÍ escribió se perdía para siempre.
+    _con_requisitos("nombre de la persona titular\ncorreo de contacto")
+
+    _pedir_y_confirmar(session)
+    handle_incoming(session, PHONE, "la persona titular es Maria Lopez")
+    handle_incoming(session, PHONE, "personal@hotmail.com")
+
+    session.expire_all()
+    ticket = _ticket(session)
+    assert ticket.escalado is False
+    assert [r["valor"] for r in requisitos_del_ticket(ticket.requirements_json)] == [
+        "la persona titular es Maria Lopez",
+        "personal@hotmail.com",
+    ]
+
+
+def test_pedir_asesor_explicito_si_escala_durante_la_captura(session):
+    _con_requisitos("clave curp")
+
+    _pedir_y_confirmar(session)
+    replies = handle_incoming(session, PHONE, "mejor quiero hablar con un asesor")
+
+    session.expire_all()
+    assert "asesor" in replies[0].lower()
+    assert _ticket(session).escalado is True
+
+
+def test_saludo_en_confirmar_no_escala(session):
+    # Regresión detectada por la revisión: dos "hola" seguidos en confirmar
+    # escalaban a humano y creaban el ticket "Escalado a asesor".
+    handle_incoming(session, PHONE, "Necesito un acta de divorcio")
+
+    replies = handle_incoming(session, PHONE, "hola")
+
+    assert "hola" in replies[0].lower()
+    assert session.get(Conversation, PHONE).state == "menu_categoria"
+    assert _ticket(session) is None  # nada se escaló ni se creó
+
+
+def test_ok_en_confirmar_repregunta_si_o_no(session):
+    # "ok" es un intento de confirmar, no una despedida: el handler re-pregunta.
+    handle_incoming(session, PHONE, "Necesito un acta de divorcio")
+
+    replies = handle_incoming(session, PHONE, "ok")
+
+    assert "confirmar con" in replies[0].lower()
+    assert session.get(Conversation, PHONE).state == "confirmar"
+
+
+def test_captura_caducada_atiende_el_mensaje_como_nuevo(session):
+    _con_requisitos("clave curp")
+    _pedir_y_confirmar(session)
+
+    conv = session.get(Conversation, PHONE)
+    conv.updated_at = utcnow() - timedelta(hours=CAPTURE_TTL_HOURS + 1)
+    session.add(conv)
+    session.commit()
+
+    replies = handle_incoming(session, PHONE, "hola buen dia")
+
+    # Días después, un saludo es un saludo — no "el dato que le pedí".
+    assert "hola" in replies[0].lower()
+    session.expire_all()
+    requisito = requisitos_del_ticket(_ticket(session).requirements_json)[0]
+    assert requisito["valor"] is None  # el folio no se ensució con el saludo
+
+
+def test_no_lo_tengo_con_punto_cuenta_como_omision(session):
+    _con_requisitos("clave curp")
+    _pedir_y_confirmar(session)
+
+    handle_incoming(session, PHONE, "No lo tengo.")
+
+    session.expire_all()
+    requisito = requisitos_del_ticket(_ticket(session).requirements_json)[0]
+    assert requisito["valor"] is None
+    assert requisito["pedido"] is True
+
+
+def test_omision_con_cola_larga_no_se_traga_el_dato(session):
+    # "despues de..." arranca como omisión pero la cola larga trae el dato.
+    _con_requisitos("numero de servicio")
+    _pedir_y_confirmar(session)
+
+    handle_incoming(session, PHONE, "despues de buscarlo lo encontre: 0012345678")
+
+    session.expire_all()
+    requisito = requisitos_del_ticket(_ticket(session).requirements_json)[0]
+    assert requisito["valor"] == "despues de buscarlo lo encontre: 0012345678"
+
+
+@pytest.mark.parametrize("como", ["eliminado", "cerrado"])
+def test_folio_muerto_corta_la_captura_sin_ensuciarlo(session, como):
+    _con_requisitos("clave curp\nnumero de servicio")
+    _pedir_y_confirmar(session)
+
+    ticket = _ticket(session)
+    if como == "eliminado":
+        ticket.habilitado = False  # lo que hace /tickets/{id}/delete
+    else:
+        ticket.status = TicketStatus.CERRADO
+    session.add(ticket)
+    session.commit()
+
+    handle_incoming(session, PHONE, "PEGF900101HDFRRN09")
+
+    session.expire_all()
+    # La respuesta a un folio muerto no se escribe en él y la captura cierra.
+    assert all(
+        r["valor"] is None
+        for r in requisitos_del_ticket(_ticket(session).requirements_json)
+    )
+    assert session.get(Conversation, PHONE).state == "menu_categoria"
+
+
+def test_agente_apagado_calla_tambien_durante_la_captura(session):
+    _con_requisitos("clave curp")
+    _pedir_y_confirmar(session)
+
+    ticket = _ticket(session)
+    ticket.agent_active = False  # /tickets/{id}/agent-toggle
+    session.add(ticket)
+    session.commit()
+
+    assert handle_incoming(session, PHONE, "PEGF900101HDFRRN09") == []
+
+
+def test_requisito_larguisimo_no_revienta_el_mensaje(session):
+    # Meta rechaza cuerpos >4096: la pregunta trunca el requisito.
+    _con_requisitos("x" * 4000)
+
+    alta = _pedir_y_confirmar(session)
+
+    assert len(alta[0]) < 1000
 
 
 def test_services_keyword_shows_catalog_listing(session):

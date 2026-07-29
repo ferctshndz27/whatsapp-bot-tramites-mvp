@@ -42,10 +42,14 @@ _LEVEL_RANK = {"ok": 0, "warn": 1, "critical": 2}
 
 def _no_entendidos_stats(session: Session, days: int = NO_ENTENDIDOS_DAYS) -> tuple[int, float]:
     """(total, pct_no_entendidos) de nluevent en la ventana. El corte fino por
-    fecha lo hace SQL con naive-UTC (mismo criterio que synonym_miner)."""
+    fecha lo hace SQL con naive-UTC (mismo criterio que synonym_miner). Los
+    grupos ignorados a mano (soft delete) no cuentan, igual que en el panel."""
     cutoff = (utcnow() - timedelta(days=days)).astimezone(timezone.utc).replace(tzinfo=None)
     total = session.exec(
-        select(func.count()).select_from(NluEvent).where(NluEvent.created_at >= cutoff)
+        select(func.count())
+        .select_from(NluEvent)
+        .where(NluEvent.created_at >= cutoff)
+        .where(NluEvent.habilitado == True)  # noqa: E712
     ).one()
     if not total:
         return 0, 0.0
@@ -53,6 +57,7 @@ def _no_entendidos_stats(session: Session, days: int = NO_ENTENDIDOS_DAYS) -> tu
         select(func.count())
         .select_from(NluEvent)
         .where(NluEvent.created_at >= cutoff)
+        .where(NluEvent.habilitado == True)  # noqa: E712
         .where(NluEvent.capa == "ninguna")
     ).one()
     return total, round(ninguna / total * 100, 1)
