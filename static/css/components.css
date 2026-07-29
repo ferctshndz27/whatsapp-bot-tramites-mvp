@@ -27,13 +27,37 @@
     .pills a:hover { color: var(--text); border-color: var(--border); }
     .pills a[aria-current="true"] { background: var(--lime); color: var(--lime-ink); font-weight: 700; }
 
-    /* ---- Table ---- */
+    /* ---- Table (como la referencia: banda gris redondeada de encabezado,
+       filas altas con alternado lila tenue) ---- */
     .table-wrap { overflow-x: auto; border-radius: 14px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { padding: .75rem .6rem; text-align: left; border-bottom: 1px solid #f0f1f3; vertical-align: middle; }
-    th { color: var(--text-muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .5px; font-weight: 700; }
-    tbody tr:nth-child(even) { background: #fafafb; }
+    /* separate (no collapse): sin él, el border-radius de la banda del thead
+       no se pinta. */
+    table { border-collapse: separate; border-spacing: 0; width: 100%; }
+    th, td { padding: .85rem .9rem; text-align: left; vertical-align: middle; }
+    td { border-bottom: 1px solid #eef0f4; }
+    thead th { background: #ececf0; color: #4a4f59; font-size: .85rem; font-weight: 600; }
+    thead th:first-child { border-radius: 12px 0 0 12px; }
+    thead th:last-child { border-radius: 0 12px 12px 0; }
+    tbody tr:nth-child(even) { background: #f7f8fd; }
     tbody tr:hover { background: #f4f6f2; }
+
+    /* ---- Paginación (píldoras numeradas, activa en lima, flechas en círculo) ---- */
+    .pagination {
+      display: inline-flex; align-items: center; gap: .45rem;
+      background: rgba(236, 237, 240, .9); border-radius: 999px;
+      padding: .4rem .5rem; margin-top: 1rem; box-shadow: var(--shadow);
+    }
+    .pagination a, .pagination .page-off {
+      min-width: 38px; height: 38px; padding: 0 .55rem; border-radius: 999px;
+      display: inline-flex; align-items: center; justify-content: center;
+      text-decoration: none; color: var(--text); font-size: .88rem; font-weight: 600;
+    }
+    .pagination a { background: #f6f7f9; border: 1px solid #e3e4e9; }
+    .pagination a:hover { background: #fff; }
+    .pagination a[aria-current="page"] { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+    .pagination .page-arrow { background: #fff; border: 0; box-shadow: var(--shadow); }
+    /* Flecha sin destino (primera/última página): visible pero apagada. */
+    .pagination .page-off { color: #a2a7b0; }
 
     .avatar {
       display: inline-flex; align-items: center; justify-content: center;

@@ -83,6 +83,26 @@
       </tbody>
     </table>
   </div>
+
+  {% if pages > 1 %}
+  {# Los links de página conservan el filtro activo; tocar un filtro regresa a la página 1. #}
+  {% macro page_url(n) %}/?page={{ n }}{% if current_filter %}&status={{ current_filter }}{% endif %}{% if assigned_filter %}&assigned={{ assigned_filter }}{% endif %}{% endmacro %}
+  <nav class="pagination" aria-label="Páginas de solicitudes">
+    {% if page > 1 %}
+    <a class="page-arrow" href="{{ page_url(page - 1) }}" aria-label="Página anterior">‹</a>
+    {% else %}
+    <span class="page-off" aria-hidden="true">‹</span>
+    {% endif %}
+    {% for n in page_numbers %}
+    <a href="{{ page_url(n) }}" {% if n == page %}aria-current="page" aria-label="Página {{ n }}, actual"{% else %}aria-label="Página {{ n }}"{% endif %}>{{ n }}</a>
+    {% endfor %}
+    {% if page < pages %}
+    <a class="page-arrow" href="{{ page_url(page + 1) }}" aria-label="Página siguiente">›</a>
+    {% else %}
+    <span class="page-off" aria-hidden="true">›</span>
+    {% endif %}
+  </nav>
+  {% endif %}
   {% else %}
   <p class="empty">No hay solicitudes{% if current_filter %} con estado «{{ current_filter }}»{% endif %}.</p>
   {% endif %}
