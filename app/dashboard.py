@@ -315,8 +315,13 @@ def invitations_create(request: Request):
     )
 
 
+PER_PAGE = 15
+
+
 @router.get("/")
-def ticket_list(request: Request, status: str | None = None, assigned: str | None = None):
+def ticket_list(
+    request: Request, status: str | None = None, assigned: str | None = None, page: int = 1
+):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -338,6 +343,15 @@ def ticket_list(request: Request, status: str | None = None, assigned: str | Non
     if assigned == "none":
         tickets = [t for t in tickets if t.assigned_to is None]
 
+    # ponytail: paginación en memoria — el filtrado ya trae todo para las
+    # stats; pasar a OFFSET/LIMIT en SQL si los folios crecen a decenas de miles.
+    pages = max(1, -(-len(tickets) // PER_PAGE))
+    page = max(1, min(page, pages))
+    tickets = tickets[(page - 1) * PER_PAGE : page * PER_PAGE]
+    # Ventana de 5 números centrada en la actual, como la referencia (1…5).
+    inicio_ventana = max(1, min(page - 2, pages - 4))
+    page_numbers = list(range(inicio_ventana, min(pages, inicio_ventana + 4) + 1))
+
     return templates.TemplateResponse(
         "tickets_list.html",
         {
@@ -348,6 +362,9 @@ def ticket_list(request: Request, status: str | None = None, assigned: str | Non
             "statuses": [s.value for s in TicketStatus],
             "current_filter": status,
             "assigned_filter": assigned,
+            "page": page,
+            "pages": pages,
+            "page_numbers": page_numbers,
         },
     )
 

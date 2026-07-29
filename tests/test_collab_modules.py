@@ -150,3 +150,27 @@ def test_detalle_del_folio_distingue_los_tres_estados_de_requisitos(monkeypatch,
     estados = [(r["valor"] is not None, r["pedido"]) for r in view.context["requisitos"]]
     assert estados == [(True, True), (False, True), (False, False)]
     assert isinstance(view.context["requirements"], str)  # referencia del catálogo
+
+
+def test_lista_de_solicitudes_pagina_de_15_en_15(monkeypatch, session):
+    """35 folios → 3 páginas: la 1 trae 15, la 3 trae 5, y una página fuera de
+    rango se ajusta a la última en vez de mostrar una tabla vacía."""
+    from app.dashboard import ticket_list
+
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    session.add(User(username="ana", password_hash="x"))
+    for i in range(35):
+        session.add(Ticket(
+            phone=f"52155000{i:05d}", category="Servicios básicos", service_id="curp",
+            service_name="CURP certificada", price_info="$80",
+        ))
+    session.commit()
+
+    pagina1 = ticket_list(_request("ana", path="/")).context
+    assert (len(pagina1["tickets"]), pagina1["pages"], pagina1["page_numbers"]) == (15, 3, [1, 2, 3])
+
+    pagina3 = ticket_list(_request("ana", path="/"), page=3).context
+    assert len(pagina3["tickets"]) == 5
+
+    fuera = ticket_list(_request("ana", path="/"), page=99).context
+    assert (fuera["page"], len(fuera["tickets"])) == (3, 5)
