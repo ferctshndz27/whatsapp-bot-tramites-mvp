@@ -32,7 +32,7 @@
     <strong>Servicio:</strong> {{ ticket.service_name }}<br>
     <strong>Precio:</strong> {{ ticket.price_info }}<br>
     <strong>Asignado a:</strong> {{ ticket.assigned_to or '— sin asignar' }}<br>
-    <strong>Conversación:</strong> <a href="/inbox/{{ ticket.phone }}">Abrir chat</a>
+    <strong>Conversación:</strong> <a href="/inbox/{{ ticket.phone }}">💬 Abrir chat</a>
     · <a href="/clients/{{ ticket.phone }}">Ficha del cliente</a>
   </p>
 
@@ -167,26 +167,6 @@
   <p class="empty" style="text-align:left; padding:.5rem 0;">
     La está atendiendo <strong>{{ ticket.assigned_to }}</strong> — solo esa persona puede cambiar el estado.
   </p>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h2>Conversación</h2>
-  {% if messages %}
-  <div class="chat">
-    {% for m in messages %}
-    <div class="bubble {{ m.direction.value }}">
-      {{ m.body }}
-      <span class="meta">
-        {{ 'Cliente' if m.direction.value == 'in' else 'Bot' }}
-        · {{ m.created_at | local }}
-        {% if m.direction.value == 'out' and m.wa_status %} · {{ m.wa_status }}{% endif %}
-      </span>
-    </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <p class="empty">Sin mensajes registrados.</p>
   {% endif %}
 </div>
 {% endblock %}
