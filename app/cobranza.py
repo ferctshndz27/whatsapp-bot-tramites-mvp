@@ -75,6 +75,62 @@ def _epoch_a_dt(epoch: int | float | None) -> datetime | None:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).replace(tzinfo=None)
 
 
+def naive_utc(dt: datetime) -> datetime:
+    """utcnow() es aware pero las columnas se leen naive: toda comparación
+    contra una fecha de la base pasa por aquí. Fuente única para el dominio,
+    los barridos y las reglas de alerta."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def aware_utc(dt: datetime) -> datetime:
+    """El camino inverso: una fecha leída de la base, comparable con utcnow()."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+# Vigencia de la sesión de Checkout. OJO: NO es el vencimiento del voucher de
+# OXXO (ese lo fija oxxo_dias y vive mucho más).
+SESION_VIGENCIA_SEGUNDOS = 24 * 3600
+
+
+def parametros_checkout(cobro: Cobro, intento: IntentoCobro) -> dict:
+    """Los parámetros EXACTOS del POST de creación, derivados SOLO de las dos
+    filas.
+
+    Nada aquí puede depender del reloj de la llamada: reusar una clave de
+    idempotencia con parámetros distintos hace que Stripe responda un error en
+    vez de devolver el objeto original, que es justo lo que el reintento del
+    barrido necesita. Por eso `expires_at` se calcula desde `solicitado_at`
+    del intento y no desde "ahora".
+    """
+    base = settings.public_base_url or ""
+    solicitado = aware_utc(intento.solicitado_at)
+    return {
+        "clave_idempotencia": intento.clave_idempotencia,
+        "monto_centavos": intento.monto_centavos,
+        "moneda": intento.moneda,
+        "concepto": cobro.concepto,
+        "metadata": {
+            "cobro_id": str(cobro.id),
+            "intento_id": str(intento.id),
+            "token": cobro.token_verificacion,
+            "llave_generacion": cobro.llave_generacion or "",
+        },
+        "metodos": [m for m in (intento.metodos_solicitados or "").split(",") if m],
+        "success_url": f"{base}/cobros/gracias",
+        "cancel_url": f"{base}/cobros/cancelado",
+        "msi": bool(intento.msi_meses),
+        # ponytail: si alguien cambia OXXO_DIAS_VENCIMIENTO teniendo un intento
+        # huérfano vivo, su reintento choca contra la clave y Stripe lo rechaza;
+        # se resuelve al siguiente barrido, que ya busca por metadata.
+        "oxxo_dias": settings.oxxo_dias_vencimiento,
+        "expires_at": int(solicitado.timestamp()) + SESION_VIGENCIA_SEGUNDOS,
+    }
+
+
 def llave_vivo(phone: str, service_id: str | None, ticket_id: int | None) -> str:
     """Candado por (teléfono, servicio) — NO por folio: con OXXO el folio se
     cierra y el bot fabrica otro, así que un candado por ticket_id no vería
@@ -345,11 +401,19 @@ def absorber_datos(cobro: Cobro, obj: dict, evento: EventoPasarela) -> None:
     if obj.get("livemode") is not None:
         cobro.livemode = obj["livemode"]
 
-    # Voucher OXXO / instrucciones SPEI: el reloj que importa.
-    oxxo = ((obj.get("next_action") or {}).get("oxxo_display_details") or {})
+    # Voucher OXXO: expires_after es el reloj que de verdad importa (la sesión
+    # de Checkout expira mucho antes y matar el cobro por ella pierde pagos).
+    accion = obj.get("next_action") or {}
+    oxxo = accion.get("oxxo_display_details") or {}
     if oxxo.get("hosted_voucher_url"):
         cobro.voucher_url = oxxo["hosted_voucher_url"]
         cobro.voucher_expira_at = _epoch_a_dt(oxxo.get("expires_after"))
+        cobro.detalle_pendiente_at = None
+    # SPEI: la ficha con CLABE vive en hosted_instructions_url y no trae un
+    # vencimiento propio — la transferencia se puede hacer mientras el PI viva.
+    spei = accion.get("display_bank_transfer_instructions") or {}
+    if spei.get("hosted_instructions_url"):
+        cobro.voucher_url = spei["hosted_instructions_url"]
         cobro.detalle_pendiente_at = None
 
     tipos = obj.get("payment_method_types") or []
@@ -404,15 +468,23 @@ def aplicar_evento(session: Session, evento: EventoPasarela) -> str:
                f"{'live' if modo_real else 'test'}")
         return _cerrar(session, evento, "ignorado", "modo no coincide")
 
-    cobro, rechazo = resolver_cobro(session, payload)
-    if rechazo:
-        alerta(session, "cobro:metadata-no-coincide", "Evento con metadata que no coincide",
-               f"{evento.stripe_event_id}: token de verificación distinto")
-        return _cerrar(session, evento, "ignorado", rechazo)
+    # Un evento sintético lo escribimos nosotros y ya sabe a qué cobro
+    # pertenece: no hay ambigüedad que resolver ni metadata ajena en la que
+    # confiar. La resolución de dos factores es para lo que llega de fuera —
+    # y la respuesta de Stripe a nuestro POST no siempre trae la metadata de
+    # vuelta en el mismo lugar.
+    cobro = session.get(Cobro, evento.cobro_id) if evento.cobro_id else None
     if cobro is None:
-        alerta(session, "cobro:evento-huerfano", "Evento de Stripe sin cobro",
-               f"{evento.stripe_event_id} ({evento.tipo}) no resolvió a ningún cobro")
-        return _cerrar(session, evento, "huerfano", "sin cobro que lo reclame")
+        cobro, rechazo = resolver_cobro(session, payload)
+        if rechazo:
+            alerta(session, "cobro:metadata-no-coincide",
+                   "Evento con metadata que no coincide",
+                   f"{evento.stripe_event_id}: token de verificación distinto")
+            return _cerrar(session, evento, "ignorado", rechazo)
+        if cobro is None:
+            alerta(session, "cobro:evento-huerfano", "Evento de Stripe sin cobro",
+                   f"{evento.stripe_event_id} ({evento.tipo}) no resolvió a ningún cobro")
+            return _cerrar(session, evento, "huerfano", "sin cobro que lo reclame")
 
     evento.cobro_id = cobro.id
     resultado, detalle = _aplicar_a_cobro(session, cobro, evento, _obj_de(payload))
@@ -510,6 +582,22 @@ def _aplicar_a_cobro(
 
     if tipo == "cobro.creado":
         return "aplicado", "alta del cobro"
+
+    if tipo == "cobro.detalle":
+        # Lectura del barrido para completar el voucher/ficha: no transiciona
+        # nada, pero absorber_datos ya escribió lo que traía el objeto.
+        return "aplicado", "detalle del instrumento absorbido"
+
+    if tipo == "cobro.vencido":
+        # Stripe canceló el instrumento por su cuenta (voucher expirado). Es
+        # distinto de que un asesor lo cancelara: mismo rango, otra palabra
+        # para el cliente y para el panel.
+        if transicionar(cobro, "vencido", evento):
+            cobro.llave_cobro_vivo = None
+            cobro.estado_motivo = "el instrumento venció (confirmado por Stripe)"
+            _actividad(session, cobro.ticket_id, "sistema", "cobro:vencido")
+            return "aplicado", None
+        return "ignorado", "vencimiento con rango menor"
 
     if tipo == "cobro.enviado":
         if transicionar(cobro, "pendiente", evento):
