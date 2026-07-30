@@ -495,20 +495,30 @@ def test_a_claude_se_le_manda_el_texto_recortado_y_sin_espacios(claude_espia):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="BUG: la colisión entre Sindos y Constancias se resuelve a ciegas hacia "
-    "Constancias — el nombre corto ('Semanas cotizadas') está contenido en el texto "
-    "y el largo ('Sindo de semanas cotizadas') no, así que queda UNA coincidencia y "
-    "deduce() gana por capa 'nombre' sin consultar suggestions()",
-    strict=True,
-)
 @pytest.mark.parametrize(
     "texto, candidatos",
     [
-        ("quiero mis semanas cotizadas", ("sin-semanas-cotizadas", "con-semanas-cotizadas")),
-        ("necesito mi vigencia de derechos", ("sin-vigencia-derechos", "con-vigencia-derechos")),
+        # Sigue en xfail: el nombre corto ('Semanas cotizadas') aparece en el
+        # texto y el largo ('Sindo de semanas cotizadas') no, así que hay UNA
+        # coincidencia y deduce() gana por capa 'nombre' sin ver suggestions().
+        pytest.param(
+            "quiero mis semanas cotizadas",
+            ("sin-semanas-cotizadas", "con-semanas-cotizadas"),
+            id="semanas-cotizadas",
+            marks=pytest.mark.xfail(
+                reason="BUG: colisión con nombres de largos distintos se resuelve a ciegas",
+                strict=True,
+            ),
+        ),
+        # Resuelto (2026-07-29): con el catálogo de producción ambos servicios
+        # matchean el término 'vigencia de derechos' con el mismo largo, el
+        # desempate por longitud no elige a ciegas y cae a sugerencias.
+        pytest.param(
+            "necesito mi vigencia de derechos",
+            ("sin-vigencia-derechos", "con-vigencia-derechos"),
+            id="vigencia-derechos",
+        ),
     ],
-    ids=["semanas-cotizadas", "vigencia-derechos"],
 )
 def test_colision_entre_categorias_cae_a_sugerencias(texto, candidatos, catalogo_produccion):
     # REGLA DESEADA: dos servicios distintos (uno en Sindos, otro en Constancias)

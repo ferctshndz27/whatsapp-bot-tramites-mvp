@@ -153,7 +153,7 @@ def deduce_all(text: str) -> list[Service]:
     found: list[Service] = []
     seen: set[str] = set()
     for service, words in _service_terms():
-        if service.id not in seen and any(w and w in normalized for w in words):
+        if service.id not in seen and any(w and _contains_term(w, normalized) for w in words):
             seen.add(service.id)
             found.append(service)
     return found[:MULTI_MAX_SERVICES] if len(found) >= 2 else []
@@ -173,6 +173,14 @@ def _service_terms() -> list[tuple[Service, list[str]]]:
     ]
 
 
+def _contains_term(term: str, normalized: str) -> bool:
+    """Coincidencia por palabra completa, nunca por subcadena. El catálogo de
+    producción trae el sinónimo "Ur", que como subcadena vive dentro de
+    "urge", "seguro" y "buro": contaminaba la capa literal con dobles matches
+    y el agente contestaba "no entendí" a frases perfectamente claras."""
+    return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", normalized) is not None
+
+
 def _deduce_keywords(text: str) -> tuple[Service | None, Category | None]:
     service, category, _, _ = _deduce_keywords_explained(text)
     return service, category
@@ -186,9 +194,20 @@ def _deduce_keywords_explained(
     capa: str = "literal"
     confianza: float | None = None
 
-    # Capa 1: nombre o sinónimo mencionado dentro de la frase ("necesito un
-    # acta de divorcio", "ocupo mi clave única") — el caso más común.
-    matches = {s.id: s for s, words in terms if any(w and w in normalized for w in words)}
+    # Capa 1: nombre o sinónimo mencionado como palabra completa dentro de la
+    # frase ("necesito un acta de divorcio") — el caso más común. Si varios
+    # servicios matchean, gana el del término más largo: la mención completa
+    # "correccion de rfc" pesa más que el sinónimo suelto "rfc" de otro
+    # servicio. Empate de longitud = ambigüedad real → cae a sugerencias.
+    con_termino = {}
+    for s, words in terms:
+        largo = max((len(w) for w in words if w and _contains_term(w, normalized)), default=0)
+        if largo:
+            con_termino[s.id] = (s, largo)
+    matches: dict[str, Service] = {}
+    if con_termino:
+        tope = max(largo for _, largo in con_termino.values())
+        matches = {sid: s for sid, (s, largo) in con_termino.items() if largo == tope}
     if not matches:
         # Capa 2: frase corta contenida en el nombre ("divorcio") — matching clásico.
         matches = {s.id: s for s in catalog.search_by_keyword(text)}
@@ -197,7 +216,12 @@ def _deduce_keywords_explained(
         # Capa 3: difuso — tolera faltas de ortografía ("nesesito mi kurp").
         # Solo gana si hay UN servicio claramente arriba del umbral.
         scored = sorted(
-            ((max(fuzz.partial_ratio(w, normalized) for w in words), s) for s, words in terms),
+            (
+                # Términos de 1-2 letras fuera del difuso: partial_ratio("ur",
+                # "seguro") da 100 y un sinónimo corto ganaría cualquier frase.
+                (max((fuzz.partial_ratio(w, normalized) for w in words if len(w) >= 3), default=0), s)
+                for s, words in terms
+            ),
             key=lambda pair: pair[0],
             reverse=True,
         )
@@ -213,7 +237,7 @@ def _deduce_keywords_explained(
         if capa == "literal":
             # Distinguir si acertó el nombre oficial o un sinónimo aprendido:
             # el panel mide si el catálogo de sinónimos está rindiendo.
-            capa = "nombre" if _norm(service.name) in normalized else "sinonimo"
+            capa = "nombre" if _contains_term(_norm(service.name), normalized) else "sinonimo"
         return service, None, capa, confianza
 
     for c in catalog.categories:

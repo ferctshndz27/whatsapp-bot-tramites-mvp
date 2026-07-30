@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+
+from app.catalog import catalog
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine, select
 
@@ -260,10 +262,24 @@ def _conv(session, phone: str = PHONE) -> Conversation:
 # ---- Jornadas ----
 
 
+
+def _sin_requisitos(*service_ids: str) -> None:
+    """Borra los requisitos documentados de servicios reales. El catálogo de
+    producción (importado 2026-07-29) trae requisitos en casi todo; las pruebas
+    que ejercitan el flujo SIN captura los limpian para no depender del dato."""
+    for sid in service_ids:
+        svc = catalog.service_by_id(sid)
+        assert catalog.update_service(
+            svc.id, svc.name, svc.price_info, requirements="", admin="prueba"
+        ) is None
+
+
 def test_jornada_completa_por_menu_crea_ticket_con_datos_del_catalogo(wa):
     """Regla: saludo → menú → categoría → servicio → 'sí' termina en UN ticket
     cuyo nombre/precio/categoría salen TAL CUAL del catálogo (el bot nunca
-    inventa precio) y el cliente recibe su folio."""
+    inventa precio) y el cliente recibe su folio. La captura de requisitos se
+    prueba en test_conversation; aquí se limpia para aislar la mecánica."""
+    _sin_requisitos("sb-acta-nacimiento")
     for text in ["hola", "servicios", "1", "1", "si"]:
         assert _send_text(text).status_code == 200
 
@@ -287,7 +303,7 @@ def test_jornada_completa_por_menu_crea_ticket_con_datos_del_catalogo(wa):
         assert len(tickets) == 1
         assert tickets[0].service_id == "sb-acta-nacimiento"
         assert tickets[0].service_name == "Acta de nacimiento"
-        assert tickets[0].price_info == "A cotizar"
+        assert tickets[0].price_info == "$25.00"  # precio real del catálogo de producción
         assert tickets[0].category == "Servicios básicos"
         assert tickets[0].status == TicketStatus.NUEVO
         assert tickets[0].escalado is False
@@ -325,11 +341,12 @@ def test_pedido_directo_en_el_primer_mensaje_no_lista_servicios(wa):
 def test_multiservicio_en_un_mensaje_confirma_una_vez_y_crea_dos_tickets(wa):
     """Regla: varios servicios en un mismo mensaje se confirman JUNTOS (UN solo
     mensaje interactivo) y generan un ticket por servicio."""
+    _sin_requisitos("sb-acta-nacimiento", "sb-curp")
     _send_text("quiero acta de nacimiento y descarga de curp")
 
     assert wa.kinds == ["buttons"]  # una sola confirmación, no dos
-    assert "Acta de nacimiento (A cotizar)" in wa.texts[0]
-    assert "Descarga de CURP (A cotizar)" in wa.texts[0]
+    assert "Acta de nacimiento ($25.00)" in wa.texts[0]
+    assert "Descarga de CURP ($10.00)" in wa.texts[0]
 
     _post(_envelope(_button_reply("si")))
 
@@ -350,6 +367,7 @@ def test_multiservicio_en_un_mensaje_confirma_una_vez_y_crea_dos_tickets(wa):
 def test_jornada_a_puros_toques_equivale_a_teclear_los_numeros(wa):
     """Regla: list_reply.id / button_reply.id se desenvuelven al mismo texto que
     el cliente habría tecleado — la jornada a toques da el mismo ticket."""
+    _sin_requisitos("sb-acta-nacimiento")
     _send_text("servicios")
     _post(_envelope(_list_reply("1")))       # Servicios básicos
     _post(_envelope(_list_reply("1")))       # Acta de nacimiento
@@ -366,7 +384,7 @@ def test_jornada_a_puros_toques_equivale_a_teclear_los_numeros(wa):
         tickets = _tickets(session)
         assert len(tickets) == 1
         assert tickets[0].service_id == "sb-acta-nacimiento"
-        assert tickets[0].price_info == "A cotizar"
+        assert tickets[0].price_info == "$25.00"
 
 
 def test_paginacion_de_infonavit_ida_y_vuelta_respeta_el_tope_de_meta(wa):
