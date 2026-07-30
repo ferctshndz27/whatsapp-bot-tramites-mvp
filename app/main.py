@@ -16,6 +16,7 @@ from app import (
     kb,
     my,
     replies,
+    stripe_webhook,
     synonym_miner,
     system,
     team_chat,
@@ -111,6 +112,7 @@ app.add_middleware(
 )
 app.middleware("http")(_security_headers)
 app.include_router(webhook.router)
+app.include_router(stripe_webhook.router)
 app.include_router(dashboard.router)
 app.include_router(inbox.router)
 app.include_router(team_chat.router)
