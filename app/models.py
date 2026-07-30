@@ -323,3 +323,251 @@ class Invitation(SQLModel, table=True):
     used_at: datetime | None = None
     used_by: str | None = None
     habilitado: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Cobranza con Stripe. Ver docs/DISENO-COBRANZA-STRIPE.md — el diseño explica
+# por qué cada campo existe; aquí solo van las restricciones que el código no
+# puede mostrar por sí solo.
+#
+# El dinero SIEMPRE es un entero de centavos. Nunca float, nunca Decimal: un
+# float de punto flotante no puede representar $0.10 exacto y en una pasarela
+# eso termina en centavos perdidos que no cuadran contra el estado de cuenta.
+# ---------------------------------------------------------------------------
+
+
+class Cobro(SQLModel, table=True):
+    """Documento de cobro. `estado` es un read model: siempre se puede
+    reconstruir haciendo replay de EventoPasarela ordenado por
+    (stripe_created, id). Nunca se decide un estado sin un evento que lo
+    respalde."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    # Nullable a propósito: el cobro sobrevive al cierre del folio. Con OXXO el
+    # cliente paga días después, cuando _latest_open_ticket ya no ve ese ticket.
+    ticket_id: int | None = Field(default=None, index=True)
+    phone: str = Field(index=True)
+    client_name: str | None = None
+    service_id: str | None = None
+    concepto: str = ""
+
+    # Minúsculas: es lo que exige la API de Stripe. El sufijo "MXN" lo pone la vista.
+    moneda: str = "mxn"
+    monto_centavos: int = 0
+    monto_cotizado_centavos: int | None = None
+    monto_catalogo_centavos: int | None = None
+    monto_origen: str = "manual"  # cotizado | override | manual
+    # Lo COBRADO, que puede diferir de lo pedido. Nunca pisa monto_centavos.
+    monto_pagado_centavos: int | None = None
+    moneda_pagada: str | None = None
+    monto_reembolsado_centavos: int = 0
+    # Leídos de la balance transaction de Stripe, jamás calculados por nosotros.
+    comision_centavos: int | None = None
+    neto_centavos: int | None = None
+    moneda_liquidacion: str | None = None
+    balance_transaction_id: str | None = None
+    # El depósito bancario de Stripe agrupa muchos cobros: sin este id no hay
+    # forma de cuadrar el estado de cuenta contra folios individuales.
+    payout_id: str | None = Field(default=None, index=True)
+
+    metodos_ofrecidos: str = "card"  # CSV: card,oxxo,spei
+    metodo_usado: str | None = None
+    msi_meses_ofrecidos: str | None = None  # CSV de plazos: "3,6,9,12"
+    msi_meses_usado: int | None = None  # cambia la comisión que absorbe el negocio
+
+    estado: str = Field(default="borrador", index=True)
+    estado_motivo: str | None = None
+
+    # Candado anti-doble-cobro. Va por (teléfono, servicio) y NO por folio: con
+    # OXXO el folio ya se cerró y el bot fabricó otro, así que un candado por
+    # ticket_id no vería nada y se generaría un segundo link cobrable.
+    # Solo pasa a NULL cuando Stripe confirma que el instrumento murió.
+    llave_cobro_vivo: str | None = None
+    # Mata el F5 y el doble clic en "Generar cobro". Nunca se libera.
+    llave_generacion: str | None = None
+    # Segundo factor al resolver el cobro desde un evento: protege contra ids
+    # reciclados si alguna vez se restaura un respaldo.
+    token_verificacion: str = Field(unique=True, index=True)
+
+    stripe_checkout_session_id: str | None = None
+    # Su presencia significa que hay un instrumento cobrable emitido, aunque la
+    # sesión de Checkout ya haya expirado: expirar la sesión NO mata el voucher.
+    stripe_payment_intent_id: str | None = None
+    stripe_charge_id: str | None = Field(default=None, index=True)
+    stripe_customer_id: str | None = None  # requisito de SPEI y semilla del recurrente
+
+    url_pago: str | None = None
+    url_expira_at: datetime | None = None
+    voucher_url: str | None = None
+    # El reloj que de verdad importa en OXXO/SPEI: la sesión expira mucho antes
+    # que el voucher, y vencer por la sesión mata cobros todavía pagables.
+    voucher_expira_at: datetime | None = None
+    # Cola del barrido: el aplicador de eventos no hace red, así que marca aquí
+    # "me falta traer el detalle del PaymentIntent".
+    detalle_pendiente_at: datetime | None = None
+
+    # Se toma del evento o de la respuesta, no del prefijo de la llave en
+    # memoria: así un evento de prueba nunca se aplica a un cobro real.
+    livemode: bool | None = None
+    discrepancia: bool = False
+    disputado: bool = False
+    ultimo_evento_id: str | None = None
+    ultimo_evento_created: int | None = None  # epoch de Stripe; desempata el rango
+
+    # Confirmación adelantada del asesor contra el recibo del cliente. NO es
+    # "pagado": el rango 4 sigue siendo exclusivo de Stripe. Esta bandera
+    # desbloquea el trabajo y deja el rastro de quién se adelantó.
+    confirmado_por_asesor: bool = False
+    confirmado_por: str | None = None
+    confirmado_at: datetime | None = None
+    # Lo único que amarra el comprobante del cliente a ESTE cobro.
+    referencia_recibo: str | None = None
+
+    plan_id: int | None = Field(default=None, index=True)  # bisagra del recurrente
+    origen: str = "panel"  # panel | plan
+    # Dueño permanente del cobro aunque el folio se reasigne después.
+    creado_por: str = Field(default="", index=True)
+    cancelado_por: str | None = None
+
+    enviado_at: datetime | None = None
+    pagado_at: datetime | None = None
+    cancelado_at: datetime | None = None
+    # El aviso al cliente sale FUERA del webhook y es reintentable: si Meta
+    # falla, no se puede perder la confirmación del pago por eso.
+    aviso_pago_enviado_at: datetime | None = None
+    reconciliado_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)
+    # Soft delete. NO entra en el WHERE del índice del candado: borrar un cobro
+    # del panel no debe liberar un voucher que el cliente todavía puede pagar.
+    habilitado: bool = True
+
+
+class IntentoCobro(SQLModel, table=True):
+    """Append-only: una fila por CADA llamada a la pasarela, escrita ANTES del
+    POST. Es el write-ahead log que contesta "el proceso murió y no sé si
+    Stripe alcanzó a crear el cobro"."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    cobro_id: int = Field(index=True)
+    numero: int = 1  # 1, 2, 3… dentro del mismo cobro
+    # "cobro:{cobro_id}:{numero}" — se manda a Stripe como Idempotency-Key.
+    clave_idempotencia: str = Field(unique=True, index=True)
+    operacion: str = "crear_checkout"  # crear_checkout|expirar_sesion|cancelar_pi|consultar
+    metodos_solicitados: str = "card"
+    msi_meses: str | None = None
+    monto_centavos: int = 0  # copia congelada: el cobro pudo cambiar después
+    moneda: str = "mxn"
+    estado: str = Field(default="enviando", index=True)  # enviando|exitoso|rechazado|error_red|abandonado
+    stripe_object: str | None = None  # checkout.session | payment_intent
+    stripe_id: str | None = Field(default=None, index=True)
+    # Lo primero que pide el soporte de Stripe cuando algo sale mal.
+    stripe_request_id: str | None = None
+    http_status: int | None = None
+    respuesta_json: str | None = None  # recortado a 8 KB antes de guardar
+    error_codigo: str | None = None
+    error_mensaje: str | None = None
+    reintentos: int = 0
+    origen: str = "panel"  # panel | cron | webhook
+    creado_por: str = ""
+    # Liga el dinero con la conversación: permite probar la entrega del link
+    # mirando Message.wa_status.
+    wa_message_id: int | None = None
+    livemode: bool | None = None
+    solicitado_at: datetime = Field(default_factory=utcnow)  # ANTES del POST
+    # NULL con estado "enviando" significa literalmente "no sé qué pasó".
+    respondido_at: datetime | None = None
+    cerrado_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
+class EventoPasarela(SQLModel, table=True):
+    """Append-only y única fuente de verdad local. Guarda TODO evento con firma
+    válida, incluidos los que no sabemos aplicar: un evento huérfano nunca se
+    descarta, se deja en la cola del barrido."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    # evt_… de Stripe, o sintético para las transiciones que no vienen de él:
+    # "panel:cancel:{cobro_id}:{iso}", "cron:recon:…", "panel:consulta:…".
+    # Que TODA transición sea un evento es lo que hace fiel al replay.
+    stripe_event_id: str = Field(unique=True, index=True)
+    tipo: str = Field(index=True)
+    api_version: str | None = None
+    livemode: bool | None = None
+    # El reloj del orden es el de Stripe, no el nuestro: los eventos llegan
+    # desordenados y el nuestro puede estar desfasado.
+    stripe_created: int = Field(default=0, index=True)
+    recibido_at: datetime = Field(default_factory=utcnow, index=True)
+    objeto_id: str | None = Field(default=None, index=True)  # cs_ | pi_ | ch_
+    monto_centavos: int | None = None  # para conciliar sin abrir el JSON
+    moneda: str | None = None
+    cobro_id: int | None = Field(default=None, index=True)  # NULL = huérfano
+    intento_id: int | None = Field(default=None, index=True)
+    payload_json: str = ""  # crudo, recortado a 32 KB
+    procesado_at: datetime | None = Field(default=None, index=True)  # NULL = pendiente
+    intentos_proceso: int = 0
+    resultado: str | None = Field(default=None, index=True)  # aplicado|duplicado|ignorado|huerfano|error
+    detalle: str | None = None
+    habilitado: bool = True
+
+
+class PlanCobro(SQLModel, table=True):
+    """Cobro recurrente. INERTE en la primera entrega: la tabla y su espejo
+    existen para no volver a pagar los cinco lugares del espejo MSSQL cuando
+    llegue el recurrente, pero nada la escribe todavía.
+
+    La suscripción NO cobra: GENERA cobros, cada uno con su
+    llave_generacion='plan:{id}:{periodo}' que garantiza exactamente-una-vez."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    phone: str = Field(index=True)
+    ticket_id: int | None = Field(default=None, index=True)
+    service_id: str | None = None
+    concepto: str = ""
+    moneda: str = "mxn"
+    monto_centavos: int = 0
+    periodicidad: str = "mensual"  # mensual | quincenal | anual
+    # 1-28 y nunca 29-31: febrero no tiene 30 y el cobro se saltaría un mes.
+    dia_cobro: int | None = None
+    paymentmethod_id: int | None = None
+    proxima_ejecucion_at: datetime | None = Field(default=None, index=True)
+    ultima_ejecucion_at: datetime | None = None
+    ultimo_periodo_generado: str | None = None  # "2026-08": memoria explícita
+    cobros_generados: int = 0
+    intentos_fallidos_seguidos: int = 0  # dunning
+    estado: str = Field(default="activo", index=True)  # activo | pausado | cancelado
+    fin_at: datetime | None = None
+    stripe_customer_id: str | None = None
+    stripe_subscription_id: str | None = None
+    creado_por: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
+class PaymentMethod(SQLModel, table=True):
+    """Método de pago guardado para cobrar sin el cliente presente. INERTE en
+    la primera entrega.
+
+    Nunca guarda el número de tarjeta ni el CVC: solo el identificador pm_ de
+    Stripe y los cuatro últimos dígitos. Guardar el PAN nos metería en alcance
+    PCI completo, que es justo lo que el diseño evita."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    phone: str = Field(index=True)
+    stripe_customer_id: str = Field(index=True)
+    stripe_payment_method_id: str = Field(unique=True, index=True)
+    tipo: str = "card"
+    marca: str | None = None
+    ultimos4: str | None = None
+    exp_mes: int | None = None
+    exp_anio: int | None = None
+    funding: str | None = None  # credit | debit; determina si aplica MSI
+    predeterminado: bool = False
+    # Consentimiento explícito para cobrar sin presencia del cliente: sin esto
+    # un cargo recurrente es indefendible ante una disputa.
+    autorizado_por: str | None = None
+    autorizado_at: datetime | None = None
+    estado: str = "activo"  # activo | vencido | revocado
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True

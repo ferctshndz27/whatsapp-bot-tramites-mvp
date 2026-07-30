@@ -460,3 +460,77 @@ Todos idempotentes, sin orden entre sí, invocados por `nightly()` con el mismo 
 ### 10.4 Dos decisiones de producto que el dueño tiene que tomar (no son código)
 1. **Aviso de pago fuera de la ventana de 24 h.** Con OXXO la confirmación llega a los 2-3 días con la ventana de WhatsApp cerrada. Sin una **plantilla HSM aprobada por Meta**, el cliente **no** recibe aviso automático de "ya cayó tu pago": el panel se lo marca al asesor para que lo mande a mano. Si se quiere el aviso automático, hay que dar de alta la plantilla en Meta.
 2. **CFDI.** Stripe cobra, no factura en México. Hay que decidir quién y cómo emite la factura, porque es la primera pregunta que va a llegar.
+---
+
+# ADENDA — Decisiones del dueño (2026-07-29)
+
+Cuatro preguntas abiertas quedaron resueltas. Dos cambian el alcance de PR1.
+
+## A.1 Revisión manual de OXXO: **consultar y, si no, marcar**
+
+El asesor tendrá dos acciones en el folio, en este orden:
+
+1. **«Consultar a Stripe ahora»** — `GET /v1/payment_intents/{id}` bajo demanda; el
+   resultado entra como evento sintético `panel:consulta:{cobro_id}:{iso}` y pasa por el
+   mismo aplicador que el webhook. Cero riesgo: Stripe sigue siendo la única verdad.
+   Es la reconciliación manual que ya estaba en §8, ahora con botón propio.
+2. **«Confirmado por asesor»** — solo si Stripe todavía no sabe nada. **No** escribe
+   `estado='pagado'`: escribe una bandera paralela. El rango 4 sigue siendo exclusivo de
+   Stripe y la monotonía de §1.6 queda intacta.
+
+Campos nuevos en `cobro` (ninguno altera el índice del candado):
+
+| Campo | Tipo | Nota |
+|---|---|---|
+| `confirmado_por_asesor` | `bool = False` | desbloquea el trabajo; **no** es "pagado" |
+| `confirmado_por` | `str \| None` | username de quien puso la bandera |
+| `confirmado_at` | `datetime \| None` | |
+| `referencia_recibo` | `str \| None` | la referencia tecleada del recibo de OXXO/SPEI; es lo único que amarra el comprobante a ESTE cobro |
+
+Reglas:
+* El panel y `/export/conciliacion.csv` distinguen «Pagado» de «Confirmado por asesor
+  (sin confirmar por Stripe)». Nunca se suman como lo mismo.
+* Alerta `cobro:confirmado-sin-stripe` si pasan más de N horas con la bandera puesta y
+  Stripe sigue sin confirmar.
+* Cuando Stripe confirma, `estado` sube a `pagado` normalmente y los dos registros se
+  cruzan por `referencia_recibo` / `stripe_charge_id`. La bandera se conserva como
+  rastro de quién se adelantó.
+
+## A.2 El depósito bancario **no** sirve para confirmar un folio
+
+El dueño reporta que ven el depósito «en la cuenta bancaria del negocio». Eso es el
+**payout de Stripe**: llega días después y **agrupado** — un solo depósito contiene
+decenas de cobros, ya neteados de comisiones. No existe correspondencia 1:1 entre un
+depósito y un folio, así que ese camino nunca va a confirmar un cobro individual.
+
+Consecuencia para el diseño: `/export/conciliacion.csv` sube de «bonito de tener» a
+**pieza central**, y se le agrega la dimensión que faltaba:
+
+* Guardar `payout_id` en `cobro` (viene de la balance transaction).
+* Vista `/cobros/payouts`: por cada depósito bancario, qué cobros lo componen, cuánto
+  fue comisión y cuánto neto. Es lo que permite cuadrar el estado de cuenta del banco
+  contra los folios sin hacerlo a mano.
+
+## A.3 SPEI **entra en PR1**
+
+Sube de PR1.5 a PR1 por decisión del dueño: confirma en minutos u horas (no días como
+OXXO) y su comisión es menor que tarjeta, así que es la respuesta directa a la queja de
+lentitud. Implica `customer_balance` con `bank_transfer[type]=mx_bank_transfer`, crear
+Customer en la sesión y manejar `payment_intent.partially_funded`.
+**Verificar los nombres exactos contra la doc vigente de Stripe al implementar.**
+
+Métodos de PR1: **tarjeta + MSI + OXXO + SPEI.**
+
+## A.4 Sin plantilla HSM: avisa el panel, decide el asesor
+
+No se da de alta ninguna plantilla UTILITY con Meta. Cuando un pago se confirma fuera de
+la ventana de 24 h, el bot **no** le escribe al cliente: el folio se marca en el tablero
+del asesor y él decide si contacta. Se conserva `aviso_pago_enviado_at` en el esquema
+para no migrar si algún día se aprueba la plantilla.
+
+## A.5 CFDI: fuera de alcance
+
+El dueño indica que no se emite factura porque no cobran IVA sobre el costo de
+operación. El módulo termina en «el cliente pagó». *(No es asesoría fiscal: conviene
+confirmarlo con su contador, porque no cobrar IVA y no estar obligado a emitir CFDI son
+cosas distintas.)*

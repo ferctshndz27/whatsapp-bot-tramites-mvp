@@ -54,6 +54,29 @@ _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
 }
 
 
+# El candado ux_cobro_vivo es la defensa contra el doble cobro: mientras un
+# cobro tenga instrumento vivo (link o voucher de OXXO), no se puede crear otro
+# para el mismo (teléfono, servicio). Va por servicio y no por folio porque con
+# OXXO el cliente paga días después, cuando el folio ya se cerró y el bot
+# fabricó uno nuevo — un candado por ticket_id no vería nada.
+_COBRANZA_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_cobro_vivo "
+    "ON cobro(llave_cobro_vivo) WHERE llave_cobro_vivo IS NOT NULL",
+    # Mata el F5 y el doble clic en "Generar cobro".
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_cobro_generacion "
+    "ON cobro(llave_generacion) WHERE llave_generacion IS NOT NULL",
+    # Impiden que dos cobros reclamen el mismo objeto de Stripe al resolver un evento.
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_cobro_payment_intent "
+    "ON cobro(stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_cobro_session "
+    "ON cobro(stripe_checkout_session_id) WHERE stripe_checkout_session_id IS NOT NULL",
+    # Un solo intento en vuelo por cobro: si el proceso murió sin saber si Stripe
+    # alcanzó a crear el instrumento, nadie puede lanzar otro hasta resolverlo.
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_intento_vivo "
+    "ON intentocobro(cobro_id) WHERE estado = 'enviando'",
+)
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _add_missing_columns("message", _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
@@ -72,6 +95,12 @@ def init_db() -> None:
                 "ON message(wa_message_id) WHERE wa_message_id IS NOT NULL"
             )
         )
+        # Cobranza: índices únicos PARCIALES. El "WHERE ... IS NOT NULL" es lo
+        # que los hace útiles — permiten infinitas filas con el campo en NULL y
+        # prohíben dos con el mismo valor. SQLModel no sabe declararlos, así que
+        # van a mano igual que el de arriba.
+        for sql in _COBRANZA_INDEXES:
+            conn.execute(text(sql))
 
 
 def _add_missing_columns(table: str, columns: dict[str, str]) -> None:
