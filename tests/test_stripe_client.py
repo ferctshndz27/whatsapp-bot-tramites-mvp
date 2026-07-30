@@ -136,23 +136,34 @@ def test_402_es_rechazo_definitivo_sin_reintentos(con_credenciales, monkeypatch)
     assert intentos["n"] == 1
 
 
+def _grabadora(monkeypatch):
+    """Devuelve {path: data} de cada POST, con respuestas por endpoint."""
+    llamadas: dict[str, dict] = {}
+    orden: list[str] = []
+
+    def _doble(metodo, url, **kw):
+        path = url.replace(sc.API_BASE, "")
+        orden.append(path)
+        llamadas[path] = dict(kw.get("data") or {}, _clave=kw["headers"].get("Idempotency-Key"))
+        ident = "cus_sintetico" if path == "/v1/customers" else "cs_test_123"
+        return _Respuesta(200, {"id": ident})
+
+    monkeypatch.setattr(sc.httpx, "request", _doble)
+    return llamadas, orden
+
+
 def test_checkout_manda_metadata_dos_veces_y_mapea_spei(con_credenciales, monkeypatch):
     """La metadata va a nivel sesión Y en payment_intent_data (la única
     búsqueda por metadata que existe es sobre PaymentIntents), y 'spei' se
-    traduce a customer_balance con transferencia mx + Customer obligatorio."""
-    capturado = {}
-
-    def _doble(metodo, url, **kw):
-        capturado.update(kw["data"])
-        return _Respuesta(200, {"id": "cs_test_123"})
-
-    monkeypatch.setattr(sc.httpx, "request", _doble)
+    traduce a customer_balance con transferencia mx."""
+    llamadas, _ = _grabadora(monkeypatch)
     sc.crear_checkout_session(
         clave_idempotencia="cobro:7:1", monto_centavos=125000, moneda="mxn",
         concepto="Acta", metadata={"cobro_id": 7, "token": "tok"},
         metodos=["card", "oxxo", "spei"], msi=True, oxxo_dias=3,
         success_url="https://x/ok", cancel_url="https://x/no",
     )
+    capturado = llamadas["/v1/checkout/sessions"]
     assert capturado["line_items[0][price_data][unit_amount]"] == "125000"
     assert capturado["metadata[cobro_id]"] == "7"
     assert capturado["payment_intent_data[metadata][cobro_id]"] == "7"
@@ -161,6 +172,55 @@ def test_checkout_manda_metadata_dos_veces_y_mapea_spei(con_credenciales, monkey
     assert capturado["payment_method_types[1]"] == "oxxo"
     assert capturado["payment_method_types[2]"] == "customer_balance"
     assert capturado["payment_method_options[customer_balance][bank_transfer][type]"] == "mx_bank_transfer"
-    assert capturado["customer_creation"] == "always"
     assert capturado["payment_method_options[oxxo][expires_after_days]"] == "3"
     assert capturado["payment_method_options[card][installments][enabled]"] == "true"
+
+
+def test_spei_crea_customer_antes_y_nunca_manda_customer_creation(con_credenciales, monkeypatch):
+    """400 real de Stripe: customer_balance exige un Customer YA creado, y
+    `customer` es excluyente con `customer_creation`. La clave derivada es lo
+    que hace que el reintento del barrido reuse el mismo Customer."""
+    llamadas, orden = _grabadora(monkeypatch)
+    sc.crear_checkout_session(
+        clave_idempotencia="cobro:7:1", monto_centavos=125000, moneda="mxn",
+        concepto="Acta", metadata={"cobro_id": 7}, metodos=["card", "spei"],
+        success_url="https://x/ok", cancel_url="https://x/no",
+    )
+    assert orden == ["/v1/customers", "/v1/checkout/sessions"]
+    assert llamadas["/v1/customers"]["_clave"] == "cobro:7:1:cus"
+    assert llamadas["/v1/customers"]["metadata[cobro_id]"] == "7"
+    sesion = llamadas["/v1/checkout/sessions"]
+    assert sesion["customer"] == "cus_sintetico"
+    assert "customer_creation" not in sesion
+
+
+def test_sin_spei_no_se_crea_customer(con_credenciales, monkeypatch):
+    llamadas, orden = _grabadora(monkeypatch)
+    sc.crear_checkout_session(
+        clave_idempotencia="cobro:8:1", monto_centavos=1000, moneda="mxn",
+        concepto="Acta", metadata={"cobro_id": 8}, metodos=["card", "oxxo"],
+        success_url="https://x/ok", cancel_url="https://x/no",
+    )
+    assert orden == ["/v1/checkout/sessions"]
+    assert "customer" not in llamadas["/v1/checkout/sessions"]
+
+
+def test_si_falla_el_customer_no_se_crea_la_sesion(con_credenciales, monkeypatch):
+    """Sin Customer no hay sesión posible: se propaga el error tal cual, con
+    su `indeterminado` intacto para que el barrido decida — jamás un POST de
+    sesión que Stripe rechazaría igual."""
+    orden = []
+
+    def _doble(metodo, url, **kw):
+        orden.append(url)
+        return _Respuesta(500, {"error": {"code": "api_error"}})
+
+    monkeypatch.setattr(sc.httpx, "request", _doble)
+    r = sc.crear_checkout_session(
+        clave_idempotencia="cobro:9:1", monto_centavos=1000, moneda="mxn",
+        concepto="Acta", metadata={"cobro_id": 9}, metodos=["spei"],
+        success_url="https://x/ok", cancel_url="https://x/no",
+    )
+    assert r.ok is False
+    assert r.indeterminado is True
+    assert all(u.endswith("/v1/customers") for u in orden)

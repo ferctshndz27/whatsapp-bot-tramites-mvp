@@ -142,6 +142,13 @@ def _metadata_plana(prefijo: str, metadata: dict) -> dict:
     return {f"{prefijo}[{k}]": str(v) for k, v in metadata.items()}
 
 
+def crear_customer(clave_idempotencia: str, metadata: dict) -> RespuestaStripe:
+    """POST /v1/customers. Solo SPEI lo necesita — ver crear_checkout_session."""
+    return _request("POST", "/v1/customers",
+                    data=_metadata_plana("metadata", metadata),
+                    clave_idempotencia=clave_idempotencia)
+
+
 def crear_checkout_session(
     clave_idempotencia: str,
     monto_centavos: int,
@@ -161,7 +168,21 @@ def crear_checkout_session(
     el PaymentIntent es el único objeto que Stripe sabe buscar por metadata,
     y esa búsqueda es la llave de recuperación cuando la clave de
     idempotencia ya caducó (>24 h).
+
+    Con 'spei' hay un POST previo: customer_balance exige un Customer YA
+    creado ("requires `customer` or `customer_account` to be set" — 400 real
+    de la API; `customer_creation: always` NO lo satisface). Va con la clave
+    de idempotencia derivada, así que el reintento del barrido reusa el mismo
+    Customer en vez de sembrar uno por intento.
     """
+    if "spei" in metodos:
+        r_cus = crear_customer(f"{clave_idempotencia}:cus", metadata)
+        if not r_cus.ok:
+            return r_cus
+        customer_id = (r_cus.objeto or {}).get("id")
+    else:
+        customer_id = None
+
     data: dict = {
         "mode": "payment",
         "line_items[0][quantity]": "1",
@@ -179,10 +200,12 @@ def crear_checkout_session(
             data[f"payment_method_types[{i}]"] = "customer_balance"
             data["payment_method_options[customer_balance][funding_type]"] = "bank_transfer"
             data["payment_method_options[customer_balance][bank_transfer][type]"] = "mx_bank_transfer"
-            data["customer_creation"] = "always"
         else:
             data[f"payment_method_types[{i}]"] = metodo
         i += 1
+    if customer_id:
+        # Excluyente con customer_creation: mandar ambos es un 400.
+        data["customer"] = customer_id
     if "oxxo" in metodos and oxxo_dias:
         data["payment_method_options[oxxo][expires_after_days]"] = str(oxxo_dias)
     if msi:

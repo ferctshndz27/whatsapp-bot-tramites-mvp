@@ -581,6 +581,14 @@ snapshot completos, cero rutas y cero escrituras.
 6. **Páginas de retorno propias** (`/cobros/gracias`, `/cobros/cancelado`):
    públicas y sin `base.html`. Las abre el cliente desde su celular y ninguna
    afirma que el pago se aplicó — con OXXO/SPEI llega ahí *antes* de pagar.
+7. **SPEI hace un POST previo a `/v1/customers`.** El diseño suponía que
+   `customer_creation: always` bastaba; la API viva responde
+   `400 The payment method 'customer_balance' requires 'customer' … to be set`.
+   El Customer se crea con la clave de idempotencia derivada (`…:cus`), así el
+   reintento del barrido reusa el mismo en vez de sembrar uno por intento, y
+   `customer_creation` desaparece del cuerpo porque es excluyente con
+   `customer`. Lo encontró la prueba de humo contra la cuenta real; ningún
+   doble podía verlo.
 
 ## Lo que falta para cobrarle a un cliente de verdad
 
@@ -590,11 +598,21 @@ Nada de código. Falta lo que solo puede hacer el dueño (§10):
    primera el panel dice «Stripe no configurado» y no escribe ningún cobro; sin
    la segunda el webhook rechaza **todo** con 403, a propósito.
 2. Activar OXXO y MSI en el dashboard de Stripe, **en cada modo por separado**.
+   Verificado en **prueba** (2026-07-30): la API acepta `oxxo` con
+   `expires_after_days`, `installments.enabled` y `customer_balance` con
+   `mx_bank_transfer`. En **modo real no está verificado** — son interruptores
+   distintos.
 3. Registrar el endpoint `https://<dominio>/webhooks/stripe` con los 11 eventos
    de §10.2.3.
 4. `timedatectl set-ntp true` en el VPS: un desfase >300 s hace que la
    verificación de firma rechace el 100% de los webhooks **y el sistema se ve
    perfectamente sano**.
-5. **La prueba de humo real sigue pendiente y es obligatoria antes de cobrarle
-   a nadie**: todo lo verificado hasta aquí corre contra dobles, no contra la
-   cuenta viva.
+5. **Humo de creación: hecho** (2026-07-30, `sk_test_`, cuenta
+   `acct_1TycbaQUq2XAVvdQ`). Cuatro Checkout Sessions reales — tarjeta,
+   tarjeta+OXXO, tarjeta+MSI, tarjeta+OXXO+SPEI — 4/4 aceptadas por la API.
+   De ahí salió la desviación 7.
+6. **Falta el humo de PAGO, de punta a punta, y es obligatorio antes de
+   cobrarle a nadie**: generar un cobro desde un folio, pagar con
+   `4242 4242 4242 4242`, y ver que el webhook lo aplica y el cobro llega a
+   `pagado`. Requiere `STRIPE_WEBHOOK_SECRET` (el `whsec_` de `stripe listen`),
+   que al 2026-07-30 sigue vacío en el `.env` local.
