@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi.templating import Jinja2Templates
 
 from app.auth import is_admin
+from app.dinero import formato_monto
 
 # CDMX es UTC-6 todo el año (México eliminó el horario de verano en 2022). Es la
 # misma zona que usan los cortes "hoy/semana/mes" de la gráfica de actividad.
@@ -32,6 +33,7 @@ def local_dt(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["is_admin"] = is_admin
+templates.env.globals["formato_monto"] = formato_monto
 templates.env.filters["local"] = local_dt
 
 
