@@ -11,6 +11,7 @@ from app import (
     authlog,
     catalog_admin,
     clients,
+    cobranza_panel,
     dashboard,
     inbox,
     kb,
@@ -114,6 +115,7 @@ app.middleware("http")(_security_headers)
 app.include_router(webhook.router)
 app.include_router(stripe_webhook.router)
 app.include_router(dashboard.router)
+app.include_router(cobranza_panel.router)
 app.include_router(inbox.router)
 app.include_router(team_chat.router)
 app.include_router(activity.router)

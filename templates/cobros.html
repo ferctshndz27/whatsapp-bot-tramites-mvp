@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Cobros{% endblock %}
+{% block content %}
+<h1>Cobros</h1>
+
+<div class="card">
+  <p style="margin-top:0;">
+    <a href="/export/cobros.csv">↓ CSV de cobros</a> ·
+    <a href="/export/conciliacion.csv">↓ CSV de conciliación</a> ·
+    <a href="/cobros/payouts">Depósitos del banco</a>
+  </p>
+
+  {% if not stripe_configurado %}
+  <p><span class="badge caducada">Stripe no está configurado</span>
+     Sin <code>STRIPE_SECRET_KEY</code> no se puede generar ningún cobro.</p>
+  {% else %}
+  <p style="color:var(--text-muted); font-size:.9rem;">
+    Llave en modo <strong>{{ modo }}</strong>.
+    {% if todos %}
+      Mostrando cobros de los dos modos.
+      <a href="/cobros">Ver solo los de modo {{ modo }}</a>
+    {% else %}
+      Los cobros del otro modo no se muestran ni suman.
+      <a href="/cobros?todos=1">Ver todos</a>
+    {% endif %}
+  </p>
+  {% endif %}
+
+  {% if totales %}
+  <div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+    {% for estado, t in totales.items() %}
+    <div class="card" style="min-width:170px; margin:0;">
+      <div style="color:var(--text-muted); font-size:.82rem;">{{ estado|replace('_', ' ')|capitalize }}</div>
+      <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(t.centavos) }}</div>
+      <div style="color:var(--text-muted); font-size:.82rem;">
+        {{ t.n }} cobro{{ '' if t.n == 1 else 's' }}
+        {% if t.neto %}· neto {{ formato_monto(t.neto) }}{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if cobros %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Folio</th><th>Cliente</th><th>Concepto</th>
+          <th>Monto</th><th>Estado</th><th>Método</th><th>Neto</th><th>Creado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in cobros %}
+        <tr>
+          <td>{{ c.id }}</td>
+          <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
+          <td>{{ c.client_name or c.phone }}</td>
+          <td>{{ c.concepto }}</td>
+          <td>
+            {{ formato_monto(c.monto_centavos, c.moneda) }}
+            {% if c.monto_pagado_centavos and c.monto_pagado_centavos != c.monto_centavos %}
+            <br><small style="color:#be1e51;">cobrado {{ formato_monto(c.monto_pagado_centavos, c.moneda_pagada or c.moneda) }}</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if c.estado == 'pagado' %}<span class="badge cerrado">✓ Pagado</span>
+            {% elif c.estado == 'pendiente' %}<span class="badge tomado">⏳ Pendiente</span>
+            {% elif c.estado == 'cancelacion_solicitada' %}<span class="badge nuevo">⚠ Cancelación sin confirmar</span>
+            {% elif c.estado == 'reembolsado' %}<span class="badge asignada">↩ Reembolsado</span>
+            {% elif c.estado == 'borrador' %}<span class="badge asignada">✎ Borrador</span>
+            {% else %}<span class="badge caducada">✕ {{ c.estado|capitalize }}</span>{% endif %}
+            {% if c.confirmado_por_asesor and c.estado != 'pagado' %}
+            <br><small>confirmado por {{ c.confirmado_por }}, sin Stripe</small>
+            {% endif %}
+            {% if c.discrepancia %}<br><small style="color:#be1e51;">⚠ discrepancia</small>{% endif %}
+            {% if c.disputado %}<br><small style="color:#be1e51;">⚠ en disputa</small>{% endif %}
+          </td>
+          <td>
+            {{ c.metodo_usado or (c.metodos_ofrecidos|replace(',', ', ')) }}
+            {% if c.msi_meses_usado %}<br><small>{{ c.msi_meses_usado }} MSI</small>{% endif %}
+          </td>
+          <td>
+            {% if c.neto_centavos is not none %}{{ formato_monto(c.neto_centavos, c.moneda_liquidacion or c.moneda) }}
+            {% elif c.estado == 'pagado' %}<small style="color:var(--text-muted);">por conciliar</small>
+            {% else %}—{% endif %}
+          </td>
+          <td><small>{{ c.created_at|local }}<br>por {{ c.creado_por }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);">Todavía no hay cobros.</p>
+  {% endif %}
+</div>
+{% endblock %}

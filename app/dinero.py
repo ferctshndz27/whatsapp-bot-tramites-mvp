@@ -58,6 +58,15 @@ def formato_monto(centavos: int, moneda: str = MONEDA_DEFAULT) -> str:
     return f"{signo}${entero:,}.{resto:02d} {moneda.upper()}"
 
 
+def monto_editable(centavos: int) -> str:
+    """125050 -> '1250.50'. Para prellenar un <input> cuyo valor vuelve a
+    pasar por parse_monto: sin símbolo, sin comas y sin moneda, para que el
+    viaje de ida y vuelta sea exacto."""
+    signo = "-" if centavos < 0 else ""
+    entero, resto = divmod(abs(centavos), 100)
+    return f"{signo}{entero}.{resto:02d}"
+
+
 if __name__ == "__main__":  # pragma: no cover
     assert parse_monto("1,250.00") == 125000
     assert parse_monto("$1250") == 125000
@@ -71,4 +80,7 @@ if __name__ == "__main__":  # pragma: no cover
             raise AssertionError(f"parse_monto aceptó {malo!r}")
     assert formato_monto(125050) == "$1,250.50 MXN"
     assert formato_monto(-990) == "-$9.90 MXN"
+    # Ida y vuelta exacto: lo que se prellena en el input debe volver igual.
+    for centavos in (1000, 125050, 999_999_99):
+        assert parse_monto(monto_editable(centavos)) == centavos, centavos
     print("ok")

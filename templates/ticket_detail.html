@@ -78,6 +78,35 @@
   <p style="white-space: pre-line; background:#f8fafc; border-radius:6px; padding:.75rem 1rem;">{{ ticket.notes }}</p>
   {% endif %}
 
+  {% if err or ok %}
+  <p style="margin:.75rem 0;">
+    {% if err == 'monto' %}<span class="badge caducada">El monto no es válido. Usa algo como 1,250.00</span>
+    {% elif err == 'monto-minimo' %}<span class="badge caducada">El monto es demasiado bajo (mínimo $10.00)</span>
+    {% elif err == 'monto-maximo' %}<span class="badge caducada">El monto supera el tope permitido. Revisa que no sobre un cero.</span>
+    {% elif err == 'monto-oxxo' %}<span class="badge caducada">OXXO no acepta fichas de ese monto. Quita OXXO o baja el importe.</span>
+    {% elif err == 'sin-stripe' %}<span class="badge caducada">Stripe no está configurado: no se generó ningún cobro.</span>
+    {% elif err == 'cobro-vivo' %}<span class="badge caducada">Este cliente ya tiene un cobro sin liquidar de este servicio. Cancélalo antes de generar otro.</span>
+    {% elif err == 'stripe' %}<span class="badge caducada">Stripe no aceptó el cobro. El borrador quedó guardado y se puede reintentar.</span>
+    {% elif err == 'ventana' %}<span class="badge esperando">El cobro se generó, pero pasaron más de 24 h desde el último mensaje del cliente: cópiale el link a mano.</span>
+    {% elif err == 'cancelacion-pendiente' %}<span class="badge esperando">Stripe no confirmó la cancelación: la ficha sigue siendo pagable y el cobro queda bloqueado hasta que confirme.</span>
+    {% elif err == 'cobro-vivo-al-cerrar' %}<span class="badge esperando">Este cliente tiene un cobro sin liquidar. Puedes cerrar el folio, pero hay que confirmarlo.</span>
+    {% elif err == 'sin-novedad' %}<span class="badge asignada">Stripe no reporta cambios todavía.</span>
+    {% elif err == 'no-pagado' %}<span class="badge caducada">Ese cobro todavía no está pagado.</span>
+    {% elif err == 'ya-pagado' %}<span class="badge asignada">Ese cobro ya está confirmado por Stripe.</span>
+    {% elif err == 'cobro-no-cancelable' %}<span class="badge asignada">Ese cobro ya no se puede cancelar.</span>
+    {% elif err %}<span class="badge caducada">No se pudo completar la acción.</span>
+    {% elif ok == 'cobro' %}<span class="badge cerrado">Cobro generado y enviado al cliente ✓</span>
+    {% elif ok == 'enviado' %}<span class="badge cerrado">Link reenviado al cliente ✓</span>
+    {% elif ok == 'cancelado' %}<span class="badge cerrado">Cobro cancelado ✓</span>
+    {% elif ok == 'reconciliado' %}<span class="badge cerrado">Estado actualizado desde Stripe ✓</span>
+    {% elif ok == 'confirmado' %}<span class="badge cerrado">Confirmación del asesor registrada ✓</span>
+    {% elif ok == 'avisado' %}<span class="badge cerrado">Aviso enviado al cliente ✓</span>
+    {% endif %}
+  </p>
+  {% endif %}
+
+  {% with modo = 'lectura' %}{% include "_cobro.html" %}{% endwith %}
+
   {% if not ticket.assigned_to and ticket.status.value != 'cerrado' %}
   <form method="post" action="/tickets/{{ ticket.id }}/claim">
     <button type="submit">Tomar esta solicitud</button>
@@ -94,7 +123,10 @@
   </form>
   {% if ticket.status.value != 'cerrado' %}
   <form method="post" action="/tickets/{{ ticket.id }}/finish" style="display:inline-block; margin-right:.5rem;"
-        onsubmit="return confirm('¿Terminar esta solicitud? Se cierra el ticket y se le avisa al cliente.');">
+        onsubmit="return confirm({% if cobros_vivos_del_telefono or cobros|selectattr('llave_cobro_vivo')|list %}'OJO: este cliente tiene un cobro SIN LIQUIDAR. Si cierras, se le avisa que su pago sigue pendiente. ¿Continuar?'{% else %}'¿Terminar esta solicitud? Se cierra el ticket y se le avisa al cliente.'{% endif %});">
+    {# Con un cobro vivo el backend exige esta confirmación explícita: cerrar
+       a ciegas con dinero en la calle es como se pierde el cobro. #}
+    <input type="hidden" name="confirm" value="1">
     <button type="submit" class="btn-sm">✔ Terminar solicitud</button>
   </form>
   {% endif %}
@@ -118,6 +150,10 @@
       style="width:100%; min-height:60px; padding:.6rem .75rem; border:1px solid var(--border); border-radius:6px; font:inherit;"></textarea>
     <button type="submit" class="btn-sm" style="margin-top:.5rem;">Guardar nota</button>
   </form>
+
+  {# Dentro de la rama del asignado a propósito: hereda la regla de propiedad
+     sin escribir una condición nueva que se pueda desincronizar del backend. #}
+  {% with modo = 'formulario' %}{% include "_cobro.html" %}{% endwith %}
 
   <h2 style="margin-top:1.5rem;">Seguimiento</h2>
   <form method="post" action="/tickets/{{ ticket.id }}/followup" style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:flex-end;">

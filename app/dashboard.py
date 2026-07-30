@@ -370,7 +370,7 @@ def ticket_list(
 
 
 @router.get("/tickets/{ticket_id}")
-def ticket_detail(request: Request, ticket_id: int):
+def ticket_detail(request: Request, ticket_id: int, err: str = "", ok: str = ""):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -412,8 +412,59 @@ def ticket_detail(request: Request, ticket_id: int):
             # Lo que el agente pidió por WhatsApp en ESTE folio (congelado al
             # darlo de alta), con lo que el cliente contestó y lo que falta.
             "requisitos": requisitos_del_ticket(ticket.requirements_json),
+            "err": err,
+            "ok": ok,
+            **_contexto_cobranza(ticket, user),
         },
     )
+
+
+def _contexto_cobranza(ticket: Ticket, user: str) -> dict:
+    """Lo que el parcial de cobro necesita del folio."""
+    from app import cobranza
+    from app.dinero import OXXO_MAX_CENTAVOS, monto_editable, parse_monto
+    from app.models import Cobro
+
+    with get_session() as session:
+        cobros = list(session.exec(
+            select(Cobro)
+            .where(Cobro.ticket_id == ticket.id)
+            .order_by(Cobro.created_at.desc())  # type: ignore[union-attr]
+        ).all())
+        # Cobros vivos del MISMO TELÉFONO en otros folios: con OXXO el folio
+        # se cierra y el bot fabrica uno nuevo, así que sin esto el asesor no
+        # vería el instrumento que todavía es cobrable y se toparía con el
+        # candado sin entender por qué.
+        vivos = [
+            c for c in session.exec(
+                select(Cobro)
+                .where(Cobro.phone == ticket.phone)
+                .where(Cobro.llave_cobro_vivo.is_not(None))  # type: ignore[union-attr]
+            ).all()
+            if c.ticket_id != ticket.id
+        ]
+
+    # La línea base del monto es lo que el bot le COTIZÓ al cliente por
+    # WhatsApp, no el catálogo vivo: ese es el número que el cliente leyó.
+    cotizado = None
+    if ticket.price_info:
+        try:
+            cotizado = parse_monto(ticket.price_info)
+        except ValueError:
+            cotizado = None  # "A cotizar" y cualquier texto ambiguo
+
+    return {
+        "cobros": cobros,
+        "cobros_vivos_del_telefono": vivos,
+        "puede_cobrar": cobranza.puede_cobrar(user, ticket, None),
+        "stripe_configurado": bool(settings.stripe_secret_key),
+        # Único por RENDER: dos envíos del mismo formulario (F5, doble clic)
+        # chocan contra ux_cobro_generacion en vez de crear dos cobros.
+        "token_form": secrets.token_hex(16),
+        "monto_cotizado_centavos": cotizado,
+        "monto_sugerido": monto_editable(cotizado) if cotizado else "",
+        "oxxo_max_centavos": OXXO_MAX_CENTAVOS,
+    }
 
 
 @router.post("/tickets/{ticket_id}/claim")
@@ -499,10 +550,29 @@ FINISH_NOTICE_GENERIC = (
     "✅ Tu solicitud quedó atendida. ¡Gracias por tu confianza! "
     "Si necesitas otro trámite, aquí estamos."
 )
+# Con un cobro sin liquidar, "quedó terminada, ¡gracias por tu confianza!" es
+# literalmente el argumento del cliente para no pagar la ficha.
+FINISH_NOTICE_CON_COBRO = (
+    "✅ Tu trámite quedó listo. Recuerda que tu pago pendiente de "
+    "{monto}{vence} sigue activo."
+)
+
+
+def _cobros_vivos_del_folio(session, ticket: Ticket) -> list:
+    """Cobros con instrumento todavía cobrable de ESTE cliente. Va por
+    teléfono, no por folio: con OXXO el folio se cierra y el bot fabrica otro,
+    así que buscar por ticket_id no vería nada."""
+    from app.models import Cobro
+
+    return list(session.exec(
+        select(Cobro)
+        .where(Cobro.phone == ticket.phone)
+        .where(Cobro.llave_cobro_vivo.is_not(None))  # type: ignore[union-attr]
+    ).all())
 
 
 @router.post("/tickets/{ticket_id}/finish")
-def finish_ticket(request: Request, ticket_id: int):
+def finish_ticket(request: Request, ticket_id: int, confirm: str = Form("")):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -520,6 +590,14 @@ def finish_ticket(request: Request, ticket_id: int):
                 logger.warning("Terminar rechazado en #%s por %s", ticket_id, user)
             return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
+        # Cerrar con un cobro vivo a veces es legítimo (el cliente paga
+        # después), así que NO se bloquea: se exige confirmación explícita.
+        vivos = bool(_cobros_vivos_del_folio(session, ticket))
+        if vivos and not confirm:
+            return RedirectResponse(
+                f"/tickets/{ticket_id}?err=cobro-vivo-al-cerrar", status_code=303
+            )
+
         ticket.status = TicketStatus.CERRADO
         ticket.agent_active = True  # ciclo terminado: el bot vuelve a cubrir el chat
         ticket.updated_at = utcnow()
@@ -534,6 +612,8 @@ def finish_ticket(request: Request, ticket_id: int):
 
     with get_session() as session:
         _log_activity(session, ticket_id, user, "cerrado")
+        if vivos:
+            _log_activity(session, ticket_id, user, "cobro:cierre-con-pago-pendiente")
     logger.info("Ticket #%s terminado por %s", ticket_id, user)
     _notify_finish(ticket_id)
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
@@ -556,7 +636,21 @@ def _notify_finish(ticket_id: int) -> None:
         if not _window_open(last_in.created_at if last_in else None):
             logger.info("Sin aviso de cierre a %s: ventana de 24h cerrada", phone)
             return
-        if ticket.service_id == "escalado":
+        cobro_vivo = next(iter(_cobros_vivos_del_folio(session, ticket)), None)
+        if cobro_vivo is not None:
+            # Con dinero pendiente el texto cambia: felicitar por el cierre sin
+            # mencionar el pago es regalarle al cliente el argumento para no
+            # pagar la ficha.
+            from app.dinero import formato_monto
+
+            vence = ""
+            if cobro_vivo.voucher_expira_at:
+                vence = f", que vence el {cobro_vivo.voucher_expira_at:%d/%m/%Y}"
+            body = FINISH_NOTICE_CON_COBRO.format(
+                monto=formato_monto(cobro_vivo.monto_centavos, cobro_vivo.moneda),
+                vence=vence,
+            )
+        elif ticket.service_id == "escalado":
             body = FINISH_NOTICE_GENERIC
         else:
             body = FINISH_NOTICE_SERVICE.format(service=ticket.service_name, folio=ticket.id)

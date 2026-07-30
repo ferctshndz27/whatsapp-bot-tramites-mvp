@@ -44,6 +44,17 @@ ACTION_LABELS = {
     "agente:pausado": "apagó el agente IA",
     "agente:pausado-auto": "apagó el agente IA (al responder por bandeja)",
     "agente:reanudado": "reanudó el agente IA",
+    # Cobranza. Sin estas claves /activity mostraría el slug crudo.
+    "cobro:generado": "generó un cobro",
+    "cobro:enviado": "envió el link de pago",
+    "cobro:voucher": "el cliente pidió su ficha de pago",
+    "cobro:pagado": "registró el pago del cliente 💰",
+    "cobro:fallido": "el pago fue rechazado",
+    "cobro:vencido": "el cobro venció sin pagarse",
+    "cobro:cancelado": "canceló el cobro",
+    "cobro:cancelacion-pendiente": "pidió cancelar el cobro (Stripe no confirmó)",
+    "cobro:confirmado-asesor": "confirmó el pago contra el recibo del cliente",
+    "cobro:cierre-con-pago-pendiente": "cerró el folio con un cobro sin liquidar",
 }
 
 
