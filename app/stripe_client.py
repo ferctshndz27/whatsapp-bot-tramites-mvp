@@ -206,6 +206,22 @@ def obtener_balance_transaction(txn_id: str) -> RespuestaStripe:
     return _request("GET", f"/v1/balance_transactions/{txn_id}")
 
 
+def obtener_charge(charge_id: str) -> RespuestaStripe:
+    """El charge es el puente a la balance transaction (y trae los MSI usados)."""
+    return _request("GET", f"/v1/charges/{charge_id}")
+
+
+def listar_payouts(limit: int = 10) -> RespuestaStripe:
+    """Depósitos al banco. Un payout agrupa decenas de cobros ya neteados:
+    esta es la única vía para cuadrar el estado de cuenta contra folios."""
+    return _request("GET", "/v1/payouts", params={"limit": limit})
+
+
+def listar_balance_transactions_de_payout(payout_id: str, limit: int = 100) -> RespuestaStripe:
+    return _request("GET", "/v1/balance_transactions",
+                    params={"payout": payout_id, "limit": limit})
+
+
 def buscar_sesiones_por_ventana(desde_epoch: int, hasta_epoch: int) -> RespuestaStripe:
     """Checkout Sessions NO soporta filtro por metadata: se trae la ventana de
     `created` completa y la metadata se filtra del lado nuestro."""
