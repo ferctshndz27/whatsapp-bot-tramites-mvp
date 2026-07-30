@@ -16,6 +16,7 @@ Pasadas las 24 h solo se busca; si no aparece, se llama a un humano.
 import logging
 from datetime import datetime, timedelta
 
+from sqlalchemy import and_, nulls_first, or_
 from sqlmodel import select
 
 from app import cobranza, stripe_client
@@ -320,11 +321,15 @@ def _reconciliar_uno(cobro_id: int) -> str:
         if cobro is None:
             return "omitido"
         objeto = _consultar_instrumento(cobro)
-        if objeto is None:
-            return "sin-respuesta"
-
+        # Se sella SIEMPRE, incluso sin respuesta: es lo que rota la cola. Sin
+        # esto, un cobro que Stripe no contesta se queda al frente del ORDER BY
+        # para siempre y mata de hambre a todos los que vienen detrás.
         cobro.reconciliado_at = utcnow()
         session.add(cobro)
+        if objeto is None:
+            session.commit()
+            return "sin-respuesta"
+
         tipo = _tipo_desde_objeto(objeto)
         if tipo is None:
             session.commit()
@@ -349,19 +354,27 @@ def reconciliar_pendientes() -> dict:
     corte = cobranza.naive_utc(ahora - timedelta(hours=RECONCILIAR_HORAS))
     ahora_naive = cobranza.naive_utc(ahora)
     with get_session() as session:
-        candidatos = session.exec(
-            select(Cobro)
-            .where(Cobro.estado.in_(ESTADOS_VIVOS_RECONCILIABLES))  # type: ignore[union-attr]
-            .limit(LOTE)
-        ).all()
+        # El filtro va en SQL, NO en Python: con .limit() antes de filtrar,
+        # SQLite devuelve las primeras 200 filas por rowid —las más viejas— y
+        # el cobro de OXXO generado hoy, cuyo webhook se perdió, no entra al
+        # lote nunca. El ORDER BY por reconciliado_at es lo que rota la cola.
         ids = [
             c.id
-            for c in candidatos
-            if cobranza.naive_utc(c.updated_at) < corte
-            or (
-                c.voucher_expira_at is not None
-                and cobranza.naive_utc(c.voucher_expira_at) < ahora_naive
-            )
+            for c in session.exec(
+                select(Cobro)
+                .where(Cobro.estado.in_(ESTADOS_VIVOS_RECONCILIABLES))  # type: ignore[union-attr]
+                .where(
+                    or_(
+                        Cobro.updated_at < corte,
+                        and_(
+                            Cobro.voucher_expira_at.is_not(None),  # type: ignore[union-attr]
+                            Cobro.voucher_expira_at < ahora_naive,
+                        ),
+                    )
+                )
+                .order_by(nulls_first(Cobro.reconciliado_at.asc()))  # type: ignore[union-attr]
+                .limit(LOTE)
+            ).all()
         ]
 
     aplicados = sin_cambio = fallidos = 0
@@ -407,6 +420,10 @@ def conciliar_montos() -> dict:
                 if cobro is None or not cobro.stripe_charge_id:
                     continue
                 txn_id = cobro.balance_transaction_id
+                # Sin balance transaction hay que releer el charge. Es también
+                # el camino del reembolso notificado con un objeto `refund`:
+                # el aplicador borra balance_transaction_id justo para forzar
+                # esta relectura y refrescar `amount_refunded`.
                 if not txn_id:
                     charge = stripe_client.obtener_charge(cobro.stripe_charge_id)
                     if not charge.ok:

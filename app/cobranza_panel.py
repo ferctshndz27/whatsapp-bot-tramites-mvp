@@ -300,6 +300,13 @@ def cancelar_cobro(request: Request, cobro_id: int):
             return _volver(ticket_id, err="cobro-no-cancelable")
         pi = cobro.stripe_payment_intent_id
         cs = cobro.stripe_checkout_session_id
+        # Un intento en "enviando" es una llamada a Stripe SIN RESPUESTA: el
+        # instrumento pudo haberse creado y nosotros no tener el id todavía.
+        intento_vivo = session.exec(
+            select(IntentoCobro)
+            .where(IntentoCobro.cobro_id == cobro_id)
+            .where(IntentoCobro.estado == "enviando")
+        ).first() is not None
 
     # Matar el PaymentIntent —y NO expirar la sesión— es lo único que mata un
     # voucher de OXXO en requires_action.
@@ -309,6 +316,13 @@ def cancelar_cobro(request: Request, cobro_id: int):
     elif cs:
         respuesta = stripe_client.expirar_sesion(cs)
         confirmado = respuesta.ok and (respuesta.objeto or {}).get("status") == "expired"
+    elif intento_vivo:
+        # Sin pi ni cs PERO con un POST en vuelo: "no hay instrumento" es una
+        # deducción falsa. Soltar el candado aquí deja que el barrido de
+        # huérfanos recupere después la sesión que Stripe SÍ creó y la pegue a
+        # un cobro ya cancelado que ningún barrido vuelve a mirar — dos
+        # instrumentos cobrables para el mismo (teléfono, servicio).
+        respuesta, confirmado = None, False
     else:
         # Nunca llegó a existir instrumento: se puede cerrar sin preguntar.
         respuesta, confirmado = None, True
@@ -337,8 +351,12 @@ def cancelar_cobro(request: Request, cobro_id: int):
         # Stripe no confirmó: el instrumento SIGUE cobrable, así que el
         # candado NO se libera. El barrido reintenta cada noche.
         vence = cobro.voucher_expira_at
-        motivo = ("no se pudo cancelar el instrumento: sigue cobrable"
-                  + (f" hasta el {vence:%d/%m/%Y}" if vence else ""))
+        if not pi and not cs:
+            motivo = ("hay una llamada a Stripe sin respuesta: no se puede "
+                      "confirmar que no exista un instrumento cobrable")
+        else:
+            motivo = ("no se pudo cancelar el instrumento: sigue cobrable"
+                      + (f" hasta el {vence:%d/%m/%Y}" if vence else ""))
         evento = cobranza.registrar_evento_sintetico(
             session,
             stripe_event_id=f"panel:cancel-pendiente:{cobro_id}:{ahora}",

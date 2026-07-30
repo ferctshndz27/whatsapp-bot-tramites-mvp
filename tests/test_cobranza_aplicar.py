@@ -245,7 +245,7 @@ def test_30_reembolso_parcial_y_total():
         assert fila.estado == "pagado"
 
         # Reentrega con el mismo acumulado: no duplica.
-        replay = _evento(s, "charge.refund.updated", {
+        replay = _evento(s, "charge.refunded", {
             "object": "charge", "id": "ch_1", "amount_refunded": 20000,
             "metadata": _meta(c),
         }, created=201)
@@ -260,6 +260,84 @@ def test_30_reembolso_parcial_y_total():
         cobranza.aplicar_evento(s, total)
         s.commit()
         assert s.get(Cobro, c.id).estado == "reembolsado"
+
+
+def test_45_refund_updated_trae_un_refund_y_no_borra_el_acumulado():
+    """`charge.refund.updated` entrega un objeto **refund**, NO un charge: no
+    trae `amount_refunded`. Leerlo con `or 0` ponía el acumulado en CERO sobre
+    un cobro ya reembolsado, y el replay lo repetía en cada recomputación.
+
+    Tampoco puede pisar la balance transaction: la del refund es otra, y
+    negativa. Se borra a propósito para forzar la relectura del charge.
+    """
+    with Session(db.engine) as s:
+        c = _cobro(s, estado="pagado", llave_cobro_vivo=None,
+                   stripe_charge_id="ch_1", monto_pagado_centavos=200000,
+                   monto_reembolsado_centavos=20000, neto_centavos=482000,
+                   balance_transaction_id="txn_cargo", ultimo_evento_created=100)
+        ev = _evento(s, "charge.refund.updated", {
+            "object": "refund", "id": "re_1", "amount": 20000,
+            "balance_transaction": "txn_refund", "status": "succeeded",
+            "charge": "ch_1", "metadata": _meta(c),
+        }, created=200)
+        cobranza.aplicar_evento(s, ev)
+        s.commit()
+        fila = s.get(Cobro, c.id)
+        assert fila.monto_reembolsado_centavos == 20000  # NO se borró
+        assert fila.neto_centavos is None                # vuelve a la cola
+        assert fila.balance_transaction_id is None       # fuerza releer el charge
+        assert fila.stripe_charge_id == "ch_1"
+
+
+def test_46_reembolso_invalida_el_neto_ya_conciliado():
+    """Sin esto el neto quedaba inflado para siempre: conciliar_montos filtra
+    por `neto_centavos IS NULL` y el cobro ya no volvía a entrar nunca."""
+    with Session(db.engine) as s:
+        c = _cobro(s, estado="pagado", llave_cobro_vivo=None,
+                   stripe_charge_id="ch_1", monto_pagado_centavos=500000,
+                   neto_centavos=482000, comision_centavos=18000,
+                   balance_transaction_id="txn_cargo", payout_id="po_x",
+                   ultimo_evento_created=100)
+        ev = _evento(s, "charge.refunded", {
+            "object": "charge", "id": "ch_1", "amount_refunded": 200000,
+            "metadata": _meta(c),
+        }, created=200)
+        cobranza.aplicar_evento(s, ev)
+        s.commit()
+        fila = s.get(Cobro, c.id)
+        assert fila.monto_reembolsado_centavos == 200000
+        assert fila.neto_centavos is None
+        # La BT del cargo NO se toca: el charge sigue siendo la fuente y el
+        # payout donde ya cayó el dinero tampoco cambia.
+        assert fila.balance_transaction_id == "txn_cargo"
+        assert fila.payout_id == "po_x"
+
+
+def test_47_evento_viejo_rellena_lo_que_falta_sin_pisar_lo_que_hay():
+    """Un sintético del panel estampa el reloj del VPS en
+    `ultimo_evento_created`. El `payment_intent.succeeded` REAL que llega
+    después es "más viejo" y se descartaba entero: el cobro quedaba pagado sin
+    `stripe_charge_id`, y conciliar_montos filtra por esa columna — pago real
+    fuera del circuito de conciliación para siempre, sin comisión ni neto.
+    """
+    with Session(db.engine) as s:
+        c = _cobro(s, ultimo_evento_created=300, metodo_usado="oxxo",
+                   stripe_charge_id=None)
+        ev = _evento(s, "payment_intent.succeeded", {
+            "object": "payment_intent", "id": "pi_1", "amount_received": 125000,
+            "currency": "mxn", "latest_charge": "ch_tardio",
+            "payment_method_details": {"type": "card"},
+            "metadata": _meta(c),
+        }, created=100)  # MÁS VIEJO que ultimo_evento_created
+        cobranza.aplicar_evento(s, ev)
+        s.commit()
+        fila = s.get(Cobro, c.id)
+        assert fila.estado == "pagado"
+        assert fila.stripe_charge_id == "ch_tardio"  # se rellenó lo que faltaba
+        assert fila.metodo_usado == "oxxo"           # NO se pisó lo que ya había
+        # Y el reloj no retrocede: si bajara, reabriría la puerta a otros aún
+        # más viejos.
+        assert fila.ultimo_evento_created == 300
 
 
 def test_44_pago_con_folio_cerrado_avisa_pero_no_reabre():

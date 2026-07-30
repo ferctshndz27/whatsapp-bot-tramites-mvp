@@ -260,6 +260,47 @@ def test_33_cancelacion_confirmada_libera_y_permite_otro(entorno, stripe_doble,
     assert len(stripe_doble["crear"]) == antes + 1
 
 
+def test_33b_cancelar_con_intento_en_vuelo_no_libera_el_candado(entorno, stripe_doble,
+                                                                monkeypatch):
+    """Sin pi y sin cs PERO con un intento en "enviando", "nunca existió
+    instrumento" es una deducción FALSA: el POST sigue en vuelo y Stripe pudo
+    haber creado la sesión.
+
+    Soltar el candado aquí deja que el barrido de huérfanos recupere después
+    esa sesión y la pegue a un cobro ya cancelado —que ningún barrido vuelve a
+    mirar— mientras el asesor ya generó el reemplazo: DOS instrumentos
+    cobrables para el mismo (teléfono, servicio).
+    """
+    def _no_debe_llamarse(*a, **kw):
+        raise AssertionError("no hay instrumento que cancelar: no se toca Stripe")
+
+    monkeypatch.setattr(panel.stripe_client, "cancelar_payment_intent", _no_debe_llamarse)
+    monkeypatch.setattr(panel.stripe_client, "expirar_sesion", _no_debe_llamarse)
+
+    with Session(entorno) as s:
+        s.add(Cobro(id=77, ticket_id=1, phone=PHONE, concepto="CURP",
+                    monto_centavos=80000, estado="pendiente",
+                    llave_cobro_vivo=f"{PHONE}:svc:curp",
+                    token_verificacion="tok-en-vuelo", creado_por=ASESOR))
+        s.add(IntentoCobro(cobro_id=77, clave_idempotencia="cobro:77:1",
+                           estado="enviando", monto_centavos=80000,
+                           creado_por=ASESOR))
+        s.commit()
+
+    cliente = _cliente(ASESOR)
+    r = cliente.post("/cobros/77/cancelar", follow_redirects=False)
+    assert "err=cancelacion-pendiente" in r.headers["location"]
+
+    with Session(entorno) as s:
+        cobro = s.get(Cobro, 77)
+        assert cobro.estado == "cancelacion_solicitada"
+        assert cobro.llave_cobro_vivo is not None, "el candado NO se puede soltar"
+
+    # Y el candado sigue haciendo su trabajo: no hay reemplazo posible todavía.
+    segunda = _generar(cliente, token="tok-reemplazo")
+    assert "err=cobro-vivo" in segunda.headers["location"]
+
+
 def test_34_sin_payment_intent_se_expira_la_sesion(entorno, stripe_doble, monkeypatch):
     """Sin instrumento emitido no hay voucher que matar: se expira la sesión y
     NO se llama a /payment_intents/cancel."""

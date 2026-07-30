@@ -517,8 +517,15 @@ def _get_engine():
         )
         # Timeouts explícitos: sin ellos, un MSSQL arrancando bloquea el
         # request del webhook de Stripe hasta que Stripe corta a los 30 s.
+        #
+        # `timeout` es POR STATEMENT y los listeners corren dentro del flush,
+        # o sea reteniendo el escritor de SQLite. Tiene que quedar por debajo
+        # del busy_timeout=5000 de app/db.py: con 10 s, un MSSQL LENTO (no
+        # caído — ahí no hay excepción que degradar) hacía que el INSERT de
+        # eventopasarela del webhook muriera con "database is locked" y
+        # devolviera 503, quemando los reintentos de Stripe.
         _engine = create_engine(
-            url, pool_pre_ping=True, connect_args={"login_timeout": 5, "timeout": 10}
+            url, pool_pre_ping=True, connect_args={"login_timeout": 5, "timeout": 3}
         )
     return _engine
 

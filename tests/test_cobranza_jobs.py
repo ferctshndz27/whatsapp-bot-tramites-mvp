@@ -234,6 +234,67 @@ def test_38_voucher_vivo_no_se_mata_por_el_reloj_local(monkeypatch):
         assert fila.reconciliado_at is not None
 
 
+def test_38c_el_lote_no_se_trunca_antes_de_filtrar(monkeypatch):
+    """PREVIENE la inanición: con .limit(LOTE) ANTES del filtro, SQLite
+    devuelve las primeras 200 filas por rowid —las más viejas— y el filtro de
+    antigüedad corría en Python sobre lo ya truncado.
+
+    Con LOTE zombis que no cambian nunca (SPEI en requires_action, sin reloj de
+    vencimiento propio), el cobro generado hoy cuyo webhook se perdió no entra
+    al lote NUNCA y su pago no se descubre jamás.
+    """
+    viejo = cobranza.naive_utc(utcnow() - timedelta(hours=5))
+    with Session(db.engine) as s:
+        for _ in range(jobs.LOTE):
+            _cobro(s, estado="pendiente",
+                   stripe_payment_intent_id=f"pi_zombi_{uuid4().hex[:8]}",
+                   updated_at=viejo)
+        # El último en entrar: rowid más alto, y por eso el que el truncado
+        # dejaba fuera. Este SÍ está pagado en Stripe.
+        pagado = _cobro(s, estado="pendiente", stripe_payment_intent_id="pi_el_bueno",
+                        updated_at=viejo)
+        pagado_id = pagado.id
+
+    monkeypatch.setattr(
+        jobs.stripe_client, "obtener_payment_intent",
+        lambda pi: _ok(
+            {"object": "payment_intent", "id": pi, "status": "succeeded",
+             "amount_received": 125000, "currency": "mxn"}
+            if pi == "pi_el_bueno"
+            else {"object": "payment_intent", "id": pi, "status": "requires_action"}
+        ),
+    )
+
+    # Dos corridas: la cola rota por reconciliado_at, así que aunque la primera
+    # se llene de zombis, la segunda tiene que llegar al que importa.
+    jobs.reconciliar_pendientes()
+    jobs.reconciliar_pendientes()
+
+    with Session(db.engine) as s:
+        assert s.get(Cobro, pagado_id).estado == "pagado"
+
+
+def test_38d_sin_respuesta_tambien_sella_reconciliado_at(monkeypatch):
+    """Es lo que rota la cola. Sin sellar, un cobro que Stripe no contesta se
+    queda al frente del ORDER BY para siempre y mata de hambre a los demás."""
+    with Session(db.engine) as s:
+        cobro = _cobro(s, estado="pendiente", stripe_payment_intent_id="pi_mudo",
+                       updated_at=cobranza.naive_utc(utcnow() - timedelta(hours=5)))
+        cobro_id = cobro.id
+
+    monkeypatch.setattr(
+        jobs.stripe_client, "obtener_payment_intent",
+        lambda pi: stripe_client.RespuestaStripe(ok=False, error_codigo="error_red",
+                                                 indeterminado=True),
+    )
+
+    assert jobs.reconciliar_pendientes()["fallidos"] == 1
+    with Session(db.engine) as s:
+        fila = s.get(Cobro, cobro_id)
+        assert fila.reconciliado_at is not None
+        assert fila.estado == "pendiente"  # indeterminado NO es un rechazo
+
+
 def test_38b_pi_cancelado_por_stripe_vence_el_cobro(monkeypatch):
     """Cancelado automáticamente = el voucher venció. Entra como fila
     sintética por el MISMO aplicador y libera el candado."""

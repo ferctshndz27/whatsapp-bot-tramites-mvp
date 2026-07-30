@@ -74,6 +74,10 @@ _COBRANZA_INDEXES = (
     # alcanzó a crear el instrumento, nadie puede lanzar otro hasta resolverlo.
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_intento_vivo "
     "ON intentocobro(cobro_id) WHERE estado = 'enviando'",
+    # La cola del barrido de reconciliación: filtra por estado y ordena por
+    # reconciliado_at para rotar. Sin él, cada noche es un scan de cobro.
+    "CREATE INDEX IF NOT EXISTS ix_cobro_reconciliacion "
+    "ON cobro(estado, reconciliado_at)",
 )
 
 

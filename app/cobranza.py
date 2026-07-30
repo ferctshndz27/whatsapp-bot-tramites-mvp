@@ -370,61 +370,80 @@ def resolver_cobro(session: Session, payload: dict) -> tuple[Cobro | None, str |
 def absorber_datos(cobro: Cobro, obj: dict, evento: EventoPasarela) -> None:
     """Corre SIEMPRE que el evento sea más nuevo, aunque el rango no suba:
     el completed(unpaid) de OXXO no cambia el estado pero trae el
-    payment_intent — perderlo por la monotonía deja al voucher invisible."""
-    if evento.stripe_created < (cobro.ultimo_evento_created or 0):
-        return
+    payment_intent — perderlo por la monotonía deja al voucher invisible.
+
+    Un evento MÁS VIEJO ya no se descarta entero: rellena lo que falta y no
+    pisa nada. Descartarlo dejaba pagos reales sin `stripe_charge_id`, y
+    `conciliar_montos` filtra por esa columna: el cobro quedaba `pagado` pero
+    fuera del circuito de conciliación para siempre, sin comisión ni neto.
+    Basta una cancelación desde el panel —que estampa el reloj del VPS— para
+    que el `payment_intent.succeeded` que llegue después sea "más viejo".
+    """
+    solo_faltantes = evento.stripe_created < (cobro.ultimo_evento_created or 0)
+
+    def _set(campo: str, valor) -> None:
+        """Escribe salvo que el evento sea viejo y el campo ya tenga valor."""
+        if valor is None:
+            return
+        if solo_faltantes and getattr(cobro, campo) is not None:
+            return
+        setattr(cobro, campo, valor)
 
     tipo_obj = obj.get("object")
     if tipo_obj == "checkout.session":
         if obj.get("id") and not cobro.stripe_checkout_session_id:
             cobro.stripe_checkout_session_id = obj["id"]
-        if obj.get("url"):
-            cobro.url_pago = obj["url"]
+        _set("url_pago", obj.get("url") or None)
         if obj.get("expires_at"):
-            cobro.url_expira_at = _epoch_a_dt(obj["expires_at"])
+            _set("url_expira_at", _epoch_a_dt(obj["expires_at"]))
     pi = _pi_de(obj)
     # Un cobro tiene exactamente UN instrumento: un pi distinto al ya escrito
     # es un segundo pago (lo maneja _aplicar_pago), nunca un reemplazo.
     if pi and not cobro.stripe_payment_intent_id:
         cobro.stripe_payment_intent_id = pi
     if tipo_obj == "charge" and obj.get("id"):
-        cobro.stripe_charge_id = obj["id"]
+        _set("stripe_charge_id", obj["id"])
     latest_charge = obj.get("latest_charge")
     if isinstance(latest_charge, str) and latest_charge:
-        cobro.stripe_charge_id = latest_charge
+        _set("stripe_charge_id", latest_charge)
     cliente = obj.get("customer")
     if isinstance(cliente, str) and cliente:
-        cobro.stripe_customer_id = cliente
+        _set("stripe_customer_id", cliente)
+    # SOLO del charge: la balance transaction de un `refund` es otra distinta
+    # (negativa), y escribirla aquí pisaba la del cargo — neto en rojo y el
+    # payout equivocado.
     txn = obj.get("balance_transaction")
-    if isinstance(txn, str) and txn:
-        cobro.balance_transaction_id = txn
+    if tipo_obj == "charge" and isinstance(txn, str) and txn:
+        _set("balance_transaction_id", txn)
     if obj.get("livemode") is not None:
-        cobro.livemode = obj["livemode"]
+        _set("livemode", obj["livemode"])
 
     # Voucher OXXO: expires_after es el reloj que de verdad importa (la sesión
     # de Checkout expira mucho antes y matar el cobro por ella pierde pagos).
     accion = obj.get("next_action") or {}
     oxxo = accion.get("oxxo_display_details") or {}
     if oxxo.get("hosted_voucher_url"):
-        cobro.voucher_url = oxxo["hosted_voucher_url"]
-        cobro.voucher_expira_at = _epoch_a_dt(oxxo.get("expires_after"))
-        cobro.detalle_pendiente_at = None
+        _set("voucher_url", oxxo["hosted_voucher_url"])
+        _set("voucher_expira_at", _epoch_a_dt(oxxo.get("expires_after")))
+        if cobro.voucher_url:
+            cobro.detalle_pendiente_at = None
     # SPEI: la ficha con CLABE vive en hosted_instructions_url y no trae un
     # vencimiento propio — la transferencia se puede hacer mientras el PI viva.
     spei = accion.get("display_bank_transfer_instructions") or {}
     if spei.get("hosted_instructions_url"):
-        cobro.voucher_url = spei["hosted_instructions_url"]
-        cobro.detalle_pendiente_at = None
+        _set("voucher_url", spei["hosted_instructions_url"])
+        if cobro.voucher_url:
+            cobro.detalle_pendiente_at = None
 
     tipos = obj.get("payment_method_types") or []
     if len(tipos) == 1 and not cobro.metodo_usado:
         cobro.metodo_usado = tipos[0]
     detalles_pago = (obj.get("payment_method_details") or {})
     if detalles_pago.get("type"):
-        cobro.metodo_usado = detalles_pago["type"]
+        _set("metodo_usado", detalles_pago["type"])
         plan = ((detalles_pago.get("card") or {}).get("installments") or {}).get("plan") or {}
         if plan.get("count"):
-            cobro.msi_meses_usado = plan["count"]
+            _set("msi_meses_usado", plan["count"])
     cobro.updated_at = utcnow()
 
 
@@ -440,7 +459,11 @@ def transicionar(cobro: Cobro, nuevo_estado: str, evento: EventoPasarela) -> boo
             return False
     cobro.estado = nuevo_estado
     cobro.ultimo_evento_id = evento.stripe_event_id
-    cobro.ultimo_evento_created = evento.stripe_created
+    # El reloj NO retrocede: un evento viejo puede transicionar (manda el
+    # rango), pero bajar la marca reabriría la puerta a otros más viejos.
+    cobro.ultimo_evento_created = max(
+        evento.stripe_created, cobro.ultimo_evento_created or 0
+    )
     cobro.updated_at = utcnow()
     return True
 
@@ -569,10 +592,29 @@ def _aplicar_a_cobro(
         return "aplicado", "pago parcial registrado"
 
     if tipo in ("charge.refunded", "charge.refund.updated"):
-        reembolsado = obj.get("amount_refunded") or 0
-        # Acumulado ABSOLUTO desde el charge, no sumando eventos: Stripe
-        # reentrega y sumar duplicaría.
-        cobro.monto_reembolsado_centavos = reembolsado
+        # OJO: `charge.refund.updated` entrega un objeto **refund**, no un
+        # charge. No trae `amount_refunded`, y el viejo `or 0` escribía CERO
+        # sobre el acumulado de un cobro ya reembolsado. Solo el charge tiene
+        # el acumulado ABSOLUTO; sumar eventos duplicaría porque Stripe
+        # reentrega.
+        if obj.get("object") == "refund":
+            # No sabemos el nuevo total. Se borran las DOS cosas: el neto (que
+            # quedó inflado) y la balance transaction — es lo que hace que
+            # conciliar_montos relea el charge y traiga `amount_refunded`
+            # fresco. La BT que reescriba será la misma del cargo.
+            cobro.neto_centavos = None
+            cobro.balance_transaction_id = None
+            cobro.updated_at = utcnow()
+            return "aplicado", "reembolso notificado; el charge se relee al conciliar"
+
+        reembolsado = obj.get("amount_refunded")
+        if reembolsado is None:
+            return "ignorado", "el objeto no trae amount_refunded"
+        if reembolsado != (cobro.monto_reembolsado_centavos or 0):
+            cobro.monto_reembolsado_centavos = reembolsado
+            # En México Stripe NO devuelve la comisión al reembolsar, así que
+            # el neto ya conciliado quedó inflado: vuelve a la cola.
+            cobro.neto_centavos = None
         if cobro.monto_pagado_centavos and reembolsado >= cobro.monto_pagado_centavos:
             transicionar(cobro, "reembolsado", evento)
         cobro.updated_at = utcnow()

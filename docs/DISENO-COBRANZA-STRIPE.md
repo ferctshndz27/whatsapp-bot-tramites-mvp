@@ -590,6 +590,52 @@ snapshot completos, cero rutas y cero escrituras.
    `customer`. Lo encontró la prueba de humo contra la cuenta real; ningún
    doble podía verlo.
 
+8. **Cancelar sin `pi` ni `cs` NO cierra si hay un intento en `enviando`.** El
+   diseño tenía dos ramas (Stripe confirma / Stripe no confirma) y deducía
+   "nunca existió instrumento" de la ausencia de ids. Es falso mientras un POST
+   siga en vuelo: el barrido de huérfanos recuperaba después la sesión que
+   Stripe **sí** creó y la pegaba a un cobro ya cancelado, con el asesor
+   habiendo generado ya el reemplazo. Dos instrumentos cobrables para el mismo
+   (teléfono, servicio) — el escenario que el candado existe para impedir.
+9. **La cola de reconciliación filtra en SQL y rota por `reconciliado_at`.** El
+   `.limit(200)` corría **antes** del filtro de antigüedad: SQLite devuelve las
+   primeras filas por rowid (las más viejas) y el filtro se aplicaba en Python
+   sobre lo ya truncado. Con 200 zombis —SPEI en `requires_action`, que no
+   tiene reloj de vencimiento propio— el cobro de hoy con el webhook perdido no
+   entraba al lote nunca. `reconciliado_at` se sella también en el camino
+   "sin respuesta"; si no, lo inalcanzable se pega al frente del `ORDER BY`.
+   Índice nuevo `ix_cobro_reconciliacion` sobre `cobro(estado, reconciliado_at)`.
+10. **`charge.refund.updated` entrega un objeto `refund`, no un charge.** No
+    trae `amount_refunded`, así que el `or 0` escribía **cero** sobre el
+    acumulado de un cobro ya reembolsado, y el replay lo repetía en cada
+    recomputación. El acumulado absoluto solo se lee del `charge`. Su
+    `balance_transaction` es además otra distinta y negativa: escribirla pisaba
+    la del cargo, dejando el neto en rojo y el `payout_id` equivocado. Ahora la
+    BT solo se absorbe cuando el objeto es un `charge`.
+11. **Un reembolso invalida el neto ya conciliado.** `conciliar_montos` filtra
+    por `neto_centavos IS NULL`, así que sin invalidar, el neto quedaba inflado
+    para siempre y `/export/conciliacion.csv` reportaba de más. En el caso del
+    objeto `refund` se borra también `balance_transaction_id`: es lo que fuerza
+    la relectura del charge para traer `amount_refunded` fresco. En México
+    Stripe no devuelve la comisión al reembolsar, y el neto ya la resta.
+12. **Un evento viejo rellena lo que falta, pero no pisa lo que hay.** Antes se
+    descartaba entero. Cualquier sintético local (cancelar, enviar, `cron:recon`)
+    estampa el reloj del VPS en `ultimo_evento_created`, así que el
+    `payment_intent.succeeded` **real** que llegara después era "más viejo" y se
+    tiraba: el cobro quedaba `pagado` sin `stripe_charge_id`, y `conciliar_montos`
+    filtra por esa columna — pago real fuera del circuito de conciliación para
+    siempre, sin comisión, sin neto y sin `payout_id`. `transicionar` tampoco
+    baja ya la marca de tiempo (`max`), para no reabrir la puerta a otros más
+    viejos.
+13. **El timeout de MSSQL queda por debajo del `busy_timeout` de SQLite** (3 s
+    contra 5 s). §7.4 justificaba el espejo síncrono con que `_safe` degrada
+    cualquier excepción a `warning`; eso cubre MSSQL **caído**, no MSSQL
+    **lento**, donde no hay excepción que degradar. `timeout` en pymssql es por
+    statement y el listener corre dentro del flush, reteniendo el escritor: el
+    INSERT de `eventopasarela` del webhook moría con `database is locked` y
+    devolvía 503, quemando reintentos de Stripe. La forma definitiva es mover el
+    espejo a un listener `after_commit`, fuera de la transacción; queda pendiente.
+
 ## Lo que falta para cobrarle a un cliente de verdad
 
 Nada de código. Falta lo que solo puede hacer el dueño (§10):
