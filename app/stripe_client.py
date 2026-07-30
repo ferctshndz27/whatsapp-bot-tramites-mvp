@@ -125,6 +125,19 @@ def _request(
     return ultima  # pragma: no cover — el bucle siempre retorna antes
 
 
+def modo_real() -> bool:
+    """True si la llave configurada opera sobre DINERO REAL.
+
+    No basta con `startswith("sk_live")`: Stripe también emite llaves
+    restringidas (`rk_live_…` / `rk_test_…`). Una `rk_live_` clasificada como
+    prueba hace que el aplicador descarte los eventos de pagos REALES con
+    "modo no coincide" — dinero que entra y el sistema ignora en silencio.
+    Encontrado contra una cuenta viva: la llave era `rk_live_` y el código
+    viejo la reportaba como modo prueba.
+    """
+    return "_live_" in settings.stripe_secret_key
+
+
 def _metadata_plana(prefijo: str, metadata: dict) -> dict:
     return {f"{prefijo}[{k}]": str(v) for k, v in metadata.items()}
 

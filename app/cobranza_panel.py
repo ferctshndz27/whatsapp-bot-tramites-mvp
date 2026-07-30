@@ -488,7 +488,8 @@ def retorno_cancelado(request: Request):
 
 
 def _modo_real() -> bool:
-    return settings.stripe_secret_key.startswith("sk_live")
+    # Fuente única: `rk_live_` (llave restringida) también es dinero real.
+    return stripe_client.modo_real()
 
 
 @router.get("/cobros")

@@ -31,6 +31,25 @@ class _Respuesta:
         return self._cuerpo
 
 
+@pytest.mark.parametrize(
+    "llave, es_real",
+    [
+        ("sk_test_abc", False),
+        ("sk_live_abc", True),
+        ("rk_test_abc", False),
+        # ESTE es el que rompía: una llave RESTRINGIDA de modo real. Con
+        # startswith("sk_live") se clasificaba como prueba, y el aplicador
+        # habría descartado los eventos de pagos REALES con "modo no
+        # coincide". Encontrado con una cuenta viva, no en el laboratorio.
+        ("rk_live_abc", True),
+        ("", False),
+    ],
+)
+def test_modo_real_reconoce_las_llaves_restringidas(monkeypatch, llave, es_real):
+    monkeypatch.setattr(settings, "stripe_secret_key", llave)
+    assert sc.modo_real() is es_real
+
+
 def test_sin_credenciales_es_noop_sin_red(monkeypatch):
     """Sin STRIPE_SECRET_KEY no debe salir NI UNA petición de red."""
     monkeypatch.setattr(settings, "stripe_secret_key", "")

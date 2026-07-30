@@ -460,8 +460,12 @@ def aplicar_evento(session: Session, evento: EventoPasarela) -> str:
         payload = {}
 
     # livemode del evento contra el modo de la llave configurada: un evento de
-    # prueba jamás mueve un cobro real (ni al revés).
-    modo_real = settings.stripe_secret_key.startswith("sk_live")
+    # prueba jamás mueve un cobro real (ni al revés). La detección vive en
+    # stripe_client porque `rk_live_` (llave restringida) también es dinero
+    # real y `startswith("sk_live")` la daba por prueba.
+    from app.stripe_client import modo_real as _modo_real
+
+    modo_real = _modo_real()
     if evento.livemode is not None and settings.stripe_secret_key and evento.livemode != modo_real:
         alerta(session, "cobro:modo-no-coincide", "Evento de Stripe en modo equivocado",
                f"{evento.stripe_event_id} livemode={evento.livemode} con llave "
