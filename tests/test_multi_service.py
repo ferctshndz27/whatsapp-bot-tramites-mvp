@@ -3,6 +3,7 @@ import json
 import pytest
 from sqlmodel import select
 
+from app.catalog import catalog
 from app.conversation import handle_incoming
 from app.models import Conversation, Ticket
 
@@ -18,7 +19,20 @@ def _go_to_service_menu(session):
     handle_incoming(session, PHONE, "1")  # Servicios básicos
 
 
+
+def _sin_requisitos(*service_ids: str) -> None:
+    """Borra los requisitos documentados de servicios reales. El catálogo de
+    producción (importado 2026-07-29) trae requisitos en casi todo; las pruebas
+    que ejercitan el flujo SIN captura los limpian para no depender del dato."""
+    for sid in service_ids:
+        svc = catalog.service_by_id(sid)
+        assert catalog.update_service(
+            svc.id, svc.name, svc.price_info, requirements="", admin="prueba"
+        ) is None
+
+
 def test_menu_multi_pick_creates_one_ticket_per_service(session):
+    _sin_requisitos("sb-acta-nacimiento", "sb-acta-matrimonio")
     _go_to_service_menu(session)
 
     replies = handle_incoming(session, PHONE, "1 y 2")
@@ -58,6 +72,7 @@ def test_menu_multi_pick_reports_out_of_range_numbers(session):
 
 
 def test_free_text_with_two_services_confirms_both(session):
+    _sin_requisitos("sb-acta-nacimiento", "sb-acta-divorcio")
     replies = handle_incoming(
         session, PHONE, "Hola, necesito acta de nacimiento y acta de divorcio"
     )

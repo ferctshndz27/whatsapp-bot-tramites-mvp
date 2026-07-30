@@ -13,12 +13,23 @@ SERVICIO_CON_REQUISITOS = "sb-acta-divorcio"
 
 
 def _con_requisitos(texto: str = "clave curp\nnumero de servicio") -> None:
-    """Documenta requisitos en un servicio real del catálogo (la semilla no
-    trae ninguno, así que sin esto el agente no tendría qué pedir)."""
+    """Fija requisitos CONOCIDOS en un servicio real: la prueba no debe
+    depender de lo que el catálogo de producción traiga documentado hoy."""
     svc = catalog.service_by_id(SERVICIO_CON_REQUISITOS)
     assert catalog.update_service(
         svc.id, svc.name, svc.price_info, requirements=texto, admin="prueba"
     ) is None
+
+
+def _sin_requisitos(*service_ids: str) -> None:
+    """Borra los requisitos documentados de servicios reales. El catálogo de
+    producción (importado 2026-07-29) trae requisitos en casi todo; las pruebas
+    que ejercitan el flujo SIN captura los limpian para no depender del dato."""
+    for sid in service_ids:
+        svc = catalog.service_by_id(sid)
+        assert catalog.update_service(
+            svc.id, svc.name, svc.price_info, requirements="", admin="prueba"
+        ) is None
 
 
 def _pedir_y_confirmar(session) -> list[str]:
@@ -56,6 +67,7 @@ def test_direct_service_request_skips_menu_and_creates_ticket(session):
 def test_alta_sin_requisitos_conserva_el_flujo_de_siempre(session):
     # REGLA: la captura es data-gated. Sin requisitos documentados el cliente
     # queda en menu_categoria y el folio no guarda nada.
+    _sin_requisitos(SERVICIO_CON_REQUISITOS)
     replies = _pedir_y_confirmar(session)
 
     assert "Su solicitud está siendo procesada, en breve le resolvemos" in replies[0]
@@ -368,6 +380,7 @@ def test_numeric_flow_still_works_after_listing(session):
 
 
 def test_greeting_after_closed_ticket_is_cordial_short(session):
+    _sin_requisitos("sb-acta-nacimiento")
     handle_incoming(session, PHONE, "necesito acta de nacimiento")
     handle_incoming(session, PHONE, "sí")  # folio creado, estado vuelve a menu_categoria
 
@@ -424,6 +437,7 @@ def test_escalated_user_stays_silent_only_after_agent_explicitly_paused(session)
 
 
 def test_status_query_lists_open_tickets_with_folio(session):
+    _sin_requisitos(SERVICIO_CON_REQUISITOS)
     handle_incoming(session, PHONE, "Necesito un acta de divorcio, soy Juan Pérez")
     handle_incoming(session, PHONE, "si")
 
@@ -436,6 +450,7 @@ def test_status_query_lists_open_tickets_with_folio(session):
 def test_status_query_understands_casual_phrasings(session):
     """Frases reales de clientes (captura 2026-07-21): "como va?" y
     "mi solicitud como va?" deben responder estatus, no escalar por error."""
+    _sin_requisitos(SERVICIO_CON_REQUISITOS)
     handle_incoming(session, PHONE, "Necesito un acta de divorcio, soy Juan Pérez")
     handle_incoming(session, PHONE, "si")
 
