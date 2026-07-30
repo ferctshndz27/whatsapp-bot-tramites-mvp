@@ -534,3 +534,67 @@ El dueño indica que no se emite factura porque no cobran IVA sobre el costo de
 operación. El módulo termina en «el cliente pagó». *(No es asesoría fiscal: conviene
 confirmarlo con su contador, porque no cobrar IVA y no estar obligado a emitir CFDI son
 cosas distintas.)*
+
+---
+
+# ESTADO DE IMPLEMENTACIÓN (rama `claude/stripe-cobranza-5c3392`)
+
+PR1 **completo, con la suite en verde: 787 passed, 18 xfailed.**
+
+| Pieza | Archivo | Estado |
+|---|---|---|
+| 5 tablas + 5 índices parciales | `app/models.py`, `app/db.py` | ✅ |
+| Espejo MSSQL (los 5 lugares × 5 tablas) | `app/archive.py`, `app/system.py` | ✅ |
+| Endurecimiento del espejo (§7.4) | `app/archive.py`, `docker-compose.yml` | ✅ |
+| Dinero (centavos enteros) | `app/dinero.py` | ✅ |
+| Cliente HTTP | `app/stripe_client.py` | ✅ |
+| Dominio / aplicador / replay | `app/cobranza.py` | ✅ |
+| Webhook fail-closed 200/403/503 | `app/stripe_webhook.py` | ✅ |
+| Los 5 barridos | `app/cobranza_jobs.py` | ✅ |
+| Alertas | `app/cobranza_alertas.py` | ✅ 13 reglas |
+| Panel + CSV + payouts | `app/cobranza_panel.py`, `templates/` | ✅ |
+
+`plancobro` y `paymentmethod` quedaron **inertes** como se acordó: DDL, espejo y
+snapshot completos, cero rutas y cero escrituras.
+
+## Desviaciones del diseño, con su razón
+
+1. **Las alertas se derivan del estado, no del evento que pasó.**
+   `evaluate_alerts()` resuelve (`active=False`) toda alerta activa cuyo código
+   no vuelva a disparar, así que una levantada solo ad-hoc desde el aplicador
+   se habría apagado sola en el barrido nocturno **con el problema aún vivo**.
+   El aplicador las sigue levantando al vuelo para que el panel las vea en el
+   minuto; los códigos coinciden a propósito para que sea la misma fila.
+2. **`cobro.vencido` es un tipo de evento propio.** Un PI que Stripe cancela
+   por su cuenta (`cancellation_reason` `automatic`/`abandoned`) es un voucher
+   **vencido**, no una cancelación del asesor: mismo rango, distinta palabra
+   para el cliente y para el panel.
+3. **Un evento sintético usa su propio `cobro_id`** en vez de re-resolverse por
+   metadata: lo escribimos nosotros y no hay ambigüedad que resolver. La
+   resolución de dos factores queda intacta para todo lo que llega de fuera.
+4. **`absorber_datos` nunca reemplaza un `payment_intent` ya escrito.** Un PI
+   distinto es un segundo pago (lo trata `_aplicar_pago`), no una corrección.
+5. **Se detecta la COLUMNA, no el índice, en el `IntegrityError`.** SQLite
+   reporta `UNIQUE constraint failed: cobro.llave_generacion`; buscar
+   `ux_cobro_generacion` nunca acertaba y el F5 devolvía `err=interno`. Lo
+   encontraron las pruebas del panel.
+6. **Páginas de retorno propias** (`/cobros/gracias`, `/cobros/cancelado`):
+   públicas y sin `base.html`. Las abre el cliente desde su celular y ninguna
+   afirma que el pago se aplicó — con OXXO/SPEI llega ahí *antes* de pagar.
+
+## Lo que falta para cobrarle a un cliente de verdad
+
+Nada de código. Falta lo que solo puede hacer el dueño (§10):
+
+1. `STRIPE_SECRET_KEY` y `STRIPE_WEBHOOK_SECRET` en el `.env` del VPS. Sin la
+   primera el panel dice «Stripe no configurado» y no escribe ningún cobro; sin
+   la segunda el webhook rechaza **todo** con 403, a propósito.
+2. Activar OXXO y MSI en el dashboard de Stripe, **en cada modo por separado**.
+3. Registrar el endpoint `https://<dominio>/webhooks/stripe` con los 11 eventos
+   de §10.2.3.
+4. `timedatectl set-ntp true` en el VPS: un desfase >300 s hace que la
+   verificación de firma rechace el 100% de los webhooks **y el sistema se ve
+   perfectamente sano**.
+5. **La prueba de humo real sigue pendiente y es obligatoria antes de cobrarle
+   a nadie**: todo lo verificado hasta aquí corre contra dobles, no contra la
+   cuenta viva.

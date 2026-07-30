@@ -671,7 +671,30 @@ def _aplicar_pago(
     cobro.pagado_at = _epoch_a_dt(evento.stripe_created) or utcnow()
     cobro.llave_cobro_vivo = None  # el instrumento se consumió
     _actividad(session, cobro.ticket_id, "sistema", "cobro:pagado")
+    _avisar_pago_tras_cierre(session, cobro)
     return "aplicado", None
+
+
+def _avisar_pago_tras_cierre(session: Session, cobro: Cobro) -> None:
+    """Con OXXO el pago llega días después, muchas veces con el folio ya
+    cerrado. El folio NO se reabre solo —eso lo decide un humano— pero el
+    dueño del cobro se entera: se le crea un seguimiento para hoy."""
+    if not cobro.ticket_id:
+        return
+    from app.models import FollowUp, Ticket, TicketStatus
+
+    ticket = session.get(Ticket, cobro.ticket_id)
+    if ticket is None or ticket.status != TicketStatus.CERRADO:
+        return
+    session.add(FollowUp(
+        ticket_id=cobro.ticket_id,
+        username=cobro.creado_por or "sistema",
+        note=(f"Entró el pago de {formato_monto(cobro.monto_pagado_centavos or cobro.monto_centavos, cobro.moneda)} "
+              "con el folio ya cerrado. Revisa si hay que reabrirlo."),
+        due_at=utcnow(),
+    ))
+    alerta(session, "cobro:pago-tras-cierre", "Pago con el folio ya cerrado",
+           f"cobro #{cobro.id} (folio #{cobro.ticket_id}) se pagó después del cierre")
 
 
 # ---------------------------------------------------------------------------

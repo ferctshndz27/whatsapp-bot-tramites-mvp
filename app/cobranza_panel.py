@@ -443,6 +443,46 @@ def avisar_pago(request: Request, cobro_id: int):
 
 
 # ---------------------------------------------------------------------------
+# Retorno de Stripe (lo ve el CLIENTE, sin sesión)
+# ---------------------------------------------------------------------------
+# Son las success_url/cancel_url que se le mandan a Stripe. Públicas a
+# propósito: las abre el cliente desde su celular. Ninguna afirma que el pago
+# se aplicó — eso solo lo dice el webhook, y con OXXO/SPEI el cliente llega
+# aquí ANTES de ir a pagar.
+
+
+@router.get("/cobros/gracias")
+def retorno_exito(request: Request):
+    return templates.TemplateResponse(
+        "cobro_retorno.html",
+        {
+            "request": request,
+            "icono": "✅",
+            "titulo": "¡Listo, recibimos tu solicitud de pago!",
+            "mensaje": "En cuanto el banco nos confirme el cobro, tu asesor "
+                       "continúa con tu trámite.",
+            "nota": "Si pagaste en OXXO o por transferencia, la confirmación "
+                    "puede tardar unas horas. Ya puedes cerrar esta página.",
+        },
+    )
+
+
+@router.get("/cobros/cancelado")
+def retorno_cancelado(request: Request):
+    return templates.TemplateResponse(
+        "cobro_retorno.html",
+        {
+            "request": request,
+            "icono": "↩️",
+            "titulo": "No se completó el pago",
+            "mensaje": "No te preocupes: no se te cobró nada.",
+            "nota": "Tu link sigue funcionando. Si tienes dudas, escríbenos por "
+                    "WhatsApp y con gusto te ayudamos.",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Vistas de administración
 # ---------------------------------------------------------------------------
 

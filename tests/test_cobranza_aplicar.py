@@ -262,6 +262,33 @@ def test_30_reembolso_parcial_y_total():
         assert s.get(Cobro, c.id).estado == "reembolsado"
 
 
+def test_44_pago_con_folio_cerrado_avisa_pero_no_reabre():
+    """Con OXXO el pago llega días después, muchas veces con el folio ya
+    cerrado. El dinero se registra SIEMPRE; el folio NO se reabre solo (eso lo
+    decide un humano) pero el dueño del cobro recibe un seguimiento para hoy."""
+    from app.models import FollowUp, Ticket, TicketStatus
+
+    with Session(db.engine) as s:
+        s.add(Ticket(id=7, phone="5215511112222", category="Servicios básicos",
+                     service_id="curp", service_name="CURP", price_info="$800",
+                     status=TicketStatus.CERRADO, assigned_to=None))
+        s.commit()
+        c = _cobro(s, ticket_id=7, creado_por="ana")
+        ev = _evento(s, "checkout.session.async_payment_succeeded", {
+            "object": "checkout.session", "id": "cs_tarde", "payment_status": "paid",
+            "amount_total": 125000, "currency": "mxn", "metadata": _meta(c),
+        }, created=300)
+        cobranza.aplicar_evento(s, ev)
+        s.commit()
+
+        assert s.get(Cobro, c.id).estado == "pagado"
+        # El folio sigue cerrado: reabrirlo es decisión de un humano.
+        assert s.get(Ticket, 7).status == TicketStatus.CERRADO
+        seguimiento = s.exec(select(FollowUp).where(FollowUp.ticket_id == 7)).one()
+        assert seguimiento.username == "ana"  # el dueño del cobro, no el asignado
+        assert _alertas(s, "cobro:pago-tras-cierre")
+
+
 def test_31_replay_completo_reproduce_la_fila():
     """PREVIENE la resurrección del cancelado: crear -> enviar -> pagar ->
     intento de cancelar (rango menor, ignorado). recomputar_estado devuelve

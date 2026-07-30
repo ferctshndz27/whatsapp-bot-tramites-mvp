@@ -440,6 +440,21 @@ def test_oxxo_sobre_el_tope_se_rechaza_antes_de_stripe(entorno, stripe_doble):
         assert s.exec(select(Cobro)).all() == []
 
 
+@pytest.mark.parametrize("ruta", ["/cobros/gracias", "/cobros/cancelado"])
+def test_las_paginas_de_retorno_son_publicas(entorno, ruta):
+    """Son las success_url/cancel_url que recibe Stripe: las abre el CLIENTE
+    desde su celular, sin sesión. Si redirigieran a /login, el cliente vería
+    una pantalla de acceso interno justo después de pagar."""
+    anonimo = TestClient(app, base_url="https://testserver")
+    r = anonimo.get(ruta, follow_redirects=False)
+
+    assert r.status_code == 200
+    # Nunca prometen que el pago se aplicó: eso solo lo confirma el webhook, y
+    # con OXXO/SPEI el cliente llega aquí ANTES de ir a pagar.
+    assert "recibimos tu pago" not in r.text.lower()
+    assert "pagado" not in r.text.lower()
+
+
 def test_sin_stripe_configurado_avisa_y_no_escribe(entorno, stripe_doble, monkeypatch):
     monkeypatch.setattr(settings, "stripe_secret_key", "")
     cliente = _cliente(ASESOR)
