@@ -32,13 +32,18 @@ from app.models import (
     CatalogService,
     Client,
     ClientNote,
+    Cobro,
     Conversation,
+    EventoPasarela,
     Feedback,
     FollowUp,
+    IntentoCobro,
     Invitation,
     LoginEvent,
     Message,
     NluEvent,
+    PaymentMethod,
+    PlanCobro,
     SavedReply,
     SynonymProposal,
     TeamMessage,
@@ -81,6 +86,12 @@ MIRROR_TABLES = [
     (ClientNote, "client_notes"),
     (FollowUp, "followups"),
     (SavedReply, "saved_replies"),
+    # Cobranza: las cinco tablas del módulo de Stripe, espejadas completas.
+    (Cobro, "cobros"),
+    (IntentoCobro, "intentos_cobro"),
+    (EventoPasarela, "eventos_pasarela"),
+    (PlanCobro, "planes_cobro"),
+    (PaymentMethod, "payment_methods"),
 ]
 
 
