@@ -76,6 +76,32 @@ def test_pago_tras_cierre_se_apaga_pasada_la_ventana():
         assert "cobro:pago-tras-cierre" in _codigos(s)
 
 
+def test_monto_sobre_cotizado_dispara_y_se_apaga_pasada_la_ventana():
+    """El panel ya clasificaba el override y se lo enseñaba al asesor que lo
+    tecleaba, pero nadie más lo miraba: se podía pedir más de lo cotizado por
+    WhatsApp sin que nada lo levantara."""
+    with Session(db.engine) as s:
+        _cobro(s, id=1, monto_centavos=250000, monto_cotizado_centavos=80000,
+               monto_origen="override", estado="pendiente",
+               created_at=_hace(VENTANA_TRANSITORIA_DIAS + 3))
+        assert "cobro:monto-sobre-cotizado" not in _codigos(s)
+
+        _cobro(s, id=2, monto_centavos=250000, monto_cotizado_centavos=80000,
+               monto_origen="override", estado="pendiente", created_at=_hace(1))
+        assert "cobro:monto-sobre-cotizado" in _codigos(s)
+
+
+def test_monto_bajo_lo_cotizado_o_ya_muerto_no_dispara():
+    """Cobrar MENOS de lo cotizado no es queja, y un cobro cancelado nunca le
+    llegó a la cartera del cliente."""
+    with Session(db.engine) as s:
+        _cobro(s, id=1, monto_centavos=50000, monto_cotizado_centavos=80000,
+               monto_origen="override", estado="pendiente", created_at=_hace(1))
+        _cobro(s, id=2, monto_centavos=250000, monto_cotizado_centavos=80000,
+               monto_origen="override", estado="cancelado", created_at=_hace(1))
+        assert "cobro:monto-sobre-cotizado" not in _codigos(s)
+
+
 def test_disputa_se_apaga_cuando_se_limpia_la_bandera():
     """La bandera `disputado` nunca se limpiaba porque no había quién manejara
     `charge.dispute.closed`: la alerta crítica quedaba prendida para siempre."""

@@ -1,8 +1,16 @@
 """Panel de cobranza: el asesor genera, reenvía, cancela y concilia.
 
 REGLA DE ORO DEL PROYECTO: el bot NUNCA genera un cobro. El link siempre lo
-dispara un humano desde aquí — `app/conversation.py` sigue contestando
-"(A cotizar)" y no cambia.
+dispara un humano desde aquí.
+
+Ojo con lo que la regla NO dice: el bot sí COTIZA. Con el catálogo de
+producción, 51 de los 58 servicios traen un `price_info` numérico que
+`app/conversation.py` le lee al cliente ("¿Confirmas 'X' ($800)?"), y solo 7
+siguen diciendo "A cotizar". Cotizar y cobrar son verbos distintos: el bot dice
+el precio, el humano manda el link. Ese número cotizado se congela en
+`monto_cotizado_centavos` y la regla 14 de `app/cobranza_alertas.py` avisa si
+el link termina pidiendo más — `landing/terminos.html` §2 promete al cliente
+que la cotización va por delante.
 
 Todo entra por Form(...) y sale con RedirectResponse 303, igual que el resto
 del panel. La red a Stripe SIEMPRE ocurre fuera de una transacción abierta de

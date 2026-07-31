@@ -21,6 +21,7 @@ from datetime import timedelta, timezone
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.cobranza import ESTADOS_VIVOS
 from app.cobranza import naive_utc as _naive
 from app.dinero import formato_monto
 from app.models import (
@@ -52,6 +53,9 @@ DESFASE_RELOJ_SEGUNDOS = 120
 CONFIRMADO_SIN_STRIPE_HORAS = 48
 # Ventana de las condiciones transitorias.
 VENTANA_TRANSITORIA_DIAS = 7
+# Estados donde un monto por arriba de lo cotizado todavía puede llegarle al
+# cliente o ya le llegó. Cancelado, expirado y reembolsado no le costaron nada.
+ESTADOS_COBRABLES = tuple(sorted(ESTADOS_VIVOS)) + ("pagado",)
 
 
 def _contar(session: Session, modelo, *condiciones) -> int:
@@ -290,6 +294,45 @@ def reglas_cobranza(session: Session) -> list[tuple[str, str, str, str, float | 
             f"{huerfanos_evt} evento(s) no resolvieron a ningún cobro local. "
             "Nada se perdió (siguen en el ledger), pero revisa si falta una fila.",
             float(huerfanos_evt),
+        ))
+
+    # 14) Se está pidiendo MÁS de lo que el bot le cotizó al cliente.
+    #
+    #     `landing/terminos.html` §2 es un compromiso público: cada trámite se
+    #     cotiza antes de iniciarse y los precios salen del catálogo vigente.
+    #     `monto_cotizado_centavos` guarda el número que el cliente LEYÓ en
+    #     WhatsApp, y el panel ya lo clasifica (`monto_origen = "override"`) y
+    #     se lo enseña al asesor — pero solo al que teclea. Nadie más lo veía.
+    #
+    #     Se compara contra la columna y no contra `monto_origen`: el origen se
+    #     congela al crear el cobro y el monto se puede editar después.
+    #
+    #     La ventana no es opcional: `monto_cotizado_centavos` nunca cambia, así
+    #     que sin ella un override legítimo de hace un año dejaría la alerta
+    #     encendida para siempre y el caso nuevo no se vería (reglas 6 y 8).
+    sobre_cotizado = session.exec(
+        select(Cobro)
+        .where(Cobro.monto_cotizado_centavos.is_not(None))  # type: ignore[union-attr]
+        .where(Cobro.monto_centavos > Cobro.monto_cotizado_centavos)
+        .where(Cobro.estado.in_(ESTADOS_COBRABLES))  # type: ignore[attr-defined]
+        .where(Cobro.created_at >= corte_transitorio)
+        .order_by((Cobro.monto_centavos - Cobro.monto_cotizado_centavos).desc())
+    ).all()
+    if sobre_cotizado:
+        peor = sobre_cotizado[0]
+        cotizado = peor.monto_cotizado_centavos or 0
+        disparadas.append((
+            "cobro:monto-sobre-cotizado", "warn",
+            "Cobros por arriba de lo que se le cotizó al cliente",
+            f"{len(sobre_cotizado)} cobro(s) de los últimos {VENTANA_TRANSITORIA_DIAS} "
+            f"días piden más de lo cotizado. El peor, folio "
+            f"{peor.ticket_id or 's/folio'}: por WhatsApp se le dijo "
+            f"{formato_monto(cotizado, peor.moneda)} y el link pide "
+            f"{formato_monto(peor.monto_centavos, peor.moneda)} "
+            f"({formato_monto(peor.monto_centavos - cotizado, peor.moneda)} de más). "
+            "Si el trámite se encareció, avísale ANTES de que pague: los "
+            "términos del sitio prometen la cotización por adelantado.",
+            float(len(sobre_cotizado)),
         ))
 
     return disparadas

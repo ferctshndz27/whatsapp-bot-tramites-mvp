@@ -20,7 +20,9 @@ Todo lo que sigue está verificado contra el código real del repo: `app/db.py:5
 | 6 | ¿El candado es por folio? (los tres) | **No: por `(teléfono, servicio)`.** `llave_cobro_vivo` nunca es NULL mientras el cobro vive. El bloque del panel lista los cobros vivos **del teléfono**, no del folio. | El folio no es estable 72 h: `_latest_open_ticket` (`app/conversation.py:304`) excluye los CERRADO, así que el bot fabrica folio nuevo y el candado por `ticket_id` no ve nada. Amarrar solo al teléfono bloquearía dos trámites legítimos en paralelo; amarrar a `(teléfono, servicio)` bloquea exactamente el vector de duplicado. |
 | 7 | ¿200 siempre al webhook? (D1/D2 sí; D3 no) | **200 solo si la fila del evento quedó COMMITEADA.** `IntegrityError` = duplicado → 200. Cualquier otra excepción al insertar (`OperationalError: database is locked`, que este repo ya tiene pineado en `tests/test_concurrency.py:811`) → **503**, para que Stripe reintente. Fallar *aplicando* sí devuelve 200: el payload ya es nuestro y lo reprocesa el barrido. | Confundir "duplicado" con "no pude escribir" pierde eventos de OXXO para siempre. |
 
-**Regla de oro heredada del proyecto, escrita en el código:** el bot **nunca** genera un cobro. El link siempre lo dispara un humano desde el panel (`app/conversation.py:964` sigue diciendo `(A cotizar)` y no cambia). Va como comentario en la cabecera de `app/cobranza_panel.py`.
+**Regla de oro heredada del proyecto, escrita en el código:** el bot **nunca** genera un cobro. El link siempre lo dispara un humano desde el panel. Va como comentario en la cabecera de `app/cobranza_panel.py`.
+
+**La regla es sobre COBRAR, no sobre COTIZAR** *(precisión de 2026-07-30; la redacción anterior decía que `app/conversation.py` "sigue diciendo `(A cotizar)`" y con el catálogo de producción eso dejó de ser cierto)*. El bot sí dice precios: `_confirm_message` le lee `service.price_info` al cliente y 51 de los 58 servicios traen número; solo 7 siguen en "A cotizar". Eso es exactamente lo que promete `landing/terminos.html` §2 — *"los precios informados por el asistente provienen de nuestro catálogo vigente"* — y por eso el número cotizado se congela en `monto_cotizado_centavos`: es el compromiso contra el que se mide el override (regla 14 de alertas).
 
 **Alcance de métodos en PR1:** tarjeta + MSI + OXXO. **SPEI se pospone** (PR1.5, ~50 líneas): en Stripe MX no es un `payment_method_types` plano sino `customer_balance` con `bank_transfer[type]=mx_bank_transfer`, exige un Customer en la sesión y un paso extra para aplicar el saldo. El esquema ya lo soporta (`metodos_ofrecidos` acepta `spei`, `stripe_customer_id` existe, `payment_intent.partially_funded` ya está en el mapa de eventos). *Verificar los nombres exactos contra la doc vigente de Stripe al implementar: es la parte de su API que más ha cambiado.*
 
@@ -237,7 +239,7 @@ Todos idempotentes, sin orden entre sí, invocados por `nightly()` con el mismo 
 5. **`conciliar_montos()`** — cobros `pagado` sin `neto_centavos`: `GET /v1/balance_transactions`.
 
 ### 4.6 Alertas (`app/cobranza_alertas.py`, tabla `Alert` ya existente)
-`cobro:sin-eventos` (hay pendientes y **cero** filas nuevas en `eventopasarela` en 24 h = el webhook está roto o rotaron el secreto) · `cobro:eventos-sin-procesar` · `cobro:intentos-huerfanos` · `cobro:intento-irresoluble` · **`cobro:desfase-reloj`** (`|recibido_at − stripe_created| > 120 s`: si el VPS se desfasa, la firma rechaza **todo** con 403 y el sistema se ve sano) · `cobro:doble-pago` · `cobro:monto-distinto` · `cobro:pago-tras-cierre` · `cobro:cancelacion-pendiente` · `cobro:modo-no-coincide` · `cobro:disputa`.
+`cobro:sin-eventos` (hay pendientes y **cero** filas nuevas en `eventopasarela` en 24 h = el webhook está roto o rotaron el secreto) · `cobro:eventos-sin-procesar` · `cobro:intentos-huerfanos` · `cobro:intento-irresoluble` · **`cobro:desfase-reloj`** (`|recibido_at − stripe_created| > 120 s`: si el VPS se desfasa, la firma rechaza **todo** con 403 y el sistema se ve sano) · `cobro:doble-pago` · `cobro:monto-distinto` · `cobro:pago-tras-cierre` · `cobro:cancelacion-pendiente` · `cobro:modo-no-coincide` · `cobro:disputa` · `cobro:confirmado-sin-stripe` · `cobro:evento-huerfano` · **`cobro:monto-sobre-cotizado`** (el link pide más de lo que el bot le cotizó al cliente por WhatsApp; `landing/terminos.html` §2 promete la cotización por adelantado, así que el override hacia arriba es la única desviación de dinero que el cliente puede reclamar por escrito).
 
 ### 4.7 El voucher y la CSP
 `app/main.py:53-67` fija `default-src 'self'; img-src 'self' data:` sin `frame-src`. Eso mata cualquier cosa embebida de Stripe. Este diseño **no toca la CSP**: el voucher se muestra como `<a href>` (la navegación por enlace no está restringida). Si algún día hay que embeberlo, la salida es proxearlo por el servidor con el precedente de `GET /media/{name}` (`app/inbox.py:343`) — **jamás** aflojar `default-src`, que rompe `tests/test_security.py:22-26`.
@@ -293,7 +295,7 @@ Todos idempotentes, sin orden entre sí, invocados por `nightly()` con el mismo 
 * **MSI:** no altera `monto_centavos`; el plazo lo **elige el cliente** en el checkout, por eso `msi_meses_ofrecidos` ≠ `msi_meses_usado`. **Prohibido calcular la comisión con una tarifa hardcodeada:** con MSI no es plana. `comision_centavos` y `neto_centavos` se **leen** de la balance transaction.
 * **Barandales** (constantes con comentario de restricción): `MONTO_MIN_CENTAVOS = 1000` ($10, abajo Stripe MX rechaza y OXXO no emite voucher) · `MONTO_MAX_CENTAVOS` (env, default `10_000_000` = $100,000; el asesor teclea el monto a mano y un cero de más es el riesgo operativo #1) · `OXXO_MAX_CENTAVOS = 1_000_000` (~$10,000 por voucher; se rechaza antes de llamar a Stripe con `?err=monto-oxxo`).
 * **CSV: nunca dinero formateado.** Los exports llevan `monto_centavos`, `monto_pagado_centavos`, `neto_centavos` como **enteros crudos** y `moneda` en su propia columna. `'$1,234.56 MXN'` entra a Excel es-MX como texto, `SUMA()` devuelve 0, y el separador de millares por coma dentro de un CSV separado por comas depende de que el quoting nunca se rompa. `formato_monto` queda restringido a plantillas y al mensaje de WhatsApp.
-* **Catálogo:** en PR1 **no** se agrega `precio_centavos` a `catalogservice`. Los 58 servicios dicen "A cotizar" y la columna sería NULL en el 100% de las filas a cambio de ~12 puntos de propagación. Cuando el dueño capture los montos, `cobro.monto_centavos` no cambia: solo cambia el valor por defecto del input. **Riesgo que hay que resolver ANTES de ese PR2:** convivir `price_info='$800'` (lo que el cliente lee en `_confirm_message`) con `precio_centavos=75000` sin regla que los ligue = el cliente ve $800 y Stripe le cobra $750. Este diseño ya deja el mecanismo puesto: la línea base del override es **lo cotizado** (`monto_cotizado_centavos`), no el catálogo vivo.
+* **Catálogo:** en PR1 **no** se agrega `precio_centavos` a `catalogservice`. El precio ya vive en `price_info` como texto humano (51 de 58 con número desde el catálogo de producción, 7 en "A cotizar"), y duplicarlo en una columna entera cuesta ~12 puntos de propagación sin comprar nada que `parse_monto` no dé hoy. Cuando el dueño capture los montos, `cobro.monto_centavos` no cambia: solo cambia el valor por defecto del input. **Riesgo que hay que resolver ANTES de ese PR2:** convivir `price_info='$800'` (lo que el cliente lee en `_confirm_message`) con `precio_centavos=75000` sin regla que los ligue = el cliente ve $800 y Stripe le cobra $750. Este diseño ya deja el mecanismo puesto: la línea base del override es **lo cotizado** (`monto_cotizado_centavos`), no el catálogo vivo.
 
 ---
 
@@ -555,7 +557,7 @@ PR1 **completo, con la suite en verde: 787 passed, 18 xfailed.**
 | Dominio / aplicador / replay | `app/cobranza.py` | ✅ |
 | Webhook fail-closed 200/403/503 | `app/stripe_webhook.py` | ✅ |
 | Los 5 barridos | `app/cobranza_jobs.py` | ✅ |
-| Alertas | `app/cobranza_alertas.py` | ✅ 13 reglas |
+| Alertas | `app/cobranza_alertas.py` | ✅ 14 reglas |
 | Panel + CSV + payouts | `app/cobranza_panel.py`, `templates/` | ✅ |
 
 `plancobro` y `paymentmethod` quedaron **inertes** como se acordó: DDL, espejo y
@@ -681,6 +683,19 @@ snapshot completos, cero rutas y cero escrituras.
     `detalle`, que no lo está y vive detrás de un `payload_json` de hasta 32 KB.
     Una alerta permanentemente encendida no se lee, y `evaluate_alerts()`
     reutiliza la fila: el caso número 21 no producía nada visible.
+19. **Regla 14, `cobro:monto-sobre-cotizado`.** El sistema ya guardaba
+    `monto_cotizado_centavos`, ya clasificaba la diferencia como
+    `monto_origen = "override"` y ya se la enseñaba al asesor en el formulario
+    — pero **solo al que la tecleaba**. No la miraba ninguna alerta ni ningún
+    barrido: se podía pedir más de lo cotizado por WhatsApp y nadie se enteraba,
+    contra un compromiso público escrito en `landing/terminos.html` §2. La
+    regla compara la **columna** (`monto_centavos > monto_cotizado_centavos`),
+    no `monto_origen`, porque el origen se congela al crear y el monto se puede
+    editar después; y lleva ventana de 7 días porque `monto_cotizado_centavos`
+    no cambia nunca — sin ella, un override legítimo del año pasado dejaría la
+    alerta encendida para siempre. Solo dispara hacia **arriba** y solo en
+    estados cobrables: pagar de menos no es una queja, y un cobro cancelado
+    nunca le costó nada al cliente.
 
 ## Lo que falta para cobrarle a un cliente de verdad
 
@@ -694,7 +709,7 @@ Nada de código. Falta lo que solo puede hacer el dueño (§10):
    `expires_after_days`, `installments.enabled` y `customer_balance` con
    `mx_bank_transfer`. En **modo real no está verificado** — son interruptores
    distintos.
-3. Registrar el endpoint `https://<dominio>/webhooks/stripe` con los 11 eventos
+3. Registrar el endpoint `https://<dominio>/webhooks/stripe` con los 12 eventos
    de §10.2.3.
 4. `timedatectl set-ntp true` en el VPS: un desfase >300 s hace que la
    verificación de firma rechace el 100% de los webhooks **y el sistema se ve
