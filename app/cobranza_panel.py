@@ -12,11 +12,12 @@ SQLite: sostener el escritor 10 s tumba el panel con "database is locked".
 import csv
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Form, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi import APIRouter, BackgroundTasks, Form, Request
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from sqlalchemy import func, nulls_last, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
@@ -38,6 +39,9 @@ MSI_PLAZOS_VALIDOS = ("3", "6", "9", "12")
 # Arriba de este monto se deja rastro en la auditoría de admins: el asesor
 # teclea el importe a mano y un cero de más es el riesgo operativo #1.
 MONTO_ALTO_CENTAVOS = 2_000_000  # $20,000
+# A 1000 cobros/mes son 18,000 filas a los 18 meses: sin paginar, cada visita
+# a /cobros las materializaba todas como objetos SQLModel.
+COBROS_POR_PAGINA = 100
 
 
 def _current_user(request: Request) -> str | None:
@@ -510,58 +514,117 @@ def _modo_real() -> bool:
     return stripe_client.modo_real()
 
 
-@router.get("/cobros")
-def listado_cobros(request: Request, todos: int = 0):
-    admin, redirect = _admin_or_redirect(request)
-    if redirect:
-        return redirect
-
-    # El cron vive en el host y puede no estar dado de alta: abrir esta página
-    # también drena la cola de eventos.
+def _drenar_eventos() -> None:
+    """El cron vive en el host y puede no estar dado de alta: abrir /cobros
+    también drena la cola. Corre DESPUÉS de responder — son hasta 200
+    transacciones de SQLite y no pueden ir en el camino del render."""
     try:
         cobranza_jobs.eventos_pendientes()
     except Exception:
         logger.exception("No se pudo drenar la cola de eventos al abrir /cobros")
 
-    with get_session() as session:
-        cobros = list(session.exec(
-            select(Cobro).order_by(Cobro.created_at.desc())  # type: ignore[union-attr]
-        ).all())
 
-    if not todos:
-        # Por defecto solo el modo que corresponde a la llave configurada: un
-        # cobro de prueba no puede sumar en los totales de producción.
-        real = _modo_real()
-        cobros = [c for c in cobros if c.livemode is None or c.livemode == real]
+def _filtro_modo(todos: int):
+    """Al WHERE, no a una comprensión de lista: filtrar en Python obliga a
+    materializar la tabla entera antes de descartar."""
+    if todos:
+        return None
+    # Por defecto solo el modo que corresponde a la llave configurada: un
+    # cobro de prueba no puede sumar en los totales de producción.
+    real = _modo_real()
+    return or_(Cobro.livemode.is_(None), Cobro.livemode == real)  # type: ignore[union-attr]
+
+
+@router.get("/cobros")
+def listado_cobros(request: Request, tareas: BackgroundTasks,
+                   todos: int = 0, pagina: int = 1):
+    admin, redirect = _admin_or_redirect(request)
+    if redirect:
+        return redirect
+
+    pagina = max(1, pagina)
+    filtro = _filtro_modo(todos)
+
+    with get_session() as session:
+        consulta = select(Cobro)
+        agregado = select(
+            Cobro.estado,
+            func.count().label("n"),
+            func.sum(Cobro.monto_centavos).label("pedido"),
+            func.sum(func.coalesce(Cobro.monto_pagado_centavos, 0)).label("recibido"),
+            func.sum(func.coalesce(Cobro.neto_centavos, 0)).label("neto"),
+        )
+        if filtro is not None:
+            consulta = consulta.where(filtro)
+            agregado = agregado.where(filtro)
+
+        cobros = list(session.exec(
+            consulta.order_by(Cobro.created_at.desc())  # type: ignore[union-attr]
+            .limit(COBROS_POR_PAGINA)
+            .offset((pagina - 1) * COBROS_POR_PAGINA)
+        ).all())
+        # Los totales se agregan en SQL y sobre TODA la cartera, no sobre la
+        # página: sumar en Python obligaba a traer las 18,000 filas al heap.
+        filas = session.exec(agregado.group_by(Cobro.estado)).all()  # type: ignore[arg-type]
 
     totales: dict[str, dict[str, int]] = {}
-    for cobro in cobros:
-        fila = totales.setdefault(cobro.estado, {"n": 0, "centavos": 0, "neto": 0})
-        fila["n"] += 1
-        fila["centavos"] += cobro.monto_pagado_centavos or cobro.monto_centavos
-        fila["neto"] += cobro.neto_centavos or 0
+    total_n = en_la_calle = recuperado = 0
+    for estado, n, pedido, recibido, neto in filas:
+        pedido, recibido, neto = int(pedido or 0), int(recibido or 0), int(neto or 0)
+        total_n += n
+        # PEDIDO y RECIBIDO son cosas distintas y el diseño (§6) prohíbe
+        # confundirlas: un SPEI parcial escribe monto_pagado dejando el estado
+        # en pendiente, así que usar el pagado para los estados vivos hacía que
+        # la cartera por cobrar se desplomara justo mientras crecía.
+        cobrado = estado in ("pagado", "reembolsado")
+        totales[estado] = {
+            "n": n, "centavos": recibido if cobrado else pedido,
+            "pedido": pedido, "recibido": recibido, "neto": neto,
+        }
+        if estado in cobranza.ESTADOS_VIVOS:
+            en_la_calle += pedido - recibido
+        elif estado == "pagado":
+            recuperado += recibido
 
+    tareas.add_task(_drenar_eventos)
     return templates.TemplateResponse(
         "cobros.html",
         {
             "request": request, "user": admin, "cobros": cobros, "totales": totales,
             "todos": todos, "modo": "real" if _modo_real() else "prueba",
             "stripe_configurado": bool(settings.stripe_secret_key),
+            "en_la_calle": en_la_calle, "recuperado": recuperado,
+            "pagina": pagina, "total_n": total_n,
+            "hay_mas": pagina * COBROS_POR_PAGINA < total_n,
         },
     )
 
 
-def _csv_response(filename: str, header: list[str], rows) -> Response:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(header)
-    writer.writerows(rows)
-    # BOM UTF-8: sin él Excel (es-MX) muestra mal los acentos.
-    return Response(
-        content="﻿" + buffer.getvalue(),
+def _csv_stream(filename: str, header: list[str], filas) -> StreamingResponse:
+    """Streaming, no un StringIO completo: el CSV de 18,000 cobros se armaba
+    entero en memoria antes de mandar el primer byte. `filas` es un generador
+    que abre su PROPIA sesión — la del route ya está cerrada cuando el cuerpo
+    empieza a producirse.
+    """
+    def _lineas():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        # BOM UTF-8: sin él Excel (es-MX) muestra mal los acentos.
+        yield "﻿"
+        for fila in (header, *filas):
+            writer.writerow(fila)
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    return StreamingResponse(
+        _lineas(),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+CSV_LOTE = 500
 
 
 @router.get("/export/cobros.csv")
@@ -569,86 +632,126 @@ def export_cobros(request: Request):
     admin, redirect = _admin_or_redirect(request)
     if redirect:
         return redirect
-    with get_session() as session:
-        cobros = session.exec(select(Cobro).order_by(Cobro.created_at)).all()
+
+    def _filas():
+        with get_session() as session:
+            for c in session.exec(
+                select(Cobro).order_by(Cobro.created_at)  # type: ignore[arg-type]
+            ).yield_per(CSV_LOTE):
+                yield [
+                    c.id, c.ticket_id or "", c.phone, c.client_name or "",
+                    c.service_id or "", c.concepto, c.moneda, c.monto_centavos,
+                    c.monto_pagado_centavos or "", c.monto_reembolsado_centavos,
+                    c.estado, int(c.confirmado_por_asesor), c.referencia_recibo or "",
+                    c.metodo_usado or "", c.msi_meses_usado or "",
+                    int(c.discrepancia), int(c.disputado),
+                    "" if c.livemode is None else int(c.livemode), c.creado_por,
+                    c.created_at, c.pagado_at or "",
+                ]
+
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     # Montos como ENTEROS CRUDOS y la moneda en su propia columna: un
     # "$1,234.56 MXN" entra a Excel es-MX como texto y SUMA() devuelve 0.
-    return _csv_response(
+    return _csv_stream(
         f"cobros-{stamp}.csv",
         ["id", "folio", "telefono", "cliente", "servicio", "concepto", "moneda",
          "monto_centavos", "monto_pagado_centavos", "monto_reembolsado_centavos",
          "estado", "confirmado_por_asesor", "referencia_recibo", "metodo_usado",
          "msi_meses_usado", "discrepancia", "disputado", "livemode", "creado_por",
          "creado", "pagado"],
-        (
-            [c.id, c.ticket_id or "", c.phone, c.client_name or "", c.service_id or "",
-             c.concepto, c.moneda, c.monto_centavos, c.monto_pagado_centavos or "",
-             c.monto_reembolsado_centavos, c.estado, int(c.confirmado_por_asesor),
-             c.referencia_recibo or "", c.metodo_usado or "", c.msi_meses_usado or "",
-             int(c.discrepancia), int(c.disputado),
-             "" if c.livemode is None else int(c.livemode), c.creado_por,
-             c.created_at, c.pagado_at or ""]
-            for c in cobros
-        ),
+        _filas(),
     )
 
 
 @router.get("/export/conciliacion.csv")
 def export_conciliacion(request: Request):
     """Cruza por stripe_charge_id y payout_id: la suma de neto_centavos de un
-    periodo cuadra con el depósito bancario SUMANDO ENTEROS."""
+    periodo cuadra con el depósito bancario SUMANDO ENTEROS.
+
+    Incluye a los CONFIRMADOS POR ASESOR aunque Stripe no los haya confirmado:
+    son justo la población que la adenda A.1 manda distinguir aquí, y filtrando
+    solo por estado no aparecía ninguno — la columna `confirmado_por_asesor`
+    era letra muerta. Se distinguen por el estado, nunca se suman como iguales.
+    """
     admin, redirect = _admin_or_redirect(request)
     if redirect:
         return redirect
-    with get_session() as session:
-        cobros = session.exec(
-            select(Cobro)
-            .where(Cobro.estado.in_(("pagado", "reembolsado")))  # type: ignore[union-attr]
-            .order_by(Cobro.pagado_at)
-        ).all()
+
+    def _filas():
+        with get_session() as session:
+            consulta = (
+                select(Cobro)
+                .where(
+                    or_(
+                        Cobro.estado.in_(("pagado", "reembolsado")),  # type: ignore[union-attr]
+                        Cobro.confirmado_por_asesor == True,  # noqa: E712
+                    )
+                )
+                # Los confirmados por asesor no tienen pagado_at: al final.
+                .order_by(nulls_last(Cobro.pagado_at.asc()))  # type: ignore[union-attr]
+            )
+            for c in session.exec(consulta).yield_per(CSV_LOTE):
+                yield [
+                    c.id, c.ticket_id or "", c.estado, c.pagado_at or "",
+                    c.phone, c.client_name or "", c.concepto, c.creado_por,
+                    c.stripe_charge_id or "", c.balance_transaction_id or "",
+                    c.payout_id or "", c.moneda_pagada or c.moneda,
+                    c.monto_pagado_centavos or "",
+                    c.comision_centavos if c.comision_centavos is not None else "",
+                    c.monto_reembolsado_centavos,
+                    c.neto_centavos if c.neto_centavos is not None else "",
+                    c.moneda_liquidacion or "", int(c.confirmado_por_asesor),
+                    c.referencia_recibo or "", c.metodo_usado or "",
+                    c.msi_meses_usado or "",
+                    "" if c.livemode is None else int(c.livemode),
+                ]
+
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
-    return _csv_response(
+    return _csv_stream(
         f"conciliacion-{stamp}.csv",
-        ["id", "folio", "pagado", "charge_id", "balance_transaction_id", "payout_id",
+        ["id", "folio", "estado", "pagado", "telefono", "cliente", "concepto",
+         "creado_por", "charge_id", "balance_transaction_id", "payout_id",
          "moneda", "monto_pagado_centavos", "comision_centavos",
          "monto_reembolsado_centavos", "neto_centavos", "moneda_liquidacion",
          "confirmado_por_asesor", "referencia_recibo", "metodo_usado",
          "msi_meses_usado", "livemode"],
-        (
-            [c.id, c.ticket_id or "", c.pagado_at or "", c.stripe_charge_id or "",
-             c.balance_transaction_id or "", c.payout_id or "",
-             c.moneda_pagada or c.moneda, c.monto_pagado_centavos or "",
-             c.comision_centavos if c.comision_centavos is not None else "",
-             c.monto_reembolsado_centavos,
-             c.neto_centavos if c.neto_centavos is not None else "",
-             c.moneda_liquidacion or "", int(c.confirmado_por_asesor),
-             c.referencia_recibo or "", c.metodo_usado or "", c.msi_meses_usado or "",
-             "" if c.livemode is None else int(c.livemode)]
-            for c in cobros
-        ),
+        _filas(),
     )
 
 
+PAYOUTS_DIAS = 90
+
+
 @router.get("/cobros/payouts")
-def vista_payouts(request: Request):
+def vista_payouts(request: Request, dias: int = PAYOUTS_DIAS):
     """Un depósito bancario agrupa decenas de cobros ya neteados: sin esta
-    vista no hay forma de cuadrar el estado de cuenta contra folios."""
+    vista no hay forma de cuadrar el estado de cuenta contra folios.
+
+    Acotada por ventana: sin ella la consulta crece sin techo y a los dos años
+    son todos los cobros pagados de la historia para pintar los depósitos de
+    esta quincena.
+    """
     admin, redirect = _admin_or_redirect(request)
     if redirect:
         return redirect
+
+    dias = max(1, min(dias, 1095))
+    corte = cobranza.naive_utc(utcnow() - timedelta(days=dias))
 
     with get_session() as session:
         cobros = session.exec(
             select(Cobro)
             .where(Cobro.payout_id.is_not(None))  # type: ignore[union-attr]
-            .order_by(Cobro.pagado_at)
+            .where(Cobro.pagado_at >= corte)
+            .order_by(Cobro.pagado_at)  # type: ignore[arg-type]
         ).all()
-        sin_conciliar = len(session.exec(
-            select(Cobro)
+        # COUNT en SQL: el len(...all()) traía cada fila al heap para contarlas.
+        sin_conciliar = session.exec(
+            select(func.count())
+            .select_from(Cobro)
             .where(Cobro.estado == "pagado")
             .where(Cobro.neto_centavos.is_(None))  # type: ignore[union-attr]
-        ).all())
+        ).one()
 
         grupos: dict[str, dict] = {}
         for cobro in cobros:
@@ -666,6 +769,6 @@ def vista_payouts(request: Request):
             {
                 "request": request, "user": admin,
                 "grupos": sorted(grupos.values(), key=lambda g: g["payout_id"]),
-                "sin_conciliar": sin_conciliar,
+                "sin_conciliar": sin_conciliar, "dias": dias,
             },
         )

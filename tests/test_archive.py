@@ -355,6 +355,36 @@ def test_conversation_archived_by_phone(mirror):
     assert rows[0][0] == "escalado"
 
 
+def test_espejo_de_cobranza_corre_despues_del_commit_no_dentro_del_flush(mirror):
+    """Dentro del flush, el round-trip a MSSQL RETIENE el escritor de SQLite.
+
+    `timeout` de pymssql es por statement y valía más que el busy_timeout de
+    SQLite, así que con MSSQL lento —no caído; ahí `_safe` sí degrada la
+    excepción a warning— el INSERT de eventopasarela del webhook moría con
+    "database is locked" y devolvía 503, quemando reintentos de Stripe.
+    """
+    from sqlmodel import create_engine as crear
+
+    from app.models import Cobro
+
+    engine = crear("sqlite://", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(engine)
+
+    def _espejadas() -> int:
+        with mirror.connect() as conn:
+            return conn.execute(text("SELECT COUNT(*) FROM cobros")).scalar()
+
+    with Session(engine) as s:
+        s.add(Cobro(phone="5215500001111", concepto="CURP", monto_centavos=125000,
+                    token_verificacion="tok-diferido", creado_por="ana"))
+        s.flush()
+        assert _espejadas() == 0, "el espejo corrió DENTRO del flush"
+        s.commit()
+        assert _espejadas() == 1, "el espejo no corrió al hacer commit"
+
+    engine.dispose()
+
+
 def test_cobro_archived_and_upsert_rewrites(mirror):
     """El upsert del espejo reescribe la MISMA fila (source_id): reprocesar un
     cobro tras un cambio de estado no lo duplica ni pierde el candado."""

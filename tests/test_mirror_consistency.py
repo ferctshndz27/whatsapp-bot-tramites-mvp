@@ -134,14 +134,16 @@ def _listeners() -> dict[str, set[str]]:
             and dec.args
             and isinstance(dec.args[0], ast.Name)
         }
-        # El cuerpo siempre es `_safe(archive_<algo>, target)`: el primer
-        # argumento es la función que hace la escritura real.
+        # El cuerpo es `_safe(archive_<algo>, target)` o, para las tres tablas
+        # de dinero, `_diferir(archive_<algo>, target)` — que encola el mismo
+        # espejo para después del commit en vez de correrlo dentro del flush.
+        # En ambos el primer argumento es la función que escribe de verdad.
         funciones = {
             sub.args[0].id
             for sub in ast.walk(interna)
             if isinstance(sub, ast.Call)
             and isinstance(sub.func, ast.Name)
-            and sub.func.id == "_safe"
+            and sub.func.id in ("_safe", "_diferir")
             and sub.args
             and isinstance(sub.args[0], ast.Name)
         }

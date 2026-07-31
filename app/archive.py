@@ -15,8 +15,12 @@ Se activa definiendo MSSQL_HOST y MSSQL_SA_PASSWORD (ver .env).
 
 import logging
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, event, text
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Session as SASession
+from sqlalchemy.orm import object_session
 
 from app.config import settings
 
@@ -1168,6 +1172,50 @@ def _safe(fn, target) -> None:
         logger.warning("No se pudo archivar en MSSQL (%s): %s", fn.__name__, exc)
 
 
+# Cola por sesión: los listeners de cobranza encolan aquí durante el flush y
+# el after_commit la drena, ya fuera de la transacción de SQLite.
+_COLA_ESPEJO = "_espejo_cobranza_pendiente"
+
+
+def _instantanea(target):
+    """Copia desprendida de las columnas, tomada DENTRO del flush.
+
+    Después del commit los atributos quedan expirados: leerlos dispararía un
+    SELECT por objeto, o reventaría si la sesión ya cerró. Las funciones
+    archive_* solo leen atributos, así que un namespace con los valores
+    alcanza y además congela exactamente lo que se va a espejar.
+    """
+    estado = sa_inspect(target)
+    return SimpleNamespace(**{
+        attr.key: getattr(target, attr.key) for attr in estado.mapper.column_attrs
+    })
+
+
+def _diferir(fn, target) -> None:
+    """Encola el espejo para DESPUÉS del commit, en vez de correrlo dentro del
+    flush.
+
+    Dentro del flush, el round-trip a MSSQL retiene el escritor de SQLite. Con
+    MSSQL lento —no caído; ahí `_safe` sí degrada la excepción a warning— el
+    INSERT de `eventopasarela` del webhook moría con "database is locked" y
+    devolvía 503, quemando los reintentos de Stripe. Lo que se pierda si el
+    proceso muere entre el commit y el espejo lo repara `backfill()` en el
+    siguiente arranque, igual que cuando MSSQL está caído.
+    """
+    if not enabled():
+        return
+    sesion = object_session(target)
+    if sesion is None:  # sin sesión no hay after_commit que drene: al vuelo
+        _safe(fn, target)
+        return
+    sesion.info.setdefault(_COLA_ESPEJO, []).append((fn, _instantanea(target)))
+
+
+def _drenar_cola_espejo(sesion) -> None:
+    for fn, copia in sesion.info.pop(_COLA_ESPEJO, ()):
+        _safe(fn, copia)
+
+
 def backfill() -> None:
     """Sincroniza a MSSQL toda la data que ya existe en SQLite. Idempotente
     (gracias al upsert), así que corre seguro en cada arranque: cubre el
@@ -1408,20 +1456,28 @@ def _register_listeners() -> None:
     def _alert_upsert(mapper, connection, target):
         _safe(archive_alert, target)
 
+    # Las tres tablas de DINERO se espejan DESPUÉS del commit: son las que
+    # escribe el webhook de Stripe, y un MSSQL lento dentro del flush retiene
+    # el escritor de SQLite hasta tumbar el request con 503. Las demás tablas
+    # siguen síncronas: su volumen es bajo y no están en ese camino.
+    @event.listens_for(SASession, "after_commit")
+    def _espejo_tras_commit(session):
+        _drenar_cola_espejo(session)
+
     @event.listens_for(Cobro, "after_insert")
     @event.listens_for(Cobro, "after_update")
     def _cobro_upsert(mapper, connection, target):
-        _safe(archive_cobro, target)
+        _diferir(archive_cobro, target)
 
     @event.listens_for(IntentoCobro, "after_insert")
     @event.listens_for(IntentoCobro, "after_update")
     def _intento_cobro_upsert(mapper, connection, target):
-        _safe(archive_intento_cobro, target)
+        _diferir(archive_intento_cobro, target)
 
     @event.listens_for(EventoPasarela, "after_insert")
     @event.listens_for(EventoPasarela, "after_update")
     def _evento_pasarela_upsert(mapper, connection, target):
-        _safe(archive_evento_pasarela, target)
+        _diferir(archive_evento_pasarela, target)
 
     @event.listens_for(PlanCobro, "after_insert")
     @event.listens_for(PlanCobro, "after_update")

@@ -313,6 +313,54 @@ def test_46_reembolso_invalida_el_neto_ya_conciliado():
         assert fila.payout_id == "po_x"
 
 
+def test_48_disputa_cerrada_apaga_la_bandera():
+    """Sin manejar `charge.dispute.closed` la bandera `disputado` no se
+    limpiaba nunca: la alerta crítica quedaba encendida de por vida y la
+    SIGUIENTE disputa solo actualizaba la misma fila, invisible."""
+    with Session(db.engine) as s:
+        c = _cobro(s, estado="pagado", llave_cobro_vivo=None,
+                   stripe_charge_id="ch_1", monto_pagado_centavos=125000,
+                   ultimo_evento_created=100)
+        abierta = _evento(s, "charge.dispute.created", {
+            "object": "dispute", "id": "dp_1", "charge": "ch_1",
+            "status": "needs_response", "metadata": _meta(c),
+        }, created=200)
+        cobranza.aplicar_evento(s, abierta)
+        s.commit()
+        assert s.get(Cobro, c.id).disputado is True
+
+        ganada = _evento(s, "charge.dispute.closed", {
+            "object": "dispute", "id": "dp_1", "charge": "ch_1",
+            "status": "won", "metadata": _meta(c),
+        }, created=300)
+        cobranza.aplicar_evento(s, ganada)
+        s.commit()
+        fila = s.get(Cobro, c.id)
+        assert fila.disputado is False
+        assert fila.estado == "pagado"  # la disputa nunca toca el estado
+        assert fila.discrepancia is False
+
+
+def test_48b_disputa_perdida_deja_rastro_y_alerta_propia():
+    """Perder es distinto de ganar: el dinero se fue y Stripe cobró la
+    penalización. La bandera se apaga igual, pero no en silencio."""
+    with Session(db.engine) as s:
+        c = _cobro(s, estado="pagado", llave_cobro_vivo=None,
+                   stripe_charge_id="ch_1", monto_pagado_centavos=125000,
+                   disputado=True, ultimo_evento_created=100)
+        ev = _evento(s, "charge.dispute.closed", {
+            "object": "dispute", "id": "dp_1", "charge": "ch_1",
+            "status": "lost", "metadata": _meta(c),
+        }, created=300)
+        cobranza.aplicar_evento(s, ev)
+        s.commit()
+        fila = s.get(Cobro, c.id)
+        assert fila.disputado is False
+        assert fila.discrepancia is True
+        assert "lost" in (fila.estado_motivo or "")
+        assert _alertas(s, "cobro:disputa-perdida")
+
+
 def test_47_evento_viejo_rellena_lo_que_falta_sin_pisar_lo_que_hay():
     """Un sintético del panel estampa el reloj del VPS en
     `ultimo_evento_created`. El `payment_intent.succeeded` REAL que llega

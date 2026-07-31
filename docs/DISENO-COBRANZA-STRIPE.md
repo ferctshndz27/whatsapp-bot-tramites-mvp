@@ -448,7 +448,11 @@ Todos idempotentes, sin orden entre sí, invocados por `nightly()` con el mismo 
 1. **Activar OXXO**: Settings → Payment methods → **OXXO** → Turn on. Hay que activarlo **en modo prueba y en modo real por separado**. Sin esto, la creación de la sesión falla con un error críptico.
 2. **Activar MSI (installments)**: Settings → Payment methods → **Cards → Installments (México)**. Confirmar qué plazos quedan habilitados (3/6/9/12) — el plazo lo elige el cliente y **la comisión la absorbe el negocio**, así que conviene decidir el tope.
 3. **Registrar el webhook**: Developers → Webhooks → **Add endpoint** → `https://<tu-dominio>/webhooks/stripe`, con **estos eventos y no otros**:
-   `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`, `payment_intent.partially_funded`, `charge.refunded`, `charge.refund.updated`, `charge.dispute.created`.
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`, `payment_intent.partially_funded`, `charge.refunded`, `charge.refund.updated`, `charge.dispute.created`, `charge.dispute.closed`.
+   > `charge.dispute.closed` es el doceavo y se agregó después: sin él la
+   > bandera `disputado` no se apaga nunca, la alerta crítica queda encendida
+   > de por vida y la disputa SIGUIENTE solo actualiza la misma fila — nadie
+   > ve que hay una nueva.
 4. **Copiar el `whsec_` al `.env` del servidor** (nunca al chat, nunca al repo) y reiniciar el contenedor.
 5. **Un solo modo a la vez.** No dejar el endpoint registrado en modo prueba mientras corre producción, y **no** correr `stripe listen --forward-to` contra el dominio de producción: aunque `livemode` está guardado y el aplicador rechaza el modo que no coincide, la regla operativa evita el susto.
 
@@ -635,6 +639,48 @@ snapshot completos, cero rutas y cero escrituras.
     INSERT de `eventopasarela` del webhook moría con `database is locked` y
     devolvía 503, quemando reintentos de Stripe. La forma definitiva es mover el
     espejo a un listener `after_commit`, fuera de la transacción; queda pendiente.
+
+14. **El espejo de las tres tablas de dinero corre en `after_commit`.** Es la
+    forma definitiva que la desviación 13 dejaba pendiente: los listeners de
+    `Cobro`, `IntentoCobro` y `EventoPasarela` encolan en `session.info` y un
+    listener de sesión drena la cola **fuera** de la transacción de SQLite. Se
+    encola una instantánea (`SimpleNamespace` con las columnas), no el objeto:
+    después del commit los atributos están expirados y leerlos dispararía un
+    SELECT por fila. Las demás tablas siguen síncronas — su volumen es bajo y
+    no están en el camino del webhook. Lo que se pierda si el proceso muere
+    entre el commit y el espejo lo repara `backfill()` al arrancar, igual que
+    cuando MSSQL está caído. `tests/test_mirror_consistency.py` reconoce ahora
+    `_diferir` además de `_safe` como LUGAR 3 de los cinco.
+15. **`/cobros` pagina de 100 y agrega los totales en SQL.** Antes materializaba
+    la tabla completa como objetos SQLModel y sumaba en Python: a 18,000 filas
+    son ~150 MB de heap en un VPS de 2 GB, con dos admins refrescando a la vez.
+    El filtro de `livemode` se fue al WHERE, los totales salen de un `GROUP BY`
+    sobre TODA la cartera (no sobre la página), y `eventos_pendientes()` —hasta
+    200 transacciones— pasó a `BackgroundTasks`, fuera del camino del render.
+    Los dos CSV se emiten con `StreamingResponse` sobre `yield_per(500)`, así
+    que ya no se arma el archivo entero en memoria antes del primer byte.
+    `/cobros/payouts` lleva ventana de 90 días y cuenta con `COUNT` en vez de
+    `len(...all())`.
+16. **Lo PEDIDO y lo RECIBIDO dejaron de ser el mismo número.** El total por
+    estado usaba `monto_pagado or monto_centavos` incluso en estados vivos, y
+    `payment_intent.partially_funded` escribe `monto_pagado` dejando el cobro
+    en `pendiente`: un SPEI de $50,000 con $10,000 transferidos reportaba
+    $10,000 por cobrar en vez de $50,000 — la cartera se desplomaba justo
+    mientras crecía. Ahora los estados vivos suman lo pedido, los cobrados
+    suman lo recibido, y arriba hay dos cifras que no existían: **en la calle**
+    y **recuperado**.
+17. **`/export/conciliacion.csv` incluye a los confirmados por asesor** y trae
+    `telefono`, `cliente`, `concepto` y `creado_por`. Filtrar solo por estado
+    dejaba fuera justo a la población que la adenda A.1 manda distinguir ahí,
+    y volvía letra muerta a la columna `confirmado_por_asesor`. Se distinguen
+    por la columna `estado`, que ahora también va en el CSV; **nunca se suman
+    como lo mismo**.
+18. **Las reglas de alerta que no se apagaban solas ya lo hacen.** `doble-pago`
+    y `pago-tras-cierre` llevan la misma ventana de 7 días que las reglas 10 y
+    13; la primera además filtra por `resultado` (indexado) antes de comparar
+    `detalle`, que no lo está y vive detrás de un `payload_json` de hasta 32 KB.
+    Una alerta permanentemente encendida no se lee, y `evaluate_alerts()`
+    reutiliza la fila: el caso número 21 no producía nada visible.
 
 ## Lo que falta para cobrarle a un cliente de verdad
 

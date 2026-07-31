@@ -260,6 +260,76 @@ def test_33_cancelacion_confirmada_libera_y_permite_otro(entorno, stripe_doble,
     assert len(stripe_doble["crear"]) == antes + 1
 
 
+def _sembrar(entorno, n: int, **kw) -> None:
+    with Session(entorno) as s:
+        for i in range(n):
+            base = dict(
+                phone=PHONE, concepto=f"CURP {i}", monto_centavos=80000,
+                estado="pendiente", creado_por=ASESOR, livemode=False,
+            )
+            base.update(kw)
+            base["token_verificacion"] = f"tok-siembra-{i}"
+            s.add(Cobro(**base))
+        s.commit()
+
+
+def test_47_el_listado_pagina_y_los_totales_son_de_toda_la_cartera(entorno):
+    """A 1000 cobros/mes son 18,000 filas a los 18 meses: sin paginar, cada
+    visita materializaba la tabla entera como objetos SQLModel. Los totales,
+    en cambio, tienen que seguir siendo de TODA la cartera (van en SQL), no
+    de la página que se está viendo."""
+    _sembrar(entorno, panel.COBROS_POR_PAGINA + 7)
+    cliente = _cliente(ADMIN)
+
+    primera = cliente.get("/cobros")
+    assert primera.status_code == 200
+    assert "107 cobros en total" in primera.text
+    assert "pagina=2" in primera.text
+
+    segunda = cliente.get("/cobros?pagina=2")
+    assert segunda.status_code == 200
+    # 107 en total: 100 en la primera página y 7 en la segunda.
+    assert primera.text.count("<td>") > segunda.text.count("<td>")
+    assert "CURP 0" in segunda.text      # el más viejo cae al final
+    assert "CURP 0" not in primera.text
+
+
+def test_48_un_parcial_no_hace_desaparecer_la_cartera_pendiente(entorno):
+    """`payment_intent.partially_funded` escribe monto_pagado dejando el cobro
+    PENDIENTE. Usar el pagado como total del estado hacía que un SPEI de
+    $50,000 con $10,000 recibidos reportara $10,000 por cobrar en vez de
+    $50,000: la cartera se desplomaba justo mientras crecía."""
+    _sembrar(entorno, 1, monto_centavos=5000000, monto_pagado_centavos=1000000)
+    r = _cliente(ADMIN).get("/cobros")
+
+    assert "$50,000.00" in r.text     # lo PEDIDO manda en un estado vivo
+    assert "$10,000.00" in r.text     # y lo recibido se muestra aparte
+    assert "$40,000.00" in r.text     # "en la calle" es lo que FALTA
+
+
+def test_49_conciliacion_incluye_a_los_confirmados_por_asesor(entorno):
+    """La adenda A.1 manda distinguir "Pagado" de "Confirmado por asesor" EN
+    ESTE CSV. Filtrando solo por estado no aparecía ninguno, así que la
+    columna `confirmado_por_asesor` era letra muerta. Y sin teléfono ni
+    cliente, contabilidad tenía que cruzar contra el otro CSV a mano."""
+    with Session(entorno) as s:
+        s.add(Cobro(id=1, ticket_id=1, phone=PHONE, client_name="Cliente Prueba",
+                    concepto="CURP certificada", monto_centavos=80000,
+                    estado="pendiente", token_verificacion="tok-oxxo",
+                    creado_por=ASESOR, confirmado_por_asesor=True,
+                    confirmado_por=ASESOR, referencia_recibo="OXXO-88213"))
+        s.commit()
+
+    r = _cliente(ADMIN).get("/export/conciliacion.csv")
+    assert r.status_code == 200
+    cuerpo = r.text
+    assert "OXXO-88213" in cuerpo, "el confirmado por asesor no salió en el CSV"
+    assert PHONE in cuerpo and "Cliente Prueba" in cuerpo
+    assert "telefono" in cuerpo.splitlines()[0]
+    # Se distingue por estado, NUNCA se suma como si fuera un pago de Stripe.
+    assert "pendiente" in cuerpo
+
+
 def test_33b_cancelar_con_intento_en_vuelo_no_libera_el_candado(entorno, stripe_doble,
                                                                 monkeypatch):
     """Sin pi y sin cs PERO con un intento en "enviando", "nunca existió

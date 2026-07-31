@@ -154,7 +154,18 @@ def reglas_cobranza(session: Session) -> list[tuple[str, str, str, str, float | 
 
     # 6) Doble cargo real (no replay): lo detecta el aplicador y queda escrito
     #    en el detalle del evento, que es lo que aquí se re-deriva.
+    #
+    #    Con ventana y filtrando primero por `resultado` (que SÍ está
+    #    indexado). Sin ventana esto era doblemente malo: (a) eventopasarela es
+    #    append-only, así que UN doble pago dejaba la alerta crítica encendida
+    #    para siempre y el SEGUNDO caso, meses después, solo actualizaba la
+    #    fila existente sin que nadie viera nada nuevo; (b) `detalle` no tiene
+    #    índice y está detrás de payload_json (32 KB), o sea que comparar por
+    #    ahí obliga a recorrer las páginas de overflow de la tabla entera.
+    corte_transitorio = _naive(ahora - timedelta(days=VENTANA_TRANSITORIA_DIAS))
     dobles = _contar(session, EventoPasarela,
+                     EventoPasarela.resultado == "ignorado",
+                     EventoPasarela.recibido_at >= corte_transitorio,
                      EventoPasarela.detalle == "segundo pago sobre cobro pagado")
     if dobles:
         disparadas.append((
@@ -187,6 +198,13 @@ def reglas_cobranza(session: Session) -> list[tuple[str, str, str, str, float | 
 
     # 8) Entró el dinero con el folio ya cerrado: o el trabajo se entregó sin
     #    cobrar, o el cliente pagó algo que ya recibió y nadie le avisó.
+    #    Con ventana sobre `pagado_at`: `aviso_pago_enviado_at` solo se escribe
+    #    si el WhatsApp SALE, y la adenda A.4 decidió que sin plantilla HSM el
+    #    bot no escribe fuera de la ventana de 24 h — que es exactamente este
+    #    caso. Sin ventana, cada pago de OXXO tardío se quedaba contado para
+    #    siempre aunque el asesor ya lo hubiera trabajado, y a los dos meses la
+    #    fila decía "20 cobros" sin bajar nunca: para cuando llegara el que sí
+    #    importa, nadie la estaría mirando.
     tras_cierre = session.exec(
         select(func.count())
         .select_from(Cobro)
@@ -194,6 +212,7 @@ def reglas_cobranza(session: Session) -> list[tuple[str, str, str, str, float | 
         .where(Cobro.estado == "pagado")
         .where(Ticket.status == TicketStatus.CERRADO)
         .where(Cobro.aviso_pago_enviado_at.is_(None))  # type: ignore[union-attr]
+        .where(Cobro.pagado_at >= corte_transitorio)
     ).one()
     if tras_cierre:
         disparadas.append((

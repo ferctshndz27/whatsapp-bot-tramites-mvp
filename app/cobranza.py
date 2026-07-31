@@ -622,9 +622,29 @@ def _aplicar_a_cobro(
 
     if tipo == "charge.dispute.created":
         cobro.disputado = True  # no cambia estado: el dinero sigue en disputa
+        cobro.updated_at = utcnow()
         alerta(session, "cobro:disputa", "Disputa de cargo",
                f"cobro #{cobro.id} charge={cobro.stripe_charge_id}", level="critical")
         return "aplicado", None
+
+    if tipo == "charge.dispute.closed":
+        # Sin esta rama la bandera NUNCA se apagaba y la alerta crítica
+        # "cargos disputados" quedaba encendida de por vida; la SIGUIENTE
+        # disputa solo actualizaba la fila existente y nadie veía nada nuevo.
+        resultado_disputa = obj.get("status") or "cerrada"
+        cobro.disputado = False
+        cobro.estado_motivo = f"disputa cerrada: {resultado_disputa}"
+        if resultado_disputa == "lost":
+            # El dinero se fue y Stripe además cobra la penalización. No
+            # transiciona (el diseño manda que la disputa no toque el estado),
+            # pero tiene que quedar marcado y visible.
+            cobro.discrepancia = True
+            alerta(session, "cobro:disputa-perdida", "Disputa PERDIDA",
+                   f"cobro #{cobro.id} charge={cobro.stripe_charge_id}: el dinero "
+                   "se devolvió al cliente y Stripe cobró la penalización.",
+                   level="critical")
+        cobro.updated_at = utcnow()
+        return "aplicado", f"disputa {resultado_disputa}"
 
     if tipo == "cobro.creado":
         return "aplicado", "alta del cobro"

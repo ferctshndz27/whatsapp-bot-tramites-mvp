@@ -28,12 +28,30 @@
 
   {% if totales %}
   <div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+    <div class="card" style="min-width:190px; margin:0; border-left:4px solid #be1e51;">
+      <div style="color:var(--text-muted); font-size:.82rem;">En la calle</div>
+      <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(en_la_calle) }}</div>
+      <div style="color:var(--text-muted); font-size:.82rem;">falta por cobrar</div>
+    </div>
+    <div class="card" style="min-width:190px; margin:0; border-left:4px solid #1e7d52;">
+      <div style="color:var(--text-muted); font-size:.82rem;">Recuperado</div>
+      <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(recuperado) }}</div>
+      <div style="color:var(--text-muted); font-size:.82rem;">ya entró</div>
+    </div>
+  </div>
+  <div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem;">
     {% for estado, t in totales.items() %}
     <div class="card" style="min-width:170px; margin:0;">
       <div style="color:var(--text-muted); font-size:.82rem;">{{ estado|replace('_', ' ')|capitalize }}</div>
       <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(t.centavos) }}</div>
       <div style="color:var(--text-muted); font-size:.82rem;">
         {{ t.n }} cobro{{ '' if t.n == 1 else 's' }}
+        {# Lo pedido y lo recibido son numeros distintos: un SPEI parcial deja
+           el cobro pendiente con dinero ya adentro, y sumarlos como uno solo
+           hacia que la cartera por cobrar se viera casi en cero. #}
+        {% if t.recibido and t.recibido != t.centavos %}
+        · recibido {{ formato_monto(t.recibido) }}
+        {% endif %}
         {% if t.neto %}· neto {{ formato_monto(t.neto) }}{% endif %}
       </div>
     </div>
@@ -91,8 +109,30 @@
       </tbody>
     </table>
   </div>
+
+  <nav aria-label="Paginación de cobros"
+       style="display:flex; gap:1rem; align-items:center; margin-top:1rem;">
+    {% if pagina > 1 %}
+    <a href="/cobros?pagina={{ pagina - 1 }}{% if todos %}&todos=1{% endif %}"
+       rel="prev">&larr; Anteriores</a>
+    {% endif %}
+    <span style="color:var(--text-muted); font-size:.9rem;">
+      Página {{ pagina }} · {{ total_n }} cobro{{ '' if total_n == 1 else 's' }} en total
+    </span>
+    {% if hay_mas %}
+    <a href="/cobros?pagina={{ pagina + 1 }}{% if todos %}&todos=1{% endif %}"
+       rel="next">Siguientes &rarr;</a>
+    {% endif %}
+  </nav>
   {% else %}
-  <p style="color:var(--text-muted);">Todavía no hay cobros.</p>
+  <p style="color:var(--text-muted);">
+    {% if pagina > 1 %}
+    No hay más cobros en esta página.
+    <a href="/cobros{% if todos %}?todos=1{% endif %}">Volver al inicio</a>
+    {% else %}
+    Todavía no hay cobros.
+    {% endif %}
+  </p>
   {% endif %}
 </div>
 {% endblock %}
