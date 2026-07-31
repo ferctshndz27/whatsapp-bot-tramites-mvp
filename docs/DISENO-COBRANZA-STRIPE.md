@@ -559,6 +559,8 @@ PR1 **completo, con la suite en verde: 787 passed, 18 xfailed.**
 | Los 5 barridos | `app/cobranza_jobs.py` | ✅ |
 | Alertas | `app/cobranza_alertas.py` | ✅ 14 reglas |
 | Panel + CSV + payouts | `app/cobranza_panel.py`, `templates/` | ✅ |
+| Humo con Stripe vivo | crear · pagar · conciliar | ✅ modo **prueba** · ⛔ modo real |
+| Panel visto en navegador | `/cobros`, `/unmatched` | ✅ escritorio y 375 px |
 
 `plancobro` y `paymentmethod` quedaron **inertes** como se acordó: DDL, espejo y
 snapshot completos, cero rutas y cero escrituras.
@@ -718,8 +720,26 @@ Nada de código. Falta lo que solo puede hacer el dueño (§10):
    `acct_1TycbaQUq2XAVvdQ`). Cuatro Checkout Sessions reales — tarjeta,
    tarjeta+OXXO, tarjeta+MSI, tarjeta+OXXO+SPEI — 4/4 aceptadas por la API.
    De ahí salió la desviación 7.
-6. **Falta el humo de PAGO, de punta a punta, y es obligatorio antes de
-   cobrarle a nadie**: generar un cobro desde un folio, pagar con
-   `4242 4242 4242 4242`, y ver que el webhook lo aplica y el cobro llega a
-   `pagado`. Requiere `STRIPE_WEBHOOK_SECRET` (el `whsec_` de `stripe listen`),
-   que al 2026-07-30 sigue vacío en el `.env` local.
+6. **Humo de PAGO punta a punta: hecho** (2026-07-31, modo prueba, misma
+   cuenta, con `stripe listen` reenviando al webhook local). Cobro generado
+   desde el panel por $800.00 (monto prellenado con lo cotizado, `monto_origen
+   = "cotizado"`), pagado con `4242 4242 4242 4242`. Lo que quedó probado y
+   ningún doble podía probar:
+   * La **firma HMAC se verifica contra Stripe real** y el 403 fail-closed se
+     levanta al poner el `whsec_`. Antes de pagar se dispararon cuatro eventos
+     firmados ajenos: los cuatro entraron y se resolvieron `huerfano` — el
+     aplicador clasifica lo que no le pertenece en vez de tronar o inventar.
+   * **La idempotencia aguanta el orden real de Stripe.** Llegaron cinco
+     eventos del pago; `payment_intent.succeeded` aplicó, y
+     `checkout.session.completed` —que llegó DESPUÉS— se marcó `duplicado
+     (pago ya aplicado)`. Ese es el escenario que duplica ingresos en las
+     implementaciones ingenuas. `charge.succeeded`, `payment_intent.created` y
+     `charge.updated` se ignoraron limpiamente por tipo no manejado.
+   * **La conciliación lee dinero real, no una tarifa hardcodeada.**
+     `conciliar_montos()` trajo la balance transaction: pagado 80000,
+     comisión 4153, neto 75847 (cuadra exacto; 5.19% para tarjeta MX).
+   Falta el mismo humo **en modo real**, que es otra llave y otros
+   interruptores.
+7. Un guardarraíl que apareció al hacerlo: el formulario de generar lleva un
+   `confirm()` nativo con el monto en el texto. Detiene el envío hasta que un
+   humano lea la cifra — el riesgo operativo #1 es el cero de más.
