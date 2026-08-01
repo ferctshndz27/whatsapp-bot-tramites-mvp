@@ -4,14 +4,30 @@
     {
       "name": "bot",
       "runtimeExecutable": ".venv/bin/uvicorn",
-      "runtimeArgs": ["app.main:app", "--port", "8010"],
+      "runtimeArgs": [
+        "app.main:app",
+        "--port",
+        "8010"
+      ],
       "port": 8010
     },
     {
       "name": "landing",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8890", "--directory", "landing"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8890",
+        "--directory",
+        "landing"
+      ],
       "port": 8890
+    },
+    {
+      "name": "cobros-live",
+      "runtimeExecutable": "/tmp/claude-1000/-home-fcorth-Projects-whatsapp-bot-tramites-mvp--claude-worktrees-stripe-cobranza-5c3392/115ee3df-5f55-4cf5-9729-b01f0413bd08/scratchpad/run_live.sh",
+      "runtimeArgs": [],
+      "port": 8011
     }
   ]
 }

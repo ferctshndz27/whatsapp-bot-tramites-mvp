@@ -574,3 +574,27 @@ def test_sin_stripe_configurado_avisa_y_no_escribe(entorno, stripe_doble, monkey
     assert "err=sin-stripe" in r.headers["location"]
     with Session(entorno) as s:
         assert s.exec(select(Cobro)).all() == []
+
+
+def test_50_el_instrumento_no_se_narra_como_pago_hasta_que_se_pago(entorno):
+    """`metodo_usado` guarda el INSTRUMENTO vivo, no un hecho consumado: el
+    aplicador lo escribe al emitirse el voucher, mucho antes de que el cliente
+    pague (ver test_22 de test_cobranza_aplicar). La plantilla lo conjugaba
+    siempre en pasado, así que un cobro esperando pago anunciaba «Pagó con
+    card» — el asesor leía un pago que nunca ocurrió."""
+    _sembrar(entorno, 1, ticket_id=1, estado="pendiente", metodo_usado="card")
+    cliente = _cliente(ASESOR)
+
+    pendiente = cliente.get("/tickets/1")
+    assert "Pagó con" not in pendiente.text
+    assert "Por card" in pendiente.text          # el instrumento sí se informa
+
+    with Session(entorno) as s:
+        cobro = s.exec(select(Cobro)).one()
+        cobro.estado = "pagado"
+        cobro.monto_pagado_centavos = cobro.monto_centavos
+        s.add(cobro)
+        s.commit()
+
+    pagado = cliente.get("/tickets/1")
+    assert "Pagó con card" in pagado.text

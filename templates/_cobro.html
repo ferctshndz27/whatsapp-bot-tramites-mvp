@@ -53,7 +53,11 @@
     {% endif %}
 
     <p style="margin:.4rem 0 0; color:var(--text-muted); font-size:.85rem;">
-      {% if c.metodo_usado %}Pagó con {{ c.metodo_usado }}{% if c.msi_meses_usado %} a {{ c.msi_meses_usado }} MSI{% endif %} ·{% endif %}
+      {# `metodo_usado` es el INSTRUMENTO vivo, no un hecho consumado: el
+         aplicador lo escribe al emitirse el voucher, antes de que el cliente
+         pague. Conjugarlo siempre en pasado anunciaba «Pagó con card» en un
+         cobro que seguía esperando el dinero. #}
+      {% if c.metodo_usado %}{% if c.estado in ('pagado', 'reembolsado') %}Pagó con{% else %}Por{% endif %} {{ c.metodo_usado }}{% if c.msi_meses_usado %} a {{ c.msi_meses_usado }} MSI{% endif %} ·{% endif %}
       Generado por {{ c.creado_por }} el {{ c.created_at|local }}
       {% if c.enviado_at %}· enviado {{ c.enviado_at|local }}{% endif %}
       {% if c.voucher_expira_at %}· la ficha vence el {{ c.voucher_expira_at|local('%d/%m/%Y') }}{% endif %}
