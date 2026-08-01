@@ -559,7 +559,8 @@ PR1 **completo, con la suite en verde: 787 passed, 18 xfailed.**
 | Los 5 barridos | `app/cobranza_jobs.py` | ✅ |
 | Alertas | `app/cobranza_alertas.py` | ✅ 14 reglas |
 | Panel + CSV + payouts | `app/cobranza_panel.py`, `templates/` | ✅ |
-| Humo con Stripe vivo | crear · pagar · conciliar | ✅ modo **prueba** · ⛔ modo real |
+| Humo con Stripe vivo | crear · pagar · conciliar | ✅ modo **prueba** completo |
+| Humo en modo **real** | crear 4/4 · cancelar ×2 | ✅ · falta solo el **cargo** |
 | Panel visto en navegador | `/cobros`, `/unmatched` | ✅ escritorio y 375 px |
 
 `plancobro` y `paymentmethod` quedaron **inertes** como se acordó: DDL, espejo y
@@ -706,11 +707,19 @@ Nada de código. Falta lo que solo puede hacer el dueño (§10):
 1. `STRIPE_SECRET_KEY` y `STRIPE_WEBHOOK_SECRET` en el `.env` del VPS. Sin la
    primera el panel dice «Stripe no configurado» y no escribe ningún cobro; sin
    la segunda el webhook rechaza **todo** con 403, a propósito.
-2. Activar OXXO y MSI en el dashboard de Stripe, **en cada modo por separado**.
-   Verificado en **prueba** (2026-07-30): la API acepta `oxxo` con
-   `expires_after_days`, `installments.enabled` y `customer_balance` con
-   `mx_bank_transfer`. En **modo real no está verificado** — son interruptores
-   distintos.
+2. **Métodos: verificados en modo REAL (2026-07-31).** Se crearon Checkout
+   Sessions live (`livemode=true`) y se expiraron enseguida — crear no cobra.
+   Tarjeta ✅ · OXXO ✅ (`oxxo: {expires_after_days: 3}`) · MSI ✅
+   (`card: {installments: {enabled: true}}`) · SPEI ✅
+   (`customer_balance: {bank_transfer: {type: mx_bank_transfer}}`).
+
+   **SPEI estaba apagado en producción y este chequeo lo encontró**: la API
+   devolvía `The payment method type provided: customer_balance is invalid.
+   Please ensure the provided type is activated in your dashboard`. Se activó
+   ("Transferencias bancarias" en Settings → Payment methods, con *Test mode*
+   apagado) y volvió a probarse: pasa. Los interruptores de prueba y de
+   producción son **distintos**; que algo funcione en `sk_test_` no dice nada
+   del modo real.
 3. Registrar el endpoint `https://<dominio>/webhooks/stripe` con los 12 eventos
    de §10.2.3.
 4. `timedatectl set-ntp true` en el VPS: un desfase >300 s hace que la
