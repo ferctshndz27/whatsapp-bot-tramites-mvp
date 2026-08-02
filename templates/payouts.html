@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Depósitos del banco{% endblock %}
+{% block content %}
+<h1>Depósitos del banco</h1>
+
+<div class="card">
+  <p style="margin-top:0;">
+    <a href="/cobros">← Volver a Cobros</a> ·
+    <a href="/export/conciliacion.csv">↓ CSV de conciliación</a>
+  </p>
+  <p style="color:var(--text-muted);">
+    Stripe no deposita cobro por cobro: junta varios, les descuenta la comisión
+    y manda <strong>un solo depósito</strong> días después. Aquí se ve qué
+    folios componen cada depósito, que es lo que permite cuadrar el estado de
+    cuenta sin hacerlo a mano.
+  </p>
+
+  {% if sin_conciliar %}
+  <p><span class="badge tomado">{{ sin_conciliar }} cobro(s) pagados sin conciliar</span>
+     Todavía no tienen comisión ni neto: el barrido nocturno los completa cuando
+     Stripe publica su transacción de balance.</p>
+  {% endif %}
+
+  {% if grupos %}
+  {% for g in grupos %}
+  <h2 style="margin-top:1.25rem;">Depósito {{ g.payout_id }}</h2>
+  <p style="margin:.25rem 0 .5rem;">
+    Bruto {{ formato_monto(g.bruto) }} · comisión {{ formato_monto(g.comision) }} ·
+    <strong>neto depositado {{ formato_monto(g.neto) }}</strong>
+    <span style="color:var(--text-muted);">({{ g.cobros|length }} cobro{{ '' if g.cobros|length == 1 else 's' }})</span>
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Folio</th><th>Cliente</th><th>Pagado</th>
+            <th>Cobrado</th><th>Comisión</th><th>Neto</th><th>Método</th></tr>
+      </thead>
+      <tbody>
+        {% for c in g.cobros %}
+        <tr>
+          <td>{{ c.id }}</td>
+          <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
+          <td>{{ c.client_name or c.phone }}</td>
+          <td><small>{{ c.pagado_at|local }}</small></td>
+          <td>{{ formato_monto(c.monto_pagado_centavos or 0, c.moneda_pagada or c.moneda) }}</td>
+          <td>{{ formato_monto(c.comision_centavos or 0, c.moneda_liquidacion or c.moneda) }}</td>
+          <td>{{ formato_monto(c.neto_centavos or 0, c.moneda_liquidacion or c.moneda) }}</td>
+          <td>
+            {{ c.metodo_usado or '—' }}
+            {% if c.msi_meses_usado %}<br><small>{{ c.msi_meses_usado }} MSI</small>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p style="color:var(--text-muted);">
+    Todavía no hay depósitos registrados. Aparecen cuando Stripe liquida los
+    primeros cobros y el barrido nocturno lee su transacción de balance.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

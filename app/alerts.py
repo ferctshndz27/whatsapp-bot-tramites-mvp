@@ -144,6 +144,13 @@ def current_rules(session: Session) -> list[tuple[str, str, str, str, float | No
             float(free_pct),
         ))
 
+    # 5) Salud de la cobranza (import local, mismo criterio que app.system
+    #    arriba: cobranza_alertas importa el dominio y traerlo al tope
+    #    cerraría un ciclo al arrancar).
+    from app.cobranza_alertas import reglas_cobranza
+
+    fired.extend(reglas_cobranza(session))
+
     return fired
 
 

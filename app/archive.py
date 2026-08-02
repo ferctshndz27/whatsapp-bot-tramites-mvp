@@ -14,9 +14,13 @@ Se activa definiendo MSSQL_HOST y MSSQL_SA_PASSWORD (ver .env).
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, event, text
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Session as SASession
+from sqlalchemy.orm import object_session
 
 from app.config import settings
 
@@ -310,6 +314,176 @@ _SCHEMA_DDL = [
         updated_at      DATETIME2     NOT NULL
     )
     """,
+    # Cobranza: dinero como BIGINT de centavos (nunca FLOAT ni DECIMAL) y sin
+    # FKs — mismo criterio del resto del archivo: es un espejo de solo lectura
+    # y las FKs complicarían el orden del backfill.
+    """
+    IF OBJECT_ID('cobros', 'U') IS NULL
+    CREATE TABLE cobros (
+        source_id                   BIGINT        NOT NULL PRIMARY KEY,
+        ticket_id                   BIGINT        NULL,
+        phone                       NVARCHAR(32)  NOT NULL,
+        client_name                 NVARCHAR(200) NULL,
+        service_id                  NVARCHAR(64)  NULL,
+        concepto                    NVARCHAR(300) NOT NULL,
+        moneda                      NVARCHAR(8)   NOT NULL,
+        monto_centavos              BIGINT        NOT NULL,
+        monto_cotizado_centavos     BIGINT        NULL,
+        monto_catalogo_centavos     BIGINT        NULL,
+        monto_origen                NVARCHAR(12)  NOT NULL,
+        monto_pagado_centavos       BIGINT        NULL,
+        moneda_pagada               NVARCHAR(8)   NULL,
+        monto_reembolsado_centavos  BIGINT        NOT NULL DEFAULT 0,
+        comision_centavos           BIGINT        NULL,
+        neto_centavos               BIGINT        NULL,
+        moneda_liquidacion          NVARCHAR(8)   NULL,
+        balance_transaction_id      NVARCHAR(128) NULL,
+        payout_id                   NVARCHAR(128) NULL,
+        metodos_ofrecidos           NVARCHAR(50)  NOT NULL,
+        metodo_usado                NVARCHAR(20)  NULL,
+        msi_meses_ofrecidos         NVARCHAR(20)  NULL,
+        msi_meses_usado             INT           NULL,
+        estado                      NVARCHAR(30)  NOT NULL,
+        estado_motivo               NVARCHAR(500) NULL,
+        llave_cobro_vivo            NVARCHAR(128) NULL,
+        llave_generacion            NVARCHAR(64)  NULL,
+        token_verificacion          NVARCHAR(64)  NOT NULL,
+        stripe_checkout_session_id  NVARCHAR(128) NULL,
+        stripe_payment_intent_id    NVARCHAR(128) NULL,
+        stripe_charge_id            NVARCHAR(128) NULL,
+        stripe_customer_id          NVARCHAR(128) NULL,
+        url_pago                    NVARCHAR(MAX) NULL,
+        url_expira_at               DATETIME2     NULL,
+        voucher_url                 NVARCHAR(MAX) NULL,
+        voucher_expira_at           DATETIME2     NULL,
+        detalle_pendiente_at        DATETIME2     NULL,
+        livemode                    BIT           NULL,
+        discrepancia                BIT           NOT NULL DEFAULT 0,
+        disputado                   BIT           NOT NULL DEFAULT 0,
+        ultimo_evento_id            NVARCHAR(128) NULL,
+        ultimo_evento_created       BIGINT        NULL,
+        confirmado_por_asesor       BIT           NOT NULL DEFAULT 0,
+        confirmado_por              NVARCHAR(64)  NULL,
+        confirmado_at               DATETIME2     NULL,
+        referencia_recibo           NVARCHAR(100) NULL,
+        plan_id                     BIGINT        NULL,
+        origen                      NVARCHAR(10)  NOT NULL,
+        creado_por                  NVARCHAR(64)  NOT NULL,
+        cancelado_por               NVARCHAR(64)  NULL,
+        enviado_at                  DATETIME2     NULL,
+        pagado_at                   DATETIME2     NULL,
+        cancelado_at                DATETIME2     NULL,
+        aviso_pago_enviado_at       DATETIME2     NULL,
+        reconciliado_at             DATETIME2     NULL,
+        created_at                  DATETIME2     NOT NULL,
+        updated_at                  DATETIME2     NOT NULL,
+        habilitado                  BIT           NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    IF OBJECT_ID('intentos_cobro', 'U') IS NULL
+    CREATE TABLE intentos_cobro (
+        source_id           BIGINT        NOT NULL PRIMARY KEY,
+        cobro_id            BIGINT        NOT NULL,
+        numero              INT           NOT NULL,
+        clave_idempotencia  NVARCHAR(64)  NOT NULL,
+        operacion           NVARCHAR(20)  NOT NULL,
+        metodos_solicitados NVARCHAR(50)  NOT NULL,
+        msi_meses           NVARCHAR(20)  NULL,
+        monto_centavos      BIGINT        NOT NULL,
+        moneda              NVARCHAR(8)   NOT NULL,
+        estado              NVARCHAR(16)  NOT NULL,
+        stripe_object       NVARCHAR(32)  NULL,
+        stripe_id           NVARCHAR(128) NULL,
+        stripe_request_id   NVARCHAR(128) NULL,
+        http_status         INT           NULL,
+        respuesta_json      NVARCHAR(MAX) NULL,
+        error_codigo        NVARCHAR(64)  NULL,
+        error_mensaje       NVARCHAR(500) NULL,
+        reintentos          INT           NOT NULL DEFAULT 0,
+        origen              NVARCHAR(10)  NOT NULL,
+        creado_por          NVARCHAR(64)  NOT NULL,
+        wa_message_id       BIGINT        NULL,
+        livemode            BIT           NULL,
+        solicitado_at       DATETIME2     NOT NULL,
+        respondido_at       DATETIME2     NULL,
+        cerrado_at          DATETIME2     NULL,
+        created_at          DATETIME2     NOT NULL,
+        habilitado          BIT           NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    IF OBJECT_ID('eventos_pasarela', 'U') IS NULL
+    CREATE TABLE eventos_pasarela (
+        source_id        BIGINT        NOT NULL PRIMARY KEY,
+        stripe_event_id  NVARCHAR(128) NOT NULL,
+        tipo             NVARCHAR(64)  NOT NULL,
+        api_version      NVARCHAR(20)  NULL,
+        livemode         BIT           NULL,
+        stripe_created   BIGINT        NOT NULL,
+        recibido_at      DATETIME2     NOT NULL,
+        objeto_id        NVARCHAR(128) NULL,
+        monto_centavos   BIGINT        NULL,
+        moneda           NVARCHAR(8)   NULL,
+        cobro_id         BIGINT        NULL,
+        intento_id       BIGINT        NULL,
+        payload_json     NVARCHAR(MAX) NOT NULL,
+        procesado_at     DATETIME2     NULL,
+        intentos_proceso INT           NOT NULL DEFAULT 0,
+        resultado        NVARCHAR(12)  NULL,
+        detalle          NVARCHAR(500) NULL,
+        habilitado       BIT           NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    IF OBJECT_ID('planes_cobro', 'U') IS NULL
+    CREATE TABLE planes_cobro (
+        source_id                  BIGINT        NOT NULL PRIMARY KEY,
+        phone                      NVARCHAR(32)  NOT NULL,
+        ticket_id                  BIGINT        NULL,
+        service_id                 NVARCHAR(64)  NULL,
+        concepto                   NVARCHAR(300) NOT NULL,
+        moneda                     NVARCHAR(8)   NOT NULL,
+        monto_centavos             BIGINT        NOT NULL,
+        periodicidad               NVARCHAR(12)  NOT NULL,
+        dia_cobro                  INT           NULL,
+        paymentmethod_id           BIGINT        NULL,
+        proxima_ejecucion_at       DATETIME2     NULL,
+        ultima_ejecucion_at        DATETIME2     NULL,
+        ultimo_periodo_generado    NVARCHAR(10)  NULL,
+        cobros_generados           INT           NOT NULL DEFAULT 0,
+        intentos_fallidos_seguidos INT           NOT NULL DEFAULT 0,
+        estado                     NVARCHAR(12)  NOT NULL,
+        fin_at                     DATETIME2     NULL,
+        stripe_customer_id         NVARCHAR(128) NULL,
+        stripe_subscription_id     NVARCHAR(128) NULL,
+        creado_por                 NVARCHAR(64)  NOT NULL,
+        created_at                 DATETIME2     NOT NULL,
+        habilitado                 BIT           NOT NULL DEFAULT 1
+    )
+    """,
+    # Nunca PAN, nunca CVC: solo el identificador pm_ de Stripe y los últimos 4.
+    """
+    IF OBJECT_ID('payment_methods', 'U') IS NULL
+    CREATE TABLE payment_methods (
+        source_id                BIGINT        NOT NULL PRIMARY KEY,
+        phone                    NVARCHAR(32)  NOT NULL,
+        stripe_customer_id       NVARCHAR(128) NOT NULL,
+        stripe_payment_method_id NVARCHAR(128) NOT NULL,
+        tipo                     NVARCHAR(20)  NOT NULL,
+        marca                    NVARCHAR(20)  NULL,
+        ultimos4                 NVARCHAR(4)   NULL,
+        exp_mes                  INT           NULL,
+        exp_anio                 INT           NULL,
+        funding                  NVARCHAR(10)  NULL,
+        predeterminado           BIT           NOT NULL DEFAULT 0,
+        autorizado_por           NVARCHAR(64)  NULL,
+        autorizado_at            DATETIME2     NULL,
+        estado                   NVARCHAR(12)  NOT NULL,
+        created_at               DATETIME2     NOT NULL,
+        habilitado               BIT           NOT NULL DEFAULT 1
+    )
+    """,
 ]
 
 # ponytail: igual que db.py, sin alembic — columnas agregadas después del
@@ -345,7 +519,18 @@ def _get_engine():
             f"mssql+pymssql://{settings.mssql_user}:{settings.mssql_password}"
             f"@{settings.mssql_host}:{settings.mssql_port}/{settings.mssql_db}"
         )
-        _engine = create_engine(url, pool_pre_ping=True)
+        # Timeouts explícitos: sin ellos, un MSSQL arrancando bloquea el
+        # request del webhook de Stripe hasta que Stripe corta a los 30 s.
+        #
+        # `timeout` es POR STATEMENT y los listeners corren dentro del flush,
+        # o sea reteniendo el escritor de SQLite. Tiene que quedar por debajo
+        # del busy_timeout=5000 de app/db.py: con 10 s, un MSSQL LENTO (no
+        # caído — ahí no hay excepción que degradar) hacía que el INSERT de
+        # eventopasarela del webhook muriera con "database is locked" y
+        # devolviera 503, quemando los reintentos de Stripe.
+        _engine = create_engine(
+            url, pool_pre_ping=True, connect_args={"login_timeout": 5, "timeout": 3}
+        )
     return _engine
 
 
@@ -360,7 +545,11 @@ def init() -> None:
             f"mssql+pymssql://{settings.mssql_user}:{settings.mssql_password}"
             f"@{settings.mssql_host}:{settings.mssql_port}/master"
         )
-        master = create_engine(master_url, isolation_level="AUTOCOMMIT")
+        master = create_engine(
+            master_url,
+            isolation_level="AUTOCOMMIT",
+            connect_args={"login_timeout": 5, "timeout": 10},
+        )
         with master.connect() as conn:
             conn.execute(
                 text(
@@ -779,16 +968,252 @@ def archive_conversation(c) -> None:
     )
 
 
+def archive_cobro(c) -> None:
+    _upsert(
+        "cobros", "source_id", c.id,
+        {
+            "ticket_id": c.ticket_id,
+            "phone": c.phone,
+            "client_name": c.client_name,
+            "service_id": c.service_id,
+            "concepto": c.concepto,
+            "moneda": c.moneda,
+            "monto_centavos": c.monto_centavos,
+            "monto_cotizado_centavos": c.monto_cotizado_centavos,
+            "monto_catalogo_centavos": c.monto_catalogo_centavos,
+            "monto_origen": c.monto_origen,
+            "monto_pagado_centavos": c.monto_pagado_centavos,
+            "moneda_pagada": c.moneda_pagada,
+            "monto_reembolsado_centavos": c.monto_reembolsado_centavos,
+            "comision_centavos": c.comision_centavos,
+            "neto_centavos": c.neto_centavos,
+            "moneda_liquidacion": c.moneda_liquidacion,
+            "balance_transaction_id": c.balance_transaction_id,
+            "payout_id": c.payout_id,
+            "metodos_ofrecidos": c.metodos_ofrecidos,
+            "metodo_usado": c.metodo_usado,
+            "msi_meses_ofrecidos": c.msi_meses_ofrecidos,
+            "msi_meses_usado": c.msi_meses_usado,
+            "estado": c.estado,
+            "estado_motivo": c.estado_motivo,
+            "llave_cobro_vivo": c.llave_cobro_vivo,
+            "llave_generacion": c.llave_generacion,
+            "token_verificacion": c.token_verificacion,
+            "stripe_checkout_session_id": c.stripe_checkout_session_id,
+            "stripe_payment_intent_id": c.stripe_payment_intent_id,
+            "stripe_charge_id": c.stripe_charge_id,
+            "stripe_customer_id": c.stripe_customer_id,
+            "url_pago": c.url_pago,
+            "url_expira_at": _naive_utc(c.url_expira_at) if c.url_expira_at else None,
+            "voucher_url": c.voucher_url,
+            "voucher_expira_at": _naive_utc(c.voucher_expira_at) if c.voucher_expira_at else None,
+            "detalle_pendiente_at": _naive_utc(c.detalle_pendiente_at) if c.detalle_pendiente_at else None,
+            "livemode": c.livemode,
+            "discrepancia": c.discrepancia,
+            "disputado": c.disputado,
+            "ultimo_evento_id": c.ultimo_evento_id,
+            "ultimo_evento_created": c.ultimo_evento_created,
+            "confirmado_por_asesor": c.confirmado_por_asesor,
+            "confirmado_por": c.confirmado_por,
+            "confirmado_at": _naive_utc(c.confirmado_at) if c.confirmado_at else None,
+            "referencia_recibo": c.referencia_recibo,
+            "plan_id": c.plan_id,
+            "origen": c.origen,
+            "creado_por": c.creado_por,
+            "cancelado_por": c.cancelado_por,
+            "enviado_at": _naive_utc(c.enviado_at) if c.enviado_at else None,
+            "pagado_at": _naive_utc(c.pagado_at) if c.pagado_at else None,
+            "cancelado_at": _naive_utc(c.cancelado_at) if c.cancelado_at else None,
+            "aviso_pago_enviado_at": _naive_utc(c.aviso_pago_enviado_at) if c.aviso_pago_enviado_at else None,
+            "reconciliado_at": _naive_utc(c.reconciliado_at) if c.reconciliado_at else None,
+            "created_at": _naive_utc(c.created_at),
+            "updated_at": _naive_utc(c.updated_at),
+            "habilitado": c.habilitado,
+        },
+    )
+
+
+def archive_intento_cobro(i) -> None:
+    _upsert(
+        "intentos_cobro", "source_id", i.id,
+        {
+            "cobro_id": i.cobro_id,
+            "numero": i.numero,
+            "clave_idempotencia": i.clave_idempotencia,
+            "operacion": i.operacion,
+            "metodos_solicitados": i.metodos_solicitados,
+            "msi_meses": i.msi_meses,
+            "monto_centavos": i.monto_centavos,
+            "moneda": i.moneda,
+            "estado": i.estado,
+            "stripe_object": i.stripe_object,
+            "stripe_id": i.stripe_id,
+            "stripe_request_id": i.stripe_request_id,
+            "http_status": i.http_status,
+            # Recorte defensivo: el dominio ya guarda recortado, pero el espejo
+            # no debe confiar en eso para no reventar el NVARCHAR.
+            "respuesta_json": i.respuesta_json[:8192] if i.respuesta_json else None,
+            "error_codigo": i.error_codigo,
+            "error_mensaje": i.error_mensaje,
+            "reintentos": i.reintentos,
+            "origen": i.origen,
+            "creado_por": i.creado_por,
+            "wa_message_id": i.wa_message_id,
+            "livemode": i.livemode,
+            "solicitado_at": _naive_utc(i.solicitado_at),
+            "respondido_at": _naive_utc(i.respondido_at) if i.respondido_at else None,
+            "cerrado_at": _naive_utc(i.cerrado_at) if i.cerrado_at else None,
+            "created_at": _naive_utc(i.created_at),
+            "habilitado": i.habilitado,
+        },
+    )
+
+
+def archive_evento_pasarela(e) -> None:
+    _upsert(
+        "eventos_pasarela", "source_id", e.id,
+        {
+            "stripe_event_id": e.stripe_event_id,
+            "tipo": e.tipo,
+            "api_version": e.api_version,
+            "livemode": e.livemode,
+            "stripe_created": e.stripe_created,
+            "recibido_at": _naive_utc(e.recibido_at),
+            "objeto_id": e.objeto_id,
+            "monto_centavos": e.monto_centavos,
+            "moneda": e.moneda,
+            "cobro_id": e.cobro_id,
+            "intento_id": e.intento_id,
+            "payload_json": e.payload_json[:32768] if e.payload_json else "",
+            "procesado_at": _naive_utc(e.procesado_at) if e.procesado_at else None,
+            "intentos_proceso": e.intentos_proceso,
+            "resultado": e.resultado,
+            "detalle": e.detalle,
+            "habilitado": e.habilitado,
+        },
+    )
+
+
+def archive_plan_cobro(p) -> None:
+    _upsert(
+        "planes_cobro", "source_id", p.id,
+        {
+            "phone": p.phone,
+            "ticket_id": p.ticket_id,
+            "service_id": p.service_id,
+            "concepto": p.concepto,
+            "moneda": p.moneda,
+            "monto_centavos": p.monto_centavos,
+            "periodicidad": p.periodicidad,
+            "dia_cobro": p.dia_cobro,
+            "paymentmethod_id": p.paymentmethod_id,
+            "proxima_ejecucion_at": _naive_utc(p.proxima_ejecucion_at) if p.proxima_ejecucion_at else None,
+            "ultima_ejecucion_at": _naive_utc(p.ultima_ejecucion_at) if p.ultima_ejecucion_at else None,
+            "ultimo_periodo_generado": p.ultimo_periodo_generado,
+            "cobros_generados": p.cobros_generados,
+            "intentos_fallidos_seguidos": p.intentos_fallidos_seguidos,
+            "estado": p.estado,
+            "fin_at": _naive_utc(p.fin_at) if p.fin_at else None,
+            "stripe_customer_id": p.stripe_customer_id,
+            "stripe_subscription_id": p.stripe_subscription_id,
+            "creado_por": p.creado_por,
+            "created_at": _naive_utc(p.created_at),
+            "habilitado": p.habilitado,
+        },
+    )
+
+
+def archive_payment_method(p) -> None:
+    _upsert(
+        "payment_methods", "source_id", p.id,
+        {
+            "phone": p.phone,
+            "stripe_customer_id": p.stripe_customer_id,
+            "stripe_payment_method_id": p.stripe_payment_method_id,
+            "tipo": p.tipo,
+            "marca": p.marca,
+            "ultimos4": p.ultimos4,
+            "exp_mes": p.exp_mes,
+            "exp_anio": p.exp_anio,
+            "funding": p.funding,
+            "predeterminado": p.predeterminado,
+            "autorizado_por": p.autorizado_por,
+            "autorizado_at": _naive_utc(p.autorizado_at) if p.autorizado_at else None,
+            "estado": p.estado,
+            "created_at": _naive_utc(p.created_at),
+            "habilitado": p.habilitado,
+        },
+    )
+
+
+# Mínimo 60 s entre intentos de init() desde _safe: SQL Server Express tarda
+# decenas de segundos en aceptar logins tras un reinicio, y sin este freno un
+# webhook de Stripe que llega en esa ventana dispararía el DDL completo (sin
+# timeout) en CADA escritura, hasta que Stripe corta a los 30 s.
+_PROXIMO_INIT: datetime | None = None
+
+
 def _safe(fn, target) -> None:
     if not enabled():
         return
-    global _ready
+    global _ready, _PROXIMO_INIT
     try:
         if not _ready:
+            ahora = datetime.utcnow()
+            if _PROXIMO_INIT and ahora < _PROXIMO_INIT:
+                return  # MSSQL caído hace <60 s: se salta el espejo, backfill repara
             init()
+            if not _ready:
+                _PROXIMO_INIT = ahora + timedelta(seconds=60)
+                return
+            _PROXIMO_INIT = None
         fn(target)
     except Exception as exc:
         logger.warning("No se pudo archivar en MSSQL (%s): %s", fn.__name__, exc)
+
+
+# Cola por sesión: los listeners de cobranza encolan aquí durante el flush y
+# el after_commit la drena, ya fuera de la transacción de SQLite.
+_COLA_ESPEJO = "_espejo_cobranza_pendiente"
+
+
+def _instantanea(target):
+    """Copia desprendida de las columnas, tomada DENTRO del flush.
+
+    Después del commit los atributos quedan expirados: leerlos dispararía un
+    SELECT por objeto, o reventaría si la sesión ya cerró. Las funciones
+    archive_* solo leen atributos, así que un namespace con los valores
+    alcanza y además congela exactamente lo que se va a espejar.
+    """
+    estado = sa_inspect(target)
+    return SimpleNamespace(**{
+        attr.key: getattr(target, attr.key) for attr in estado.mapper.column_attrs
+    })
+
+
+def _diferir(fn, target) -> None:
+    """Encola el espejo para DESPUÉS del commit, en vez de correrlo dentro del
+    flush.
+
+    Dentro del flush, el round-trip a MSSQL retiene el escritor de SQLite. Con
+    MSSQL lento —no caído; ahí `_safe` sí degrada la excepción a warning— el
+    INSERT de `eventopasarela` del webhook moría con "database is locked" y
+    devolvía 503, quemando los reintentos de Stripe. Lo que se pierda si el
+    proceso muere entre el commit y el espejo lo repara `backfill()` en el
+    siguiente arranque, igual que cuando MSSQL está caído.
+    """
+    if not enabled():
+        return
+    sesion = object_session(target)
+    if sesion is None:  # sin sesión no hay after_commit que drene: al vuelo
+        _safe(fn, target)
+        return
+    sesion.info.setdefault(_COLA_ESPEJO, []).append((fn, _instantanea(target)))
+
+
+def _drenar_cola_espejo(sesion) -> None:
+    for fn, copia in sesion.info.pop(_COLA_ESPEJO, ()):
+        _safe(fn, copia)
 
 
 def backfill() -> None:
@@ -807,12 +1232,17 @@ def backfill() -> None:
         CatalogService,
         Client,
         ClientNote,
+        Cobro,
         Conversation,
+        EventoPasarela,
         Feedback,
         FollowUp,
+        IntentoCobro,
         Invitation,
         LoginEvent,
         NluEvent,
+        PaymentMethod,
+        PlanCobro,
         SavedReply,
         SynonymProposal,
         Ticket,
@@ -867,6 +1297,16 @@ def backfill() -> None:
                 archive_synonym_proposal(sp)
             for al in session.exec(select(Alert)).all():
                 archive_alert(al)
+            for co in session.exec(select(Cobro)).all():
+                archive_cobro(co)
+            for ic in session.exec(select(IntentoCobro)).all():
+                archive_intento_cobro(ic)
+            for ep in session.exec(select(EventoPasarela)).all():
+                archive_evento_pasarela(ep)
+            for pc in session.exec(select(PlanCobro)).all():
+                archive_plan_cobro(pc)
+            for pm in session.exec(select(PaymentMethod)).all():
+                archive_payment_method(pm)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -884,13 +1324,18 @@ def _register_listeners() -> None:
         CatalogService,
         Client,
         ClientNote,
+        Cobro,
         Conversation,
+        EventoPasarela,
         FollowUp,
         Feedback,
+        IntentoCobro,
         Invitation,
         LoginEvent,
         Message,
         NluEvent,
+        PaymentMethod,
+        PlanCobro,
         SavedReply,
         SynonymProposal,
         TeamMessage,
@@ -1010,6 +1455,39 @@ def _register_listeners() -> None:
     @event.listens_for(Alert, "after_update")
     def _alert_upsert(mapper, connection, target):
         _safe(archive_alert, target)
+
+    # Las tres tablas de DINERO se espejan DESPUÉS del commit: son las que
+    # escribe el webhook de Stripe, y un MSSQL lento dentro del flush retiene
+    # el escritor de SQLite hasta tumbar el request con 503. Las demás tablas
+    # siguen síncronas: su volumen es bajo y no están en ese camino.
+    @event.listens_for(SASession, "after_commit")
+    def _espejo_tras_commit(session):
+        _drenar_cola_espejo(session)
+
+    @event.listens_for(Cobro, "after_insert")
+    @event.listens_for(Cobro, "after_update")
+    def _cobro_upsert(mapper, connection, target):
+        _diferir(archive_cobro, target)
+
+    @event.listens_for(IntentoCobro, "after_insert")
+    @event.listens_for(IntentoCobro, "after_update")
+    def _intento_cobro_upsert(mapper, connection, target):
+        _diferir(archive_intento_cobro, target)
+
+    @event.listens_for(EventoPasarela, "after_insert")
+    @event.listens_for(EventoPasarela, "after_update")
+    def _evento_pasarela_upsert(mapper, connection, target):
+        _diferir(archive_evento_pasarela, target)
+
+    @event.listens_for(PlanCobro, "after_insert")
+    @event.listens_for(PlanCobro, "after_update")
+    def _plan_cobro_upsert(mapper, connection, target):
+        _safe(archive_plan_cobro, target)
+
+    @event.listens_for(PaymentMethod, "after_insert")
+    @event.listens_for(PaymentMethod, "after_update")
+    def _payment_method_upsert(mapper, connection, target):
+        _safe(archive_payment_method, target)
 
 
 _register_listeners()

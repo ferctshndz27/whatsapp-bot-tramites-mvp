@@ -42,6 +42,26 @@ class Settings:
         self.mssql_user = os.environ.get("MSSQL_USER", "sa")
         self.mssql_password = os.environ.get("MSSQL_SA_PASSWORD", "")
         self.mssql_db = os.environ.get("MSSQL_DB", "tramites_archive")
+        # Cobranza con Stripe. Sin STRIPE_SECRET_KEY el módulo queda inerte:
+        # el panel avisa "Stripe no configurado" y no se escribe ningún cobro.
+        self.stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
+        # Distinto en modo prueba y en modo real. Sin él el webhook rechaza
+        # TODO con 403 a propósito: un webhook sin verificar es dinero ajeno
+        # entrando a nuestra base.
+        self.stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+        # Se pinea la versión para que un cambio de forma en la API de Stripe
+        # no rompa el aplicador de eventos de un día para otro.
+        self.stripe_api_version = os.environ.get("STRIPE_API_VERSION", "")
+        # URL pública del panel: Stripe la exige para success_url/cancel_url.
+        self.public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        # Tope defensivo: un dedazo del asesor no debe poder cobrar $1,000,000.
+        self.cobro_monto_maximo_centavos = int(
+            os.environ.get("COBRO_MONTO_MAXIMO_CENTAVOS", "10000000")
+        )
+        # Vigencia del voucher OXXO. Stripe acepta de 1 a 3 días.
+        self.oxxo_dias_vencimiento = max(
+            1, min(3, int(os.environ.get("OXXO_DIAS_VENCIMIENTO", "3")))
+        )
 
 
 settings = Settings()

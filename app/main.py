@@ -11,11 +11,13 @@ from app import (
     authlog,
     catalog_admin,
     clients,
+    cobranza_panel,
     dashboard,
     inbox,
     kb,
     my,
     replies,
+    stripe_webhook,
     synonym_miner,
     system,
     team_chat,
@@ -111,7 +113,9 @@ app.add_middleware(
 )
 app.middleware("http")(_security_headers)
 app.include_router(webhook.router)
+app.include_router(stripe_webhook.router)
 app.include_router(dashboard.router)
+app.include_router(cobranza_panel.router)
 app.include_router(inbox.router)
 app.include_router(team_chat.router)
 app.include_router(activity.router)
@@ -126,6 +130,21 @@ app.include_router(kb.router)
 app.include_router(authlog.router)
 
 
+def _aplicar_eventos_pendientes() -> None:
+    """Cola de eventos de Stripe que quedaron sin aplicar. También corre en el
+    cron nocturno, pero el cron vive en el host y puede no estar dado de alta
+    en el VPS: sin esta llamada un evento atorado esperaría indefinidamente."""
+    try:
+        from app.cobranza_jobs import eventos_pendientes
+
+        resultado = eventos_pendientes()
+        if resultado["pendientes"]:
+            logger.info("Eventos de Stripe aplicados al arrancar: %s", resultado)
+    except Exception:
+        # Best-effort: la cobranza nunca puede impedir que el bot arranque.
+        logger.exception("No se pudieron aplicar los eventos de Stripe pendientes")
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
@@ -133,6 +152,7 @@ def on_startup() -> None:
     archive.init()
     activity.backfill_closed_tickets()
     archive.backfill()
+    _aplicar_eventos_pendientes()
 
 
 @app.get("/health")

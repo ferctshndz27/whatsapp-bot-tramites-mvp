@@ -47,6 +47,7 @@ from app.models import (
     CatalogService,
     Client,
     ClientNote,
+    Cobro,
     Direction,
     Invitation,
     LoginEvent,
@@ -79,6 +80,7 @@ IP_ACCESO = "203.0.113.77"  # rango de documentación (RFC 5737), nunca real
 MARCA_ACTIVIDAD = "marca-secreta-actividad"
 MARCA_BITACORA = "secreto-en-bitacora"
 CLIENTE_SECRETO = "Cliente Secreto"
+REFERENCIA_COBRO = "recibo-secreto-9931"  # solo sale en el CSV de conciliación
 PRECIO_SEMBRADO = "$777"
 TEXTO_NO_ENTENDIDO = "quiero rentar un zeppelin para el domingo"
 SINONIMO_MINADO = "sinonimo minado por claude"
@@ -255,6 +257,14 @@ RUTAS: list[Ruta] = [
     Ruta("GET /logins", "GET", "/logins", "/", filtracion=IP_ACCESO),
     Ruta("GET /export/logins.csv", "GET", "/export/logins.csv", "/", filtracion=IP_ACCESO),
     Ruta("GET /export/tickets.csv", "GET", "/export/tickets.csv", "/", filtracion=CLIENTE_SECRETO),
+    # --- Cobranza: lo que se ve aquí es dinero de clientes ---
+    Ruta("GET /cobros", "GET", "/cobros", "/", filtracion=CLIENTE_SECRETO),
+    Ruta("GET /cobros/payouts", "GET", "/cobros/payouts", "/", filtracion=CLIENTE_SECRETO),
+    Ruta("GET /export/cobros.csv", "GET", "/export/cobros.csv", "/", filtracion=CLIENTE_SECRETO),
+    Ruta(
+        "GET /export/conciliacion.csv", "GET", "/export/conciliacion.csv", "/",
+        filtracion=REFERENCIA_COBRO,
+    ),
     Ruta(
         "GET /export/activity.csv", "GET", "/export/activity.csv", "/",
         filtracion=MARCA_ACTIVIDAD,
@@ -317,6 +327,23 @@ def _sembrar() -> None:
             )
         )
         s.add(TicketActivity(ticket_id=1, username=ADMIN, action=MARCA_ACTIVIDAD))
+        # Cobro ya liquidado y conciliado: alimenta /cobros, /cobros/payouts y
+        # los dos CSV. llave_cobro_vivo=None a propósito — un cobro vivo haría
+        # que /finish exigiera confirmación y cambiaría lo que prueban las
+        # filas de arriba.
+        s.add(
+            Cobro(
+                id=1, ticket_id=1, phone=PHONE, client_name=CLIENTE_SECRETO,
+                service_id="curp", concepto="CURP certificada (folio #1)",
+                monto_centavos=80000, monto_pagado_centavos=80000,
+                comision_centavos=3000, neto_centavos=77000, moneda_liquidacion="mxn",
+                estado="pagado", llave_cobro_vivo=None,
+                token_verificacion="tok-authz", creado_por=ADMIN,
+                stripe_charge_id="ch_semilla", payout_id="po_semilla",
+                referencia_recibo=REFERENCIA_COBRO, metodo_usado="card",
+                pagado_at=utcnow(),
+            )
+        )
         # Autor "tercero": el admin borra la nota por ser admin, no por autoría.
         s.add(ClientNote(id=1, phone=PHONE, author="tercero", body="ya pagó anticipo"))
         s.add(Invitation(id=1, token=TOKEN_INVITACION, created_by=ADMIN, used_at=None))
