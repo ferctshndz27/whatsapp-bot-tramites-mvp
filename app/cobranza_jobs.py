@@ -88,6 +88,20 @@ def eventos_pendientes(limite: int = LOTE) -> dict:
     for evento_id in ids:
         try:
             with get_session() as session:
+                # Reclamo del ESCRITOR como primera operación de la
+                # transacción: el cron y el BackgroundTasks del panel corren
+                # este mismo drenado desde procesos distintos, y dos lectores
+                # con el mismo snapshot aplicaban el evento dos veces (el
+                # segundo pisaba lo del primero). El UPDATE toma el candado de
+                # escritura de SQLite desde el arranque y serializa; tras un
+                # crash el evento sigue con procesado_at NULL y se retoma.
+                filas = session.connection().exec_driver_sql(
+                    "UPDATE eventopasarela SET resultado = 'reclamado' "
+                    "WHERE id = ? AND procesado_at IS NULL",
+                    (evento_id,),
+                ).rowcount
+                if not filas:
+                    continue  # otro drenador ya lo procesó
                 evento = session.get(EventoPasarela, evento_id)
                 if evento is None or evento.procesado_at is not None:
                     continue

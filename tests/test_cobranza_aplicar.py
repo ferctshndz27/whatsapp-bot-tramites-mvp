@@ -457,3 +457,70 @@ def test_31_replay_completo_reproduce_la_fila():
         assert despues.llave_cobro_vivo is None
         for campo in cobranza._CAMPOS_REPLAY:
             assert getattr(despues, campo) == antes[campo], campo
+
+
+def test_51_declive_de_tarjeta_no_suelta_el_candado():
+    """PREVIENE el doble instrumento: en Checkout mode=payment un declive deja
+    el PI en requires_payment_method y la sesión ABIERTA — el cliente puede
+    reintentar con otra tarjeta en el MISMO link. Tratar el evento como
+    terminal soltaba el candado con el link vivo, y el panel dejaba generar un
+    segundo cobro: dos sesiones cobrables para el mismo (teléfono, servicio)."""
+    with Session(db.engine) as s:
+        c = _cobro(s, stripe_payment_intent_id="pi_51",
+                   url_pago="https://checkout.stripe.com/c/pay/cs_51")
+        llave = c.llave_cobro_vivo
+        ev = _evento(s, "payment_intent.payment_failed", {
+            "object": "payment_intent", "id": "pi_51",
+            "status": "requires_payment_method",
+            "last_payment_error": {"message": "tarjeta rechazada"},
+            "metadata": _meta(c),
+        })
+        cobranza.aplicar_evento(s, ev)
+        s.commit()
+        fila = s.get(Cobro, c.id)
+        assert fila.estado == "pendiente"          # NO es terminal
+        assert fila.llave_cobro_vivo == llave      # el candado sigue puesto
+        assert fila.url_pago                       # y el link sigue vivo
+        assert "tarjeta rechazada" in (fila.estado_motivo or "")
+
+
+def test_52_fallo_asincrono_de_oxxo_si_es_terminal():
+    """El voucher vencido o la transferencia fallida SÍ matan el instrumento:
+    checkout.session.async_payment_failed conserva su rama terminal."""
+    with Session(db.engine) as s:
+        c = _cobro(s)
+        ev = _evento(s, "checkout.session.async_payment_failed", {
+            "object": "checkout.session", "id": "cs_52",
+            "payment_status": "unpaid", "metadata": _meta(c),
+        })
+        cobranza.aplicar_evento(s, ev)
+        s.commit()
+        fila = s.get(Cobro, c.id)
+        assert fila.estado == "fallido"
+        assert fila.llave_cobro_vivo is None
+
+
+def test_53_rechazo_definitivo_de_stripe_suelta_el_candado():
+    """Un 4xx al crear la sesión significa que Stripe NO creó nada: dejar el
+    candado puesto bloqueaba (teléfono, servicio) para siempre, sin que ningún
+    barrido lo liberara (borrador no está en ESTADOS_VIVOS_RECONCILIABLES)."""
+    from app.stripe_client import RespuestaStripe
+
+    with Session(db.engine) as s:
+        c = cobranza.crear_cobro(
+            s, phone="5215577778888", concepto="CURP", monto_centavos=80000,
+            creado_por="ana", llave_generacion=f"form:{uuid4().hex}",
+            token_verificacion=uuid4().hex, service_id="curp",
+        )
+        s.flush()
+        intento = cobranza.nuevo_intento(s, c, creado_por="ana")
+        s.flush()
+        assert c.llave_cobro_vivo is not None
+        r = RespuestaStripe(ok=False, http_status=400,
+                            error_codigo="url_invalid",
+                            error_mensaje="Not a valid URL")
+        assert cobranza.aplicar_respuesta_stripe(s, c, intento, r) == "rechazado"
+        s.commit()
+        fila = s.get(Cobro, c.id)
+        assert fila.llave_cobro_vivo is None       # el candado se libera
+        assert "url_invalid" in (fila.estado_motivo or "")

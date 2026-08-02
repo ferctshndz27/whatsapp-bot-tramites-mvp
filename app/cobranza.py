@@ -550,7 +550,9 @@ def _aplicar_a_cobro(
     if tipo in ("checkout.session.async_payment_succeeded", "payment_intent.succeeded"):
         return _aplicar_pago(session, cobro, evento, obj)
 
-    if tipo in ("checkout.session.async_payment_failed", "payment_intent.payment_failed"):
+    if tipo == "checkout.session.async_payment_failed":
+        # OXXO/SPEI: el pago diferido murió (voucher vencido, transferencia
+        # rechazada). Este SÍ es terminal.
         if transicionar(cobro, "fallido", evento):
             cobro.llave_cobro_vivo = None  # Stripe confirmó: el instrumento murió
             error = (obj.get("last_payment_error") or {}).get("message")
@@ -558,6 +560,22 @@ def _aplicar_a_cobro(
             _actividad(session, cobro.ticket_id, "sistema", "cobro:fallido")
             return "aplicado", None
         return "ignorado", "fallo con rango menor al estado actual"
+
+    if tipo == "payment_intent.payment_failed":
+        # Un declive de tarjeta NO mata el instrumento: el PI queda en
+        # requires_payment_method y la Checkout Session sigue ABIERTA — el
+        # cliente puede reintentar con otra tarjeta en el MISMO link. Tratarlo
+        # como terminal soltaba el candado con el link vivo: dos instrumentos
+        # cobrables para el mismo (teléfono, servicio). La muerte real llega
+        # por payment_intent.canceled o checkout.session.expired.
+        if cobro.estado not in ESTADOS_VIVOS:
+            return "ignorado", "declive sobre cobro no vivo"
+        error = (obj.get("last_payment_error") or {}).get("message")
+        cobro.estado_motivo = f"intento de pago fallido: {error or 'sin detalle'}"[:500]
+        cobro.detalle_pendiente_at = utcnow()  # que la reconciliación confirme
+        cobro.updated_at = utcnow()
+        _actividad(session, cobro.ticket_id, "sistema", "cobro:pago-rechazado")
+        return "aplicado", "declive registrado; el instrumento sigue vivo"
 
     if tipo == "checkout.session.expired":
         if cobro.stripe_payment_intent_id:
@@ -816,6 +834,15 @@ def aplicar_respuesta_stripe(session: Session, cobro: Cobro, intento: IntentoCob
     intento.respondido_at = ahora
     intento.cerrado_at = ahora
     session.add(intento)
+    # Rechazo definitivo (4xx): Stripe NO creó ningún instrumento. Sin esto el
+    # cobro quedaba en borrador con el candado puesto y ningún barrido lo
+    # liberaba (borrador no entra a la reconciliación): el (teléfono,
+    # servicio) bloqueado para siempre.
+    cobro.llave_cobro_vivo = None
+    motivo = respuesta.error_codigo or respuesta.error_mensaje or "error"
+    cobro.estado_motivo = f"stripe rechazó: {motivo}"[:500]
+    cobro.updated_at = ahora
+    session.add(cobro)
     return "rechazado"
 
 

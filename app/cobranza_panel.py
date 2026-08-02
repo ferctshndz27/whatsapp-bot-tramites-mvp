@@ -123,6 +123,11 @@ def generar_cobro(
         # El no-op silencioso es del cliente HTTP; aquí sí se avisa: un cobro
         # fantasma es peor que un error visible.
         return _volver(ticket_id, err="sin-stripe")
+    if not settings.public_base_url:
+        # Stripe rechaza una success_url relativa con 400: sin la URL pública
+        # el 100% de los cobros fallaría con un «se puede reintentar» que no
+        # dice por qué. Se corta ANTES de escribir nada.
+        return _volver(ticket_id, err="sin-url-publica")
 
     msi_plazos = msi if msi in MSI_PLAZOS_VALIDOS else None
     # Lo que el bot le COTIZÓ al cliente es la línea base del override, no el
@@ -240,6 +245,11 @@ def _enviar_link(cobro_id: int, user: str, reemplazo: bool = False) -> bool:
         phone, ticket_id = cobro.phone, cobro.ticket_id
 
     wamid = whatsapp_client.send_text(phone, texto)
+    if wamid is None:
+        # Meta rechazó (token vencido, número no habilitado…): el link NO
+        # salió. Marcarlo como enviado escondería que el cliente nunca lo vio.
+        logger.warning("El link del cobro %s no salió: Meta rechazó el envío", cobro_id)
+        return False
 
     with get_session() as session:
         cobro = session.get(Cobro, cobro_id)
@@ -424,7 +434,9 @@ def confirmar_por_asesor(request: Request, cobro_id: int, referencia: str = Form
         cobro.confirmado_por_asesor = True
         cobro.confirmado_por = user
         cobro.confirmado_at = utcnow()
-        cobro.referencia_recibo = referencia.strip() or None
+        # [:100] en el borde: el espejo declara NVARCHAR(100) y una referencia
+        # más larga tumbaba el upsert — y con él todo el backfill de cobranza.
+        cobro.referencia_recibo = referencia.strip()[:100] or None
         cobro.updated_at = utcnow()
         session.add(cobro)
         cobranza._actividad(session, ticket_id, user, "cobro:confirmado-asesor")
@@ -461,6 +473,10 @@ def avisar_pago(request: Request, cobro_id: int):
         phone = cobro.phone
 
     wamid = whatsapp_client.send_text(phone, texto)
+    if wamid is None:
+        # Meta rechazó el envío: marcar el aviso como enviado apagaría la
+        # alerta de pago-tras-cierre sin que el cliente recibiera nada.
+        return _volver(ticket_id, err="envio-fallo")
 
     with get_session() as session:
         cobro = session.get(Cobro, cobro_id)

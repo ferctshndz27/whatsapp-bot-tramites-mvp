@@ -598,3 +598,75 @@ def test_50_el_instrumento_no_se_narra_como_pago_hasta_que_se_pago(entorno):
 
     pagado = cliente.get("/tickets/1")
     assert "Pagó con card" in pagado.text
+
+
+def test_54_sin_url_publica_no_genera_ningun_cobro(entorno, stripe_doble, monkeypatch):
+    """PREVIENE el fallo total silencioso: con PUBLIC_BASE_URL vacía la
+    success_url sale relativa y Stripe rechaza el 100% de los cobros con 400.
+    El asesor solo veía «se puede reintentar» — y reintentaba para siempre."""
+    monkeypatch.setattr(settings, "public_base_url", "")
+    cliente = _cliente(ASESOR)
+    r = _generar(cliente, token="tok-sin-url")
+
+    assert "err=sin-url-publica" in r.headers["location"]
+    assert stripe_doble["crear"] == []            # ni una llamada a Stripe
+    with Session(entorno) as s:
+        assert s.exec(select(Cobro)).all() == []  # ni una fila escrita
+
+
+def test_55_meta_rechaza_el_aviso_y_no_se_marca_como_enviado(entorno, stripe_doble, monkeypatch):
+    """`send_text` devuelve None cuando Meta rechaza. Marcar el aviso como
+    enviado apagaba la alerta de pago-tras-cierre sin que el cliente hubiera
+    recibido nada."""
+    _sembrar(entorno, 1, ticket_id=1, estado="pagado", monto_pagado_centavos=80000)
+    monkeypatch.setattr(panel.whatsapp_client, "send_text", lambda *a, **k: None)
+    cliente = _cliente(ASESOR)
+
+    r = cliente.post("/cobros/1/avisar-pago", follow_redirects=False)
+
+    assert "err=envio-fallo" in r.headers["location"]
+    with Session(entorno) as s:
+        assert s.exec(select(Cobro)).one().aviso_pago_enviado_at is None
+
+
+def test_56_la_referencia_del_recibo_se_recorta_en_el_borde(entorno, stripe_doble):
+    """El espejo MSSQL declara NVARCHAR(100): una referencia más larga tumbaba
+    el upsert y con él TODO el backfill de cobranza. Se recorta al entrar."""
+    _sembrar(entorno, 1, ticket_id=1, estado="pendiente")
+    cliente = _cliente(ASESOR)
+
+    cliente.post("/cobros/1/confirmar", data={"referencia": "R" * 300},
+                 follow_redirects=False)
+
+    with Session(entorno) as s:
+        assert s.exec(select(Cobro)).one().referencia_recibo == "R" * 100
+
+
+def test_57_cerrar_un_folio_sin_cobro_no_arrastra_el_de_otro_tramite(entorno, stripe_doble, monkeypatch):
+    """REGRESIÓN del cierre: el filtro iba solo por teléfono, así que cerrar
+    el folio del ACTA (sin cobro) se bloqueaba por el cobro vivo de la CURP y
+    el aviso le decía al cliente el monto de OTRO trámite."""
+    import app.dashboard as dashboard
+
+    _sembrar(entorno, 1, ticket_id=1, service_id="curp", estado="pendiente",
+             llave_cobro_vivo=f"{PHONE}:curp")
+    with Session(entorno) as s:
+        s.add(Ticket(id=2, phone=PHONE, client_name="Cliente Prueba",
+                     category="Servicios básicos", service_id="acta",
+                     service_name="Acta de nacimiento", price_info="$500",
+                     status=TicketStatus.NUEVO, assigned_to=ASESOR))
+        s.commit()
+    cuerpos: list[str] = []
+    monkeypatch.setattr(dashboard.whatsapp_client, "send_text",
+                        lambda phone, body, **k: (cuerpos.append(body), "wamid.f57")[1])
+    cliente = _cliente(ASESOR)
+
+    r = cliente.post("/tickets/2/finish", data={}, follow_redirects=False)
+    assert "err=cobro-vivo-al-cerrar" not in r.headers["location"]
+    with Session(entorno) as s:
+        assert s.get(Ticket, 2).status == TicketStatus.CERRADO
+    assert cuerpos and "sigue activo" not in cuerpos[-1]
+
+    # Control: cerrar el folio DEL servicio con cobro vivo sí exige confirmar.
+    r2 = cliente.post("/tickets/1/finish", data={}, follow_redirects=False)
+    assert "err=cobro-vivo-al-cerrar" in r2.headers["location"]

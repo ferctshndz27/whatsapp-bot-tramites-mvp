@@ -13,12 +13,32 @@ BRANCH=production
 # función al parsear el script, antes de ejecutar nada — así el reset
 # (que reescribe este mismo archivo en pleno vuelo) no corrompe la
 # posición de lectura del intérprete a mitad de las líneas restantes.
+# Si el deploy nuevo no levanta, regresar el código Y el contenedor al commit
+# anterior. Sin esto, `git reset --hard` ya movió HEAD antes del `up`: en el
+# siguiente tick LOCAL==REMOTE, el script sale 0 para siempre y el bot queda
+# CAÍDO hasta que un humano entre por SSH. Con el rollback, HEAD se queda en
+# el commit viejo y cada tick reintenta el deploy que falló.
+rollback() {
+  echo "$(date -Is) rollback a $LOCAL" >&2
+  if [ "$LOCAL" != "none" ]; then
+    git reset --hard "$LOCAL"
+    docker compose up -d --build \
+      || echo "$(date -Is) ERROR: el rollback tampoco levantó" >&2
+  fi
+}
+
 deploy() {
   git reset --hard "origin/$BRANCH"
   # Versión desplegada visible en el panel /system (data/ está montado en /data)
   mkdir -p data
   echo "$REMOTE $(date -Is)" > data/deploy-info
-  docker compose up -d --build
+  if ! docker compose up -d --build; then
+    # Con `depends_on: service_healthy`, un MSSQL enfermo aborta el up y
+    # DESTRUYE el contenedor viejo del bot antes de crear el nuevo.
+    echo "$(date -Is) ERROR: compose up falló para $REMOTE" >&2
+    rollback
+    return 1
+  fi
 
   # Stack de correo (Poste.io) — independiente del bot, no bloquea su
   # deploy ni su health check si falla; solo se registra la advertencia.
@@ -35,6 +55,7 @@ deploy() {
 
   echo "$(date -Is) ERROR: health check falló tras desplegar $REMOTE" >&2
   docker compose logs --tail 30 bot >&2
+  rollback
   return 1
 }
 

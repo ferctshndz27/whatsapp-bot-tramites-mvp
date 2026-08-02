@@ -7,7 +7,7 @@ import bcrypt
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 from app.templating import templates
-from sqlalchemy import update
+from sqlalchemy import or_, update
 from sqlmodel import select
 
 from app import authlog, whatsapp_client
@@ -559,15 +559,19 @@ FINISH_NOTICE_CON_COBRO = (
 
 
 def _cobros_vivos_del_folio(session, ticket: Ticket) -> list:
-    """Cobros con instrumento todavía cobrable de ESTE cliente. Va por
-    teléfono, no por folio: con OXXO el folio se cierra y el bot fabrica otro,
-    así que buscar por ticket_id no vería nada."""
+    """Cobros con instrumento todavía cobrable de ESTE trámite. El criterio es
+    el MISMO del candado (`ux_cobro_vivo`): (teléfono, servicio) — no solo el
+    teléfono, porque el cobro de la CURP no tiene por qué bloquear el cierre
+    del acta ni colarse en su aviso; y no solo el folio, porque con OXXO el
+    folio se cierra y el bot fabrica otro para el mismo servicio."""
     from app.models import Cobro
 
     return list(session.exec(
         select(Cobro)
         .where(Cobro.phone == ticket.phone)
         .where(Cobro.llave_cobro_vivo.is_not(None))  # type: ignore[union-attr]
+        .where(or_(Cobro.ticket_id == ticket.id,
+                   Cobro.service_id == ticket.service_id))
     ).all())
 
 

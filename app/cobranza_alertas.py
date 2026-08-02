@@ -335,4 +335,93 @@ def reglas_cobranza(session: Session) -> list[tuple[str, str, str, str, float | 
             float(len(sobre_cotizado)),
         ))
 
+    # 15-19) Los códigos que el aplicador levanta AD-HOC (`cobranza.alerta`)
+    # necesitan su regla derivada aquí, con el MISMO código: evaluate_alerts()
+    # apaga toda alerta cuyo código no vuelva a disparar, y corre al final del
+    # MISMO nightly() que los barridos — sin regla, la alerta moría esa noche
+    # con el problema vivo.
+
+    # 15) SPEI parcial: hay dinero adentro y el cobro sigue vivo. Deriva del
+    #     estado, se apaga sola cuando el pago se completa o el cobro muere.
+    parciales = session.exec(
+        select(Cobro)
+        .where(Cobro.estado.in_(tuple(sorted(ESTADOS_VIVOS))))  # type: ignore[attr-defined]
+        .where(Cobro.monto_pagado_centavos > 0)
+        .where(Cobro.monto_pagado_centavos < Cobro.monto_centavos)
+    ).all()
+    if parciales:
+        ej = parciales[0]
+        disparadas.append((
+            "cobro:pago-parcial", "warn",
+            "Transferencia SPEI parcial",
+            f"{len(parciales)} cobro(s) tienen dinero recibido sin completar. Ej. "
+            f"cobro #{ej.id}: {formato_monto(ej.monto_pagado_centavos or 0, ej.moneda)} "
+            f"de {formato_monto(ej.monto_centavos, ej.moneda)}. El cliente debe "
+            "transferir el resto con la MISMA referencia.",
+            float(len(parciales)),
+        ))
+
+    # 16) Disputa perdida: ledger + ventana (como las reglas 6 y 13).
+    perdidas = _contar(session, EventoPasarela,
+                       EventoPasarela.tipo == "charge.dispute.closed",
+                       EventoPasarela.detalle == "disputa lost",
+                       EventoPasarela.recibido_at >= corte_transitorio)
+    if perdidas:
+        disparadas.append((
+            "cobro:disputa-perdida", "critical",
+            "Disputa PERDIDA",
+            f"{perdidas} disputa(s) perdidas en {VENTANA_TRANSITORIA_DIAS} días: "
+            "el dinero se devolvió al cliente y Stripe cobró la penalización. "
+            "Revisa el folio y decide si se recobra por otro medio.",
+            float(perdidas),
+        ))
+
+    # 17) Pago tardío: el dinero real ganó sobre vencido/cancelado/fallido.
+    #     `estado_motivo` se queda para siempre; la ventana va por pagado_at.
+    tardios = _contar(session, Cobro,
+                      Cobro.estado == "pagado",
+                      Cobro.estado_motivo == "pago tardío aceptado",
+                      Cobro.pagado_at >= corte_transitorio)
+    if tardios:
+        disparadas.append((
+            "cobro:pago-tardio", "warn",
+            "Pago sobre cobro terminal",
+            f"{tardios} cobro(s) se pagaron estando vencidos/cancelados/fallidos. "
+            "El dinero se aceptó y quedó marcado con discrepancia: verifica que "
+            "el trámite siga siendo procedente.",
+            float(tardios),
+        ))
+
+    # 18) Candado en conflicto: un cobro vivo que exige candado y no lo tiene
+    #     (el replay no pudo restaurarlo por choque). Sin candado, nada impide
+    #     generar un segundo instrumento para el mismo (teléfono, servicio).
+    sin_candado = _contar(session, Cobro,
+                          Cobro.estado.in_(("pendiente", "cancelacion_solicitada")),  # type: ignore[attr-defined]
+                          Cobro.llave_cobro_vivo.is_(None))  # type: ignore[union-attr]
+    if sin_candado:
+        disparadas.append((
+            "cobro:candado-en-conflicto", "warn",
+            "Cobros vivos sin candado",
+            f"{sin_candado} cobro(s) pendientes no tienen candado de instrumento "
+            "vivo (choque en el replay). Mientras tanto se puede generar un "
+            "duplicado: resuélvelos antes de cobrar de nuevo a esos clientes.",
+            float(sin_candado),
+        ))
+
+    # 19) Metadata que no coincide: token de verificación distinto — típico de
+    #     un respaldo restaurado con ids reciclados. Ledger + ventana.
+    meta_mal = _contar(session, EventoPasarela,
+                       EventoPasarela.resultado == "ignorado",
+                       EventoPasarela.detalle == "metadata no coincide",
+                       EventoPasarela.recibido_at >= corte_transitorio)
+    if meta_mal:
+        disparadas.append((
+            "cobro:metadata-no-coincide", "warn",
+            "Eventos con metadata que no coincide",
+            f"{meta_mal} evento(s) traían un token de verificación distinto al "
+            "del cobro que reclamaban y se ignoraron. Si restauraste un "
+            "respaldo, esos pagos requieren conciliación manual.",
+            float(meta_mal),
+        ))
+
     return disparadas

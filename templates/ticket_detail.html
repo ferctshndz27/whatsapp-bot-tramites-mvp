@@ -85,6 +85,8 @@
     {% elif err == 'monto-maximo' %}<span class="badge caducada">El monto supera el tope permitido. Revisa que no sobre un cero.</span>
     {% elif err == 'monto-oxxo' %}<span class="badge caducada">OXXO no acepta fichas de ese monto. Quita OXXO o baja el importe.</span>
     {% elif err == 'sin-stripe' %}<span class="badge caducada">Stripe no está configurado: no se generó ningún cobro.</span>
+    {% elif err == 'sin-url-publica' %}<span class="badge caducada">Falta PUBLIC_BASE_URL en la configuración: Stripe rechazaría el cobro. No se generó nada.</span>
+    {% elif err == 'envio-fallo' %}<span class="badge caducada">WhatsApp rechazó el envío: el aviso NO le llegó al cliente. Reintenta o avísale a mano.</span>
     {% elif err == 'cobro-vivo' %}<span class="badge caducada">Este cliente ya tiene un cobro sin liquidar de este servicio. Cancélalo antes de generar otro.</span>
     {% elif err == 'stripe' %}<span class="badge caducada">Stripe no aceptó el cobro. El borrador quedó guardado y se puede reintentar.</span>
     {% elif err == 'ventana' %}<span class="badge esperando">El cobro se generó, pero pasaron más de 24 h desde el último mensaje del cliente: cópiale el link a mano.</span>

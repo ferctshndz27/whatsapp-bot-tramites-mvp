@@ -442,7 +442,7 @@ Todos idempotentes, sin orden entre sí, invocados por `nightly()` con el mismo 
 | `STRIPE_SECRET_KEY` | Dashboard de Stripe → **Developers → API keys → Secret key** (`sk_test_…` para probar, `sk_live_…` para producción) | El panel muestra "Stripe no configurado" y **no** se escribe ningún cobro (no-op del cliente, aviso explícito en la UI) |
 | `STRIPE_WEBHOOK_SECRET` | Dashboard → **Developers → Webhooks → tu endpoint → Signing secret** (`whsec_…`). Es **distinto** en modo prueba y en modo real | El webhook rechaza **todo** con 403 (fail-closed deliberado) y ningún pago se confirma |
 | `STRIPE_API_VERSION` | La versión que muestre tu dashboard el día del deploy (p.ej. `2025-xx-xx`). Se pinea para que un cambio de shape de Stripe no rompa el aplicador | Se usa la default de la cuenta y el histórico deja de ser reproducible |
-| `STRIPE_PUBLIC_BASE_URL` | La URL pública del panel, p.ej. `https://tramites.tudominio.mx`. Se usa para `success_url`/`cancel_url` | Stripe rechaza la creación de la sesión |
+| `PUBLIC_BASE_URL` | La URL pública del panel, p.ej. `https://tramites.tudominio.mx`. Se usa para `success_url`/`cancel_url`. *(Una versión previa de esta tabla decía `STRIPE_PUBLIC_BASE_URL` — nombre que el código NUNCA leyó; la fuente única es `.env.example`)* | El panel rechaza generar con `err=sin-url-publica` antes de escribir nada |
 | `COBRO_MONTO_MAXIMO_CENTAVOS` | Decisión del dueño. Sugerido `10000000` ($100,000) | Default $100,000 |
 | `OXXO_DIAS_VENCIMIENTO` | 1-3. Sugerido `3` | Default 3 |
 
@@ -557,7 +557,7 @@ PR1 **completo, con la suite en verde: 787 passed, 18 xfailed.**
 | Dominio / aplicador / replay | `app/cobranza.py` | ✅ |
 | Webhook fail-closed 200/403/503 | `app/stripe_webhook.py` | ✅ |
 | Los 5 barridos | `app/cobranza_jobs.py` | ✅ |
-| Alertas | `app/cobranza_alertas.py` | ✅ 14 reglas |
+| Alertas | `app/cobranza_alertas.py` | ✅ 19 reglas |
 | Panel + CSV + payouts | `app/cobranza_panel.py`, `templates/` | ✅ |
 | Humo con Stripe vivo | crear · pagar · conciliar | ✅ modo **prueba** completo |
 | Humo en modo **real** | crear 4/4 · cancelar ×2 | ✅ · falta solo el **cargo** |
@@ -699,6 +699,29 @@ snapshot completos, cero rutas y cero escrituras.
     alerta encendida para siempre. Solo dispara hacia **arriba** y solo en
     estados cobrables: pagar de menos no es una queja, y un cobro cancelado
     nunca le costó nada al cliente.
+20. **Auditoría pre-deploy (2026-08-01): 11 hallazgos confirmados, todos
+    corregidos.** Los dos que importan al dinero: (a) un **declive de
+    tarjeta** (`payment_intent.payment_failed`) se trataba como terminal y
+    soltaba el candado con la Checkout Session AÚN ABIERTA — el cliente podía
+    reintentar en el link viejo mientras el asesor generaba otro: dos
+    instrumentos cobrables; ahora solo `checkout.session.async_payment_failed`
+    (OXXO/SPEI) es terminal, y el declive deja el cobro pendiente con el
+    candado puesto. (b) el deploy hacía `git reset --hard` ANTES del
+    `compose up`: si el up fallaba, el siguiente tick veía LOCAL==REMOTE y no
+    reintentaba nunca — bot caído hasta entrar por SSH; ahora hay `rollback()`
+    al commit anterior en ambos caminos de fallo. Además: guard de
+    `PUBLIC_BASE_URL` vacía (antes: 100% de los cobros fallaban con un error
+    genérico), el cierre de folio filtra por (teléfono, servicio) — el mismo
+    criterio del candado — en vez de solo teléfono, los cinco códigos ad-hoc
+    del aplicador ganaron regla derivada (15-19: sin ella `evaluate_alerts()`
+    los apagaba la misma noche), un rechazo 4xx de Stripe suelta el candado
+    (antes: borrador bloqueado para siempre), `avisar-pago` y el envío del
+    link ya no se marcan como enviados cuando Meta rechaza,
+    `referencia_recibo` se recorta a los 100 del espejo, y el drenado de
+    eventos reclama el escritor antes de leer (cron y panel corren el mismo
+    barrido desde procesos distintos). Cada arreglo trae su prueba en rojo
+    verificada — salvo el reclamo del drenado, cuya carrera no es
+    reproducible de forma determinista en un test.
 
 ## Lo que falta para cobrarle a un cliente de verdad
 

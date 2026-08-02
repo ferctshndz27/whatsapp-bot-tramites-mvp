@@ -114,3 +114,53 @@ def test_disputa_se_apaga_cuando_se_limpia_la_bandera():
         s.add(c)
         s.commit()
         assert "cobro:disputa" not in _codigos(s)
+
+
+def test_las_alertas_adhoc_del_aplicador_tienen_regla_derivada():
+    """PREVIENE el suicidio nocturno: `evaluate_alerts()` apaga toda alerta
+    cuyo código no vuelva a disparar, y corre al final del MISMO nightly() que
+    los barridos. Cinco códigos que el aplicador levanta ad-hoc no tenían
+    regla derivada: se morían esa misma noche con el problema vivo."""
+    with Session(db.engine) as s:
+        # pago-parcial: SPEI transfirió parte y el cobro sigue vivo.
+        _cobro(s, id=1, estado="pendiente", monto_centavos=200000,
+               monto_pagado_centavos=50000)
+        # pago-tardio: el dinero real ganó sobre un estado terminal.
+        _cobro(s, id=2, estado="pagado", monto_pagado_centavos=125000,
+               estado_motivo="pago tardío aceptado", pagado_at=_hace(1))
+        # candado-en-conflicto: vivo que exige candado y no lo tiene.
+        _cobro(s, id=3, estado="pendiente")  # llave_cobro_vivo = None
+        # disputa-perdida y metadata-no-coincide: derivan del ledger de eventos.
+        s.add(EventoPasarela(stripe_event_id="evt_lost", tipo="charge.dispute.closed",
+                             resultado="aplicado", detalle="disputa lost",
+                             recibido_at=_hace(1)))
+        s.add(EventoPasarela(stripe_event_id="evt_meta", tipo="payment_intent.succeeded",
+                             resultado="ignorado", detalle="metadata no coincide",
+                             recibido_at=_hace(1)))
+        s.commit()
+        codigos = _codigos(s)
+        assert "cobro:pago-parcial" in codigos
+        assert "cobro:pago-tardio" in codigos
+        assert "cobro:candado-en-conflicto" in codigos
+        assert "cobro:disputa-perdida" in codigos
+        assert "cobro:metadata-no-coincide" in codigos
+
+
+def test_las_derivadas_con_ventana_se_apagan_solas():
+    """Las de ledger (append-only) y el pago tardío llevan ventana: sin ella,
+    un caso de hace meses dejaría la alerta encendida para siempre."""
+    with Session(db.engine) as s:
+        viejo = _hace(VENTANA_TRANSITORIA_DIAS + 3)
+        _cobro(s, id=1, estado="pagado", monto_pagado_centavos=125000,
+               estado_motivo="pago tardío aceptado", pagado_at=viejo)
+        s.add(EventoPasarela(stripe_event_id="evt_lost_v", tipo="charge.dispute.closed",
+                             resultado="aplicado", detalle="disputa lost",
+                             recibido_at=viejo))
+        s.add(EventoPasarela(stripe_event_id="evt_meta_v", tipo="payment_intent.succeeded",
+                             resultado="ignorado", detalle="metadata no coincide",
+                             recibido_at=viejo))
+        s.commit()
+        codigos = _codigos(s)
+        assert "cobro:pago-tardio" not in codigos
+        assert "cobro:disputa-perdida" not in codigos
+        assert "cobro:metadata-no-coincide" not in codigos
