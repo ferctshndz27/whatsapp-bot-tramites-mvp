@@ -54,7 +54,10 @@ def sesion_panel():
     with Session(db.engine) as s:
         s.add(User(username="asesora", password_hash=HASH_CLAVE))
         s.commit()
-    with TestClient(app) as http:
+    # base_url https: la cookie de sesión lleva el flag Secure con la config de
+    # producción (CI corre sin .env, o sea SECURE_COOKIES=1) y sobre http el
+    # cliente la descarta — cada request volvería anónimo a /login.
+    with TestClient(app, base_url="https://testserver") as http:
         respuesta = http.post(
             "/login",
             data={"username": "asesora", "password": CLAVE},
