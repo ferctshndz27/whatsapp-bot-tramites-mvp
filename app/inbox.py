@@ -252,8 +252,11 @@ def inbox_send(
             return RedirectResponse(f"/inbox/{phone}?err=window", status_code=303)
 
         media_path = None
+        # El canal se resuelve UNA vez y sirve para enviar Y para sellar la
+        # fila: resolverlo dos veces dejaría divergir el registro del envío.
+        canal = messaging.canal_de(phone)
         if adjunto is None:
-            wamid = messaging.send_text(phone, body)
+            wamid = messaging.send_text(phone, body, provider=canal)
             registro = body
         else:
             media_path, disk_path, error = save_upload(adjunto)
@@ -262,7 +265,7 @@ def inbox_send(
             # El texto del composer viaja como pie del archivo, igual que en
             # WhatsApp; si no hay texto se registra el tipo y el nombre.
             wamid = messaging.send_media(
-                phone, disk_path, adjunto.content_type, body, adjunto.filename
+                phone, disk_path, adjunto.content_type, body, adjunto.filename, provider=canal
             )
             kind = "imagen" if (adjunto.content_type or "").startswith("image/") else "documento"
             registro = body or f"[{kind}: {adjunto.filename}]"
@@ -275,6 +278,7 @@ def inbox_send(
                 wa_message_id=wamid,
                 media_path=media_path,
                 sent_by=user,
+                provider=canal,
             )
         )
         session.commit()

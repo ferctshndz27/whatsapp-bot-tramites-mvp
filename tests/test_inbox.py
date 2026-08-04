@@ -4,9 +4,17 @@ from types import SimpleNamespace
 from sqlmodel import Session
 
 import app.db as db
-from app import media_store, whatsapp_client
+from app import media_store, twilio_client, whatsapp_client
 from app.inbox import build_conversation_items, inbox_bot_on, inbox_chat, inbox_delete_message, inbox_send
-from app.models import Conversation, Direction, Message, Ticket, TicketActivity, TicketStatus
+from app.models import (
+    PROVIDER_TWILIO,
+    Conversation,
+    Direction,
+    Message,
+    Ticket,
+    TicketActivity,
+    TicketStatus,
+)
 
 
 def _request(user: str) -> SimpleNamespace:
@@ -126,6 +134,35 @@ def test_send_logs_message_and_pauses_bot(monkeypatch, session):
     conv = session.get(Conversation, "333")
     session.refresh(conv)
     assert conv.state == "escalado"
+
+
+def test_la_respuesta_manual_sale_y_se_registra_por_el_canal_del_cliente(monkeypatch, session):
+    # REGLA: el composer pasa por el puerto — a un cliente de Twilio se le
+    # contesta por Twilio Y la fila Message queda sellada con ese canal. El
+    # humo real (2026-08-04) encontró el envío bien enrutado pero la fila en
+    # 'meta': un reporte por canal contaría el mensaje en la cuenta equivocada.
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    por_meta, por_twilio = [], []
+    monkeypatch.setattr(
+        whatsapp_client, "send_text", lambda phone, body: por_meta.append(body) or "wamid.NO"
+    )
+    monkeypatch.setattr(
+        twilio_client, "send_text", lambda phone, body: por_twilio.append(body) or "SMX1"
+    )
+    session.add(_msg("555", Direction.IN, "hola", hours_ago=1))
+    session.add(Conversation(phone="555", state="escalado", provider=PROVIDER_TWILIO))
+    session.commit()
+
+    inbox_send(_request("ana"), "555", body="voy con tu acta")
+
+    assert por_twilio == ["voy con tu acta"]
+    assert por_meta == [], "la respuesta manual salió por la cuenta equivocada"
+    session.expire_all()
+    sent = session.query(Message).filter(
+        Message.phone == "555", Message.direction == Direction.OUT
+    ).one()
+    assert sent.provider == PROVIDER_TWILIO
+    assert sent.wa_message_id == "SMX1"
 
 
 def _upload(nombre: str = "acta.pdf", tipo: str = "application/pdf", datos: bytes = b"%PDF-1.4 x"):
