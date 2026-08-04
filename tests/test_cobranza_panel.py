@@ -103,7 +103,7 @@ def stripe_doble(monkeypatch):
         return f"wamid.{enviados['n']}"  # unique: message.wa_message_id es UNIQUE
 
     monkeypatch.setattr(panel.stripe_client, "crear_checkout_session", _crear)
-    monkeypatch.setattr(panel.whatsapp_client, "send_text", _wamid)
+    monkeypatch.setattr(panel.messaging, "send_text", _wamid)
     return llamadas
 
 
@@ -440,9 +440,9 @@ def test_43_no_se_cierra_a_ciegas_con_un_cobro_vivo(entorno, stripe_doble, monke
         enviados.append(body)
         return f"wamid.cierre-{next(contador)}"
 
-    monkeypatch.setattr(panel.whatsapp_client, "send_text", _capturar)
-    monkeypatch.setattr(dashboard.whatsapp_client, "send_text", _capturar)
-    monkeypatch.setattr(dashboard.whatsapp_client, "send_buttons",
+    monkeypatch.setattr(panel.messaging, "send_text", _capturar)
+    monkeypatch.setattr(dashboard.messaging, "send_text", _capturar)
+    monkeypatch.setattr(dashboard.messaging, "send_buttons",
                         lambda *a, **kw: "wamid.botones")
 
     cliente = _cliente(ASESOR)
@@ -472,7 +472,7 @@ def test_45_ventana_cerrada_genera_el_cobro_pero_no_manda_nada(entorno, stripe_d
     """Que no se pueda avisar por WhatsApp NUNCA afecta el estado del cobro:
     el link queda guardado y el panel ofrece copiarlo."""
     enviados = []
-    monkeypatch.setattr(panel.whatsapp_client, "send_text",
+    monkeypatch.setattr(panel.messaging, "send_text",
                         lambda *a, **kw: enviados.append(a) or "wamid.X")
 
     with Session(entorno) as s:
@@ -619,7 +619,7 @@ def test_55_meta_rechaza_el_aviso_y_no_se_marca_como_enviado(entorno, stripe_dob
     enviado apagaba la alerta de pago-tras-cierre sin que el cliente hubiera
     recibido nada."""
     _sembrar(entorno, 1, ticket_id=1, estado="pagado", monto_pagado_centavos=80000)
-    monkeypatch.setattr(panel.whatsapp_client, "send_text", lambda *a, **k: None)
+    monkeypatch.setattr(panel.messaging, "send_text", lambda *a, **k: None)
     cliente = _cliente(ASESOR)
 
     r = cliente.post("/cobros/1/avisar-pago", follow_redirects=False)
@@ -657,7 +657,7 @@ def test_57_cerrar_un_folio_sin_cobro_no_arrastra_el_de_otro_tramite(entorno, st
                      status=TicketStatus.NUEVO, assigned_to=ASESOR))
         s.commit()
     cuerpos: list[str] = []
-    monkeypatch.setattr(dashboard.whatsapp_client, "send_text",
+    monkeypatch.setattr(dashboard.messaging, "send_text",
                         lambda phone, body, **k: (cuerpos.append(body), "wamid.f57")[1])
     cliente = _cliente(ASESOR)
 

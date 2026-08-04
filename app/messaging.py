@@ -8,11 +8,14 @@ contestar por el otro deja al negocio fuera de ventana con un remitente que el
 cliente no reconoce.
 
 Esa decisión vive aquí y en ningún otro lado: quien envía dice a QUIÉN, nunca
-POR DÓNDE. Así la Fase 4 (alta de Twilio) se resuelve agregando una rama en
-`_adaptador()` y ni el webhook, ni la bandeja, ni cobranza se enteran.
+POR DÓNDE. Por eso dar de alta un proveedor nuevo se resuelve agregando una
+rama en `_adaptador()`, y ni el webhook, ni la bandeja, ni cobranza se enteran.
 
-FASE 2: todavía solo existe Meta. La resolución de canal ya está completa y
-`_adaptador()` siempre devuelve el adaptador de Meta.
+Los dos adaptadores ya están cableados. Sin las credenciales de Twilio en el
+entorno el canal queda inerte: `twilio_client.enabled()` es False, su webhook
+rechaza toda firma, y como nadie puede crear una Conversation con
+provider='twilio', `canal_de()` resuelve siempre a Meta. Lo comprueba
+`tests/test_messaging_port.py::test_sin_credenciales_de_twilio_nadie_sale_por_ese_canal`.
 """
 
 import logging

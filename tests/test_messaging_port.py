@@ -19,7 +19,8 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 import app.db as db
-from app import messaging
+from app import messaging, twilio_client, whatsapp_client
+from app.config import settings
 from app.models import PROVIDER_META, PROVIDER_TWILIO, Conversation
 
 PHONE = "525500000000"
@@ -55,6 +56,43 @@ def test_un_cliente_sin_conversacion_cae_en_meta(sesion):
     # escrito, así que no tiene canal. Cae en Meta, la cuenta que existía
     # primero — nunca en "ninguno", que dejaría el mensaje sin enviar.
     assert messaging.canal_de(PHONE) == PROVIDER_META
+
+
+def test_sin_credenciales_de_twilio_nadie_sale_por_ese_canal(sesion, monkeypatch):
+    """REGLA: esta prueba es la que respalda mergear el módulo a main ANTES de
+    activar la cuenta de Twilio. Con el entorno en blanco —que es el estado de
+    producción mientras las credenciales no estén puestas— el código nuevo
+    existe pero no se ejecuta nunca. Son tres condiciones y hacen falta las
+    tres:
+
+      1. `enabled()` es False, así que nada da el canal por disponible.
+      2. La firma se rechaza siempre, así que NADIE puede crear desde fuera una
+         Conversation con provider='twilio' — que es el único camino por el que
+         un teléfono cambia de canal.
+      3. Y sin esa fila, el puerto resuelve a Meta y devuelve su adaptador.
+
+    Si alguna deja de cumplirse, mergear en estado inerte deja de ser seguro y
+    esto tiene que fallar en CI antes de llegar al VPS.
+    """
+    monkeypatch.setattr(settings, "twilio_account_sid", "")
+    monkeypatch.setattr(settings, "twilio_auth_token", "")
+    monkeypatch.setattr(settings, "twilio_whatsapp_from", "")
+
+    assert twilio_client.enabled() is False
+
+    # Ni siquiera una firma bien formada entra: sin token no hay con qué
+    # compararla, y aceptar sin verificar dejaría inyectar mensajes ajenos.
+    assert (
+        twilio_client.verify_signature(
+            "https://tramites.example.mx/webhook/twilio",
+            {"From": f"whatsapp:+{PHONE}", "Body": "hola"},
+            "kZk9c2FtcGxlIHNpZ25hdHVyZQ==",
+        )
+        is False
+    )
+
+    assert messaging.canal_de(PHONE) == PROVIDER_META
+    assert messaging._adaptador(PROVIDER_META) is whatsapp_client
 
 
 def test_el_canal_es_el_del_ultimo_entrante(sesion):

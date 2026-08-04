@@ -29,7 +29,7 @@ from sqlalchemy import func, nulls_last, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from app import cobranza, cobranza_jobs, stripe_client, whatsapp_client
+from app import cobranza, cobranza_jobs, messaging, stripe_client
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
@@ -244,9 +244,9 @@ def _enviar_link(cobro_id: int, user: str, reemplazo: bool = False) -> bool:
         texto = cobranza.mensaje_link(cobro, reemplazo=reemplazo)
         phone, ticket_id = cobro.phone, cobro.ticket_id
 
-    wamid = whatsapp_client.send_text(phone, texto)
+    wamid = messaging.send_text(phone, texto)
     if wamid is None:
-        # Meta rechazó (token vencido, número no habilitado…): el link NO
+        # El proveedor rechazó (token vencido, número no habilitado…): el link NO
         # salió. Marcarlo como enviado escondería que el cliente nunca lo vio.
         logger.warning("El link del cobro %s no salió: Meta rechazó el envío", cobro_id)
         return False
@@ -472,9 +472,9 @@ def avisar_pago(request: Request, cobro_id: int):
         texto = cobranza.mensaje_pagado(cobro)
         phone = cobro.phone
 
-    wamid = whatsapp_client.send_text(phone, texto)
+    wamid = messaging.send_text(phone, texto)
     if wamid is None:
-        # Meta rechazó el envío: marcar el aviso como enviado apagaría la
+        # El proveedor rechazó el envío: marcar el aviso como enviado apagaría la
         # alerta de pago-tras-cierre sin que el cliente recibiera nada.
         return _volver(ticket_id, err="envio-fallo")
 
