@@ -182,9 +182,9 @@ def test_finish_ticket_sends_feedback_buttons(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     monkeypatch.setattr(inbox, "_window_open", lambda *_: True)
     sent: dict = {}
-    monkeypatch.setattr(dashboard.whatsapp_client, "send_text", lambda p, b: "wamid-1")
+    monkeypatch.setattr(dashboard.messaging, "send_text", lambda p, b: "wamid-1")
     monkeypatch.setattr(
-        dashboard.whatsapp_client, "send_buttons",
+        dashboard.messaging, "send_buttons",
         lambda p, b, btns: sent.update(buttons=btns) or "wamid-2",
     )
     session.add(User(username="jefa", password_hash="x", is_admin=True))

@@ -21,6 +21,13 @@
     <span class="badge cerrado">bot activo</span>
     {% endif %}
     {% if not window_open %}<span class="badge caducada">ventana de 24h cerrada</span>{% endif %}
+    {# Canal: el asesor necesita saber desde qué número le llegará su respuesta
+       al cliente, y que la ventana de 24 h se cuenta por número. #}
+    {% if conversation and conversation.provider == 'twilio' %}
+    <span class="badge canal-twilio">responde por Twilio</span>
+    {% else %}
+    <span class="badge canal-meta">responde por Meta</span>
+    {% endif %}
     {% if ticket %}
     <a href="/tickets/{{ ticket.id }}">Ver solicitud #{{ ticket.id }}</a>
     {% if ticket.assigned_to %}<span class="badge asignada">atiende: {{ ticket.assigned_to }}</span>{% endif %}

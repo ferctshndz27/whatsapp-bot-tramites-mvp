@@ -10,7 +10,7 @@ from app.templating import templates
 from sqlalchemy import or_, update
 from sqlmodel import select
 
-from app import authlog, whatsapp_client
+from app import authlog, messaging
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
@@ -658,14 +658,14 @@ def _notify_finish(ticket_id: int) -> None:
             body = FINISH_NOTICE_GENERIC
         else:
             body = FINISH_NOTICE_SERVICE.format(service=ticket.service_name, folio=ticket.id)
-        wamid = whatsapp_client.send_text(phone, body)
+        wamid = messaging.send_text(phone, body)
         session.add(
             Message(phone=phone, direction=Direction.OUT, body=body, wa_message_id=wamid)
         )
         # Feedback del cliente: botones 👍/👎. Los ids fb:<folio>:up|down los
         # procesa conversation.handle_incoming al tocar el botón.
         fb_body = "¿Te sirvió nuestro servicio?"
-        fb_wamid = whatsapp_client.send_buttons(
+        fb_wamid = messaging.send_buttons(
             phone,
             fb_body,
             [
@@ -706,7 +706,7 @@ def _notify_release(ticket_id: int) -> None:
             body = RELEASE_NOTICE_GENERIC
         else:
             body = RELEASE_NOTICE_SERVICE.format(service=ticket.service_name, folio=ticket.id)
-        wamid = whatsapp_client.send_text(phone, body)
+        wamid = messaging.send_text(phone, body)
         session.add(
             Message(phone=phone, direction=Direction.OUT, body=body, wa_message_id=wamid)
         )

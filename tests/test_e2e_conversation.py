@@ -39,8 +39,13 @@ from app.models import (
     TicketStatus,
 )
 
-PHONE = "5215500000000"
-PHONE2 = "5215511112222"
+# Forma CANÓNICA (ver app.utils.normalize_phone): es la que queda en la base.
+# Meta puede mandar '5215500000000' o '525500000000'; el webhook normaliza en el
+# borde, así que estas pruebas —que van del flujo, no del formato— usan la forma
+# ya normalizada. La equivalencia entre formatos la cubre
+# tests/test_phone_normalization.py.
+PHONE = "525500000000"
+PHONE2 = "525511112222"
 APP_SECRET = "secreto-de-prueba-e2e"
 
 # Sin context manager: no dispara el lifespan/startup (init_db + seed del

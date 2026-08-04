@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 
+from sqlalchemy import text
 from sqlmodel import Field, SQLModel
 
 
@@ -11,6 +12,18 @@ def utcnow() -> datetime:
 class Direction(str, Enum):
     IN = "in"
     OUT = "out"
+
+
+# Proveedor del canal de WhatsApp. Son DOS cuentas independientes, cada una con
+# su propio número, que comparten este CRM; no hay failover entre ellas.
+#
+# Cadena simple y no Enum a propósito: el valor viaja en el DEFAULT de un ALTER
+# TABLE (app/db.py) y en el espejo MSSQL, y SQLModel guarda los Enum por NOMBRE
+# ("META"), lo que obligaría a escribir 'META' en el SQL y Provider.META.value en
+# cada comparación. Para dos valores no compensa.
+PROVIDER_META = "meta"
+PROVIDER_TWILIO = "twilio"
+PROVIDERS = (PROVIDER_META, PROVIDER_TWILIO)
 
 
 class TicketStatus(str, Enum):
@@ -34,6 +47,21 @@ class Conversation(SQLModel, table=True):
     failed_attempts: int = 0
     updated_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    # Canal del ÚLTIMO mensaje entrante. Decide por dónde se responde: la
+    # ventana de 24 h es por número, así que contestar por el otro canal deja
+    # al negocio fuera de ventana con un remitente que el cliente no reconoce.
+    # Una persona = una conversación, sin importar a cuál de los dos números
+    # escribió (opción A del plan): nadie quiere dos trámites en paralelo.
+    # server_default: una base NUEVA (create_all) nace con el mismo DEFAULT que
+    # deja la migración en la base vieja (ALTER TABLE ... DEFAULT 'meta'). Sin
+    # esto los dos caminos divergen y aparece un bug que solo se ve en uno.
+    # text(): una cadena pelona la vuelve a citar SQLAlchemy y el DEFAULT
+    # quedaría con las comillas DENTRO del valor ("'meta'"), que nunca
+    # coincidiría con PROVIDER_META.
+    provider: str = Field(
+        default=PROVIDER_META,
+        sa_column_kwargs={"server_default": text(f"'{PROVIDER_META}'")},
+    )
 
 
 class Message(SQLModel, table=True):
@@ -48,6 +76,20 @@ class Message(SQLModel, table=True):
     media_path: str | None = None
     sent_by: str | None = None
     habilitado: bool = True
+    # Canal por el que entró o salió este mensaje. Sin esto no se puede
+    # interpretar `wa_status` (los estados de Twilio y los de Meta no son el
+    # mismo vocabulario) ni acotar el emparejamiento FIFO de wa_message_id,
+    # que hoy cruza ids entre canales (ver webhook._tag_sent_message).
+    # server_default: una base NUEVA (create_all) nace con el mismo DEFAULT que
+    # deja la migración en la base vieja (ALTER TABLE ... DEFAULT 'meta'). Sin
+    # esto los dos caminos divergen y aparece un bug que solo se ve en uno.
+    # text(): una cadena pelona la vuelve a citar SQLAlchemy y el DEFAULT
+    # quedaría con las comillas DENTRO del valor ("'meta'"), que nunca
+    # coincidiría con PROVIDER_META.
+    provider: str = Field(
+        default=PROVIDER_META,
+        sa_column_kwargs={"server_default": text(f"'{PROVIDER_META}'")},
+    )
 
 
 class Ticket(SQLModel, table=True):
@@ -74,6 +116,18 @@ class Ticket(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    # Número por el que llegó la solicitud. Es lo que permite reportar carga y
+    # conversión por cuenta cuando las dos cuentas comparten este CRM.
+    # server_default: una base NUEVA (create_all) nace con el mismo DEFAULT que
+    # deja la migración en la base vieja (ALTER TABLE ... DEFAULT 'meta'). Sin
+    # esto los dos caminos divergen y aparece un bug que solo se ve en uno.
+    # text(): una cadena pelona la vuelve a citar SQLAlchemy y el DEFAULT
+    # quedaría con las comillas DENTRO del valor ("'meta'"), que nunca
+    # coincidiría con PROVIDER_META.
+    provider: str = Field(
+        default=PROVIDER_META,
+        sa_column_kwargs={"server_default": text(f"'{PROVIDER_META}'")},
+    )
 
 
 class User(SQLModel, table=True):
@@ -312,6 +366,42 @@ class Alert(SQLModel, table=True):
     active: bool = True
     created_at: datetime = Field(default_factory=utcnow)
     resolved_at: datetime | None = None
+
+
+class Plantilla(SQLModel, table=True):
+    """Plantilla aprobada por Meta, con su identificador en CADA proveedor.
+
+    Fuera de la ventana de 24 h solo pasa una plantilla aprobada. Eso la vuelve
+    obligatoria para tres cosas: listas y botones en el canal de Twilio (que no
+    acepta el JSON inline de Meta, exige Content Templates), los avisos de
+    cobranza ("tu cargo de $X se hace el día D", siempre fuera de ventana), y el
+    reenganche de un cliente que lleva horas sin escribir.
+
+    Vive como DATO y no regada en el código porque la MISMA plantilla necesita
+    estar aprobada en los dos proveedores, cada uno con su identificador propio
+    (`name` en Meta, `ContentSid` en Twilio). Si esos dos ids estuvieran
+    hardcodeados en módulos distintos, el día que alguien actualice uno solo los
+    dos números divergen en silencio.
+
+    Una plantilla NO se usa en un canal donde no está aprobada: el envío la
+    salta y lo registra, en vez de fallar contra la API del proveedor.
+    """
+
+    codigo: str = Field(primary_key=True)  # slug estable: "cobro_proximo"
+    # utility | marketing | authentication. UTILITY aprueba más rápido y cuesta
+    # menos; es la correcta para avisos de trámite y de cobranza.
+    categoria: str = "utility"
+    # Texto aprobado, con {{1}}, {{2}}… Sirve de preview en el panel; el envío
+    # real lo arma el proveedor a partir de su propio identificador.
+    texto_referencia: str = ""
+    num_variables: int = 0
+    meta_template_name: str | None = None
+    twilio_content_sid: str | None = None
+    aprobada_meta: bool = False
+    aprobada_twilio: bool = False
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
 
 
 class Invitation(SQLModel, table=True):

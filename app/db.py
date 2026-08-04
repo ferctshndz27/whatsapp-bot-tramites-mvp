@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy import event, text
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -8,6 +10,8 @@ from sqlmodel import Session, SQLModel, create_engine
 # traen los modelos: creaba cero tablas y las alertas fallaban en silencio.
 from app import models  # noqa: F401
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 engine = create_engine(f"sqlite:///{settings.db_path}", connect_args={"check_same_thread": False})
 
@@ -31,6 +35,13 @@ _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     "media_path": "VARCHAR",
     "sent_by": "VARCHAR",
     "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
+    # DEFAULT 'meta': todo lo que ya existe entró o salió por la cuenta de Meta,
+    # que es la única que hubo hasta ahora. Ponerlo NULL dejaría el histórico sin
+    # canal y los reportes por cuenta saldrían mal para siempre.
+    "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
+}
+_CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
 }
 _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
@@ -51,6 +62,7 @@ _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     # migrar no debe inventarlos (además SQLite rechaza ADD COLUMN NOT NULL sin
     # DEFAULT sobre una tabla con datos: tumbaría el arranque en el VPS).
     "requirements_json": "VARCHAR",
+    "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
 }
 
 
@@ -81,12 +93,21 @@ _COBRANZA_INDEXES = (
 )
 
 
+# Tablas con una columna de teléfono que apunta al mismo humano. Las dos
+# primeras lo tienen como PRIMARY KEY, así que normalizarlas puede colisionar
+# (ver _normalize_phones). `user.phone` es el celular del colaborador: no es
+# llave de nada, pero se normaliza por consistencia.
+_TABLAS_CON_TELEFONO = ("message", "ticket", "clientnote", "feedback", "nluevent", "user")
+_TABLAS_CON_TELEFONO_COMO_PK = ("client", "conversation")
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _add_missing_columns("message", _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("teammessage", _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("user", _USER_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("ticket", _TICKET_COLUMNS_ADDED_AFTER_LAUNCH)
+    _add_missing_columns("conversation", _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH)
     for table in _TABLES_NEEDING_HABILITADO:
         _add_missing_columns(table, _HABILITADO_COLUMN)
     with engine.begin() as conn:
@@ -105,6 +126,68 @@ def init_db() -> None:
         # van a mano igual que el de arriba.
         for sql in _COBRANZA_INDEXES:
             conn.execute(text(sql))
+
+    _normalize_phones()
+
+
+def _normalize_phones() -> None:
+    """Lleva los teléfonos ya guardados al formato canónico (ver utils).
+
+    Hace falta porque las filas anteriores a esta migración traen el formato
+    crudo de Meta ('5215500000000'). Sin esto, normalizar solo lo ENTRANTE haría
+    que un cliente existente no se encuentre y se cree duplicado — justo el bug
+    que la normalización quiere prevenir.
+
+    Idempotente: sobre datos ya canónicos no escribe nada, así que corre seguro
+    en cada arranque y en cada corrida del cron.
+    """
+    from app.utils import normalize_phone
+
+    with engine.begin() as conn:
+        existentes = {
+            row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        }
+
+        # Las de PK primero: si el canónico YA existe, hay dos filas para el
+        # mismo humano y se conserva la canónica (la vieja se descarta después
+        # de repuntar a sus hijos). Si no existe, es un simple renombre.
+        for tabla in _TABLAS_CON_TELEFONO_COMO_PK:
+            if tabla not in existentes:
+                continue
+            for (crudo,) in conn.execute(text(f"SELECT phone FROM {tabla}")).fetchall():
+                canonico = normalize_phone(crudo)
+                if not canonico or canonico == crudo:
+                    continue
+                ya_existe = conn.execute(
+                    text(f"SELECT 1 FROM {tabla} WHERE phone = :c"), {"c": canonico}
+                ).first()
+                if ya_existe:
+                    # Duplicado real: el histórico se preserva porque los hijos
+                    # (mensajes, tickets, notas) se repuntan al canónico abajo.
+                    conn.execute(text(f"DELETE FROM {tabla} WHERE phone = :p"), {"p": crudo})
+                    logger.warning(
+                        "Teléfono duplicado en %s: %s se fusiona con %s", tabla, crudo, canonico
+                    )
+                else:
+                    conn.execute(
+                        text(f"UPDATE {tabla} SET phone = :c WHERE phone = :p"),
+                        {"c": canonico, "p": crudo},
+                    )
+
+        for tabla in _TABLAS_CON_TELEFONO:
+            if tabla not in existentes:
+                continue
+            columna = "phone"
+            filas = conn.execute(
+                text(f'SELECT DISTINCT {columna} FROM "{tabla}" WHERE {columna} IS NOT NULL')
+            ).fetchall()
+            for (crudo,) in filas:
+                canonico = normalize_phone(crudo)
+                if canonico and canonico != crudo:
+                    conn.execute(
+                        text(f'UPDATE "{tabla}" SET {columna} = :c WHERE {columna} = :p'),
+                        {"c": canonico, "p": crudo},
+                    )
 
 
 def _add_missing_columns(table: str, columns: dict[str, str]) -> None:

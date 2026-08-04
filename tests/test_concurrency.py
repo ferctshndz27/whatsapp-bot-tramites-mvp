@@ -57,7 +57,9 @@ from app.models import (
 )
 from app.webhook import _tag_sent_message
 
-PHONE = "5215500000000"
+# Forma canónica (ver app.utils.normalize_phone): el webhook normaliza en el
+# borde, así que es la que queda en la base.
+PHONE = "525500000000"
 
 # Estados válidos de la máquina conversacional (app/conversation.py).
 ESTADOS_CONOCIDOS = {

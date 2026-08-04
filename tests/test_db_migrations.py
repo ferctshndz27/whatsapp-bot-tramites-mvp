@@ -35,7 +35,11 @@ import app.db as db
 # vigila test_importar_solo_app_db_registra_todos_los_modelos_en_el_metadata.
 from app import models  # noqa: F401  isort:skip
 
+# Formato CRUDO de Meta: es el que tienen las filas anteriores a la
+# normalización — justo el escenario que este archivo simula.
 PHONE = "5215500000000"
+# El mismo teléfono después de init_db(): _normalize_phones() lo reescribe.
+PHONE_CANONICO = "525500000000"
 _RAIZ = Path(__file__).resolve().parents[1]
 
 # ---------------------------------------------------------------------------
@@ -207,12 +211,13 @@ _COLUMNAS_QUE_AGREGA_LA_MIGRACION = {
         "media_path",
         "sent_by",
         "habilitado",
+        "provider",
     ),
     "teammessage": ("habilitado",),
     "user": ("is_admin", "habilitado", "estado", "phone"),
-    "ticket": ("agent_active", "habilitado", "requirements_json"),
+    "ticket": ("agent_active", "habilitado", "requirements_json", "provider"),
     "client": ("habilitado",),
-    "conversation": ("habilitado",),
+    "conversation": ("habilitado", "provider"),
     "invitation": ("habilitado",),
     "ticketactivity": ("habilitado",),
 }
@@ -484,6 +489,22 @@ _ESQUEMA_DESPLEGADO = {
         "created_at",
         "habilitado",
     ),
+    # Tabla nacida con la convivencia Meta + Twilio: create_all() la crea
+    # completa, así que se registra aquí con sus columnas de hoy para que a
+    # partir de la SIGUIENTE columna quede vigilada.
+    "plantilla": (
+        "codigo",
+        "categoria",
+        "texto_referencia",
+        "num_variables",
+        "meta_template_name",
+        "twilio_content_sid",
+        "aprobada_meta",
+        "aprobada_twilio",
+        "created_at",
+        "updated_at",
+        "habilitado",
+    ),
     "savedreply": ("id", "username", "title", "body", "created_at", "habilitado"),
     "synonymproposal": (
         "id",
@@ -540,6 +561,10 @@ _DICTS_DE_MIGRACION = {
     "user": db._USER_COLUMNS_ADDED_AFTER_LAUNCH,
     "ticket": db._TICKET_COLUMNS_ADDED_AFTER_LAUNCH,
     **{tabla: db._HABILITADO_COLUMN for tabla in db._TABLES_NEEDING_HABILITADO},
+    # Va DESPUÉS del spread de habilitado: conversation aparece en los dos y el
+    # último gana. Se fusionan para no perder de vista ninguno de los dos dicts
+    # que init_db() le aplica a esta tabla.
+    "conversation": {**db._HABILITADO_COLUMN, **db._CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH},
 }
 
 
@@ -613,12 +638,14 @@ def test_la_migracion_no_pierde_los_datos_historicos(bd_migrada):
     # trámites (cliente, conversación, mensajes, solicitud) es el activo del
     # negocio y tiene que sobrevivir intacto al deploy.
     with bd_migrada.connect() as conn:
+        # Se consulta por la forma CANÓNICA: init_db() normaliza los teléfonos
+        # históricos. El dato tiene que seguir ahí, solo bajo la llave nueva.
         cliente = conn.exec_driver_sql(
-            "SELECT phone, name FROM client WHERE phone = ?", (PHONE,)
+            "SELECT phone, name FROM client WHERE phone = ?", (PHONE_CANONICO,)
         ).fetchone()
         conversacion = conn.exec_driver_sql(
             "SELECT state, context_json, failed_attempts FROM conversation WHERE phone = ?",
-            (PHONE,),
+            (PHONE_CANONICO,),
         ).fetchone()
         mensaje = conn.exec_driver_sql(
             "SELECT phone, direction, body FROM message WHERE id = 1"
@@ -630,9 +657,9 @@ def test_la_migracion_no_pierde_los_datos_historicos(bd_migrada):
             'SELECT username, password_hash FROM "user" WHERE id = 1'
         ).fetchone()
 
-    assert cliente == (PHONE, "Ana Ruiz")
+    assert cliente == (PHONE_CANONICO, "Ana Ruiz")
     assert conversacion == ("menu_servicio", '{"categoria": "actas"}', 1)
-    assert mensaje == (PHONE, "in", "quiero mi acta de nacimiento")
+    assert mensaje == (PHONE_CANONICO, "in", "quiero mi acta de nacimiento")
     assert ticket == (
         "acta_nacimiento",
         "Acta de nacimiento",

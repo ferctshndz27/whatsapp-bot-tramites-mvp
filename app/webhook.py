@@ -6,11 +6,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlmodel import select
 
-from app import conversation, whatsapp_client
+from app import conversation, messaging, twilio_client
 from app.config import settings
 from app.conversation import handle_incoming
 from app.db import get_session
-from app.models import Client, Message
+from app.models import PROVIDER_META, PROVIDER_TWILIO, Client, Message
+from app.utils import mask_phone, normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -61,28 +62,44 @@ def _valid_signature(raw_body: bytes, signature_header: str) -> bool:
 
 
 def _process_message(message: dict) -> None:
-    phone = message.get("from")
+    """Entrada de Meta: se traduce a la forma común y se procesa."""
+    # Se normaliza AQUÍ, en el borde: el formato crudo de cada proveedor no
+    # entra a la base. Sin esto, el mismo humano por Meta y por Twilio serían
+    # dos clientes distintos (la PK de `client` es el teléfono).
+    phone = normalize_phone(message.get("from"))
     if not phone:
         return
+    text, is_media = _extract_text(message)
+    handle_inbound(phone, text, is_media, message.get("id"), PROVIDER_META)
 
+
+def handle_inbound(
+    phone: str, text: str, is_media: bool, message_id: str | None, provider: str
+) -> None:
+    """Tronco común a los dos proveedores.
+
+    Todo lo que sigue —bloqueo del cliente, máquina de estados, presentación y
+    entrega— es idéntico venga de donde venga: para cuando se llega aquí, cada
+    adaptador ya tradujo su formato al canónico. `provider` viaja explícito
+    hasta la entrega para que la respuesta salga POR EL MISMO NÚMERO que recibió
+    el mensaje.
+    """
     with get_session() as session:
         client = session.get(Client, phone)
         if client is not None and not client.habilitado:
-            logger.info("Mensaje de %s ignorado: cliente bloqueado", phone)
+            logger.info("Mensaje de %s ignorado: cliente bloqueado", mask_phone(phone))
             return
-
-    text, is_media = _extract_text(message)
 
     with get_session() as session:
         replies = handle_incoming(
-            session, phone, text, is_media=is_media, wa_message_id=message.get("id")
+            session, phone, text, is_media=is_media, wa_message_id=message_id, provider=provider
         )
         outbound = conversation.presentation(session, phone, replies)
 
     for item in outbound:
-        wa_message_id = _deliver(phone, item)
+        wa_message_id = _deliver(phone, item, provider)
         if wa_message_id:
-            _tag_sent_message(phone, wa_message_id)
+            _tag_sent_message(phone, wa_message_id, provider)
 
 
 def _extract_text(message: dict) -> tuple[str, bool]:
@@ -98,28 +115,34 @@ def _extract_text(message: dict) -> tuple[str, bool]:
     return "", True
 
 
-def _deliver(phone: str, item) -> str | None:
+def _deliver(phone: str, item, provider: str = PROVIDER_META) -> str | None:
     """Envía texto plano o interactivo; si el interactivo falla, cae al texto
     (el cliente nunca se queda sin respuesta por un error de formato)."""
     if isinstance(item, str):
-        return whatsapp_client.send_text(phone, item)
+        return messaging.send_text(phone, item, provider=provider)
     if "buttons" in item:
-        wamid = whatsapp_client.send_buttons(phone, item["text"], item["buttons"])
+        wamid = messaging.send_buttons(phone, item["text"], item["buttons"], provider=provider)
     else:
-        wamid = whatsapp_client.send_list(
-            phone, item["text"], item.get("button", "Ver opciones"), item["list"]
+        wamid = messaging.send_list(
+            phone, item["text"], item.get("button", "Ver opciones"), item["list"], provider=provider
         )
-    return wamid or whatsapp_client.send_text(phone, item["text"])
+    return wamid or messaging.send_text(phone, item["text"], provider=provider)
 
 
-def _tag_sent_message(phone: str, wa_message_id: str) -> None:
-    # ponytail: matches the oldest untagged OUT row for this phone (FIFO with the
-    # order replies were logged/sent). Fine for single-request sends; revisit if
-    # concurrent sends per phone become a thing.
+def _tag_sent_message(phone: str, wa_message_id: str, provider: str = PROVIDER_META) -> None:
+    # Empareja con la fila OUT sin taggear más vieja de este teléfono (FIFO con
+    # el orden en que se registraron y enviaron las respuestas).
+    #
+    # El filtro por `provider` NO es cosmético: con dos cuentas escribiéndole al
+    # mismo cliente, sin él un wamid de Meta podía quedar pegado a un saliente
+    # de Twilio y el estado de entrega se aplicaría al mensaje equivocado.
+    # ponytail: sigue siendo FIFO, suficiente para envíos de una sola petición;
+    # revisar si algún día hay envíos concurrentes al mismo teléfono.
     with get_session() as session:
         row = session.exec(
             select(Message)
             .where(Message.phone == phone)
+            .where(Message.provider == provider)
             .where(Message.wa_message_id.is_(None))
             .order_by(Message.id)
         ).first()
@@ -127,6 +150,19 @@ def _tag_sent_message(phone: str, wa_message_id: str) -> None:
             row.wa_message_id = wa_message_id
             session.add(row)
             session.commit()
+
+
+def _apply_status(wa_message_id: str, state: str, status_at: datetime) -> None:
+    """Guarda el estado de entrega en la fila del mensaje. Común a los dos
+    proveedores: para llegar aquí, cada uno ya tradujo su vocabulario."""
+    with get_session() as session:
+        row = session.exec(select(Message).where(Message.wa_message_id == wa_message_id)).first()
+        if not row:
+            return
+        row.wa_status = state
+        row.wa_status_at = status_at
+        session.add(row)
+        session.commit()
 
 
 def _process_status(status: dict) -> None:
@@ -137,14 +173,72 @@ def _process_status(status: dict) -> None:
 
     timestamp = status.get("timestamp")
     status_at = (
-        datetime.fromtimestamp(int(timestamp), tz=timezone.utc) if timestamp else datetime.now(timezone.utc)
+        datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+        if timestamp
+        else datetime.now(timezone.utc)
     )
+    _apply_status(wa_message_id, state, status_at)
 
-    with get_session() as session:
-        row = session.exec(select(Message).where(Message.wa_message_id == wa_message_id)).first()
-        if not row:
-            return
-        row.wa_status = state
-        row.wa_status_at = status_at
-        session.add(row)
-        session.commit()
+
+# ---------------------------------------------------------------------------
+# Segunda cuenta: Twilio
+# ---------------------------------------------------------------------------
+
+
+async def _form_verificado(request: Request, path: str) -> dict[str, str]:
+    """Form del webhook de Twilio, ya con la firma validada.
+
+    La firma se calcula sobre la URL PÚBLICA que Twilio llamó, reconstruida
+    desde PUBLIC_BASE_URL: detrás del proxy `request.url` trae el host interno y
+    http://, y con eso no coincidiría ninguna firma.
+
+    Esto es además el cortafuegos entre proveedores: un payload de Meta enviado
+    a esta ruta no trae X-Twilio-Signature válida y se rechaza entero, en vez de
+    procesarse a medias.
+    """
+    form = {clave: str(valor) for clave, valor in (await request.form()).items()}
+    firma = request.headers.get("x-twilio-signature", "")
+    if not twilio_client.verify_signature(twilio_client.callback_url(path), form, firma):
+        raise HTTPException(status_code=403, detail="Firma inválida")
+    return form
+
+
+@router.post("/webhook/twilio")
+async def receive_twilio(request: Request) -> Response:
+    form = await _form_verificado(request, "/webhook/twilio")
+
+    datos = twilio_client.parse_inbound(form)
+    if datos is not None:
+        try:
+            handle_inbound(
+                datos["phone"],
+                datos["text"],
+                datos["is_media"],
+                datos["message_id"],
+                PROVIDER_TWILIO,
+            )
+        except Exception:
+            logger.exception("Error procesando mensaje de Twilio sid=%s", datos["message_id"])
+
+    # 204 y no TwiML: la respuesta al cliente se manda por la API, igual que en
+    # Meta. Devolver TwiML aquí duplicaría el mensaje.
+    return Response(status_code=204)
+
+
+@router.post("/webhook/twilio/status")
+async def receive_twilio_status(request: Request) -> Response:
+    form = await _form_verificado(request, "/webhook/twilio/status")
+
+    sid = form.get("MessageSid")
+    estado = twilio_client.map_status(form.get("MessageStatus", ""))
+    if sid and estado:
+        _apply_status(sid, estado, datetime.now(timezone.utc))
+    elif sid:
+        # Estado que no está en la tabla: se registra en vez de inventarle un
+        # significado. La bandeja prefiere no mostrar nada a mostrar algo falso.
+        logger.warning(
+            "MessageStatus desconocido de Twilio (%s) para sid=%s",
+            form.get("MessageStatus"),
+            sid,
+        )
+    return Response(status_code=204)

@@ -1,10 +1,16 @@
+import hashlib
+import hmac
+import logging
 import re
+import time
 import uuid
 from pathlib import Path
 
 from fastapi import UploadFile
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 MB = 1024 * 1024
 ALLOWED_MEDIA = {
@@ -36,3 +42,48 @@ def save_upload(file: UploadFile) -> tuple[str | None, str | None, str | None]:
     name = f"{uuid.uuid4().hex}{ext}"
     (media_dir / name).write_bytes(data)
     return f"/media/{name}", str(media_dir / name), None
+
+
+# --------------------------------------------------------------------------
+# URL pública firmada (la necesita Twilio)
+# --------------------------------------------------------------------------
+# Meta recibe el binario y devuelve un media id; Twilio NO acepta subir el
+# archivo: exige una `MediaUrl` de la que él lo descarga. Como MEDIA_DIR guarda
+# documentos de clientes (actas, constancias fiscales), publicarlo abierto sería
+# una fuga: cualquiera con el nombre del archivo lo leería para siempre.
+#
+# Solución: URL firmada y de vida corta. Twilio descarga en segundos, así que
+# quince minutos sobran y dejan margen para un reintento suyo.
+FIRMA_TTL_SEGUNDOS = 15 * 60
+
+
+def _firmar(name: str, expira: int) -> str:
+    return hmac.new(
+        settings.session_secret.encode(), f"{name}|{expira}".encode(), hashlib.sha256
+    ).hexdigest()
+
+
+def signed_media_path(name: str, ttl: int = FIRMA_TTL_SEGUNDOS) -> str | None:
+    """Ruta pública firmada de un adjunto, o None si no se puede firmar."""
+    if not MEDIA_NAME_RE.match(name):
+        return None
+    if not settings.session_secret:
+        # Sin secreto estable no hay firma verificable. Mejor no mandar el
+        # archivo que publicarlo sin protección.
+        logger.error("No se puede firmar la URL del adjunto: falta SESSION_SECRET")
+        return None
+    expira = int(time.time()) + ttl
+    return f"/media/publico/{name}?exp={expira}&sig={_firmar(name, expira)}"
+
+
+def verify_media_token(name: str, expira: str, firma: str) -> bool:
+    """Valida la firma y la vigencia de una URL pública de adjunto."""
+    if not settings.session_secret or not MEDIA_NAME_RE.match(name):
+        return False
+    try:
+        vence = int(expira)
+    except (TypeError, ValueError):
+        return False
+    if vence < time.time():
+        return False
+    return hmac.compare_digest(_firmar(name, vence), firma or "")

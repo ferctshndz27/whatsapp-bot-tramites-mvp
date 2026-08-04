@@ -5,7 +5,7 @@ from sqlmodel import select
 
 from app.catalog import catalog, requisitos_del_ticket
 from app.conversation import CAPTURE_TTL_HOURS, handle_incoming
-from app.models import Conversation, Ticket, TicketStatus, utcnow
+from app.models import PROVIDER_TWILIO, Conversation, Ticket, TicketStatus, utcnow
 
 PHONE = "5215500000000"
 
@@ -603,3 +603,27 @@ def test_status_query_blocked_when_agent_explicitly_paused(session):
 
     conv = session.get(Conversation, PHONE)
     assert conv.state == "escalado"
+
+
+def test_el_ticket_hereda_el_canal_de_la_conversacion(session):
+    # REGLA: el ticket registra POR DÓNDE llegó la solicitud. Los envíos ya
+    # resuelven canal por Conversation.provider, pero el ticket es lo que leen
+    # reportes y cobranza: dejarlo en el default 'meta' miente para todo
+    # cliente atendido por Twilio.
+    handle_incoming(session, PHONE, "Necesito un acta de divorcio", provider=PROVIDER_TWILIO)
+    handle_incoming(session, PHONE, "sí", provider=PROVIDER_TWILIO)
+
+    ticket = _ticket(session)
+    assert ticket is not None
+    assert ticket.provider == PROVIDER_TWILIO
+
+
+def test_el_ticket_de_escalado_tambien_hereda_el_canal(session):
+    # REGLA: mismo criterio para el SEGUNDO sitio que crea tickets
+    # (_escalate). Si solo se corrigiera el de confirmación, el cliente de
+    # Twilio que pide un humano seguiría dejando un ticket 'meta'.
+    handle_incoming(session, PHONE, "quiero hablar con un humano", provider=PROVIDER_TWILIO)
+
+    ticket = _ticket(session)
+    assert ticket is not None
+    assert ticket.provider == PROVIDER_TWILIO

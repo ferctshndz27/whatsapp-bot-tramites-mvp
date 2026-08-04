@@ -138,7 +138,7 @@ def test_release_resets_agent_and_notifies_escalated_client(monkeypatch, session
     monkeypatch.setattr(db, "engine", session.get_bind())
     sent = []
     monkeypatch.setattr(
-        dashboard.whatsapp_client, "send_text",
+        dashboard.messaging, "send_text",
         lambda phone, body: sent.append((phone, body)) or "wamid.NOTICE",
     )
     ticket = _make_ticket(
@@ -165,7 +165,7 @@ def test_release_of_unescalated_ticket_sends_no_notice(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     sent = []
     monkeypatch.setattr(
-        dashboard.whatsapp_client, "send_text",
+        dashboard.messaging, "send_text",
         lambda phone, body: sent.append((phone, body)) or "wamid.X",
     )
     ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO)
@@ -181,7 +181,7 @@ def test_release_notice_skipped_when_24h_window_closed(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     sent = []
     monkeypatch.setattr(
-        dashboard.whatsapp_client, "send_text",
+        dashboard.messaging, "send_text",
         lambda phone, body: sent.append((phone, body)) or "wamid.X",
     )
     # Escalado pero sin ningún mensaje entrante: ventana cerrada.
@@ -198,7 +198,7 @@ def test_finish_closes_ticket_resets_flow_and_notifies(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     sent = []
     monkeypatch.setattr(
-        dashboard.whatsapp_client, "send_text",
+        dashboard.messaging, "send_text",
         lambda phone, body: sent.append(body) or "wamid.FIN",
     )
     ticket = _make_ticket(
@@ -229,7 +229,7 @@ def test_finish_rejected_for_non_assignee(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     sent = []
     monkeypatch.setattr(
-        dashboard.whatsapp_client, "send_text",
+        dashboard.messaging, "send_text",
         lambda phone, body: sent.append(body) or "wamid.X",
     )
     ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO)
@@ -243,7 +243,7 @@ def test_finish_rejected_for_non_assignee(monkeypatch, session):
 
 def test_admin_can_finish_any_ticket(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
-    monkeypatch.setattr(dashboard.whatsapp_client, "send_text", lambda phone, body: "wamid.F2")
+    monkeypatch.setattr(dashboard.messaging, "send_text", lambda phone, body: "wamid.F2")
     session.add(User(username="jefa", password_hash="x", is_admin=True))
     ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.TOMADO)
     session.commit()

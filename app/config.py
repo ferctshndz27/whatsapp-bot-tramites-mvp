@@ -37,6 +37,20 @@ class Settings:
         # Geolocalización de IPs en la bitácora de accesos (ipwho.is,
         # best-effort con cache local). GEOIP_ENABLED=0 la apaga.
         self.geoip_enabled = os.environ.get("GEOIP_ENABLED", "1") != "0"
+        # Segunda cuenta de WhatsApp, vía Twilio. Es una cuenta INDEPENDIENTE
+        # con su propio número que comparte este CRM; no hay failover con Meta.
+        # Sin TWILIO_AUTH_TOKEN el webhook de Twilio rechaza todo: la firma no
+        # se puede verificar, y aceptar sin verificar dejaría que cualquiera
+        # inyecte mensajes al bot.
+        self.twilio_account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+        self.twilio_auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+        # Remitente en formato Twilio: "whatsapp:+5215500000000".
+        self.twilio_whatsapp_from = os.environ.get("TWILIO_WHATSAPP_FROM", "")
+        # URL pública del servicio, SIN diagonal final. Twilio firma la URL
+        # COMPLETA que llamó; detrás del proxy, request.url reporta el host
+        # interno y http://, así que reconstruirla desde aquí no es un lujo:
+        # sin esto fallan TODAS las firmas, no algunas.
+        self.public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
         self.mssql_host = os.environ.get("MSSQL_HOST", "")
         self.mssql_port = int(os.environ.get("MSSQL_PORT", "1433"))
         self.mssql_user = os.environ.get("MSSQL_USER", "sa")
