@@ -568,6 +568,7 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
                 # Los requisitos se congelan aquí: editar el catálogo después no
                 # reescribe lo que se le pidió a este cliente.
                 requirements_json=requisitos_iniciales(service.requirements),
+                provider=conv.provider,
             )
             session.add(ticket)
             tickets.append(ticket)
@@ -1030,6 +1031,7 @@ def _escalate(
             status=TicketStatus.NUEVO,
             escalado=True,
             notes=f"Cliente pidió hablar con un asesor. Último mensaje: {original_text[:MAX_NOTE_TEXT]}",
+            provider=conv.provider,
         )
         session.add(ticket)
 
