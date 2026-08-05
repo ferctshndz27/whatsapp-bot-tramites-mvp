@@ -80,20 +80,24 @@
     <div style="display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem;">
       {% if c.estado in ('pendiente', 'borrador') %}
       <form method="post" action="/cobros/{{ c.id }}/enviar" style="display:inline;">
+        <input type="hidden" name="volver" value="{{ volver }}">
         <button type="submit" class="btn-sm">Reenviar por WhatsApp</button>
       </form>
       {% endif %}
       {% if c.estado in ('borrador', 'pendiente', 'cancelacion_solicitada') %}
       <form method="post" action="/cobros/{{ c.id }}/cancelar" style="display:inline;"
             onsubmit="return confirm('¿Cancelar este cobro? Si el cliente ya tiene una ficha de OXXO, solo se cancela cuando Stripe lo confirme.');">
+        <input type="hidden" name="volver" value="{{ volver }}">
         <button type="submit" class="btn-sm btn-danger">Cancelar cobro</button>
       </form>
       <form method="post" action="/cobros/{{ c.id }}/reconciliar" style="display:inline;">
+        <input type="hidden" name="volver" value="{{ volver }}">
         <button type="submit" class="btn-sm">Consultar a Stripe ahora</button>
       </form>
       {% endif %}
       {% if c.estado == 'pagado' and not c.aviso_pago_enviado_at %}
       <form method="post" action="/cobros/{{ c.id }}/avisar-pago" style="display:inline;">
+        <input type="hidden" name="volver" value="{{ volver }}">
         <button type="submit" class="btn-sm">Avisar al cliente que ya pagó</button>
       </form>
       {% endif %}
@@ -103,6 +107,7 @@
     <form method="post" action="/cobros/{{ c.id }}/confirmar"
           style="display:flex; gap:.5rem; align-items:flex-end; margin-top:.75rem;"
           onsubmit="return confirm('Esto NO marca el cobro como pagado: solo deja constancia de que viste el comprobante. Stripe sigue siendo la única confirmación.');">
+      <input type="hidden" name="volver" value="{{ volver }}">
       <div>
         <label for="ref-{{ c.id }}">Referencia del recibo</label>
         <input type="text" name="referencia" id="ref-{{ c.id }}" maxlength="100"
@@ -137,6 +142,7 @@
   {% else %}
   <form method="post" action="/tickets/{{ ticket.id }}/cobro"
         onsubmit="return confirm('Se va a generar un cobro por ' + this.monto.value + ' para {{ ticket.client_name or ticket.phone }}. ¿Confirmas el monto?');">
+    <input type="hidden" name="volver" value="{{ volver }}">
     {# El token viaja escondido y es único por RENDER: dos envíos del mismo
        formulario (F5 o doble clic) chocan contra ux_cobro_generacion y NO
        generan un segundo cobro. #}

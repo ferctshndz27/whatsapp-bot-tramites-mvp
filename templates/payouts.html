@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Depósitos del banco{% endblock %}
 {% block content %}
+{% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
 <h1>Depósitos del banco</h1>
 
 <div class="card">
@@ -39,7 +40,7 @@
         {% for c in g.cobros %}
         <tr>
           <td>{{ c.id }}</td>
-          <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
+          <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
           <td>{{ c.client_name or c.phone }}</td>
           <td><small>{{ c.pagado_at|local }}</small></td>
           <td>{{ formato_monto(c.monto_pagado_centavos or 0, c.moneda_pagada or c.moneda) }}</td>

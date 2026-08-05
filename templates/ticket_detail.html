@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Solicitud #{{ ticket.id }}{% endblock %}
 {% block content %}
-{# `volver` trae la lista de origen con filtros y página; validado en la ruta. #}
-<p style="margin-top:0;"><a href="{{ volver or '/' }}">← Volver a solicitudes</a></p>
+{# `volver` trae la lista de origen con filtros y página (validado en la
+   ruta); el texto del botón dice a DÓNDE regresa. #}
+{% set volver_texto = '← Volver a cobros' if volver.startswith('/cobros') else ('← Volver al chat' if volver.startswith('/inbox') else '← Volver a solicitudes') %}
+<p style="margin-top:0;"><a class="btn-nav" href="{{ volver or '/' }}">{{ volver_texto }}</a></p>
 <h1>Solicitud #{{ ticket.id }}</h1>
 
 {% if not ticket.habilitado %}
@@ -34,8 +36,9 @@
     <strong>Servicio:</strong> {{ ticket.service_name }}<br>
     <strong>Precio:</strong> {{ ticket.price_info }}<br>
     <strong>Asignado a:</strong> {{ ticket.assigned_to or '— sin asignar' }}<br>
-    <strong>Conversación:</strong> <a href="/inbox/{{ ticket.phone }}">💬 Abrir chat</a>
-    · <a href="/clients/{{ ticket.phone }}">👤 Ficha del cliente</a>
+    <strong>Conversación:</strong>
+    <a class="btn-nav" href="/inbox/{{ ticket.phone }}">💬 Abrir chat</a>
+    <a class="btn-nav" href="/clients/{{ ticket.phone }}">👤 Ficha del cliente</a>
     · <a href="/clients/{{ ticket.phone }}">Ficha del cliente</a>
   </p>
 

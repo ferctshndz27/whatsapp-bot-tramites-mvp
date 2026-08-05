@@ -21,6 +21,7 @@ import csv
 import io
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Form, Request
@@ -34,6 +35,7 @@ from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
+from app.utils import ruta_interna
 from app.dinero import MONTO_MIN_CENTAVOS, OXXO_MAX_CENTAVOS, formato_monto, parse_monto
 from app.models import Cobro, Direction, IntentoCobro, Message, Ticket, utcnow
 from app.templating import templates
@@ -56,8 +58,17 @@ def _current_user(request: Request) -> str | None:
     return request.session.get("user")
 
 
-def _volver(ticket_id: int | None, **params) -> RedirectResponse:
+def _volver(ticket_id: int | None, volver: str = "", **params) -> RedirectResponse:
+    """Redirige al folio (o a /cobros) tras una acción de cobro.
+
+    `volver` es la lista de ORIGEN (p.ej. /cobros?pagina=2): se reenvía como
+    query del folio para que su botón de regreso sobreviva al POST. Validado
+    con ruta_interna y urlencoded — viene de un hidden que cualquiera puede
+    fabricar.
+    """
     destino = f"/tickets/{ticket_id}" if ticket_id else "/cobros"
+    if ruta_interna(volver):
+        params["volver"] = quote(volver, safe="")
     query = "&".join(f"{k}={v}" for k, v in params.items() if v is not None)
     if query:
         destino = f"{destino}?{query}"
@@ -87,6 +98,7 @@ def generar_cobro(
     token_form: str = Form(...),
     metodo: list[str] = Form(default=[]),
     msi: str = Form(""),
+    volver: str = Form(""),
 ):
     user = _current_user(request)
     if not user:
@@ -100,7 +112,7 @@ def generar_cobro(
             # No-op silencioso, como el resto del panel: se registra y se
             # devuelve al folio sin pistas de qué falló.
             logger.warning("Cobro rechazado en #%s por %s", ticket_id, user)
-            return _volver(ticket_id)
+            return _volver(ticket_id, volver=volver)
         phone, client_name = ticket.phone, ticket.client_name
         service_id, service_name = ticket.service_id, ticket.service_name
         price_info = ticket.price_info
@@ -108,26 +120,26 @@ def generar_cobro(
     try:
         monto_centavos = parse_monto(monto)
     except ValueError:
-        return _volver(ticket_id, err="monto")
+        return _volver(ticket_id, volver=volver,err="monto")
 
     metodos = [m for m in metodo if m in METODOS_VALIDOS] or ["card"]
     if monto_centavos < MONTO_MIN_CENTAVOS:
-        return _volver(ticket_id, err="monto-minimo")
+        return _volver(ticket_id, volver=volver,err="monto-minimo")
     if monto_centavos > settings.cobro_monto_maximo_centavos:
-        return _volver(ticket_id, err="monto-maximo")
+        return _volver(ticket_id, volver=volver,err="monto-maximo")
     if "oxxo" in metodos and monto_centavos > OXXO_MAX_CENTAVOS:
         # Se rechaza ANTES de llamar a Stripe: el voucher no se emitiría.
-        return _volver(ticket_id, err="monto-oxxo")
+        return _volver(ticket_id, volver=volver,err="monto-oxxo")
 
     if not settings.stripe_secret_key:
         # El no-op silencioso es del cliente HTTP; aquí sí se avisa: un cobro
         # fantasma es peor que un error visible.
-        return _volver(ticket_id, err="sin-stripe")
+        return _volver(ticket_id, volver=volver,err="sin-stripe")
     if not settings.public_base_url:
         # Stripe rechaza una success_url relativa con 400: sin la URL pública
         # el 100% de los cobros fallaría con un «se puede reintentar» que no
         # dice por qué. Se corta ANTES de escribir nada.
-        return _volver(ticket_id, err="sin-url-publica")
+        return _volver(ticket_id, volver=volver,err="sin-url-publica")
 
     msi_plazos = msi if msi in MSI_PLAZOS_VALIDOS else None
     # Lo que el bot le COTIZÓ al cliente es la línea base del override, no el
@@ -182,11 +194,11 @@ def generar_cobro(
         detalle = str(exc.orig) if exc.orig else str(exc)
         if "llave_generacion" in detalle:
             # F5 o doble clic: el cobro ya existe. No es un error.
-            return _volver(ticket_id, ok="cobro")
+            return _volver(ticket_id, volver=volver,ok="cobro")
         if "llave_cobro_vivo" in detalle:
-            return _volver(ticket_id, err="cobro-vivo")
+            return _volver(ticket_id, volver=volver,err="cobro-vivo")
         logger.exception("No se pudo crear el cobro del folio #%s", ticket_id)
-        return _volver(ticket_id, err="interno")
+        return _volver(ticket_id, volver=volver,err="interno")
 
     if origen_monto == "override":
         log_admin(user, "cobro:monto-override",
@@ -212,10 +224,10 @@ def generar_cobro(
         # Rechazo: el cobro se queda en borrador y es reintentable.
         # Indeterminado: lo resuelve el barrido de huérfanos con la MISMA
         # clave — jamás se crea otro aquí.
-        return _volver(ticket_id, err="stripe")
+        return _volver(ticket_id, volver=volver,err="stripe")
 
     enviado = _enviar_link(cobro_id, user)
-    return _volver(ticket_id, ok="cobro" if enviado else None,
+    return _volver(ticket_id, volver=volver,ok="cobro" if enviado else None,
                    err=None if enviado else "ventana")
 
 
@@ -292,14 +304,14 @@ def _cargar_para_accion(request: Request, cobro_id: int) -> tuple[str, int | Non
 
 
 @router.post("/cobros/{cobro_id}/enviar")
-def reenviar_cobro(request: Request, cobro_id: int):
+def reenviar_cobro(request: Request, cobro_id: int, volver: str = Form("")):
     user, ticket_id, permitido = _cargar_para_accion(request, cobro_id)
     if not user:
         return RedirectResponse("/login", status_code=303)
     if not permitido:
-        return _volver(ticket_id)
+        return _volver(ticket_id, volver=volver)
     enviado = _enviar_link(cobro_id, user)
-    return _volver(ticket_id, ok="enviado" if enviado else None,
+    return _volver(ticket_id, volver=volver,ok="enviado" if enviado else None,
                    err=None if enviado else "ventana")
 
 
@@ -309,17 +321,17 @@ def reenviar_cobro(request: Request, cobro_id: int):
 
 
 @router.post("/cobros/{cobro_id}/cancelar")
-def cancelar_cobro(request: Request, cobro_id: int):
+def cancelar_cobro(request: Request, cobro_id: int, volver: str = Form("")):
     user, ticket_id, permitido = _cargar_para_accion(request, cobro_id)
     if not user:
         return RedirectResponse("/login", status_code=303)
     if not permitido:
-        return _volver(ticket_id)
+        return _volver(ticket_id, volver=volver)
 
     with get_session() as session:
         cobro = session.get(Cobro, cobro_id)
         if cobro.estado not in cobranza.ESTADOS_VIVOS:
-            return _volver(ticket_id, err="cobro-no-cancelable")
+            return _volver(ticket_id, volver=volver,err="cobro-no-cancelable")
         pi = cobro.stripe_payment_intent_id
         cs = cobro.stripe_checkout_session_id
         # Un intento en "enviando" es una llamada a Stripe SIN RESPUESTA: el
@@ -368,7 +380,7 @@ def cancelar_cobro(request: Request, cobro_id: int):
             cobro.cancelado_por = user
             session.add(cobro)
             session.commit()
-            return _volver(ticket_id, ok="cancelado")
+            return _volver(ticket_id, volver=volver,ok="cancelado")
 
         # Stripe no confirmó: el instrumento SIGUE cobrable, así que el
         # candado NO se libera. El barrido reintenta cada noche.
@@ -389,7 +401,7 @@ def cancelar_cobro(request: Request, cobro_id: int):
         session.flush()
         cobranza.aplicar_evento(session, evento)
         session.commit()
-    return _volver(ticket_id, err="cancelacion-pendiente")
+    return _volver(ticket_id, volver=volver,err="cancelacion-pendiente")
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +410,7 @@ def cancelar_cobro(request: Request, cobro_id: int):
 
 
 @router.post("/cobros/{cobro_id}/reconciliar")
-def reconciliar_cobro(request: Request, cobro_id: int):
+def reconciliar_cobro(request: Request, cobro_id: int, volver: str = Form("")):
     """«Consultar a Stripe ahora»: el resultado entra como evento sintético y
     pasa por el MISMO aplicador que el webhook. Stripe sigue siendo la única
     verdad."""
@@ -406,18 +418,20 @@ def reconciliar_cobro(request: Request, cobro_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
     if not permitido:
-        return _volver(ticket_id)
+        return _volver(ticket_id, volver=volver)
     try:
         estado = cobranza_jobs._reconciliar_uno(cobro_id)
     except Exception:
         logger.exception("Consulta manual a Stripe falló para el cobro %s", cobro_id)
         estado = "sin-respuesta"
-    return _volver(ticket_id, ok="reconciliado" if estado == "aplicado" else None,
+    return _volver(ticket_id, volver=volver,ok="reconciliado" if estado == "aplicado" else None,
                    err=None if estado == "aplicado" else "sin-novedad")
 
 
 @router.post("/cobros/{cobro_id}/confirmar")
-def confirmar_por_asesor(request: Request, cobro_id: int, referencia: str = Form("")):
+def confirmar_por_asesor(
+    request: Request, cobro_id: int, referencia: str = Form(""), volver: str = Form("")
+):
     """Bandera paralela: NO escribe estado='pagado'. El rango 4 es exclusivo
     de Stripe; esto solo desbloquea el trabajo y deja rastro de quién se
     adelantó contra el recibo del cliente."""
@@ -425,12 +439,12 @@ def confirmar_por_asesor(request: Request, cobro_id: int, referencia: str = Form
     if not user:
         return RedirectResponse("/login", status_code=303)
     if not permitido:
-        return _volver(ticket_id)
+        return _volver(ticket_id, volver=volver)
 
     with get_session() as session:
         cobro = session.get(Cobro, cobro_id)
         if cobro.estado == "pagado":
-            return _volver(ticket_id, err="ya-pagado")
+            return _volver(ticket_id, volver=volver,err="ya-pagado")
         cobro.confirmado_por_asesor = True
         cobro.confirmado_por = user
         cobro.confirmado_at = utcnow()
@@ -442,11 +456,11 @@ def confirmar_por_asesor(request: Request, cobro_id: int, referencia: str = Form
         cobranza._actividad(session, ticket_id, user, "cobro:confirmado-asesor")
         session.commit()
     log_admin(user, "cobro:confirmado-asesor", f"#{cobro_id} ref={referencia.strip()}")
-    return _volver(ticket_id, ok="confirmado")
+    return _volver(ticket_id, volver=volver,ok="confirmado")
 
 
 @router.post("/cobros/{cobro_id}/avisar-pago")
-def avisar_pago(request: Request, cobro_id: int):
+def avisar_pago(request: Request, cobro_id: int, volver: str = Form("")):
     """Aviso al cliente de que su pago entró. Fuera del webhook y
     reintentable: con OXXO la confirmación llega a los días, con la ventana de
     24 h ya cerrada."""
@@ -456,19 +470,19 @@ def avisar_pago(request: Request, cobro_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
     if not permitido:
-        return _volver(ticket_id)
+        return _volver(ticket_id, volver=volver)
 
     with get_session() as session:
         cobro = session.get(Cobro, cobro_id)
         if cobro.estado != "pagado":
-            return _volver(ticket_id, err="no-pagado")
+            return _volver(ticket_id, volver=volver,err="no-pagado")
         ultimo_in = session.exec(
             select(Message)
             .where(Message.phone == cobro.phone, Message.direction == Direction.IN)
             .order_by(Message.created_at.desc())  # type: ignore[union-attr]
         ).first()
         if not _window_open(ultimo_in.created_at if ultimo_in else None):
-            return _volver(ticket_id, err="ventana")
+            return _volver(ticket_id, volver=volver,err="ventana")
         texto = cobranza.mensaje_pagado(cobro)
         phone = cobro.phone
 
@@ -476,7 +490,7 @@ def avisar_pago(request: Request, cobro_id: int):
     if wamid is None:
         # El proveedor rechazó el envío: marcar el aviso como enviado apagaría la
         # alerta de pago-tras-cierre sin que el cliente recibiera nada.
-        return _volver(ticket_id, err="envio-fallo")
+        return _volver(ticket_id, volver=volver,err="envio-fallo")
 
     with get_session() as session:
         cobro = session.get(Cobro, cobro_id)
@@ -485,7 +499,7 @@ def avisar_pago(request: Request, cobro_id: int):
         cobro.aviso_pago_enviado_at = utcnow()
         session.add(cobro)
         session.commit()
-    return _volver(ticket_id, ok="avisado")
+    return _volver(ticket_id, volver=volver,ok="avisado")
 
 
 # ---------------------------------------------------------------------------

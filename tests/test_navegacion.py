@@ -140,3 +140,30 @@ def test_un_volver_externo_en_el_chat_cae_a_la_bandeja(http):
     assert r.status_code == 200
     assert "evil.com" not in r.text
     assert 'href="/inbox"' in r.text
+
+
+# ---------------------------------------------------------------------------
+# Cobranza: _volver preserva el origen a través de las acciones POST
+# ---------------------------------------------------------------------------
+
+
+def test_volver_de_cobranza_preserva_el_origen_interno():
+    # REGLA: entrar al folio desde /cobros pagina 2, ejecutar una acción de
+    # cobro y regresar debe devolverte a /cobros pagina 2 — el redirect del
+    # POST reenvía `volver` como query para que el botón de regreso sobreviva.
+    from app.cobranza_panel import _volver
+
+    r = _volver(5, volver="/cobros?pagina=2", ok="cobro")
+    assert r.headers["location"] == "/tickets/5?ok=cobro&volver=%2Fcobros%3Fpagina%3D2"
+
+
+def test_volver_de_cobranza_descarta_un_origen_externo():
+    from app.cobranza_panel import _volver
+
+    assert _volver(5, volver="https://evil.com").headers["location"] == "/tickets/5"
+
+
+def test_volver_de_cobranza_sin_folio_cae_a_la_lista():
+    from app.cobranza_panel import _volver
+
+    assert _volver(None).headers["location"] == "/cobros"
