@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Cobros{% endblock %}
 {% block content %}
+{# URL actual (página/filtro) urlencoded: viaja como ?volver= en los enlaces
+   al folio para que el regreso restaure esta vista, incluso tras una acción. #}
+{% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
 <h1>Cobros</h1>
 
 <div class="card">
@@ -72,7 +75,7 @@
         {% for c in cobros %}
         <tr>
           <td>{{ c.id }}</td>
-          <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
+          <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
           <td>{{ c.client_name or c.phone }}</td>
           <td>{{ c.concepto }}</td>
           <td>

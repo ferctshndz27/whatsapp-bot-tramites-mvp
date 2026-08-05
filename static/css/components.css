@@ -27,6 +27,15 @@
     .pills a:hover { color: var(--text); border-color: var(--border); }
     .pills a[aria-current="true"] { background: var(--lime); color: var(--lime-ink); font-weight: 700; }
 
+    /* ---- Botón de navegación entre páginas (pill del ERP, hover lima) ---- */
+    .btn-nav {
+      display: inline-flex; align-items: center; gap: .4rem;
+      background: var(--card-bg); color: var(--text); text-decoration: none;
+      padding: .45rem 1rem; min-height: 40px; border-radius: 999px;
+      box-shadow: var(--shadow); font-size: .88rem; font-weight: 600;
+    }
+    .btn-nav:hover { background: var(--lime); color: var(--lime-ink); }
+
     /* ---- Table (como la referencia: banda gris redondeada de encabezado,
        filas altas con alternado lila tenue) ---- */
     .table-wrap { overflow-x: auto; border-radius: 14px; }
