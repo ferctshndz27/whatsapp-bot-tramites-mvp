@@ -35,7 +35,7 @@
     <a class="btn-nav" href="/tickets/{{ ticket.id }}?volver={{ ('/inbox/' ~ phone) | urlencode }}">🎫 Ver solicitud #{{ ticket.id }}</a>
     {% if ticket.assigned_to %}<span class="badge asignada">atiende: {{ ticket.assigned_to }}</span>{% endif %}
     {% endif %}
-    {% if client %}<a class="btn-nav" href="/clients/{{ phone }}">👤 Ficha del cliente</a>{% endif %}
+    {% if client %}<a class="btn-nav" href="/clients/{{ phone }}?volver={{ ('/inbox/' ~ phone) | urlencode }}">👤 Ficha del cliente</a>{% endif %}
     {% if client and not client.habilitado %}<span class="badge caducada">cliente bloqueado</span>{% endif %}
     {% if is_admin(user) and client %}
     <form method="post" action="/inbox/{{ phone }}/block" style="display:inline;"

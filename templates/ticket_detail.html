@@ -38,8 +38,7 @@
     <strong>Asignado a:</strong> {{ ticket.assigned_to or '— sin asignar' }}<br>
     <strong>Conversación:</strong>
     <a class="btn-nav" href="/inbox/{{ ticket.phone }}">💬 Abrir chat</a>
-    <a class="btn-nav" href="/clients/{{ ticket.phone }}">👤 Ficha del cliente</a>
-    · <a href="/clients/{{ ticket.phone }}">Ficha del cliente</a>
+    <a class="btn-nav" href="/clients/{{ ticket.phone }}?volver={{ ('/tickets/' ~ ticket.id) | urlencode }}">👤 Ficha del cliente</a>
   </p>
 
   {% if requisitos or requirements %}

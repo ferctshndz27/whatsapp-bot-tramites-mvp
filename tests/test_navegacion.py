@@ -20,7 +20,7 @@ from sqlmodel import Session, create_engine
 import app.db as db
 from app.config import settings
 from app.main import app
-from app.models import Conversation, Direction, Message, Ticket, TicketStatus, User
+from app.models import Client, Conversation, Direction, Message, Ticket, TicketStatus, User
 from app.utils import ruta_interna
 
 PHONE = "525500000000"
@@ -62,6 +62,7 @@ def http():
         )
         s.add(Message(phone=PHONE, direction=Direction.IN, body="hola"))
         s.add(Conversation(phone=PHONE, state="menu_categoria"))
+        s.add(Client(phone=PHONE, name="Ana Ruiz"))
         s.commit()
     with TestClient(app, base_url="https://testserver") as cliente:
         r = cliente.post(
@@ -140,6 +141,35 @@ def test_un_volver_externo_en_el_chat_cae_a_la_bandeja(http):
     assert r.status_code == 200
     assert "evil.com" not in r.text
     assert 'href="/inbox"' in r.text
+
+
+# ---------------------------------------------------------------------------
+# Ficha del cliente: regreso al folio o chat de origen, y sin enlace duplicado
+# ---------------------------------------------------------------------------
+
+
+def test_el_volver_de_la_ficha_regresa_a_la_solicitud(http):
+    r = http.get(f"/clients/{PHONE}?volver=/tickets/1")
+
+    assert r.status_code == 200
+    assert 'href="/tickets/1"' in r.text
+    assert "Volver a la solicitud" in r.text
+
+
+def test_un_volver_externo_en_la_ficha_cae_a_clientes(http):
+    r = http.get(f"/clients/{PHONE}?volver=https://evil.com")
+
+    assert r.status_code == 200
+    assert "evil.com" not in r.text
+    assert "Volver a clientes" in r.text
+
+
+def test_la_ficha_se_enlaza_una_sola_vez_desde_el_folio(http):
+    # REGRESIÓN: el botón .btn-nav convivió con el enlace de texto viejo y el
+    # folio mostraba «Ficha del cliente» dos veces.
+    r = http.get("/tickets/1")
+
+    assert r.text.count("Ficha del cliente") == 1
 
 
 # ---------------------------------------------------------------------------

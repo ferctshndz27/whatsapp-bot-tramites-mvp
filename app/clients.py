@@ -16,6 +16,7 @@ from app.audit import log_admin
 from app.auth import is_admin
 from app.db import get_session
 from app.models import Client, ClientNote, Ticket
+from app.utils import ruta_interna
 from app.utils import normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ def clients_upsert(request: Request, phone: str = Form(...), name: str = Form(""
 
 
 @router.get("/clients/{phone}")
-def client_profile(request: Request, phone: str):
+def client_profile(request: Request, phone: str, volver: str = ""):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -143,6 +144,9 @@ def client_profile(request: Request, phone: str):
             "client": client,
             "tickets": tickets,
             "notes": notes,
+            # Origen del salto a la ficha (folio o chat) para el botón de
+            # regreso; validado, un valor externo se descarta.
+            "volver": ruta_interna(volver),
         },
     )
 

@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Cliente {{ client.name or client.phone }}{% endblock %}
 {% block content %}
+{# `volver` trae el folio o el chat de origen; el texto dice a dónde regresa. #}
+{% set volver_texto = '← Volver a la solicitud' if volver.startswith('/tickets') else ('← Volver al chat' if volver.startswith('/inbox') else '← Volver a clientes') %}
+<p style="margin-top:0;"><a class="btn-nav" href="{{ volver or '/clients' }}">{{ volver_texto }}</a></p>
 <h1>
   {{ client.name or 'Sin nombre' }}
   <span style="color:var(--text-muted); font-size:.9rem; font-weight:400;">· {{ client.phone }}</span>
