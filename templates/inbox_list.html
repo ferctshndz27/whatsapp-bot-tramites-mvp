@@ -16,7 +16,7 @@
   <div class="convo-list">
     {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
     {% for i in items %}
-    <a class="convo-card" href="/inbox/{{ i.phone }}">
+    <a class="convo-card" href="/inbox/{{ i.phone }}{% if current_filter %}?volver={{ ('/inbox?filter=' ~ current_filter) | urlencode }}{% endif %}">
       <span class="avatar" style="background: {{ palette[loop.index % 5] }}" aria-hidden="true">
         {{ (i.name or i.phone)[:2] | upper }}
       </span>

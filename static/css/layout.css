@@ -1,5 +1,13 @@
     .layout { display: flex; min-height: 100vh; }
 
+    /* ---- Skip link: invisible hasta recibir foco de teclado ---- */
+    .skip-link {
+      position: absolute; left: 1rem; top: -100px; z-index: 40;
+      background: var(--lime); color: var(--lime-ink); font-weight: 700;
+      padding: .6rem 1.2rem; border-radius: 999px; text-decoration: none;
+    }
+    .skip-link:focus-visible { top: 1rem; }
+
     /* ---- Sidebar: pills sobre el fondo, activo en lima ---- */
     .sidebar {
       width: 236px; flex-shrink: 0; background: transparent;
@@ -22,17 +30,24 @@
       padding: .55rem 1rem; min-height: 44px; border-radius: 999px; margin: .35rem 0;
     }
     .sidebar nav a:hover { background: #fff; color: var(--text); }
+    /* Sin cambio de font-weight al activarse: engordar la tipografía ensancha
+       la pill y en el nav horizontal móvil producía layout shift al navegar.
+       El fondo lima + aria-current ya comunican el estado. */
     .sidebar nav a[aria-current="page"] {
-      background: var(--lime); color: var(--lime-ink); font-weight: 700;
+      background: var(--lime); color: var(--lime-ink);
     }
     .nav-ico { filter: grayscale(1); opacity: .8; width: 1.35em; text-align: center; flex-shrink: 0; }
     .nav-badge {
-      margin-left: auto; background: var(--red); color: #fff; border-radius: 999px;
+      /* No usa var(--red) #f43f5e: con texto blanco a .72rem da ~3.3:1 y
+         reprueba WCAG AA (4.5:1). Este rojo más profundo llega a ~4.8:1. */
+      margin-left: auto; background: #dc2626; color: #fff; border-radius: 999px;
       padding: 0 .5rem; font-size: .72rem; font-weight: 700; min-width: 1.4em; text-align: center;
     }
     .nav-label {
       display: block; padding: 1rem .6rem .3rem; font-size: .68rem; font-weight: 700;
-      letter-spacing: 1.2px; text-transform: uppercase; color: #9aa0aa;
+      /* #9aa0aa daba ~1.8:1 sobre el fondo plata: los rótulos eran decorativos
+         de facto. Este gris llega a ~4.6:1 sin dejar de verse secundario. */
+      letter-spacing: 1.2px; text-transform: uppercase; color: #565b66;
     }
 
     /* ---- Main + topbar de bienvenida ---- */

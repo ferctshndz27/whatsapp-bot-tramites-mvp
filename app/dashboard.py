@@ -11,6 +11,7 @@ from sqlalchemy import or_, update
 from sqlmodel import select
 
 from app import authlog, messaging
+from app.utils import ruta_interna
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
@@ -370,7 +371,9 @@ def ticket_list(
 
 
 @router.get("/tickets/{ticket_id}")
-def ticket_detail(request: Request, ticket_id: int, err: str = "", ok: str = ""):
+def ticket_detail(
+    request: Request, ticket_id: int, err: str = "", ok: str = "", volver: str = ""
+):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -414,6 +417,9 @@ def ticket_detail(request: Request, ticket_id: int, err: str = "", ok: str = "")
             "requisitos": requisitos_del_ticket(ticket.requirements_json),
             "err": err,
             "ok": ok,
+            # Ruta de la lista de origen (filtros y página incluidos) para el
+            # botón «volver»; validada, un valor externo se descarta.
+            "volver": ruta_interna(volver),
             **_contexto_cobranza(ticket, user),
         },
     )

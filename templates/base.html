@@ -11,13 +11,18 @@
 </head>
 <body>
   {% if user %}
+  {# Primer tabulable de la página: sin él, un usuario de teclado cruza los
+     ~15 enlaces del sidebar en CADA página antes de llegar al contenido. #}
+  <a class="skip-link" href="#contenido">Saltar al contenido</a>
   <div class="layout">
     <aside class="sidebar">
       <div class="brand"><span class="star" aria-hidden="true">✳️</span> Trámites</div>
       <nav aria-label="Principal">
         <span class="nav-label">Operación</span>
         <a href="/my" {% if request.url.path.startswith('/my') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🗓️</span>Mi día</a>
-        <a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🎫</span>Solicitudes</a>
+        {# El detalle de folio vive bajo /tickets/: sin esta rama, entrar a un
+           folio dejaba el sidebar entero sin ítem activo. #}
+        <a href="/" {% if request.url.path == '/' or request.url.path.startswith('/tickets') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🎫</span>Solicitudes</a>
         <a href="/inbox" {% if request.url.path.startswith('/inbox') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📥</span>Bandeja</a>
         <a href="/clients" {% if request.url.path.startswith('/clients') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👤</span>Clientes</a>
         <a href="/team" {% if request.url.path.startswith('/team') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💬</span>Equipo</a>
@@ -37,7 +42,7 @@
         {% endif %}
       </nav>
     </aside>
-    <main class="main">
+    <main class="main" id="contenido">
       <div class="topbar">
         <div>
           <div class="hello">Bienvenido, {{ user }} 🎉</div>
