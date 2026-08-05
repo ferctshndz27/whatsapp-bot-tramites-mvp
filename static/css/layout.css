@@ -1,13 +1,5 @@
     .layout { display: flex; min-height: 100vh; }
 
-    /* ---- Skip link: invisible hasta recibir foco de teclado ---- */
-    .skip-link {
-      position: absolute; left: 1rem; top: -100px; z-index: 40;
-      background: var(--lime); color: var(--lime-ink); font-weight: 700;
-      padding: .6rem 1.2rem; border-radius: 999px; text-decoration: none;
-    }
-    .skip-link:focus-visible { top: 1rem; }
-
     /* ---- Sidebar: pills sobre el fondo, activo en lima ---- */
     .sidebar {
       width: 236px; flex-shrink: 0; background: transparent;

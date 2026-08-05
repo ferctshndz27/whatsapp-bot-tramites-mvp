@@ -11,9 +11,6 @@
 </head>
 <body>
   {% if user %}
-  {# Primer tabulable de la página: sin él, un usuario de teclado cruza los
-     ~15 enlaces del sidebar en CADA página antes de llegar al contenido. #}
-  <a class="skip-link" href="#contenido">Saltar al contenido</a>
   <div class="layout">
     <aside class="sidebar">
       <div class="brand"><span class="star" aria-hidden="true">✳️</span> Trámites</div>
@@ -42,7 +39,7 @@
         {% endif %}
       </nav>
     </aside>
-    <main class="main" id="contenido">
+    <main class="main">
       <div class="topbar">
         <div>
           <div class="hello">Bienvenido, {{ user }} 🎉</div>
