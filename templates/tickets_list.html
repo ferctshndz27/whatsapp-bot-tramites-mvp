@@ -2,6 +2,9 @@
 {% block title %}Solicitudes{% endblock %}
 {% block head %}<meta http-equiv="refresh" content="30">{% endblock %}
 {% block content %}
+{# URL actual (filtros y página incluidos) urlencoded: viaja como ?volver= en
+   cada enlace al detalle para que su botón de regreso restaure esta vista. #}
+{% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
 <h1>Hola, {{ user }}</h1>
 
 <div class="stats">
@@ -48,7 +51,7 @@
         {% for t in tickets %}
         <tr>
           <td>
-            <a class="cell-person" href="/tickets/{{ t.id }}" style="text-decoration:none; color:inherit;">
+            <a class="cell-person" href="/tickets/{{ t.id }}?volver={{ volver_actual }}" style="text-decoration:none; color:inherit;">
               <span class="avatar" style="background: {{ palette[t.id % 5] }}" aria-hidden="true">
                 {{ (t.client_name or t.phone)[:2] | upper }}
               </span>

@@ -10,6 +10,7 @@ from sqlmodel import select
 
 from app import messaging
 from app.audit import log_admin
+from app.utils import ruta_interna
 from app.auth import is_admin
 from app.config import settings
 from app.conversation import _latest_open_ticket, _log_message
@@ -140,7 +141,7 @@ def inbox_list(request: Request, filter: str | None = None):
 
 
 @router.get("/inbox/{phone}")
-def inbox_chat(request: Request, phone: str, err: str | None = None):
+def inbox_chat(request: Request, phone: str, err: str | None = None, volver: str = ""):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -181,6 +182,9 @@ def inbox_chat(request: Request, phone: str, err: str | None = None):
             # cambia según el canal.
             "conversation": conv,
             "window_open": _window_open(last_in),
+            # Ruta de la Bandeja de origen (con su filtro) para el botón
+            # «volver»; validada, un valor externo se descarta.
+            "volver": ruta_interna(volver),
             "quick_replies": QUICK_REPLIES,
             "my_replies": my_replies,
             "error": err,

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Chat — {{ client.name if client and client.name else phone }}{% endblock %}
 {% block content %}
+{# `volver` trae la Bandeja con su filtro activo; validado en la ruta. #}
+<p style="margin-top:0;"><a href="{{ volver or '/inbox' }}">← Volver a la Bandeja</a></p>
 <h1>
   {{ client.name if client and client.name else 'Sin nombre' }}
   <span style="color:var(--text-muted); font-size:.9rem; font-weight:400;">· {{ phone }}</span>

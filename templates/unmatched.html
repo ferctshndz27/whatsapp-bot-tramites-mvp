@@ -157,7 +157,9 @@
         {% for m in pending %}
         <tr>
           <td>{{ m.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td>{{ m.phone }}</td>
+          {# Enlazado: revisar QUÉ contestó el bot exige ver la conversación
+             y copiar el número a mano era la única vía. #}
+          <td><a href="/inbox/{{ m.phone }}">{{ m.phone }}</a></td>
           <td>{{ m.body }}</td>
         </tr>
         {% endfor %}

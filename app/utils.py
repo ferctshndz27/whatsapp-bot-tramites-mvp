@@ -55,6 +55,18 @@ def mask_phone(phone: str) -> str:
     return f"***{phone[-4:]}" if len(phone) > 4 else "***"
 
 
+def ruta_interna(ruta: str) -> str:
+    """Acepta solo rutas del propio panel para enlaces de «volver».
+
+    El valor viene de la URL, así que cualquiera puede fabricarlo. «//» y
+    «/\\» son URLs protocolo-relativas para el navegador: aceptar cualquiera
+    de las dos convertiría el botón de volver en un open redirect.
+    """
+    if ruta.startswith("/") and not ruta.startswith(("//", "/\\")):
+        return ruta
+    return ""
+
+
 if __name__ == "__main__":  # pragma: no cover
     # Check mínimo: las cinco formas en que el mismo humano puede llegar.
     _canonico = "525500000000"
