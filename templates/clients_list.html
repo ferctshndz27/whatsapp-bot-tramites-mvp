@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Clientes{% endblock %}
 {% block content %}
+{# URL actual (búsqueda q incluida) para que el regreso desde la ficha la
+   restaure. #}
+{% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
 <h1>Clientes</h1>
 
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
@@ -58,7 +61,7 @@
         {% for c in clients %}
         <tr>
           <td>
-            <a class="cell-person" href="/clients/{{ c.phone }}" style="text-decoration:none; color:inherit;">
+            <a class="cell-person" href="/clients/{{ c.phone }}?volver={{ volver_actual }}" style="text-decoration:none; color:inherit;">
               <span class="avatar" style="background: {{ palette[loop.index0 % 5] }}" aria-hidden="true">
                 {{ (c.name or c.phone)[:2] | upper }}
               </span>
