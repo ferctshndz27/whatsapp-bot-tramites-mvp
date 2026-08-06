@@ -128,7 +128,10 @@ def build_conversation_items(session) -> list[dict]:
     return result
 
 
-@router.get("/inbox")
+# Bandeja apagada: Solicitudes («/») absorbió sus filtros y sus tarjetas.
+# Se comenta solo el decorador — la función queda para poder revivir la vista
+# con una línea si hiciera falta; /inbox responde 404 mientras tanto.
+# @router.get("/inbox")
 def inbox_list(request: Request, filter: str | None = None):
     user = _current_user(request)
     if not user:
@@ -166,7 +169,8 @@ def inbox_chat(request: Request, phone: str, err: str | None = None, volver: str
             .order_by(Message.created_at)
         ).all()
         if not messages:
-            return RedirectResponse("/inbox", status_code=303)
+            # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
+            return RedirectResponse("/", status_code=303)
         client = session.get(Client, phone)
         conv = session.get(Conversation, phone)
         ticket = session.exec(
@@ -395,8 +399,10 @@ def media_file(request: Request, name: str):
     if not user:
         return RedirectResponse("/login", status_code=303)
     if not MEDIA_NAME_RE.match(name):
-        return RedirectResponse("/inbox", status_code=303)
+        # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
+        return RedirectResponse("/", status_code=303)
     path = Path(settings.media_dir) / name
     if not path.is_file():
-        return RedirectResponse("/inbox", status_code=303)
+        # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
+        return RedirectResponse("/", status_code=303)
     return FileResponse(path)

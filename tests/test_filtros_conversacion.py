@@ -29,9 +29,6 @@ ESPERANDO = "525500000001"  # último mensaje entrante, ventana viva
 CADUCADA = "525500000002"  # último entrante hace 30 h: fuera de la ventana de 24 h
 PAUSADA = "525500000003"  # conversación escalada: el bot está apagado
 
-FILTROS = ["esperando", "caducadas", "pausadas"]
-
-
 @pytest.fixture(autouse=True)
 def _base_compartida(monkeypatch):
     """Engine con StaticPool para que el hilo del TestClient vea la misma base."""
@@ -98,12 +95,11 @@ def _telefonos(html: str) -> set[str]:
     return set(re.findall(r'href="/inbox/(\d+)', html))
 
 
-@pytest.mark.parametrize("filtro", FILTROS)
-def test_filtro_lista_lo_mismo_que_la_bandeja(http, filtro):
-    solicitudes = http.get(f"/?conv={filtro}")
-    bandeja = http.get(f"/inbox?filter={filtro}")
-    assert solicitudes.status_code == 200
-    assert _telefonos(solicitudes.text) == _telefonos(bandeja.text)
+def test_la_bandeja_esta_apagada(http):
+    """La ruta /inbox quedó sin decorador (comentado en app/inbox.py): la vista
+    vieja responde 404. El chat /inbox/{phone} sigue vivo — lo cubren las
+    pruebas de navegación."""
+    assert http.get("/inbox").status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -120,13 +116,15 @@ def test_cada_filtro_trae_las_conversaciones_correctas(http, filtro, esperados):
     assert _telefonos(http.get(f"/?conv={filtro}").text) == esperados
 
 
-def test_los_conteos_de_los_chips_coinciden_con_la_bandeja(http):
+def test_los_conteos_de_los_chips_de_conversacion(http):
+    """Contra los datos sembrados: 1 esperando, 2 caducadas (la pausada nunca
+    escribió, así que tampoco tiene ventana), 1 con el bot pausado."""
     inicio = http.get("/").text
-    bandeja = http.get("/inbox").text
-    for etiqueta in ("esperando respuesta", "caducadas", "bot pausado"):
+    for etiqueta, n in (("esperando respuesta", 1), ("caducadas", 2), ("bot pausado", 1)):
         patron = re.escape(etiqueta) + r" \((\d+)\)"
-        assert re.search(patron, inicio), f"falta el chip «{etiqueta}» en /"
-        assert re.search(patron, inicio).group(1) == re.search(patron, bandeja).group(1)
+        chip = re.search(patron, inicio)
+        assert chip, f"falta el chip «{etiqueta}» en /"
+        assert int(chip.group(1)) == n
 
 
 def test_sin_filtro_la_vista_sigue_listando_folios(http):
