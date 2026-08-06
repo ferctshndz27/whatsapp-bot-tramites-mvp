@@ -151,7 +151,7 @@
       </thead>
       <tbody>
         {% for a in recent %}
-        <tr>
+        <tr data-href="/tickets/{{ a.ticket_id }}">
           <td>{{ a.at | local }}</td>
           <td><a href="/tickets/{{ a.ticket_id }}">#{{ a.ticket_id }}</a></td>
           <td>{{ a.label }}</td>

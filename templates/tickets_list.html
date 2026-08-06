@@ -61,7 +61,7 @@
       <tbody>
         {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
         {% for t in tickets %}
-        <tr>
+        <tr data-href="/tickets/{{ t.id }}?volver={{ volver_actual }}">
           <td>
             <a class="cell-person" href="/tickets/{{ t.id }}?volver={{ volver_actual }}" style="text-decoration:none; color:inherit;">
               <span class="avatar" style="background: {{ palette[t.id % 5] }}" aria-hidden="true">

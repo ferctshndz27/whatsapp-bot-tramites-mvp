@@ -58,5 +58,19 @@
   {% else %}
   {% block content_public %}{% endblock %}
   {% endif %}
+  <script>
+    // Filas con data-href: toda la fila navega, como una tarjeta de
+    // conversación. Mejora progresiva: sin JS el enlace interno de la fila
+    // sigue funcionando. No navega si el click cayó en un control (enlace,
+    // botón, campo), lleva modificadores o hay texto seleccionado.
+    document.addEventListener('click', function (e) {
+      var fila = e.target.closest('tr[data-href]');
+      if (!fila) return;
+      if (e.target.closest('a, button, input, select, textarea, label')) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (String(window.getSelection())) return;
+      window.location.assign(fila.dataset.href);
+    });
+  </script>
 </body>
 </html>
