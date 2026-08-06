@@ -125,7 +125,8 @@ def client_profile(request: Request, phone: str, volver: str = ""):
     with get_session() as session:
         client = session.get(Client, phone)
         if client is None:
-            return RedirectResponse("/inbox", status_code=303)
+            # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
+            return RedirectResponse("/", status_code=303)
         tickets = session.exec(
             select(Ticket).where(Ticket.phone == phone).order_by(Ticket.created_at.desc())
         ).all()
@@ -160,7 +161,8 @@ def add_client_note(request: Request, phone: str, body: str = Form(...)):
     cleaned = body.strip()
     with get_session() as session:
         if session.get(Client, phone) is None:
-            return RedirectResponse("/inbox", status_code=303)
+            # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
+            return RedirectResponse("/", status_code=303)
         if cleaned:
             session.add(ClientNote(phone=phone, author=user, body=cleaned[:2000]))
             session.commit()
