@@ -27,6 +27,10 @@
     .pills a:hover { color: var(--text); border-color: var(--border); }
     .pills a[aria-current="true"] { background: var(--lime); color: var(--lime-ink); font-weight: 700; }
 
+    /* Filas con destino (data-href): toda la fila navega, como las tarjetas
+       de conversación. El JS de delegación vive en base.html. */
+    tbody tr[data-href] { cursor: pointer; }
+
     /* ---- Botón de navegación entre páginas (pill del ERP, hover lima) ---- */
     .btn-nav {
       display: inline-flex; align-items: center; gap: .4rem;

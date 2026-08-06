@@ -73,7 +73,7 @@
       </thead>
       <tbody>
         {% for c in cobros %}
-        <tr>
+        <tr {% if c.ticket_id %}data-href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}"{% endif %}>
           <td>{{ c.id }}</td>
           <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
           <td>{{ c.client_name or c.phone }}</td>

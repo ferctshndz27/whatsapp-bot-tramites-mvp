@@ -59,7 +59,7 @@
       <tbody>
         {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
         {% for c in clients %}
-        <tr>
+        <tr data-href="/clients/{{ c.phone }}?volver={{ volver_actual }}">
           <td>
             <a class="cell-person" href="/clients/{{ c.phone }}?volver={{ volver_actual }}" style="text-decoration:none; color:inherit;">
               <span class="avatar" style="background: {{ palette[loop.index0 % 5] }}" aria-hidden="true">

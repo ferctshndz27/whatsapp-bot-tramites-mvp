@@ -95,7 +95,7 @@
         <thead><tr><th>Folio</th><th>Cliente</th><th>Servicio</th><th>Estado</th></tr></thead>
         <tbody>
           {% for t in tickets %}
-          <tr>
+          <tr data-href="/tickets/{{ t.id }}">
             <td><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
             <td>{{ t.client_name or t.phone }}</td>
             <td>{{ t.service_name }}</td>

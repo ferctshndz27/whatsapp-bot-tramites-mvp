@@ -155,7 +155,7 @@
       <thead><tr><th>Fecha (UTC)</th><th>Teléfono</th><th>Mensaje</th></tr></thead>
       <tbody>
         {% for m in pending %}
-        <tr>
+        <tr data-href="/inbox/{{ m.phone }}">
           <td>{{ m.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           {# Enlazado: revisar QUÉ contestó el bot exige ver la conversación
              y copiar el número a mano era la única vía. #}

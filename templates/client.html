@@ -56,7 +56,7 @@
         <thead><tr><th>Folio</th><th>Servicio</th><th>Estado</th><th>Fecha</th><th>Atendió</th></tr></thead>
         <tbody>
           {% for t in tickets %}
-          <tr {% if not t.habilitado %}style="opacity:.55;"{% endif %}>
+          <tr data-href="/tickets/{{ t.id }}" {% if not t.habilitado %}style="opacity:.55;"{% endif %}>
             <td><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
             <td>{{ t.service_name }}</td>
             <td><span class="badge {{ t.status.value }}">{{ t.status.value.replace('_', ' ') }}</span></td>
