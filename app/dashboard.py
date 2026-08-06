@@ -321,8 +321,25 @@ PER_PAGE = 15
 
 @router.get("/")
 def ticket_list(
-    request: Request, status: str | None = None, assigned: str | None = None, page: int = 1
+    request: Request,
+    status: str | None = None,
+    assigned: str | None = None,
+    conv: str | None = None,
+    page: int = 1,
 ):
+    """Solicitudes y conversaciones en una sola vista.
+
+    Los filtros por estado del folio (`status`, `assigned`) listan folios en la
+    tabla; los de conversación (`conv`) listan conversaciones por teléfono, con
+    las mismas tarjetas de la Bandeja. Son mutuamente excluyentes: un chip de
+    conversación no acota folios, cambia lo que se lista."""
+    from app.inbox import (
+        CONV_FILTERS,
+        build_conversation_items,
+        conversation_counts,
+        filter_conversations,
+    )
+
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -331,6 +348,16 @@ def ticket_list(
         all_tickets = session.exec(
             select(Ticket).where(Ticket.habilitado == True).order_by(Ticket.created_at.desc())  # noqa: E712
         ).all()
+        # ponytail: recorre todos los mensajes en cada carga de «/», que además
+        # se auto-refresca cada 30 s; pasar a una consulta agregada si el
+        # historial crece a decenas de miles.
+        conversaciones = build_conversation_items(session)
+
+    # Un valor desconocido en ?conv= equivale a «todas»: la vista nunca queda en
+    # un estado sin lista ni chip activo.
+    conv = conv if conv in CONV_FILTERS else None
+    conv_counts = conversation_counts(conversaciones)
+    conversaciones = filter_conversations(conversaciones, conv)
 
     stats = {
         "total": len(all_tickets),
@@ -338,6 +365,15 @@ def ticket_list(
         "activos": sum(1 for t in all_tickets if t.status in (TicketStatus.TOMADO, TicketStatus.EN_PROCESO)),
         "escalados": sum(1 for t in all_tickets if t.escalado),
     }
+    # Conteo de cada chip de folio, siempre sobre el total: el número dice
+    # cuántos hay, no cuántos quedan dentro del filtro activo — si se contaran
+    # sobre lo ya filtrado, todos los chips menos el activo dirían 0.
+    ticket_counts = {s.value: 0 for s in TicketStatus}
+    for t in all_tickets:
+        ticket_counts[t.status.value] += 1
+    ticket_counts["todas"] = len(all_tickets)
+    ticket_counts["sin_asignar"] = sum(1 for t in all_tickets if t.assigned_to is None)
+
     tickets = all_tickets
     if status:
         tickets = [t for t in tickets if t.status.value == status]
@@ -363,6 +399,10 @@ def ticket_list(
             "statuses": [s.value for s in TicketStatus],
             "current_filter": status,
             "assigned_filter": assigned,
+            "ticket_counts": ticket_counts,
+            "conversaciones": conversaciones,
+            "conv_counts": conv_counts,
+            "conv_filter": conv,
             "page": page,
             "pages": pages,
             "page_numbers": page_numbers,

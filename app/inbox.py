@@ -61,6 +61,28 @@ def _window_open(last_in_at: datetime | None) -> bool:
     return datetime.now(timezone.utc) - _as_utc(last_in_at) < timedelta(hours=WINDOW_HOURS)
 
 
+# Filtros de conversación. Una sola definición porque los comparten la Bandeja
+# y la fila de filtros de Solicitudes: duplicar los predicados haría divergir el
+# número del chip respecto a la lista que ese mismo chip abre.
+CONV_FILTERS = {
+    "esperando": lambda i: i["waiting"],
+    "caducadas": lambda i: not i["window_open"],
+    "pausadas": lambda i: i["bot_paused"],
+}
+
+
+def conversation_counts(items: list[dict]) -> dict[str, int]:
+    counts = {"todas": len(items)}
+    counts.update({k: sum(1 for i in items if pred(i)) for k, pred in CONV_FILTERS.items()})
+    return counts
+
+
+def filter_conversations(items: list[dict], filtro: str | None) -> list[dict]:
+    """Aplica un filtro de conversación. Un valor desconocido no filtra nada."""
+    pred = CONV_FILTERS.get(filtro or "")
+    return [i for i in items if pred(i)] if pred else items
+
+
 def build_conversation_items(session) -> list[dict]:
     # ponytail: carga todos los mensajes y agrupa en Python — sobra a este
     # volumen; pasar a una consulta agregada si el historial crece a decenas de miles.
@@ -115,18 +137,8 @@ def inbox_list(request: Request, filter: str | None = None):
     with get_session() as session:
         items = build_conversation_items(session)
 
-    counts = {
-        "todas": len(items),
-        "esperando": sum(1 for i in items if i["waiting"]),
-        "caducadas": sum(1 for i in items if not i["window_open"]),
-        "pausadas": sum(1 for i in items if i["bot_paused"]),
-    }
-    if filter == "esperando":
-        items = [i for i in items if i["waiting"]]
-    elif filter == "caducadas":
-        items = [i for i in items if not i["window_open"]]
-    elif filter == "pausadas":
-        items = [i for i in items if i["bot_paused"]]
+    counts = conversation_counts(items)
+    items = filter_conversations(items, filter)
 
     return templates.TemplateResponse(
         "inbox_list.html",

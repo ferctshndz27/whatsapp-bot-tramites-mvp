@@ -1,0 +1,36 @@
+{# Lista de conversaciones (tarjetas de la Bandeja).
+
+   Un solo markup para las dos vistas que la muestran — la Bandeja y la fila de
+   filtros de Solicitudes — para que la tarjeta no diverja entre ellas.
+
+   Contexto que espera:
+     items      lista de dicts de app.inbox.build_conversation_items
+     volver_url ruta de regreso YA urlencoded, o '' para no ofrecer regreso
+     filtrada   bool: cambia el texto del estado vacío #}
+{% if items %}
+<div class="convo-list">
+  {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
+  {% for i in items %}
+  <a class="convo-card" href="/inbox/{{ i.phone }}{% if volver_url %}?volver={{ volver_url }}{% endif %}">
+    <span class="avatar" style="background: {{ palette[loop.index % 5] }}" aria-hidden="true">
+      {{ (i.name or i.phone)[:2] | upper }}
+    </span>
+    <span class="body">
+      <strong>{{ i.name or i.phone }}</strong>
+      {% if i.name %}<span class="sub" style="color:var(--text-muted); font-size:.8rem;"> · {{ i.phone }}</span>{% endif %}
+      <div class="preview">{{ '📎 ' if i.last_direction == 'out' and not i.last_body else '' }}{{ i.last_body[:70] }}</div>
+      <span class="badges">
+        {% if i.waiting %}<span class="badge esperando">esperando respuesta</span>{% endif %}
+        {% if i.provider == 'twilio' %}<span class="badge canal-twilio" title="Se atiende por la cuenta de Twilio">Twilio</span>{% endif %}
+        {% if not i.window_open %}<span class="badge caducada">caducó</span>{% endif %}
+        {% if i.bot_paused %}<span class="badge pausado">bot pausado</span>{% endif %}
+        {% if i.assigned_to %}<span class="badge asignada">{{ i.assigned_to }}</span>{% endif %}
+      </span>
+    </span>
+    <span class="when">{{ i.ago }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">No hay conversaciones{% if filtrada %} en este filtro{% endif %}.</p>
+{% endif %}

@@ -11,6 +11,8 @@ con «//»): un `volver=https://evil.com` sería un open redirect servido por
 nosotros mismos.
 """
 
+import re
+
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
@@ -124,23 +126,55 @@ def test_la_lista_de_folios_propaga_su_url_en_los_enlaces_al_detalle(http):
 
 
 # ---------------------------------------------------------------------------
-# Bandeja: volver al filtro activo
+# Chat: el regreso lleva a Solicitudes, que ya trae los filtros de conversación
 # ---------------------------------------------------------------------------
 
 
-def test_el_volver_del_chat_conserva_el_filtro(http):
+def _sidebar(html: str) -> str:
+    return re.search(r'<nav aria-label="Principal">.*?</nav>', html, re.S).group(0)
+
+
+def test_la_bandeja_ya_no_es_una_entrada_del_menu(http):
+    """Solicitudes absorbió los filtros de conversación, así que la Bandeja
+    dejó de ser un destino del sidebar."""
+    assert ">Bandeja<" not in _sidebar(http.get("/").text)
+
+
+@pytest.mark.parametrize("url", ["/", "/?conv=pausadas", f"/inbox/{PHONE}", "/clients"])
+def test_el_sidebar_siempre_marca_un_item_activo(http, url):
+    """Quitar la Bandeja no puede dejar el chat sin nada resaltado en el menú:
+    el chat se alcanza desde Solicitudes, así que ese es su ítem."""
+    activos = re.findall(r'<a href="([^"]+)"[^>]*aria-current="page"', _sidebar(http.get(url).text))
+    assert activos == ["/clients" if url == "/clients" else "/"]
+
+
+def _boton_volver(html: str) -> str:
+    """Destino del botón «Volver» del chat (el primero de la página)."""
+    return re.search(r'<a class="btn-nav" href="([^"]+)">← Volver', html).group(1)
+
+
+def test_el_volver_del_chat_conserva_el_filtro_de_solicitudes(http):
+    r = http.get(f"/inbox/{PHONE}?volver=/%3Fconv%3Dpausadas")
+
+    assert r.status_code == 200
+    assert _boton_volver(r.text) == "/?conv=pausadas"
+
+
+def test_el_volver_del_chat_descarta_un_origen_en_la_bandeja(http):
+    """El botón dice «Solicitudes», así que no puede llevar a la Bandeja."""
     r = http.get(f"/inbox/{PHONE}?volver=/inbox%3Ffilter%3Desperando")
 
     assert r.status_code == 200
-    assert 'href="/inbox?filter=esperando"' in r.text
+    assert _boton_volver(r.text) == "/"
+    assert "Volver a Solicitudes" in r.text
 
 
-def test_un_volver_externo_en_el_chat_cae_a_la_bandeja(http):
+def test_un_volver_externo_en_el_chat_cae_a_solicitudes(http):
     r = http.get(f"/inbox/{PHONE}?volver=//evil.com")
 
     assert r.status_code == 200
     assert "evil.com" not in r.text
-    assert 'href="/inbox"' in r.text
+    assert _boton_volver(r.text) == "/"
 
 
 # ---------------------------------------------------------------------------
