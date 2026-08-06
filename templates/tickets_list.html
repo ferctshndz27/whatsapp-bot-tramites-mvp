@@ -27,17 +27,29 @@
 </div>
 
 <div class="card">
-  <h2>Solicitudes</h2>
+  <h2>{% if conv_filter %}Conversaciones{% else %}Solicitudes{% endif %}</h2>
 
-  <nav class="pills" aria-label="Filtrar por estado">
-    <a href="/" {% if not current_filter and not assigned_filter %}aria-current="true"{% endif %}>todas</a>
+  {# Una sola fila de filtros: «todas» es el estado sin filtro de ambos grupos,
+     por eso no se repite. Los primeros chips acotan folios; los tres últimos
+     cambian la lista a conversaciones, con los mismos conteos que la Bandeja.
+     Sin separador entre grupos a propósito: la fila se envuelve según el ancho
+     y una línea vertical acaba suelta al inicio de un renglón. #}
+  <nav class="pills" aria-label="Filtrar solicitudes y conversaciones">
+    <a href="/" {% if not current_filter and not assigned_filter and not conv_filter %}aria-current="true"{% endif %}>todas ({{ ticket_counts.todas }})</a>
     {% for s in statuses %}
-    <a href="/?status={{ s }}" {% if current_filter == s %}aria-current="true"{% endif %}>{{ s.replace('_', ' ') }}</a>
+    <a href="/?status={{ s }}" {% if current_filter == s %}aria-current="true"{% endif %}>{{ s.replace('_', ' ') }} ({{ ticket_counts[s] }})</a>
     {% endfor %}
-    <a href="/?assigned=none" {% if assigned_filter == 'none' %}aria-current="true"{% endif %}>sin asignar</a>
+    <a href="/?assigned=none" {% if assigned_filter == 'none' %}aria-current="true"{% endif %}>sin asignar ({{ ticket_counts.sin_asignar }})</a>
+    <a href="/?conv=esperando" {% if conv_filter == 'esperando' %}aria-current="true"{% endif %}>esperando respuesta ({{ conv_counts.esperando }})</a>
+    <a href="/?conv=caducadas" {% if conv_filter == 'caducadas' %}aria-current="true"{% endif %}>caducadas ({{ conv_counts.caducadas }})</a>
+    <a href="/?conv=pausadas" {% if conv_filter == 'pausadas' %}aria-current="true"{% endif %}>bot pausado ({{ conv_counts.pausadas }})</a>
   </nav>
 
-  {% if tickets %}
+  {% if conv_filter %}
+  {% with items = conversaciones, volver_url = volver_actual, filtrada = true %}
+    {% include "_convo_list.html" %}
+  {% endwith %}
+  {% elif tickets %}
   <div class="table-wrap">
     <table>
       <thead>
