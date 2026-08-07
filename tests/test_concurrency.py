@@ -1,13 +1,13 @@
 """Concurrencia e idempotencia bajo carga real (hilos de verdad, no simulados).
 
-Contexto honesto de producción: `receive_webhook` es `async def` y llama
-`_process_message` de forma síncrona, así que con un solo worker de uvicorn
-(el CMD del Dockerfile no pasa --workers) el procesamiento de mensajes queda
-SERIALIZADO en el event loop. La concurrencia real hoy viene de (a) las rutas
-síncronas del panel, que Starlette corre en su threadpool y tocan las mismas
-tablas y el mismo singleton `catalog`, (b) el job nocturno de app/jobs.py y
-(c) cualquier futuro `--workers > 1`. Estas pruebas son deliberadamente más
-estrictas que el runtime actual: documentan INVARIANTES, no fallas en curso.
+Contexto honesto de producción: `receive_webhook` despacha `_process_message`
+vía `run_in_threadpool` (la cadena NLU/entrega/SQLite es síncrona y dentro del
+event loop congelaba el único worker de uvicorn), así que dos webhooks que
+llegan a la vez SÍ se procesan en paralelo en el threadpool de Starlette.
+A eso se suman (a) las rutas síncronas del panel, que corren en el mismo
+threadpool y tocan las mismas tablas y el mismo singleton `catalog`, (b) el
+job nocturno de app/jobs.py y (c) cualquier futuro `--workers > 1`. Estas
+pruebas documentan los INVARIANTES que ese paralelismo tiene que respetar.
 
 Por qué NO se usa el fixture autouse `_isolated_db` del conftest:
   1. `create_engine("sqlite://")` en memoria usa SingletonThreadPool → cada
