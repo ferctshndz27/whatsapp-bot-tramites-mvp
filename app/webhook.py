@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlmodel import select
+from starlette.concurrency import run_in_threadpool
 
 from app import conversation, messaging, twilio_client
 from app.config import settings
@@ -41,12 +42,17 @@ async def receive_webhook(request: Request) -> dict:
             value = change.get("value", {})
             for message in value.get("messages", []):
                 try:
-                    _process_message(message)
+                    # En threadpool: toda la cadena de abajo (NLU con red, envío
+                    # HTTP a Meta/Twilio, SQLite) es síncrona, y uvicorn corre
+                    # con UN solo worker — dentro del event loop bloquearía el
+                    # proceso entero por hasta ~8 s por mensaje. El orden dentro
+                    # del payload se conserva: se espera cada mensaje.
+                    await run_in_threadpool(_process_message, message)
                 except Exception:
                     logger.exception("Error procesando mensaje de WhatsApp id=%s", message.get("id"))
             for status in value.get("statuses", []):
                 try:
-                    _process_status(status)
+                    await run_in_threadpool(_process_status, status)
                 except Exception:
                     logger.exception("Error procesando estado de WhatsApp id=%s", status.get("id"))
 
@@ -210,7 +216,9 @@ async def receive_twilio(request: Request) -> Response:
     datos = twilio_client.parse_inbound(form)
     if datos is not None:
         try:
-            handle_inbound(
+            # Mismo motivo que en receive_webhook: cadena síncrona fuera del loop.
+            await run_in_threadpool(
+                handle_inbound,
                 datos["phone"],
                 datos["text"],
                 datos["is_media"],
@@ -232,7 +240,7 @@ async def receive_twilio_status(request: Request) -> Response:
     sid = form.get("MessageSid")
     estado = twilio_client.map_status(form.get("MessageStatus", ""))
     if sid and estado:
-        _apply_status(sid, estado, datetime.now(timezone.utc))
+        await run_in_threadpool(_apply_status, sid, estado, datetime.now(timezone.utc))
     elif sid:
         # Estado que no está en la tabla: se registra en vez de inventarle un
         # significado. La bandeja prefiere no mostrar nada a mostrar algo falso.
