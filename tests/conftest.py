@@ -32,6 +32,19 @@ def _stripe_en_modo_prueba(monkeypatch):
     monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_suite")
 
 
+@pytest.fixture(autouse=True)
+def _nlu_sin_red(monkeypatch):
+    """Ningún test sale a la red por la cadena NLU por accidente: si el .env
+    del desarrollador trae ANTHROPIC_API_KEY u OLLAMA_URL reales, las capas
+    LLM se activarían solas (lentas, no deterministas y con costo). Las
+    pruebas que ejercitan esas capas las configuran explícitamente y ganan."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "")
+    monkeypatch.setattr(settings, "ollama_token", "")
+
+
 @pytest.fixture()
 def session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})

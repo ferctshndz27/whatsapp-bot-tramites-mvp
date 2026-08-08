@@ -1,9 +1,12 @@
 """Deducción de intención: ¿qué servicio del catálogo quiere el cliente?
 
-Con ANTHROPIC_API_KEY definida usa Claude (salida estructurada, validada
-contra el catálogo — nunca se confía en un id inventado). Sin API key, o si
-la llamada falla/tarda, cae al matching por palabras clave de siempre: el
-bot jamás se queda sin responder por culpa de un servicio externo.
+Cadena de capas, de la más barata a la más cara: coincidencia textual exacta
+(nombre o sinónimo del catálogo — instantánea y gratis) → Ollama local (con
+OLLAMA_URL; modelo abierto, costo cero pero ~5s en CPU) → Claude (con
+ANTHROPIC_API_KEY) → difuso y categoría. Los LLM solo ven lo que el matching
+exacto no resolvió, y su respuesta se valida contra el catálogo: nunca se
+confía en un id inventado. Si una capa falla o tarda, contesta la siguiente:
+el bot jamás se queda sin responder por culpa de un servicio externo.
 """
 
 import json
@@ -56,12 +59,34 @@ def deduce(text: str) -> tuple[Service | None, Category | None]:
 
 
 def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, float | None]:
-    """Como deduce(), más la capa que decidió ("llm", "nombre", "sinonimo",
-    "keyword", "fuzzy", "categoria", "ninguna") y la confianza (solo fuzzy,
-    0-1). Alimenta la bitácora nluevent del panel Agente IA."""
+    """Como deduce(), más la capa que decidió ("ollama", "llm", "nombre",
+    "sinonimo", "keyword", "fuzzy", "categoria", "ninguna") y la confianza
+    (solo fuzzy, 0-1). Alimenta la bitácora nluevent del panel Agente IA."""
     cleaned = text.strip()
     if len(cleaned) < 3:
         return None, None, "ninguna", None
+
+    # Atajo determinista: si el cliente nombró el trámite tal cual (nombre
+    # oficial o sinónimo del catálogo), no hay nada que deducir. Va ANTES de
+    # los LLM porque es exacto, gratis e instantáneo: una clasificación local
+    # en CPU cuesta ~5s, y cobrárselos a "quiero mi acta de nacimiento" sería
+    # pagar por adivinar lo que ya está dicho. Un empate NO se resuelve aquí
+    # (es ambigüedad real) y sigue a los LLM, que sí leen el contexto.
+    matches, capa = _exact_matches(cleaned)
+    if len(matches) == 1:
+        service = next(iter(matches.values()))
+        return service, None, _capa_exacta(service, cleaned, capa), None
+
+    if settings.ollama_url:
+        try:
+            service, category = _deduce_ollama(cleaned[:MAX_INPUT_CHARS])
+            if service is not None or category is not None:
+                return service, category, "ollama", None
+            # Un "no sé" no detiene la cadena (misma regla que la capa Claude):
+            # las capas de abajo ven sinónimos aprendidos por el minero que el
+            # prompt no lleva, y son gratis.
+        except Exception as exc:
+            logger.warning("Deducción con Ollama falló, sigue la cadena: %s", exc)
 
     if settings.anthropic_api_key:
         try:
@@ -90,12 +115,25 @@ def _get_client():
     return _client
 
 
-def _deduce_llm(text: str) -> tuple[Service | None, Category | None]:
+def _catalog_system_prompt() -> str:
     listing = "\n".join(
         f"- {s.id}: {s.name} — {c.name}" for c in catalog.categories for s in c.services
     )
     categories = "\n".join(f"- {c.id}: {c.name}" for c in catalog.categories)
-    system = _SYSTEM_TEMPLATE.format(listing=listing, categories=categories)
+    return _SYSTEM_TEMPLATE.format(listing=listing, categories=categories)
+
+
+def _validated(data: dict) -> tuple[Service | None, Category | None]:
+    """Validación contra el catálogo: un id alucinado se descarta en silencio."""
+    service = catalog.service_by_id(data["service_id"]) if data.get("service_id") else None
+    category = catalog.category_by_id(data["category_id"]) if data.get("category_id") else None
+    if service:
+        return service, None
+    return None, category
+
+
+def _deduce_llm(text: str) -> tuple[Service | None, Category | None]:
+    system = _catalog_system_prompt()
 
     response = _get_client().messages.create(
         model=settings.nlu_model,
@@ -109,13 +147,42 @@ def _deduce_llm(text: str) -> tuple[Service | None, Category | None]:
     if response.stop_reason == "refusal":
         return None, None
 
-    data = json.loads(next(b.text for b in response.content if b.type == "text"))
-    # Validación contra el catálogo: un id alucinado se descarta en silencio.
-    service = catalog.service_by_id(data["service_id"]) if data.get("service_id") else None
-    category = catalog.category_by_id(data["category_id"]) if data.get("category_id") else None
-    if service:
-        return service, None
-    return None, category
+    return _validated(json.loads(next(b.text for b in response.content if b.type == "text")))
+
+
+def _deduce_ollama(text: str) -> tuple[Service | None, Category | None]:
+    """Clasificación con el modelo abierto local (Ollama detrás de nginx en
+    labs). Mismo prompt, mismo esquema y misma validación que la capa Claude.
+    "think" apagado: elegir un id no necesita cadena de razonamiento y el
+    cliente de WhatsApp sí siente cada segundo de latencia."""
+    import httpx
+
+    headers = {}
+    if settings.ollama_token:
+        headers["Authorization"] = f"Bearer {settings.ollama_token}"
+    response = httpx.post(
+        f"{settings.ollama_url}/api/chat",
+        headers=headers,
+        json={
+            "model": settings.ollama_model,
+            "messages": [
+                {"role": "system", "content": _catalog_system_prompt()},
+                {"role": "user", "content": text},
+            ],
+            "stream": False,
+            "think": False,
+            # Ollama fuerza la salida al esquema (structured outputs), igual
+            # que output_config en la API de Claude.
+            "format": _SCHEMA,
+            "options": {"temperature": 0, "num_predict": 128},
+        },
+        # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
+        # lento); conectar a un servidor caído corta a los 2s. Un float suelto
+        # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
+        timeout=httpx.Timeout(settings.ollama_timeout, connect=2.0),
+    )
+    response.raise_for_status()
+    return _validated(json.loads(response.json()["message"]["content"]))
 
 
 # FUZZY_THRESHOLD ahora es configurable (settings.fuzzy_threshold, .env).
@@ -188,41 +255,57 @@ def _deduce_keywords(text: str) -> tuple[Service | None, Category | None]:
     return service, category
 
 
+def _exact_matches(text: str) -> tuple[dict[str, Service], str]:
+    """Candidatos por coincidencia textual exacta, y la capa que los produjo.
+
+    Puede devolver varios: un empate es ambigüedad real y NO se resuelve aquí.
+    Es la única parte de la cascada barata en la que se confía lo bastante
+    como para saltarse los LLM, así que no incluye el difuso.
+
+    Capa "literal": nombre o sinónimo mencionado como palabra completa dentro
+    de la frase ("necesito un acta de divorcio") — el caso más común. Si varios
+    servicios matchean, gana el del término más largo: la mención completa
+    "correccion de rfc" pesa más que el sinónimo suelto "rfc" de otro servicio.
+    Capa "keyword": la frase corta entera contenida en un nombre ("divorcio").
+    """
+    normalized = _norm(text)
+    con_termino = {}
+    for s, words in _service_terms():
+        largo = max((len(w) for w in words if w and _contains_term(w, normalized)), default=0)
+        if largo:
+            con_termino[s.id] = (s, largo)
+    if con_termino:
+        tope = max(largo for _, largo in con_termino.values())
+        return {sid: s for sid, (s, largo) in con_termino.items() if largo == tope}, "literal"
+    return {s.id: s for s in catalog.search_by_keyword(text)}, "keyword"
+
+
+def _capa_exacta(service: Service, text: str, capa: str) -> str:
+    """Nombre de capa para la bitácora. Distingue si acertó el nombre oficial
+    o un sinónimo aprendido: el panel mide si el catálogo de sinónimos rinde."""
+    if capa != "literal":
+        return capa
+    return "nombre" if _contains_term(_norm(service.name), _norm(text)) else "sinonimo"
+
+
 def _deduce_keywords_explained(
     text: str,
 ) -> tuple[Service | None, Category | None, str, float | None]:
     normalized = _norm(text)
-    terms = _service_terms()
-    capa: str = "literal"
+    matches, capa = _exact_matches(text)
     confianza: float | None = None
 
-    # Capa 1: nombre o sinónimo mencionado como palabra completa dentro de la
-    # frase ("necesito un acta de divorcio") — el caso más común. Si varios
-    # servicios matchean, gana el del término más largo: la mención completa
-    # "correccion de rfc" pesa más que el sinónimo suelto "rfc" de otro
-    # servicio. Empate de longitud = ambigüedad real → cae a sugerencias.
-    con_termino = {}
-    for s, words in terms:
-        largo = max((len(w) for w in words if w and _contains_term(w, normalized)), default=0)
-        if largo:
-            con_termino[s.id] = (s, largo)
-    matches: dict[str, Service] = {}
-    if con_termino:
-        tope = max(largo for _, largo in con_termino.values())
-        matches = {sid: s for sid, (s, largo) in con_termino.items() if largo == tope}
-    if not matches:
-        # Capa 2: frase corta contenida en el nombre ("divorcio") — matching clásico.
-        matches = {s.id: s for s in catalog.search_by_keyword(text)}
-        capa = "keyword"
     if not matches and len(normalized) >= FUZZY_MIN_CHARS:
-        # Capa 3: difuso — tolera faltas de ortografía ("nesesito mi kurp").
-        # Solo gana si hay UN servicio claramente arriba del umbral.
+        # Capa difusa — tolera faltas de ortografía ("nesesito mi kurp"). Va
+        # hasta el final, después de los LLM: es la más propensa a falsos
+        # positivos, y aquí un falso positivo le cotiza el trámite equivocado
+        # a un cliente real. Solo gana si hay UN servicio arriba del umbral.
         scored = sorted(
             (
                 # Términos de 1-2 letras fuera del difuso: partial_ratio("ur",
                 # "seguro") da 100 y un sinónimo corto ganaría cualquier frase.
                 (max((fuzz.partial_ratio(w, normalized) for w in words if len(w) >= 3), default=0), s)
-                for s, words in terms
+                for s, words in _service_terms()
             ),
             key=lambda pair: pair[0],
             reverse=True,
@@ -236,11 +319,7 @@ def _deduce_keywords_explained(
 
     if len(matches) == 1:
         service = next(iter(matches.values()))
-        if capa == "literal":
-            # Distinguir si acertó el nombre oficial o un sinónimo aprendido:
-            # el panel mide si el catálogo de sinónimos está rindiendo.
-            capa = "nombre" if _contains_term(_norm(service.name), normalized) else "sinonimo"
-        return service, None, capa, confianza
+        return service, None, _capa_exacta(service, text, capa), confianza
 
     for c in catalog.categories:
         if _norm(c.name) in normalized:

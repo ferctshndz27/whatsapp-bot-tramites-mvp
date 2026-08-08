@@ -457,8 +457,8 @@ def test_texto_de_menos_de_tres_caracteres_no_gasta_una_llamada_a_claude(texto, 
 
 @pytest.mark.parametrize(
     "texto",
-    ["ok!", "😀😀😀", "hola", "necesito mi acta de nacimiento"],
-    ids=["tres-signos", "tres-emojis-borde", "saludo", "frase-clara"],
+    ["ok!", "😀😀😀", "hola", "ese asunto pendiente que traigo"],
+    ids=["tres-signos", "tres-emojis-borde", "saludo", "frase-sin-match-exacto"],
 )
 def test_desde_tres_caracteres_la_capa_llm_si_se_consulta(texto, claude_espia):
     # Cara B de la prueba anterior, y su seguro contra el falso verde: sin esto,
@@ -466,6 +466,10 @@ def test_desde_tres_caracteres_la_capa_llm_si_se_consulta(texto, claude_espia):
     # dejaría "nadie llama a Claude" en verde.
     # "😀😀😀" mide 3 caracteres crudos y pasa el filtro aunque normalizado quede
     # vacío: el corte se evalúa sobre el texto sin normalizar.
+    # OJO con la frase larga: tiene que ser una que el catálogo NO resuelva
+    # literal. Nombrar un trámite tal cual ("necesito mi acta de nacimiento")
+    # lo atiende el atajo exacto sin consultar a nadie — correcto, pero
+    # convertiría esta prueba en vacua.
     service, category, capa, confianza = nlu.deduce_explained(texto)
 
     assert len(claude_espia.llamadas) == 1, f"{texto!r} no llegó a Claude"
@@ -481,7 +485,10 @@ def test_a_claude_se_le_manda_el_texto_recortado_y_sin_espacios(claude_espia):
     # No se fija el valor exacto del recorte (bajarlo sería una mejora legítima
     # de costo): se fija que RECORTE y que lo enviado sea un prefijo del mensaje
     # del cliente ya sin espacios de orilla.
-    largo = "   " + LARGO_CON_SERVICIO + "   "
+    # Se usa el texto SIN servicio a propósito: uno que nombre el trámite lo
+    # resuelve el atajo exacto y nunca llegaría a Claude, dejando la prueba
+    # vacua. El recorte se mide igual — no depende de lo que diga el mensaje.
+    largo = "   " + LARGO_SIN_SERVICIO + "   "
 
     nlu.deduce_explained(largo)
 

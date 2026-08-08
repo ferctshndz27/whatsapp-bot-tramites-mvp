@@ -337,7 +337,7 @@ class NluEvent(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     phone: str = Field(index=True)
     text: str  # truncado a 200 caracteres
-    # llm | nombre | sinonimo | keyword | fuzzy | categoria | multi |
+    # ollama | llm | nombre | sinonimo | keyword | fuzzy | categoria | multi |
     # sugerencia | ninguna | rag (capa informativa de app/rag.py; convive con
     # la fila "ninguna"/"sugerencia" del mismo mensaje — ver _try_informative)
     capa: str = Field(index=True)
