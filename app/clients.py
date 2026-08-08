@@ -33,6 +33,26 @@ def _current_user(request: Request) -> str | None:
     return request.session.get("user")
 
 
+def _propagar_nombre(session, phone: str, nombre: str) -> int:
+    """Reescribe el nombre congelado en los folios de ese teléfono.
+
+    Cada folio guarda `client_name` como copia del nombre que tenía el cliente
+    al crearse, así que corregir `Client.name` no se veía en Solicitudes ni en
+    Mi día: seguían mostrando el nombre viejo.
+
+    Se actualiza folio por folio con el ORM, NO con un UPDATE masivo: el espejo
+    MSSQL se alimenta del evento `after_update` de cada instancia y un UPDATE en
+    bloque no lo dispara — la base local quedaría corregida y el espejo con el
+    nombre viejo, sin error visible.
+    """
+    folios = session.exec(select(Ticket).where(Ticket.phone == phone)).all()
+    desfasados = [t for t in folios if t.client_name != nombre]
+    for folio in desfasados:
+        folio.client_name = nombre
+        session.add(folio)
+    return len(desfasados)
+
+
 @router.get("/clients")
 def clients_list(request: Request, q: str = "", alta: str = "", error: str = ""):
     user = _current_user(request)
@@ -98,21 +118,26 @@ def clients_upsert(request: Request, phone: str = Form(...), name: str = Form(""
         cliente = session.get(Client, canonico)
         if cliente is None:
             session.add(Client(phone=canonico, name=nombre))
-            session.commit()
             accion, resultado = "cliente:alta", "alta"
         elif cliente.name == nombre:
             accion, resultado = None, "sin-cambio"
         else:
             cliente.name = nombre
             session.add(cliente)
-            session.commit()
             accion, resultado = "cliente:nombre", "actualizado"
+        # Un solo commit: el cliente y sus folios cambian de nombre juntos o no
+        # cambian. La corrección se aplica también en el alta, por si el
+        # teléfono ya tenía folios de antes.
+        folios = _propagar_nombre(session, canonico, nombre)
+        session.commit()
 
     # Auditado porque a este cliente se le van a cobrar tarjetas: quién le puso
     # ese nombre y cuándo es dato que hace falta el día de una aclaración.
     if accion:
         log_admin(user, accion, f"{canonico} · {nombre}")
         logger.info("Cliente %s (%s) por %s", canonico, resultado, user)
+    if folios:
+        logger.info("Nombre propagado a %d folio(s) de %s", folios, canonico)
     return RedirectResponse(f"/clients?alta={resultado}&q={canonico}", status_code=303)
 
 
