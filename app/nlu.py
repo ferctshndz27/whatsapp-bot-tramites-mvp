@@ -68,7 +68,9 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
             service, category = _deduce_llm(cleaned[:MAX_INPUT_CHARS])
             if service is not None or category is not None:
                 return service, category, "llm", None
-            return None, None, "ninguna", None
+            # Ambos null ya NO es veredicto final: las capas literales/fuzzy
+            # ven sinónimos aprendidos por el minero que el prompt no lleva,
+            # y son gratis. Antes el mensaje moría aquí en "ninguna".
         except Exception as exc:
             logger.warning("Deducción con Claude falló, usando keywords: %s", exc)
 
