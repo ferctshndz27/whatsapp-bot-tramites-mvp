@@ -109,8 +109,12 @@
     input:focus, select:focus, textarea:focus {
       border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px rgba(37, 99, 235, .13);
     }
+    /* El borde oliva marca los botones de acción principal (fondo oscuro).
+       Las variantes con borde propio (.btn-sm, .btn-approve, .btn-ignore,
+       .btn-danger, .btn-ghost) lo pisan y quedan como estaban; el menú lateral
+       son enlaces, no botones. */
     button {
-      background: #22242a; color: #fff; border: 0; border-radius: 999px;
+      background: #22242a; color: #fff; border: 1px solid var(--btn-border); border-radius: 999px;
       padding: .6rem 1.4rem; font-size: .92rem; font-weight: 600; cursor: pointer; min-height: 44px;
     }
     button:hover { background: #3a3d45; }
@@ -193,7 +197,8 @@
     .composer-bar input[type=file]:focus-visible + .field .attach { outline: 3px solid var(--blue); outline-offset: 2px; }
 
     .btn-send {
-      flex-shrink: 0; background: #22242a; color: #fff; border: 0; border-radius: 999px;
+      flex-shrink: 0; background: #22242a; color: #fff; border-radius: 999px;
+      border: 1px solid var(--btn-border);
       padding: .6rem 1.3rem; min-height: 44px; font-weight: 600; cursor: pointer;
     }
     .btn-send:hover { background: #3a3d45; }
