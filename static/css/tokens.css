@@ -5,8 +5,9 @@
       --text-muted: #7c828d;
       --border: #e6e7ea;
       --lime: #dcf24c;      --lime-ink: #23260f;
-      /* Borde oliva del botón de acción principal (rgb(86,95,29)). */
+      /* Borde oliva de los botones de acción (rgb(86,95,29)). */
       --btn-border: #565f1d;
+      --btn-border-width: 3px;
       --green: #10b981;     --green-2: #0c9b6c;
       --blue: #2563eb;      --blue-2: #1d4fd7;
       --red: #f43f5e;       --red-2: #e11d48;

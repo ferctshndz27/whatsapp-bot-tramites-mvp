@@ -21,10 +21,11 @@
     .pills { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
     .pills a {
       text-decoration: none; color: var(--text-muted); background: var(--card-bg);
-      border: 1px solid transparent; border-radius: 999px; padding: .45rem 1rem; min-height: 40px;
+      border: var(--btn-border-width) solid var(--btn-border);
+      border-radius: 999px; padding: .45rem 1rem; min-height: 40px;
       display: inline-flex; align-items: center; font-size: .85rem; box-shadow: var(--shadow);
     }
-    .pills a:hover { color: var(--text); border-color: var(--border); }
+    .pills a:hover { color: var(--text); }
     .pills a[aria-current="true"] { background: var(--lime); color: var(--lime-ink); font-weight: 700; }
 
     /* Filas con destino (data-href): toda la fila navega, como las tarjetas
@@ -36,6 +37,7 @@
       display: inline-flex; align-items: center; gap: .4rem;
       background: var(--card-bg); color: var(--text); text-decoration: none;
       padding: .45rem 1rem; min-height: 40px; border-radius: 999px;
+      border: var(--btn-border-width) solid var(--btn-border);
       box-shadow: var(--shadow); font-size: .88rem; font-weight: 600;
     }
     .btn-nav:hover { background: var(--lime); color: var(--lime-ink); }
@@ -109,20 +111,23 @@
     input:focus, select:focus, textarea:focus {
       border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px rgba(37, 99, 235, .13);
     }
-    /* El borde oliva marca los botones de acción principal (fondo oscuro).
-       Las variantes con borde propio (.btn-sm, .btn-approve, .btn-ignore,
-       .btn-danger, .btn-ghost) lo pisan y quedan como estaban; el menú lateral
-       son enlaces, no botones. */
+    /* Borde oliva en los botones de acción: el primario oscuro, los claros
+       (.btn-sm), los de navegación (.btn-nav) y los filtros (.pills a).
+       Las variantes de color (.btn-approve, .btn-ignore, .btn-danger,
+       .btn-ghost) conservan su propio borde, y el menú lateral no se toca
+       porque son enlaces de `.sidebar nav`. */
     button {
-      background: #22242a; color: #fff; border: 1px solid var(--btn-border); border-radius: 999px;
+      background: #22242a; color: #fff; border-radius: 999px;
+      border: var(--btn-border-width) solid var(--btn-border);
       padding: .6rem 1.4rem; font-size: .92rem; font-weight: 600; cursor: pointer; min-height: 44px;
     }
     button:hover { background: #3a3d45; }
     .btn-sm {
       padding: .35rem 1rem; font-size: .82rem; min-height: 36px;
-      background: var(--card-bg); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow);
+      background: var(--card-bg); color: var(--text); box-shadow: var(--shadow);
+      border: var(--btn-border-width) solid var(--btn-border);
     }
-    .btn-sm:hover { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+    .btn-sm:hover { background: var(--lime); color: var(--lime-ink); }
     /* Aprobar (verde) / Ignorar (gris): el color acompaña al ícono + texto,
        nunca es el único indicador. */
     .btn-approve { background: #e3f7f0; color: #0b6e5d; border: 1px solid #b3e6d5; }
@@ -198,7 +203,7 @@
 
     .btn-send {
       flex-shrink: 0; background: #22242a; color: #fff; border-radius: 999px;
-      border: 1px solid var(--btn-border);
+      border: var(--btn-border-width) solid var(--btn-border);
       padding: .6rem 1.3rem; min-height: 44px; font-weight: 600; cursor: pointer;
     }
     .btn-send:hover { background: #3a3d45; }
