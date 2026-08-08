@@ -19,7 +19,7 @@ from sqlmodel import Session, create_engine, select
 import app.db as db
 from app.config import settings
 from app.main import app
-from app.models import AdminAudit, Client, Conversation, User
+from app.models import AdminAudit, Client, Conversation, Ticket, User
 
 CRUDO = "5215500000000"
 CANONICO = "525500000000"
@@ -172,6 +172,33 @@ def test_el_alta_no_reescribe_la_fecha_de_alta_original(sesion_panel):
 
     with Session(db.engine) as s:
         assert s.get(Client, CANONICO).created_at == original
+
+
+def test_corregir_el_nombre_lo_actualiza_en_los_folios_ya_creados(sesion_panel):
+    # REGLA: cada folio guarda el nombre del cliente congelado al crearse. Si
+    # corregir el nombre no lo reescribe ahí, Solicitudes y Mi día siguen
+    # mostrando el nombre viejo y el asesor cree que la corrección no se guardó.
+    with Session(db.engine) as s:
+        s.add(Client(phone=CANONICO, name="Ana"))
+        for _ in range(2):
+            s.add(
+                Ticket(
+                    phone=CANONICO,
+                    client_name="Ana",
+                    category="actas",
+                    service_id="acta-nac",
+                    service_name="Acta de nacimiento",
+                    price_info="$150",
+                )
+            )
+        s.commit()
+
+    _alta(sesion_panel, CANONICO, "Ana Ruiz")
+
+    with Session(db.engine) as s:
+        nombres = [t.client_name for t in s.exec(select(Ticket)).all()]
+    assert nombres == ["Ana Ruiz", "Ana Ruiz"], "los folios quedaron con el nombre viejo"
+    assert "Ana Ruiz" in sesion_panel.get("/").text, "Solicitudes no muestra el nombre nuevo"
 
 
 # ---------------------------------------------------------------------------
