@@ -234,9 +234,17 @@ def handle_incoming(
     if is_media:
         replies = ["Por ahora no puedo recibir documentos en este chat. Un asesor te indicará cómo enviarlos."]
     elif (fb := FEEDBACK_RE.match(text.strip())):
-        # Botón 👍/👎 del aviso de cierre: se registra y se agradece, en
-        # cualquier estado (no pasa por la máquina de estados ni por nluevent).
+        # Botón 👍/👎 del aviso de cierre con el id viejo: se registra y se
+        # agradece, en cualquier estado (no pasa por la máquina de estados ni
+        # por nluevent).
         replies = _record_feedback(session, phone, int(fb.group(1)), fb.group(2))
+    elif (rating := _lee_rating(text)) is not None and (
+        pendiente := _feedback_pendiente(session, phone)
+    ) is not None:
+        # Respuesta a la encuesta: el toque del botón manda "1"/"2" y el cliente
+        # de Twilio teclea eso mismo (o el emoji). El folio se resuelve por el
+        # último cerrado, así que la opción no tiene que cargar el id.
+        replies = _record_feedback(session, phone, pendiente, rating)
     elif (apagado := _latest_open_ticket(session, phone)) is not None and not apagado.agent_active:
         # El colaborador asignado apagó el agente IA para este folio: silencio
         # total en CUALQUIER estado — antes solo aplicaba en "escalado" y el
@@ -751,12 +759,60 @@ def _extract_client_data(session: Session, phone: str, text: str) -> None:
             )
 
 
-# Botones 👍/👎 del aviso de cierre (ids emitidos por dashboard._notify_finish).
+# Encuesta del aviso de cierre (la emite dashboard._notify_finish).
+#
+# Los ids de las opciones son "1" y "2" —tecleables— porque Twilio no tiene
+# botones nativos y degrada el mensaje a texto poniendo el id delante de cada
+# opción: con los ids viejos el cliente leía "fb:25:up) 👍 Sí, excelente", un
+# identificador interno que encima no podía responder. Con ids tecleables el
+# toque (Meta) y el tecleo (Twilio) entran por el mismo camino.
+FEEDBACK_PROMPT = "¿Te sirvió nuestro servicio?"
+FEEDBACK_OPCIONES = [("1", "👍 Sí, excelente"), ("2", "👎 Puede mejorar")]
+
+# Compatibilidad: los botones ya enviados con el id viejo siguen llegando desde
+# los chats donde el cliente todavía no ha tocado nada.
 FEEDBACK_RE = re.compile(r"^fb:(\d+):(up|down)$")
 FEEDBACK_THANKS = {
     "up": "¡Gracias por tu opinión! 🙌 Nos alegra haberte ayudado.",
     "down": "Gracias por decírnoslo 🙏 Vamos a revisar tu caso para mejorar.",
 }
+
+
+def _lee_rating(text: str) -> str | None:
+    """Traduce la respuesta a la encuesta: el número, el emoji o un sí/no."""
+    t = text.strip().lower()
+    if t.startswith("👍") or t in {"1", "si", "sí"}:
+        return "up"
+    if t.startswith("👎") or t in {"2", "no"}:
+        return "down"
+    return None
+
+
+def _feedback_pendiente(session: Session, phone: str) -> int | None:
+    """Folio cerrado que está esperando la calificación, si lo hay.
+
+    Solo cuenta cuando el ÚLTIMO mensaje que le mandamos al cliente fue la
+    encuesta: si después hubo cualquier otro envío, un "1" suyo pertenece a esa
+    conversación (un menú, por ejemplo) y no a la calificación.
+    """
+    ultimo_out = session.exec(
+        select(Message)
+        .where(Message.phone == phone, Message.direction == Direction.OUT)
+        .order_by(Message.created_at.desc(), Message.id.desc())
+    ).first()
+    if ultimo_out is None or not ultimo_out.body.startswith(FEEDBACK_PROMPT):
+        return None
+    ticket = session.exec(
+        select(Ticket)
+        .where(Ticket.phone == phone, Ticket.status == TicketStatus.CERRADO)
+        .order_by(Ticket.updated_at.desc(), Ticket.id.desc())
+    ).first()
+    if ticket is None:
+        return None
+    ya_calificado = session.exec(
+        select(Feedback).where(Feedback.ticket_id == ticket.id)
+    ).first()
+    return None if ya_calificado else ticket.id
 
 
 def _record_feedback(session: Session, phone: str, ticket_id: int, rating: str) -> list[str]:

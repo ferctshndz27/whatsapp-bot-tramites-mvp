@@ -8,7 +8,7 @@ from sqlmodel import select
 import app.db as db
 import app.nlu as nlu
 from app.conversation import handle_incoming, presentation
-from app.models import Conversation, Feedback, Ticket, User
+from app.models import Conversation, Direction, Feedback, Ticket, User
 from app.webhook import _extract_text
 from app.whatsapp_client import _buttons_payload, _list_payload
 
@@ -199,5 +199,65 @@ def test_finish_ticket_sends_feedback_buttons(monkeypatch, session):
     request = SimpleNamespace(session={"user": "jefa"})
     dashboard.finish_ticket(request, ticket.id)
 
+    # REGLA: los ids son tecleables. Twilio no tiene botones nativos y degrada
+    # el mensaje a texto poniendo el id delante de cada opción; con los ids
+    # viejos el cliente leía "fb:25:up) 👍 Sí, excelente".
     ids = [b[0] for b in sent["buttons"]]
-    assert ids == [f"fb:{ticket.id}:up", f"fb:{ticket.id}:down"]
+    assert ids == ["1", "2"]
+    assert all(":" not in opcion_id for opcion_id in ids), (
+        "un id con ':' se le muestra tal cual al cliente de Twilio"
+    )
+
+
+def test_encuesta_contestada_por_texto_registra_la_calificacion(monkeypatch, session):
+    # REGLA: en Twilio el cliente no toca un botón, teclea. La calificación se
+    # resuelve contra el último folio cerrado, sin que la opción cargue el id.
+    from app.conversation import FEEDBACK_PROMPT
+    from app.models import Message, TicketStatus
+
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _keywords_only(monkeypatch)
+    ticket = Ticket(
+        phone=PHONE, category="c", service_id="s", service_name="S",
+        price_info="$1", status=TicketStatus.CERRADO,
+    )
+    session.add(ticket)
+    session.add(
+        Message(
+            phone=PHONE, direction=Direction.OUT,
+            body=f"{FEEDBACK_PROMPT} (1 👍 Sí, excelente / 2 👎 Puede mejorar)",
+        )
+    )
+    session.commit()
+    session.refresh(ticket)
+
+    replies = handle_incoming(session, PHONE, "1")
+
+    filas = session.exec(select(Feedback)).all()
+    assert len(filas) == 1, "la respuesta tecleada no quedó registrada"
+    assert filas[0].rating == "up"
+    assert filas[0].ticket_id == ticket.id
+    assert "racias" in replies[0]
+
+
+def test_un_numero_fuera_de_la_encuesta_no_se_toma_como_calificacion(monkeypatch, session):
+    # REGLA: si el último mensaje que le mandamos NO fue la encuesta, un "1" del
+    # cliente pertenece a esa conversación (un menú) y no a la calificación.
+    from app.models import Message, TicketStatus
+
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _keywords_only(monkeypatch)
+    session.add(
+        Ticket(
+            phone=PHONE, category="c", service_id="s", service_name="S",
+            price_info="$1", status=TicketStatus.CERRADO,
+        )
+    )
+    session.add(
+        Message(phone=PHONE, direction=Direction.OUT, body="¿De qué categoría lo necesitas?")
+    )
+    session.commit()
+
+    handle_incoming(session, PHONE, "1")
+
+    assert session.exec(select(Feedback)).all() == []

@@ -708,21 +708,18 @@ def _notify_finish(ticket_id: int) -> None:
         session.add(
             Message(phone=phone, direction=Direction.OUT, body=body, wa_message_id=wamid)
         )
-        # Feedback del cliente: botones 👍/👎. Los ids fb:<folio>:up|down los
-        # procesa conversation.handle_incoming al tocar el botón.
-        fb_body = "¿Te sirvió nuestro servicio?"
-        fb_wamid = messaging.send_buttons(
-            phone,
-            fb_body,
-            [
-                (f"fb:{ticket.id}:up", "👍 Sí, excelente"),
-                (f"fb:{ticket.id}:down", "👎 Puede mejorar"),
-            ],
-        )
+        # Encuesta del cliente: botones 👍/👎 en Meta y el mismo texto con las
+        # opciones numeradas en Twilio, que no tiene botones nativos. Las
+        # respuestas ("1"/"2", o el emoji) las resuelve
+        # conversation.handle_incoming contra el último folio cerrado.
+        from app.conversation import FEEDBACK_OPCIONES, FEEDBACK_PROMPT
+
+        fb_wamid = messaging.send_buttons(phone, FEEDBACK_PROMPT, FEEDBACK_OPCIONES)
+        opciones = " / ".join(f"{tecla} {titulo}" for tecla, titulo in FEEDBACK_OPCIONES)
         session.add(
             Message(
                 phone=phone, direction=Direction.OUT,
-                body=fb_body + " (👍/👎)", wa_message_id=fb_wamid,
+                body=f"{FEEDBACK_PROMPT} ({opciones})", wa_message_id=fb_wamid,
             )
         )
         session.commit()
