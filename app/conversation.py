@@ -867,7 +867,10 @@ def _deduce_and_log(session: Session, phone: str, text: str):
         _log_nlu(session, phone, text, capa, service.id, confianza)
         return [], service, None, []
     if category is not None:
-        _log_nlu(session, phone, text, "categoria", category.id)
+        # La capa real, no el literal "categoria": un acierto de categoría de
+        # Ollama/Claude debe contar para SU capa en la dona del panel (la capa
+        # de keywords ya se reporta a sí misma como "categoria").
+        _log_nlu(session, phone, text, capa, category.id)
         return [], None, category, []
     options = nlu.suggestions(text)
     if options:

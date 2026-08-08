@@ -45,6 +45,23 @@ class Settings:
         self.embeddings_model = os.environ.get("EMBEDDINGS_MODEL", "nomic-embed-text")
         self.embeddings_token = os.environ.get("EMBEDDINGS_TOKEN", "")
         self.rag_top_k = max(1, int(os.environ.get("RAG_TOP_K", "8")))
+        # Clasificador local (Ollama, p.ej. detrás de nginx en la instancia
+        # labs). Sin OLLAMA_URL la capa no existe. Corre después del atajo
+        # literal y antes de Claude: hace el mismo trabajo gratis, y si falla
+        # o no decide, la cadena sigue. URL sin diagonal final y sin /api:
+        # p.ej. https://labs.esaumillan.cloud/ollama
+        self.ollama_url = os.environ.get("OLLAMA_URL", "").rstrip("/")
+        self.ollama_token = os.environ.get("OLLAMA_TOKEN", "")
+        # El default acepta "think": false (clasificar un id no necesita
+        # cadena de razonamiento y sí castiga la latencia). Medido contra el
+        # catálogo real en CPU ARM: 4b y 8b aciertan igual (14/14), pero el 8b
+        # tiene mediana 7.1s contra 5.4s del 4b — por eso el chico es default.
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
+        # Si el modelo local no contesta en este lapso, responde la siguiente
+        # capa. En CPU el costo está en releer el catálogo del prompt, no en
+        # generar: con p90 medido de 6.0s, un tope de 6s cortaría la mitad de
+        # las respuestas buenas.
+        self.ollama_timeout = float(os.environ.get("OLLAMA_TIMEOUT", "12"))
         # Umbral de la capa difusa (rapidfuzz) para aceptar un servicio con
         # faltas de ortografía. Barandal 70-95: bajarlo de más dispara falsos
         # positivos que cotizan el trámite equivocado a un cliente real.

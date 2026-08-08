@@ -1036,6 +1036,8 @@ def test_ninguna_prueba_de_este_archivo_puede_salir_a_la_red(catalogo_tibio, mon
     #     `except Exception` de deduce_explained NO puede tragarse. Sin este
     #     detalle, una fuga de red se vería idéntica a un fallback legítimo a
     #     keywords y nadie se enteraría.
+    #     La frase de (b) NO puede nombrar un trámite: el atajo exacto la
+    #     resolvería sin consultar a nadie y la guardia nunca mordería.
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-de-mentiras")
     with pytest.raises(RedProhibida):
-        nlu.deduce_explained("necesito acta de nacimiento")
+        nlu.deduce_explained("ese asunto pendiente que traigo")

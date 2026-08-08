@@ -261,7 +261,7 @@ def ignore_cluster(rep: str, days: int = CLUSTER_DAYS) -> int:
 # único indicador: leyenda y tooltips llevan nombre y número).
 METRICS_DAYS = 14
 CAPA_COLORS = {
-    "llm": "#8b5cf6", "nombre": "#2563eb", "sinonimo": "#10b981",
+    "llm": "#8b5cf6", "ollama": "#84cc16", "nombre": "#2563eb", "sinonimo": "#10b981",
     "keyword": "#22d3ee", "fuzzy": "#f59e0b", "multi": "#ec4899",
     "categoria": "#14b8a6", "sugerencia": "#64748b", "ninguna": "#f43f5e",
     "rag": "#a3e635",
