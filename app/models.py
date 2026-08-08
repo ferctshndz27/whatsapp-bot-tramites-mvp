@@ -338,7 +338,8 @@ class NluEvent(SQLModel, table=True):
     phone: str = Field(index=True)
     text: str  # truncado a 200 caracteres
     # llm | nombre | sinonimo | keyword | fuzzy | categoria | multi |
-    # sugerencia | ninguna
+    # sugerencia | ninguna | rag (capa informativa de app/rag.py; convive con
+    # la fila "ninguna"/"sugerencia" del mismo mensaje — ver _try_informative)
     capa: str = Field(index=True)
     # Uno o varios service_id separados por coma (multi/sugerencia).
     service_id: str | None = None

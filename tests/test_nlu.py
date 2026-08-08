@@ -148,3 +148,34 @@ def test_llm_refusal_returns_nothing(monkeypatch):
     monkeypatch.setattr(nlu, "_client", fake)
 
     assert nlu.deduce("texto cualquiera sin match") == (None, None)
+
+
+def test_llm_ambos_null_cae_a_keywords(monkeypatch):
+    # REGLA (paso 1 del plan RAG): "ambos null" del LLM ya no es veredicto
+    # final — las capas literales ven sinónimos aprendidos que el prompt no
+    # lleva, así que se intentan igual antes de rendirse en "ninguna".
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    fake = SimpleNamespace(
+        messages=SimpleNamespace(
+            create=lambda **kw: _fake_response({"service_id": None, "category_id": None})
+        )
+    )
+    monkeypatch.setattr(nlu, "_client", fake)
+
+    service, category, capa, _ = nlu.deduce_explained("necesito un acta de divorcio")
+
+    assert service is not None and "divorcio" in service.name.lower()
+    assert category is None
+    assert capa in {"nombre", "sinonimo"}  # rescató una capa literal, no el LLM
+
+
+def test_llm_ambos_null_sin_match_literal_sigue_siendo_ninguna(monkeypatch):
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    fake = SimpleNamespace(
+        messages=SimpleNamespace(
+            create=lambda **kw: _fake_response({"service_id": None, "category_id": None})
+        )
+    )
+    monkeypatch.setattr(nlu, "_client", fake)
+
+    assert nlu.deduce_explained("zzz qqq no relacionado")[:2] == (None, None)

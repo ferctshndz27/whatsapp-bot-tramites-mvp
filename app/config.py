@@ -30,6 +30,21 @@ class Settings:
         # usa el matching por palabras clave de siempre.
         self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         self.nlu_model = os.environ.get("NLU_MODEL", "claude-opus-4-8")
+        # Capa informativa ("rag"): responde dudas de horarios/tiempos/requisitos
+        # usando SOLO el corpus público (catálogo + INFO_DOCS_PATH). Apagada por
+        # defecto; requiere ANTHROPIC_API_KEY. Ver app/rag.py.
+        self.rag_enabled = os.environ.get("RAG_ENABLED", "0") == "1"
+        # Documento curado OPCIONAL con información pública del negocio
+        # (horarios, tiempos de entrega, políticas). Regla dura: solo texto que
+        # cualquier cliente puede saber — jamás datos de clientes ni internos.
+        self.info_docs_path = os.environ.get("INFO_DOCS_PATH", "")
+        # Paso vectorial OPCIONAL: con EMBEDDINGS_URL definida la capa
+        # informativa recupera top-k documentos por similitud en vez de mandar
+        # el corpus completo (que hoy cabe de sobra en el prompt).
+        self.embeddings_url = os.environ.get("EMBEDDINGS_URL", "")
+        self.embeddings_model = os.environ.get("EMBEDDINGS_MODEL", "nomic-embed-text")
+        self.embeddings_token = os.environ.get("EMBEDDINGS_TOKEN", "")
+        self.rag_top_k = max(1, int(os.environ.get("RAG_TOP_K", "8")))
         # Umbral de la capa difusa (rapidfuzz) para aceptar un servicio con
         # faltas de ortografía. Barandal 70-95: bajarlo de más dispara falsos
         # positivos que cotizan el trámite equivocado a un cliente real.

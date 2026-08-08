@@ -50,6 +50,9 @@ def _no_entendidos_stats(session: Session, days: int = NO_ENTENDIDOS_DAYS) -> tu
         .select_from(NluEvent)
         .where(NluEvent.created_at >= cutoff)
         .where(NluEvent.habilitado == True)  # noqa: E712
+        # La fila "rag" es EXTRA del mismo mensaje (conversation._try_informative):
+        # contarla diluiría el % y podría silenciar la alerta de no entendidos.
+        .where(NluEvent.capa != "rag")
     ).one()
     if not total:
         return 0, 0.0

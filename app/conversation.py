@@ -5,8 +5,9 @@ from datetime import timedelta, timezone
 
 from sqlmodel import Session, select
 
-from app import nlu
+from app import nlu, rag
 from app.catalog import PAGE_SIZE, catalog, requisitos_del_ticket, requisitos_iniciales
+from app.config import settings
 from app.models import (
     PROVIDER_META,
     Client,
@@ -937,14 +938,37 @@ def _not_understood(
     # None = calcularlas aquí (para llamadas fuera de la cascada instrumentada).
     if options is None:
         options = nlu.suggestions(text)
-    if options:
-        return _suggest_reply(session, conv, options)
-    if _asks_info(text):
+    if _asks_info(text) and not options:
         # Pedir informes es interés, no un intento fallido: no suma al
-        # contador de reintentos ni suena a regaño.
+        # contador de reintentos ni suena a regaño. Va ANTES de la capa
+        # informativa: un "¿cuánto cuesta?" genérico no tiene respuesta única
+        # en el corpus y el embudo cálido lo resuelve mejor.
         _set_state(session, conv, "menu_categoria")
         return [INFO_REPLY]
+    # Capa informativa (RAG_ENABLED): responde la duda antes de ofrecer el
+    # mini-menú — "¿cuánto tarda el acta?" pregunta por tiempos, no pide un
+    # menú de actas. Si no hay respuesta con evidencia, el flujo de siempre.
+    respuesta_rag = _try_informative(session, client.phone, text)
+    if respuesta_rag is not None:
+        return [respuesta_rag]
+    if options:
+        return _suggest_reply(session, conv, options)
     return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
+
+
+def _try_informative(session: Session, phone: str, text: str) -> str | None:
+    """Capa "rag" (app/rag.py) con su bitácora. Deja una fila nluevent
+    capa="rag" ADEMÁS de la que ya dejó _deduce_and_log ("ninguna" o
+    "sugerencia"): el minado de sinónimos sigue viendo lo mismo, y las
+    métricas por mensaje (alerts._no_entendidos_stats, nlu_metrics) EXCLUYEN
+    esta fila extra para no inflar su denominador."""
+    if not settings.rag_enabled or not rag.es_pregunta_informativa(text):
+        return None
+    respuesta = rag.answer(text)
+    if respuesta is None:
+        return None
+    _log_nlu(session, phone, text, "rag")
+    return respuesta
 
 
 def _handle_sugerencia(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
