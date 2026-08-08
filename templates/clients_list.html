@@ -19,20 +19,21 @@
   <h2>Registrar cliente</h2>
   <p class="sub">Si el número ya existe, se actualiza el nombre — no se reinicia su conversación ni se pierde su historial.</p>
   <form method="post" action="/clients">
+    {# La ayuda del teléfono va dentro del label: así ambas columnas miden lo
+       mismo y los campos quedan alineados (antes el <small> colgaba del input
+       y descuadraba la fila). #}
     <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end;">
-      <div>
-        <label for="alta-phone">Teléfono</label>
+      <div style="flex:1 1 220px; max-width:320px;">
+        <label for="alta-phone">Teléfono <span style="opacity:.75;">— 10 dígitos, o 52 + 10 dígitos</span></label>
         <input type="tel" id="alta-phone" name="phone" required
-               placeholder="55 0000 0000" autocomplete="off"
-               aria-describedby="alta-phone-ayuda">
-        <small id="alta-phone-ayuda" class="sub">10 dígitos, o 52 + 10 dígitos.</small>
+               placeholder="55 0000 0000" autocomplete="off">
       </div>
-      <div>
+      <div style="flex:1 1 200px; max-width:320px;">
         <label for="alta-name">Nombre</label>
         <input type="text" id="alta-name" name="name" required
                placeholder="Ana Ruiz" maxlength="200" autocomplete="off">
       </div>
-      <div><button type="submit">Guardar</button></div>
+      <button type="submit">Guardar</button>
     </div>
   </form>
 </div>
