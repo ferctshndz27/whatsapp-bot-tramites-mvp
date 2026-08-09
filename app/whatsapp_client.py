@@ -124,7 +124,12 @@ def send_list(to_phone: str, body: str, button: str, rows: list[tuple[str, str]]
     return _send(to_phone, _list_payload(to_phone, body, button, rows))
 
 
-def send_buttons(to_phone: str, body: str, buttons: list[tuple[str, str]]) -> str | None:
+def send_buttons(
+    to_phone: str, body: str, buttons: list[tuple[str, str]], content_sid: str | None = None
+) -> str | None:
+    # content_sid es cosa de Twilio (su Content API): Meta arma los botones en
+    # el mismo POST. Se acepta y se ignora para que los dos adaptadores tengan
+    # la misma firma.
     return _send(to_phone, _buttons_payload(to_phone, body, buttons))
 
 

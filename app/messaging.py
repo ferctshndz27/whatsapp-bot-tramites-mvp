@@ -72,9 +72,15 @@ def send_list(
 
 
 def send_buttons(
-    phone: str, body: str, buttons: list[tuple[str, str]], provider: str | None = None
+    phone: str,
+    body: str,
+    buttons: list[tuple[str, str]],
+    provider: str | None = None,
+    content_sid: str | None = None,
 ) -> str | None:
-    return _resolver(phone, provider).send_buttons(phone, body, buttons)
+    """`content_sid` es la plantilla de la Content API que Twilio necesita para
+    mandar botones nativos; Meta los arma solo y lo ignora."""
+    return _resolver(phone, provider).send_buttons(phone, body, buttons, content_sid)
 
 
 def send_media(

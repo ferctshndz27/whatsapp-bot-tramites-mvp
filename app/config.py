@@ -78,6 +78,11 @@ class Settings:
         self.twilio_auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
         # Remitente en formato Twilio: "whatsapp:+5215500000000".
         self.twilio_whatsapp_from = os.environ.get("TWILIO_WHATSAPP_FROM", "")
+        # Plantilla twilio/quick-reply de la encuesta de cierre (ContentSid,
+        # "HX..."). Twilio no manda botones sin plantilla; sin esto la encuesta
+        # sale como texto con las opciones numeradas, que se sigue pudiendo
+        # contestar tecleando.
+        self.twilio_content_sid_feedback = os.environ.get("TWILIO_CONTENT_SID_FEEDBACK", "")
         # URL pública del servicio, SIN diagonal final. Twilio firma la URL
         # COMPLETA que llamó; detrás del proxy, request.url reporta el host
         # interno y http://, así que reconstruirla desde aquí no es un lujo:

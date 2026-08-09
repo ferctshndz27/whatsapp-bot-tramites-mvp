@@ -122,7 +122,9 @@ class FakeWhatsApp:
             return None
         return self._wamid()
 
-    def send_buttons(self, to_phone: str, body: str, buttons) -> str | None:
+    def send_buttons(
+        self, to_phone: str, body: str, buttons, content_sid: str | None = None
+    ) -> str | None:
         self.sent.append(
             {"kind": "buttons", "to": to_phone, "text": body, "buttons": list(buttons)}
         )

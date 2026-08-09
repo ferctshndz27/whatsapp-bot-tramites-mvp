@@ -14,6 +14,7 @@ cualquier alteración.
 import base64
 import hashlib
 import hmac
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -408,3 +409,65 @@ def test_la_lista_degradada_respeta_el_tope_de_opciones_de_whatsapp():
 
     assert "10) Opción 10" in texto
     assert "11) Opción 11" not in texto, "se pasó del tope de 10 opciones de WhatsApp"
+
+
+# ---------------------------------------------------------------------------
+# Botones nativos (plantilla de la Content API)
+# ---------------------------------------------------------------------------
+
+SID_PLANTILLA = "HX00000000000000000000000000000001"
+OPCIONES_FB = [("1", "👍 Sí, excelente"), ("2", "👎 Puede mejorar")]
+
+
+def test_con_plantilla_se_mandan_botones_nativos_y_no_texto(monkeypatch):
+    # REGLA: Twilio solo manda botones por ContentSid. El cuerpo viaja como
+    # variable {{1}} para que el texto siga saliendo del código y no de la
+    # plantilla.
+    enviado: dict = {}
+    monkeypatch.setattr(
+        twilio_client, "_post_message",
+        lambda to, data: enviado.update(to=to, data=data) or "SM1",
+    )
+
+    sid = twilio_client.send_buttons(
+        "525500000000", "¿Te sirvió?", OPCIONES_FB, content_sid=SID_PLANTILLA
+    )
+
+    assert sid == "SM1"
+    assert enviado["data"]["ContentSid"] == SID_PLANTILLA
+    assert json.loads(enviado["data"]["ContentVariables"]) == {"1": "¿Te sirvió?"}
+    assert "Body" not in enviado["data"], "con plantilla no se manda el texto degradado"
+
+
+def test_sin_plantilla_se_sigue_degradando_a_texto(monkeypatch):
+    # REGLA: sin TWILIO_CONTENT_SID_FEEDBACK la encuesta tiene que salir igual,
+    # como texto numerado y contestable tecleando.
+    enviado: dict = {}
+    monkeypatch.setattr(
+        twilio_client, "_post_message",
+        lambda to, data: enviado.update(data=data) or "SM2",
+    )
+
+    twilio_client.send_buttons("525500000000", "¿Te sirvió?", OPCIONES_FB)
+
+    assert "ContentSid" not in enviado["data"]
+    assert "1) 👍 Sí, excelente" in enviado["data"]["Body"]
+
+
+def test_si_la_plantilla_falla_el_cliente_recibe_el_texto(monkeypatch):
+    # REGLA: un SID equivocado o una plantilla borrada dejarían al cliente sin
+    # encuesta y sin error visible. Vale más una encuesta fea que ninguna.
+    intentos: list[dict] = []
+
+    def _post(to, data):
+        intentos.append(data)
+        return None if "ContentSid" in data else "SM3"
+
+    monkeypatch.setattr(twilio_client, "_post_message", _post)
+
+    sid = twilio_client.send_buttons(
+        "525500000000", "¿Te sirvió?", OPCIONES_FB, content_sid=SID_PLANTILLA
+    )
+
+    assert sid == "SM3", "no se cayó al texto cuando la plantilla falló"
+    assert "1) 👍 Sí, excelente" in intentos[-1]["Body"]

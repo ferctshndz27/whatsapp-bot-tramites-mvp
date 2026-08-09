@@ -714,7 +714,12 @@ def _notify_finish(ticket_id: int) -> None:
         # conversation.handle_incoming contra el último folio cerrado.
         from app.conversation import FEEDBACK_OPCIONES, FEEDBACK_PROMPT
 
-        fb_wamid = messaging.send_buttons(phone, FEEDBACK_PROMPT, FEEDBACK_OPCIONES)
+        fb_wamid = messaging.send_buttons(
+            phone,
+            FEEDBACK_PROMPT,
+            FEEDBACK_OPCIONES,
+            content_sid=settings.twilio_content_sid_feedback or None,
+        )
         opciones = " / ".join(f"{tecla} {titulo}" for tecla, titulo in FEEDBACK_OPCIONES)
         session.add(
             Message(
