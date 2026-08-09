@@ -503,6 +503,7 @@ def test_consulta_de_estatus_no_rompe_el_estado_ni_la_confirmacion_pendiente(wa)
     ni pierde la página del submenú ni cancela una confirmación pendiente."""
     _send_text("necesito mi acta de nacimiento")
     _send_text("si")  # folio #1
+    _send_text("omitir")  # cierra la captura de la CURP: este test no va de eso
 
     # (a) parado en el submenú de una categoría
     _send_text("servicios")

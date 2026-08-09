@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 import app.nlu as nlu
 from app.catalog import catalog
 from app.config import settings
@@ -465,3 +467,67 @@ def test_ollama_wins_over_claude_when_both_configured(monkeypatch):
 
     assert service is not None and service.id == svc.id
     assert capa == "ollama"
+
+
+# --- Clasificación de códigos sueltos (Ollama) ---
+# Los tres códigos de la prueba real en producción: tienen forma de CURP pero
+# no cuadran con el patrón (17 caracteres, sin el H/M del sexo).
+CODIGOS_RAROS = ["CUSE234543KPLRT02", "COUE237643KPLRT02", "COSE234543KPLRT00"]
+
+
+def test_clasificar_codigos_devuelve_el_tipo_del_modelo(monkeypatch):
+    monkeypatch.setattr(settings, "ollama_url", "http://ollama.test")
+    calls = {}
+
+    def _fake_post(url, **kw):
+        calls["url"] = url
+        calls["mensaje"] = kw["json"]["messages"][-1]["content"]
+        return _fake_ollama_response(
+            {"codigos": [{"codigo": c, "tipo": "CURP"} for c in CODIGOS_RAROS]}
+        )
+
+    monkeypatch.setattr("httpx.post", _fake_post)
+
+    assert nlu.clasificar_codigos(CODIGOS_RAROS) == dict.fromkeys(CODIGOS_RAROS, "CURP")
+    assert calls["url"] == "http://ollama.test/api/chat"
+    assert calls["mensaje"] == "\n".join(CODIGOS_RAROS)
+
+
+def test_clasificar_codigos_descarta_lo_que_el_modelo_se_invento(monkeypatch):
+    # Mismo criterio que _validated con los ids del catálogo: un código que no
+    # se mandó, o un tipo que no existe, no entra.
+    monkeypatch.setattr(settings, "ollama_url", "http://ollama.test")
+    monkeypatch.setattr(
+        "httpx.post",
+        lambda url, **kw: _fake_ollama_response(
+            {
+                "codigos": [
+                    {"codigo": CODIGOS_RAROS[0], "tipo": "CURP"},
+                    {"codigo": CODIGOS_RAROS[1], "tipo": "PASAPORTE"},  # tipo inventado
+                    {"codigo": "NUNCA-SE-MANDO", "tipo": "RFC"},        # código inventado
+                    {"codigo": CODIGOS_RAROS[2], "tipo": None},         # "no sé"
+                ]
+            }
+        ),
+    )
+
+    assert nlu.clasificar_codigos(CODIGOS_RAROS) == {CODIGOS_RAROS[0]: "CURP"}
+
+
+@pytest.mark.parametrize(
+    "url, revienta",
+    [
+        ("", False),                 # sin OLLAMA_URL no hay a quién preguntarle
+        ("http://ollama.test", True),  # servidor caído o lento
+    ],
+)
+def test_clasificar_codigos_nunca_revienta(monkeypatch, url, revienta):
+    monkeypatch.setattr(settings, "ollama_url", url)
+    if revienta:
+        def _explota(*a, **kw):
+            raise RuntimeError("servidor caído")
+
+        monkeypatch.setattr("httpx.post", _explota)
+
+    # {} = "no pude verificar": quien llama sigue adelante y crea el folio.
+    assert nlu.clasificar_codigos(CODIGOS_RAROS) == {}
