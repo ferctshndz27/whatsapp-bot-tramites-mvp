@@ -22,6 +22,7 @@ Tres diferencias con Meta que este módulo absorbe para que nadie más las vea:
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import time
 from pathlib import Path
@@ -214,7 +215,38 @@ def send_list(to_phone: str, body: str, button: str, rows: list[tuple[str, str]]
     return send_text(to_phone, _numerar(body, rows))
 
 
-def send_buttons(to_phone: str, body: str, buttons: list[tuple[str, str]]) -> str | None:
+def send_buttons(
+    to_phone: str, body: str, buttons: list[tuple[str, str]], content_sid: str | None = None
+) -> str | None:
+    """Botones nativos si hay plantilla de la Content API; si no, texto numerado.
+
+    Twilio no manda botones con un POST suelto: exige una plantilla
+    `twilio/quick-reply` creada de antemano y se envía por su ContentSid. Los
+    títulos viven en la plantilla (no admiten variables); el cuerpo sí, y va
+    como {{1}} para que el texto siga saliendo de este código.
+
+    DENTRO de la ventana de 24 h WhatsApp no pide aprobación para esta
+    plantilla, con un máximo de 3 botones — por eso sirve para la encuesta de
+    cierre, que `dashboard._notify_finish` solo manda con la ventana abierta.
+
+    Si el envío con plantilla falla (SID equivocado, plantilla borrada) se cae
+    al texto numerado: vale más una encuesta fea que un cliente sin encuesta.
+    """
+    if content_sid:
+        sid = _post_message(
+            to_phone,
+            {
+                "ContentSid": content_sid,
+                "ContentVariables": json.dumps({"1": body[:BODY_MAX]}, ensure_ascii=False),
+            },
+        )
+        if sid:
+            return sid
+        logger.warning(
+            "Botones de Twilio no enviados a %s con la plantilla %s; se manda como texto",
+            mask_phone(to_phone),
+            content_sid,
+        )
     return send_text(to_phone, _numerar(body, buttons))
 
 
