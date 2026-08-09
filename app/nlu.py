@@ -102,6 +102,98 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
     return _deduce_keywords_explained(cleaned)
 
 
+# ---- Clasificación de códigos sueltos (Ollama) ----
+# Solo se llama cuando los patrones de app/codigos.py NO alcanzaron: una CURP
+# mal tecleada, una clave copiada de otro documento. Es el "por si tiene
+# dudas". Si Ollama no está configurado, tarda o alucina, la función devuelve
+# {} y el flujo sigue igual que sin ella: el folio SE CREA y el colaborador
+# valida a mano. Nunca bloquea el alta de un trámite.
+CODIGOS_MAX = 10
+_TIPOS_CODIGO = ("CURP", "RFC", "NSS")
+_CODIGOS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "codigos": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "codigo": {"type": "string"},
+                    "tipo": {"type": ["string", "null"]},
+                },
+                "required": ["codigo", "tipo"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["codigos"],
+    "additionalProperties": False,
+}
+_CODIGOS_SYSTEM = """Eres un validador de claves oficiales mexicanas. Recibes una lista \
+de cadenas que un cliente escribió en WhatsApp y dices de qué tipo es cada una.
+
+Tipos posibles:
+- CURP: 18 caracteres, 4 letras + 6 dígitos de fecha + H o M + 5 letras + 2 de verificación.
+- RFC: 12 (moral) o 13 (física) caracteres, 3-4 letras + 6 dígitos de fecha + 3 de homoclave.
+- NSS: 11 dígitos del IMSS.
+
+Reglas:
+- Una clave con un dedazo o un carácter de más o de menos SIGUE siendo de su tipo: \
+responde el tipo que el cliente claramente quiso escribir.
+- Si no se parece a ninguno de los tres, responde tipo null. No adivines.
+- Devuelve exactamente una entrada por cada cadena recibida, con el `codigo` idéntico \
+al recibido."""
+
+
+def clasificar_codigos(codigos: list[str]) -> dict[str, str]:
+    """{código: "CURP"|"RFC"|"NSS"} para las cadenas que el modelo local sí
+    reconoce. Devuelve {} si Ollama no está configurado o si falla: quien
+    llama debe seguir adelante sin esto."""
+    if not settings.ollama_url or not codigos:
+        return {}
+    try:
+        return _clasificar_codigos_ollama(codigos[:CODIGOS_MAX])
+    except Exception as exc:
+        logger.warning("Clasificación de códigos con Ollama falló, se dejan sin tipo: %s", exc)
+        return {}
+
+
+def _clasificar_codigos_ollama(codigos: list[str]) -> dict[str, str]:
+    import httpx
+
+    headers = {}
+    if settings.ollama_token:
+        headers["Authorization"] = f"Bearer {settings.ollama_token}"
+    response = httpx.post(
+        f"{settings.ollama_url}/api/chat",
+        headers=headers,
+        json={
+            "model": settings.ollama_model,
+            "messages": [
+                {"role": "system", "content": _CODIGOS_SYSTEM},
+                {"role": "user", "content": "\n".join(codigos)},
+            ],
+            "stream": False,
+            "think": False,
+            "format": _CODIGOS_SCHEMA,
+            "options": {"temperature": 0, "num_predict": 256},
+        },
+        timeout=httpx.Timeout(settings.ollama_timeout, connect=2.0),
+    )
+    response.raise_for_status()
+    data = json.loads(response.json()["message"]["content"])
+    # Igual que _validated con los ids del catálogo: un código que el modelo se
+    # inventó (o devolvió cambiado) no entra.
+    pedidos = set(codigos)
+    return {
+        item["codigo"]: item["tipo"]
+        for item in data.get("codigos", [])
+        if isinstance(item, dict)
+        and item.get("codigo") in pedidos
+        and item.get("tipo") in _TIPOS_CODIGO
+    }
+
+
 def _get_client():
     global _client
     if _client is None:

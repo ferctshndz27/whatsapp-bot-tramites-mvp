@@ -5,9 +5,16 @@ from datetime import timedelta, timezone
 
 from sqlmodel import Session, select
 
-from app import nlu, rag
-from app.catalog import PAGE_SIZE, catalog, requisitos_del_ticket, requisitos_iniciales
+from app import codigos, nlu, rag
+from app.catalog import (
+    PAGE_SIZE,
+    catalog,
+    parse_requirements,
+    requisitos_del_ticket,
+    requisitos_iniciales,
+)
 from app.config import settings
+from app.dinero import formato_monto, parse_monto
 from app.models import (
     PROVIDER_META,
     Client,
@@ -173,6 +180,16 @@ REQ_PREGUNTA = (
     "¿Me lo compartes? Si no lo tienes a la mano, escribe *omitir*."
 )
 REQ_CIERRE = "¡Gracias! 🙌 Ya guardé tus datos. " + TICKET_ALTA_CIERRE
+# Cuando el cliente mandó los códigos en el mismo mensaje del trámite, el
+# agente NO se los vuelve a pedir — pero sí avisa que los tomó.
+REQ_YA_CAPTURADO = "📎 Ya tomé los datos que me compartiste."
+# La respuesta a un requisito que pide una clave (CURP/RFC/NSS) y no trae nada
+# con esa forma ("." , "ya te lo mandé") se repregunta UNA vez: guardarla tal
+# cual dejaba el folio con basura donde debía ir la clave.
+REQ_REINTENTO = (
+    "No reconocí *{requisito}* en tu respuesta 🤔 ¿Me la compartes completa? "
+    "Si no la tienes a la mano, escribe *omitir*."
+)
 # El cliente puede saltarse un dato: se marca como faltante y lo pide el asesor.
 OMIT_WORDS = {
     "omitir", "omitelo", "saltar", "despues", "luego", "no lo tengo",
@@ -425,6 +442,45 @@ def _social_kind(text: str) -> str | None:
     return "despedida" if "despedida" in kinds else "saludo"
 
 
+def _pendiente(service_ids: list[str], text: str) -> dict:
+    """Contexto del estado "confirmar". Guarda los códigos que venían en el
+    MISMO mensaje que pidió el trámite ("acta de nacimiento CURP1 CURP2"): el
+    folio todavía no existe —falta que el cliente confirme— y sin esto el dato
+    se perdería y el agente lo volvería a pedir dos mensajes después.
+
+    La clasificación se resuelve AQUÍ, en el turno que ya paga la deducción con
+    Ollama, y queda guardada: el turno del "sí" reusa este dict en vez de
+    volver a detectar. Así la cantidad que se le cotizó al cliente y la que
+    acaba en el folio son la misma, y el "sí" sigue costando cero."""
+    context: dict = {"pending_service_ids": service_ids}
+    detectados = codigos.detectar(text)
+    sueltos = detectados.get(codigos.SUELTO)
+    if sueltos:
+        # Solo cuando los patrones NO alcanzaron: el "por si tiene dudas". Si
+        # Ollama no contesta devuelve {} y todo sigue igual — el folio se crea
+        # de todos modos y el colaborador valida a mano.
+        detectados = codigos.aplicar_clasificacion(
+            detectados, nlu.clasificar_codigos(sueltos)
+        )
+    if detectados:
+        context["codigos"] = detectados
+    return context
+
+
+def _confirmar(
+    session: Session, conv: Conversation, services: list, text: str, prefijo: str = ""
+) -> list[str]:
+    """Deja la conversación esperando el sí/no y arma el mensaje de
+    confirmación. Fuente única: los códigos se detectan y clasifican una sola
+    vez, y de ahí salen tanto la cotización que ve el cliente como lo que se
+    copia al folio cuando confirme."""
+    context = _pendiente([s.id for s in services], text)
+    _set_state(session, conv, "confirmar", context)
+    if len(services) > 1:
+        return [prefijo + _confirm_multi_message(services)]
+    return [prefijo + _confirm_message(services[0], context.get("codigos"))]
+
+
 def _handle_inicio(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
     # Los saludos y despedidas ya los atajó _dispatch (también en este estado).
 
@@ -432,14 +488,12 @@ def _handle_inicio(session: Session, client: Client, conv: Conversation, text: s
     # curp"): se confirman juntos y se crea un ticket por cada uno.
     multi, service, category, options = _deduce_and_log(session, client.phone, text)
     if multi:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
-        return ["¡Hola! 😊 " + _confirm_multi_message(multi)]
+        return _confirmar(session, conv, multi, text, "¡Hola! 😊 ")
 
     # Regla: si el primer mensaje ya trae el servicio ("necesito mi CURP, soy
     # Juan…"), no se listan servicios: saludo breve y directo a confirmar.
     if service is not None:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
-        return ["¡Hola! 😊 " + _confirm_message(service)]
+        return _confirmar(session, conv, [service], text, "¡Hola! 😊 ")
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
@@ -447,7 +501,7 @@ def _handle_inicio(session: Session, client: Client, conv: Conversation, text: s
     # "quiero un acta": una palabra que coincide con varios servicios no debe
     # terminar en "no te entendí" — se ofrece el mini-menú de parecidos.
     if options:
-        return _suggest_reply(session, conv, options)
+        return _suggest_reply(session, conv, options, text)
 
     _set_state(session, conv, "menu_categoria")
     prefix = f"¡Hola, {client.name}! " if client.name else "¡Hola! 😊 "
@@ -490,11 +544,9 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
 
     multi, service, category, options = _deduce_and_log(session, client.phone, text)
     if multi:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
-        return [_confirm_multi_message(multi)]
+        return _confirmar(session, conv, multi, text)
     if service is not None:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
-        return [_confirm_message(service)]
+        return _confirmar(session, conv, [service], text)
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
@@ -521,8 +573,7 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
     if idx is not None:
         service = catalog.service_by_index(category_id, idx)
         if service is not None:
-            _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
-            return [_confirm_message(service)]
+            return _confirmar(session, conv, [service], text)
 
     # "1 y 2": varios servicios del mismo menú en un solo mensaje.
     indices = _parse_indices(normalized)
@@ -535,19 +586,15 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
                 str(i) for i in indices if catalog.service_by_index(category_id, i) is None
             ]
             note = f"No encontré la opción {', '.join(missing)}. " if missing else ""
-            _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in picked]})
-            msg = _confirm_multi_message(picked) if len(picked) > 1 else _confirm_message(picked[0])
-            return [note + msg]
+            return _confirmar(session, conv, picked, text, note)
 
     # Texto libre dentro del submenú: intentar deducir igual que en el menú
     # principal ("mejor quiero una CURP" debe funcionar desde cualquier lado).
     multi, service, deduced_category, options = _deduce_and_log(session, client.phone, text)
     if multi:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
-        return [_confirm_multi_message(multi)]
+        return _confirmar(session, conv, multi, text)
     if service is not None:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
-        return [_confirm_message(service)]
+        return _confirmar(session, conv, [service], text)
     if deduced_category is not None and deduced_category.id != category_id:
         _set_state(session, conv, "menu_servicio", {"category_id": deduced_category.id, "page": 0})
         return [catalog.format_service_menu(deduced_category.id)]
@@ -564,8 +611,15 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     services = [s for s in (catalog.service_by_id(i) for i in ids) if s is not None]
 
     if normalized in YES_WORDS and services:
+        # Códigos que venían en el mensaje con que pidió el trámite: se copian
+        # al folio antes de preguntar nada (ver _requisitos_con_codigos).
+        detectados = context.get("codigos") or {}
         tickets = []
+        prellenado = False
         for service in services:
+            requisitos_json = requisitos_iniciales(service.requirements)
+            con_codigos = _requisitos_con_codigos(requisitos_json, detectados)
+            prellenado = prellenado or con_codigos != requisitos_json
             ticket = Ticket(
                 phone=client.phone,
                 client_name=client.name,
@@ -576,7 +630,7 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
                 status=TicketStatus.NUEVO,
                 # Los requisitos se congelan aquí: editar el catálogo después no
                 # reescribe lo que se le pidió a este cliente.
-                requirements_json=requisitos_iniciales(service.requirements),
+                requirements_json=con_codigos,
                 provider=conv.provider,
             )
             session.add(ticket)
@@ -587,11 +641,13 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
             session.refresh(ticket)
 
         # Cola plana de preguntas: [[folio, índice del requisito], …] en orden
-        # de folio. Vacía = ningún servicio tiene requisitos → flujo de siempre.
+        # de folio. Vacía = ningún servicio tiene requisitos pendientes → flujo
+        # de siempre. Lo que ya llegó en el mensaje del cliente no se pregunta.
         cola = [
             [t.id, i]
             for t in tickets
-            for i in range(len(requisitos_del_ticket(t.requirements_json)))
+            for i, requisito in enumerate(requisitos_del_ticket(t.requirements_json))
+            if not requisito["valor"]
         ][:MAX_COLA]
 
         if len(tickets) == 1:
@@ -605,6 +661,11 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
                 TICKET_ALTA_CIERRE_MULTI + " ¿Otro trámite? Escribe *menu*."
             )
             alta = f"¡Listo! ✅ Registré tus {len(tickets)} solicitudes:\n{lines}\n{cierre}"
+
+        if prellenado:
+            # Decirlo evita que el cliente crea que se ignoró lo que escribió y
+            # lo vuelva a mandar (que es justo lo que pasaba antes).
+            alta += " " + REQ_YA_CAPTURADO
 
         pregunta, cola = _siguiente_pregunta(session, cola)
         if pregunta is None:
@@ -623,10 +684,33 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     if len(services) > 1:
         confirm_text = _confirm_multi_message(services)
     elif services:
-        confirm_text = _confirm_message(services[0])
+        # Misma cotización que la primera vez: el contexto sobrevive a
+        # _bump_or_escalate, que solo incrementa failed_attempts.
+        confirm_text = _confirm_message(services[0], context.get("codigos"))
     else:
         confirm_text = catalog.format_category_menu()
     return _bump_or_escalate(session, client, conv, text, "¿Puedes confirmar con 'sí' o 'no'?\n" + confirm_text)
+
+
+def _requisitos_con_codigos(requisitos_json: str | None, detectados: dict) -> str | None:
+    """Los requisitos del folio con los códigos que el cliente ya escribió.
+
+    Devuelve el JSON tal cual si no hay nada que copiar, para que el llamador
+    sepa por comparación si hubo prellenado."""
+    if not requisitos_json or not detectados:
+        return requisitos_json
+    originales = requisitos_del_ticket(requisitos_json)
+    llenos = codigos.prellenar(originales, detectados)
+    if llenos == originales:
+        return requisitos_json
+    return json.dumps(llenos, ensure_ascii=False)
+
+
+def _requisito_de(session: Session, ticket_id: int, idx: int) -> str:
+    """Texto del requisito que está contestando el cliente ("clave curp")."""
+    ticket = session.get(Ticket, ticket_id)
+    requisitos = requisitos_del_ticket(ticket.requirements_json) if ticket else []
+    return requisitos[idx]["req"] if 0 <= idx < len(requisitos) else ""
 
 
 def _siguiente_pregunta(session: Session, cola: list) -> tuple[str | None, list]:
@@ -634,7 +718,11 @@ def _siguiente_pregunta(session: Session, cola: list) -> tuple[str | None, list]
 
     Salta folios eliminados por el asesor (soft delete, habilitado=False) o ya
     cerrados, e índices fuera del JSON: a media captura la base puede haber
-    cambiado y el cliente no debe quedarse contestando a un folio muerto."""
+    cambiado y el cliente no debe quedarse contestando a un folio muerto.
+
+    Salta también los requisitos que YA tienen valor —el cliente los mandó en el
+    mismo mensaje del trámite, o el asesor los capturó a mano desde el panel—:
+    preguntar por un dato que ya se tiene es justo lo que molestaba al cliente."""
     while cola:
         ticket_id, idx = cola[0]
         ticket = session.get(Ticket, ticket_id)
@@ -644,7 +732,7 @@ def _siguiente_pregunta(session: Session, cola: list) -> tuple[str | None, list]
             and ticket.status != TicketStatus.CERRADO
         )
         requisitos = requisitos_del_ticket(ticket.requirements_json) if vivo else []
-        if 0 <= idx < len(requisitos):
+        if 0 <= idx < len(requisitos) and not requisitos[idx]["valor"]:
             return (
                 REQ_PREGUNTA.format(
                     servicio=ticket.service_name,
@@ -693,8 +781,15 @@ def _handle_requisitos(session: Session, client: Client, conv: Conversation, tex
     Aquí NO existe "no te entendí": cualquier texto es la respuesta al dato
     pedido, así que nunca se pasa por _bump_or_escalate (escalar dejaría el
     contexto vacío y mataría la captura). Si el cliente no lo tiene, *omitir*
-    lo marca como faltante para que el asesor lo pida."""
-    cola_original = _get_context(conv).get("cola") or []
+    lo marca como faltante para que el asesor lo pida.
+
+    ÚNICA excepción (2026-08-08): si el dato pedido es una clave con formato
+    —CURP, RFC, NSS— y la respuesta no trae nada con esa forma, se repregunta
+    UNA vez. Sin eso el folio se quedaba con un "." donde iba la CURP. A la
+    segunda se guarda tal cual: el agente no discute con el cliente, y
+    *omitir* sigue saliendo antes de llegar aquí."""
+    contexto = _get_context(conv)
+    cola_original = contexto.get("cola") or []
     pregunta_vigente, cola = _siguiente_pregunta(session, cola_original)
     if pregunta_vigente is None:
         _set_state(session, conv, "menu_categoria")
@@ -708,7 +803,16 @@ def _handle_requisitos(session: Session, client: Client, conv: Conversation, tex
         return [pregunta_vigente]
 
     ticket_id, idx = cola[0]
-    valor = None if _es_omision(text) else text.strip()[:MAX_NOTE_TEXT]
+    omite = _es_omision(text)
+    requisito = _requisito_de(session, ticket_id, idx)
+    if not omite and not contexto.get("reintento") and not codigos.trae_el_dato(requisito, text):
+        # Se pidió una clave (CURP/RFC/NSS) y la respuesta no trae nada con esa
+        # forma: un "." o un "ya te lo mandé". Se repregunta UNA vez —a la
+        # siguiente se guarda tal cual, que el asesor lo lea y decida.
+        _set_state(session, conv, "pidiendo_requisitos", {"cola": cola, "reintento": True})
+        return [REQ_REINTENTO.format(requisito=requisito[:REQ_MAX_CHARS])]
+
+    valor = None if omite else text.strip()[:MAX_NOTE_TEXT]
     _editar_requisito(session, ticket_id, idx, {"valor": valor, "pedido": True})
 
     pregunta, resto = _siguiente_pregunta(session, cola[1:])
@@ -728,23 +832,22 @@ def _marcar_pedido(session: Session, cola: list) -> None:
 
 
 # Datos estructurados que el cliente suelta en el chat (Fase 2): se anexan a
-# su ficha como nota para que el colaborador no los vuelva a pedir.
-CURP_RE = re.compile(r"\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b")
-RFC_RE = re.compile(r"\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b")
-EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+# su ficha como nota para que el colaborador no los vuelva a pedir. Los
+# patrones viven en app/codigos.py — aquí solo se decide qué se anota.
+# Solo los tipos con formato oficial: las cadenas "con forma de clave" sin
+# clasificar (codigos.SUELTO) sirven para llenar un requisito concreto, pero
+# como nota suelta en la ficha serían ruido.
+TIPOS_EN_FICHA = ("CURP", "RFC", "Email")
 
 
 def _extract_client_data(session: Session, phone: str, text: str) -> None:
-    upper = text.upper()
-    found: list[tuple[str, str]] = []
-    curps = CURP_RE.findall(upper)
-    found += [("CURP", c) for c in curps]
-    found += [
-        ("RFC", r) for r in RFC_RE.findall(upper)
-        if not any(r in c for c in curps)  # el prefijo de una CURP no es un RFC
+    detectados = codigos.detectar(text)
+    found = [
+        (tipo, valor) for tipo in TIPOS_EN_FICHA for valor in detectados.get(tipo, [])
     ]
-    found += [("Email", e.lower()) for e in EMAIL_RE.findall(text)]
-    for tipo, valor in found[:3]:  # tope defensivo por mensaje
+    # El tope es de NOTAS por mensaje, no de datos: lo que se copia al folio
+    # sale de `detectados`, sin recortar (tres CURP entran completas).
+    for tipo, valor in found[:3]:
         exists = session.exec(
             select(ClientNote)
             .where(ClientNote.phone == phone)
@@ -958,23 +1061,20 @@ def _try_service_request(session: Session, conv: Conversation, text: str) -> lis
     una categoría o parecidos por palabra clave. None si no pide nada."""
     multi, service, category, options = _deduce_and_log(session, conv.phone, text)
     if multi:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in multi]})
-        return [_confirm_multi_message(multi)]
+        return _confirmar(session, conv, multi, text)
     if service is not None:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [service.id]})
-        return [_confirm_message(service)]
+        return _confirmar(session, conv, [service], text)
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
     if options:
-        return _suggest_reply(session, conv, options)
+        return _suggest_reply(session, conv, options, text)
     return None
 
 
-def _suggest_reply(session: Session, conv: Conversation, options: list) -> list[str]:
+def _suggest_reply(session: Session, conv: Conversation, options: list, text: str) -> list[str]:
     if len(options) == 1:
-        _set_state(session, conv, "confirmar", {"pending_service_ids": [options[0].id]})
-        return [_confirm_message(options[0])]
+        return _confirmar(session, conv, [options[0]], text)
     _set_state(
         session, conv, "eligiendo_sugerencia", {"suggestion_ids": [s.id for s in options]}
     )
@@ -1011,7 +1111,7 @@ def _not_understood(
     if respuesta_rag is not None:
         return [respuesta_rag]
     if options:
-        return _suggest_reply(session, conv, options)
+        return _suggest_reply(session, conv, options, text)
     return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
 
 
@@ -1041,20 +1141,42 @@ def _handle_sugerencia(session: Session, client: Client, conv: Conversation, tex
     if picks and options:
         chosen = _unique_services(options[i - 1] for i in picks if 1 <= i <= len(options))
         if chosen:
-            _set_state(session, conv, "confirmar", {"pending_service_ids": [s.id for s in chosen]})
-            if len(chosen) > 1:
-                return [_confirm_multi_message(chosen)]
-            return [_confirm_message(chosen[0])]
+            return _confirmar(session, conv, chosen, text)
     # Cualquier otra cosa se procesa como texto libre normal.
     return _handle_menu_categoria(session, client, conv, text, normalized)
 
 
-def _confirm_message(service) -> str:
+def _confirm_message(service, detectados: dict | None = None) -> str:
     # El precio sale SOLO del catálogo — el agente nunca inventa precios.
-    return f"¿Confirmas '{service.name}' ({service.price_info})? Responde sí o no."
+    cuantos = codigos.cuantos_tramites(
+        parse_requirements(service.requirements), detectados or {}
+    )
+    if cuantos == 1:
+        return f"¿Confirmas '{service.name}' ({service.price_info})? Responde sí o no."
+    # Una sola solicitud que cubre los N códigos —no N folios— pero cotizada
+    # por cantidad: el cliente ve de dónde sale el número antes de confirmar.
+    return (
+        f"¿Confirmas '{service.name}' para los {cuantos} datos que me compartiste "
+        f"({service.price_info} c/u)? {_estimado(service, cuantos)} Responde sí o no."
+    )
+
+
+def _estimado(service, cuantos: int) -> str:
+    """Precio del catálogo × cantidad. Es un ESTIMADO y se dice: el agente NO
+    fija el precio final de un trámite — eso lo confirma el asesor, que además
+    es quien teclea el monto del cobro. Un precio no numérico del catálogo
+    ("A cotizar") no se multiplica: no hay número que multiplicar."""
+    try:
+        unitario = parse_monto(service.price_info)
+    except ValueError:
+        return "El asesor te confirma el total."
+    return f"Estimado: {formato_monto(unitario * cuantos)}, sujeto a confirmación del asesor."
 
 
 def _confirm_multi_message(services) -> str:
+    # Con varios servicios distintos NO se reparten los códigos: adivinar cuál
+    # de los trámites lleva cuál clave sería inventar. Uno de cada uno, y el
+    # asesor ajusta si el cliente quería más.
     lines = "\n".join(f"• {s.name} ({s.price_info})" for s in services)
     return f"¿Confirmas estos {len(services)} trámites?\n{lines}\nResponde sí o no."
 

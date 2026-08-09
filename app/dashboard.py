@@ -10,12 +10,13 @@ from app.templating import templates
 from sqlalchemy import or_, update
 from sqlmodel import select
 
-from app import authlog, messaging
+from app import authlog, codigos, messaging
 from app.utils import ruta_interna
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
+from app.dinero import formato_monto, parse_monto
 from app.models import (
     Conversation,
     Direction,
@@ -410,6 +411,31 @@ def ticket_list(
     )
 
 
+def cotizacion_estimada(price_info: str, requisitos: list[dict]) -> dict | None:
+    """Cuántas claves mandó el cliente para este folio y a cuánto suman al
+    precio del catálogo.
+
+    Se DERIVA de lo capturado en el folio: no hay columna "cantidad" que
+    mantener sincronizada con el espejo MSSQL. Devuelve None cuando es una sola
+    (la vista de siempre); `total` es None cuando el precio del catálogo no es
+    un número ("A cotizar" — 7 de los 58 servicios).
+
+    Es un ESTIMADO para que el asesor no cuente los códigos a mano. El monto
+    que se cobra lo sigue tecleando él: el sistema no fija precios finales.
+    """
+    capturado = " ".join(r["valor"] for r in requisitos if r["valor"])
+    cuantos = codigos.cuantos_tramites(
+        [r["req"] for r in requisitos], codigos.detectar(capturado)
+    )
+    if cuantos < 2:
+        return None
+    try:
+        unitario = parse_monto(price_info)
+    except ValueError:
+        return {"cuantos": cuantos, "total": None}
+    return {"cuantos": cuantos, "total": formato_monto(unitario * cuantos)}
+
+
 @router.get("/tickets/{ticket_id}")
 def ticket_detail(
     request: Request, ticket_id: int, err: str = "", ok: str = "", volver: str = ""
@@ -442,6 +468,7 @@ def ticket_detail(
     from app.catalog import catalog, requisitos_del_ticket
 
     service = catalog.service_by_id(ticket.service_id)
+    requisitos = requisitos_del_ticket(ticket.requirements_json)
     return templates.TemplateResponse(
         "ticket_detail.html",
         {
@@ -454,7 +481,11 @@ def ticket_detail(
             "requirements": service.requirements if service else "",
             # Lo que el agente pidió por WhatsApp en ESTE folio (congelado al
             # darlo de alta), con lo que el cliente contestó y lo que falta.
-            "requisitos": requisitos_del_ticket(ticket.requirements_json),
+            "requisitos": requisitos,
+            # Cuántas claves mandó el cliente y cuánto suman al precio del
+            # catálogo. Es un ESTIMADO para que el asesor no cuente a mano; el
+            # monto que se cobra lo sigue tecleando él.
+            "cotizacion": cotizacion_estimada(ticket.price_info, requisitos),
             "err": err,
             "ok": ok,
             # Ruta de la lista de origen (filtros y página incluidos) para el

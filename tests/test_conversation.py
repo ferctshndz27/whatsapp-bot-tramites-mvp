@@ -3,6 +3,7 @@ from datetime import timedelta
 import pytest
 from sqlmodel import select
 
+from app import conversation
 from app.catalog import catalog, requisitos_del_ticket
 from app.conversation import CAPTURE_TTL_HOURS, handle_incoming
 from app.models import PROVIDER_TWILIO, Conversation, Ticket, TicketStatus, utcnow
@@ -99,6 +100,116 @@ def test_agente_pide_los_requisitos_y_los_guarda_en_el_folio(session):
     ]
 
 
+def test_los_codigos_del_primer_mensaje_no_se_vuelven_a_pedir(session):
+    # Caso real (producción, 2026-08-08): el cliente pidió el trámite Y pegó sus
+    # códigos en el MISMO mensaje, y el agente le pidió la CURP de todos modos.
+    # Los tres códigos van al mismo folio: quien decide si son tres actas es el
+    # asesor, no el agente (el agente nunca fija el precio final).
+    _con_requisitos("clave curp")
+    codigos = "CUSE234543KPLRT02 COUE237643KPLRT02 COSE234543KPLRT00"
+
+    handle_incoming(session, PHONE, f"acta de divorcio {codigos}")
+    alta = handle_incoming(session, PHONE, "sí")
+
+    assert "folio" in alta[0].lower()
+    assert "necesito" not in alta[0].lower()  # ya no pregunta lo que ya tiene
+    assert "ya tomé los datos" in alta[0].lower()
+    assert session.get(Conversation, PHONE).state == "menu_categoria"
+    session.expire_all()
+    assert requisitos_del_ticket(_ticket(session).requirements_json) == [
+        {"req": "clave curp", "valor": codigos.replace(" ", ", "), "pedido": False}
+    ]
+
+
+def test_la_confirmacion_cotiza_por_la_cantidad_de_codigos(session):
+    # Tres claves = tres unidades del mismo trámite. Se cotiza ANTES de crear
+    # el folio, con el precio del catálogo y dicho como estimado: el agente no
+    # fija el precio final (regla de negocio) — lo confirma el asesor.
+    _con_requisitos("clave curp")
+    svc = catalog.service_by_id(SERVICIO_CON_REQUISITOS)
+    catalog.update_service(svc.id, svc.name, "$25.00", requirements="clave curp", admin="prueba")
+
+    confirmacion = handle_incoming(
+        session, PHONE,
+        "acta de divorcio CUSE234543KPLRT02 COUE237643KPLRT02 COSE234543KPLRT00",
+    )
+
+    assert "3 datos" in confirmacion[0]
+    assert "$75.00 MXN" in confirmacion[0]
+    assert "asesor" in confirmacion[0]  # se dice que es estimado
+    # Y sigue siendo UNA solicitud, no tres folios.
+    handle_incoming(session, PHONE, "sí")
+    session.expire_all()
+    assert len(session.exec(select(Ticket).where(Ticket.phone == PHONE)).all()) == 1
+
+
+def test_ollama_se_consulta_una_sola_vez_por_peticion(session, monkeypatch):
+    # La clasificación cuesta ~5s en CPU y va DENTRO del webhook. Se paga en el
+    # turno que ya paga la deducción, y ni el "sí" ni un titubeo la repiten:
+    # el veredicto queda guardado en el contexto de la conversación.
+    _con_requisitos("clave curp")
+    llamadas = []
+    monkeypatch.setattr(
+        conversation.nlu, "clasificar_codigos",
+        lambda cods: (llamadas.append(list(cods)), {c: "CURP" for c in cods})[1],
+    )
+
+    handle_incoming(session, PHONE, "acta de divorcio CUSE234543KPLRT02 COUE237643KPLRT02")
+    handle_incoming(session, PHONE, "que?")
+    handle_incoming(session, PHONE, "eh?")
+    handle_incoming(session, PHONE, "sí")
+
+    assert llamadas == [["CUSE234543KPLRT02", "COUE237643KPLRT02"]]
+
+
+def test_un_precio_no_numerico_no_se_multiplica(session):
+    # 7 de 58 servicios del catálogo de producción dicen "A cotizar": ahí no
+    # hay número que multiplicar y el agente no debe inventarlo.
+    svc = catalog.service_by_id(SERVICIO_CON_REQUISITOS)
+    catalog.update_service(
+        svc.id, svc.name, "A cotizar", requirements="clave curp", admin="prueba"
+    )
+
+    confirmacion = handle_incoming(
+        session, PHONE, "acta de divorcio CUSE234543KPLRT02 COUE237643KPLRT02"
+    )
+
+    assert "2 datos" in confirmacion[0]
+    assert "El asesor te confirma el total" in confirmacion[0]
+    assert "MXN" not in confirmacion[0]
+
+
+def test_los_codigos_sobreviven_a_una_confirmacion_titubeante(session):
+    # El folio no existe hasta que el cliente confirma: los códigos viajan en el
+    # contexto de la conversación y un "¿qué?" en medio no debe borrarlos.
+    _con_requisitos("clave curp")
+
+    handle_incoming(session, PHONE, "acta de divorcio CUSE234543KPLRT02")
+    handle_incoming(session, PHONE, "que?")
+    handle_incoming(session, PHONE, "sí")
+
+    session.expire_all()
+    assert requisitos_del_ticket(_ticket(session).requirements_json) == [
+        {"req": "clave curp", "valor": "CUSE234543KPLRT02", "pedido": False}
+    ]
+
+
+def test_solo_se_prellena_el_requisito_que_pide_ese_dato(session):
+    # El código llena la CURP; el dato que no es una clave se sigue preguntando.
+    _con_requisitos("clave curp\nnombre completo")
+
+    handle_incoming(session, PHONE, "acta de divorcio PEGF900101HDFRRN09")
+    alta = handle_incoming(session, PHONE, "sí")
+
+    assert "nombre completo" in alta[0]
+    assert "clave curp" not in alta[0]
+    session.expire_all()
+    assert [r["valor"] for r in requisitos_del_ticket(_ticket(session).requirements_json)] == [
+        "PEGF900101HDFRRN09",
+        None,
+    ]
+
+
 def test_omitir_deja_el_requisito_como_faltante(session):
     _con_requisitos("clave curp")
 
@@ -115,7 +226,9 @@ def test_respuestas_ambiguas_no_secuestran_la_captura(session):
     # REGLA: en captura de texto libre no existe "no te entendí". Palabras que
     # en otro estado son atajos (folio → estatus, "ok" → despedida) aquí son
     # el dato del cliente, y una respuesta rara NO debe escalar.
-    _con_requisitos("clave curp\nnumero de servicio")
+    # Requisitos SIN clave oficial a propósito: de un "número de servicio" no
+    # hay formato que validar, así que se guarda tal cual venga.
+    _con_requisitos("numero de servicio\nreferencia del recibo")
 
     _pedir_y_confirmar(session)
     handle_incoming(session, PHONE, "mi folio de la CFE es 12345")
@@ -128,6 +241,43 @@ def test_respuestas_ambiguas_no_secuestran_la_captura(session):
     ]
     assert _ticket(session).escalado is False
     assert session.get(Conversation, PHONE).state == "menu_categoria"
+
+
+def test_respuesta_sin_clave_se_repregunta_una_sola_vez(session):
+    # REGLA: si se pidió una clave (CURP/RFC/NSS) y la respuesta no trae nada
+    # con esa forma —el caso real: el cliente contestó "."— se repregunta UNA
+    # vez. A la segunda se guarda tal cual: el agente no discute con el cliente.
+    _con_requisitos("clave curp")
+
+    _pedir_y_confirmar(session)
+    reintento = handle_incoming(session, PHONE, ".")
+
+    assert "no reconocí" in reintento[0].lower()
+    assert session.get(Conversation, PHONE).state == "pidiendo_requisitos"
+    session.expire_all()
+    assert requisitos_del_ticket(_ticket(session).requirements_json)[0]["valor"] is None
+
+    cierre = handle_incoming(session, PHONE, ".")
+
+    assert "gracias" in cierre[0].lower()
+    session.expire_all()
+    assert requisitos_del_ticket(_ticket(session).requirements_json)[0]["valor"] == "."
+    assert _ticket(session).escalado is False
+
+
+def test_omitir_sigue_valiendo_pese_al_guardia_de_claves(session):
+    # La salida de emergencia no se cierra: *omitir* deja el requisito como
+    # faltante sin pasar por la repregunta.
+    _con_requisitos("clave curp")
+
+    _pedir_y_confirmar(session)
+    cierre = handle_incoming(session, PHONE, "omitir")
+
+    assert "gracias" in cierre[0].lower()
+    session.expire_all()
+    assert requisitos_del_ticket(_ticket(session).requirements_json) == [
+        {"req": "clave curp", "valor": None, "pedido": True}
+    ]
 
 
 def test_menu_aborta_la_captura_sin_perder_lo_capturado(session):
