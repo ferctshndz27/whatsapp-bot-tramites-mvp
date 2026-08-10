@@ -155,33 +155,104 @@ def inbox_list(request: Request, filter: str | None = None):
     )
 
 
+# Un mensaje no lleva folio y no puede llevarlo: cuando el cliente escribe
+# «quiero un acta» el folio todavía no existe, y esos son justo los mensajes que
+# más importan. Se deriva por tiempo: cada mensaje cae con el alta más cercana,
+# así que la frontera entre dos folios es el punto medio entre ellos. Eso pone
+# del lado correcto las DOS mitades de un folio: lo que el cliente pidió (antes
+# del alta) y lo que se le pidió a él (requisitos y encuesta, después).
+#
+# El margen agrupa los folios de un mismo turno. Un «quiero un acta y un rfc»
+# levanta dos folios con segundos de diferencia; sin margen el segundo se
+# quedaría con una ventana vacía.
+# ponytail: heurística de tiempo; si no alcanza, la solución real es una columna
+# Message.ticket_id llenada al confirmar el alta (y su espejo en MSSQL).
+FOLIOS_MISMO_TURNO = timedelta(seconds=60)
+
+
+def _mitad(a: datetime, b: datetime) -> datetime:
+    return a + (b - a) / 2
+
+
+def _segmento_del_folio(
+    tickets: list[Ticket], ticket: Ticket
+) -> tuple[datetime | None, datetime | None]:
+    """Rango `(inicio, fin]` de la conversación que pertenece a `ticket`.
+
+    `None` en un extremo = sin límite por ese lado."""
+    creado = _as_utc(ticket.created_at)
+    todos = [_as_utc(t.created_at) for t in tickets]
+    # El folio no viaja solo: se lleva a los de su mismo turno.
+    turno = [c for c in todos if abs(c - creado) <= FOLIOS_MISMO_TURNO]
+    primero, ultimo = min(turno), max(turno)
+    antes = [c for c in todos if c < primero - FOLIOS_MISMO_TURNO]
+    despues = [c for c in todos if c > ultimo + FOLIOS_MISMO_TURNO]
+    return (
+        _mitad(max(antes), primero) if antes else None,
+        _mitad(ultimo, min(despues)) if despues else None,
+    )
+
+
+def _en_segmento(dt: datetime, inicio: datetime | None, fin: datetime | None) -> bool:
+    momento = _as_utc(dt)
+    return (inicio is None or momento > inicio) and (fin is None or momento <= fin)
+
+
 @router.get("/inbox/{phone}")
-def inbox_chat(request: Request, phone: str, err: str | None = None, volver: str = ""):
+def inbox_chat(
+    request: Request,
+    phone: str,
+    err: str | None = None,
+    volver: str = "",
+    folio: int | None = None,
+    todo: int = 0,
+):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
 
     with get_session() as session:
-        messages = session.exec(
+        historial = session.exec(
             select(Message)
             .where(Message.phone == phone)
             .where(Message.habilitado.is_(True))
             .order_by(Message.created_at)
         ).all()
-        if not messages:
+        if not historial:
             # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
             return RedirectResponse("/", status_code=303)
         client = session.get(Client, phone)
         conv = session.get(Conversation, phone)
-        ticket = session.exec(
+        tickets = session.exec(
             select(Ticket).where(Ticket.phone == phone).order_by(Ticket.created_at.desc())
-        ).first()
+        ).all()
+        # `folio` viene de la URL: se busca DENTRO de los folios de este número,
+        # así un id de otro cliente no abre su conversación aquí.
+        ticket = next((t for t in tickets if t.id == folio), None) or (
+            tickets[0] if tickets else None
+        )
         from app.replies import personal_replies
 
         my_replies = personal_replies(session, user)
 
+    # Un número sin folios (p. ej. los que llegan desde /unmatched) no tiene nada
+    # que acotar: se muestra todo o la vista saldría vacía.
+    ver_todo = bool(todo) or ticket is None
+    if ver_todo:
+        messages, folios = historial, []
+    else:
+        inicio, fin = _segmento_del_folio(tickets, ticket)
+        messages = [m for m in historial if _en_segmento(m.created_at, inicio, fin)]
+        folios = sorted(
+            (t for t in tickets if _en_segmento(t.created_at, inicio, fin)),
+            key=lambda t: t.id,
+        )
+
+    # La ventana de 24 h es del NÚMERO, no del folio: se calcula sobre el
+    # historial completo. Si se calculara sobre lo que se pinta, abrir un folio
+    # viejo apagaría el compositor de un chat que sigue vivo.
     last_in = next(
-        (m.created_at for m in reversed(messages) if m.direction == Direction.IN), None
+        (m.created_at for m in reversed(historial) if m.direction == Direction.IN), None
     )
     return templates.TemplateResponse(
         "inbox_chat.html",
@@ -192,6 +263,11 @@ def inbox_chat(request: Request, phone: str, err: str | None = None, volver: str
             "client": client,
             "messages": messages,
             "ticket": ticket,
+            # Qué se está viendo y qué queda fuera: acotar sin decirlo se lee
+            # como historial perdido.
+            "folios": folios,
+            "ver_todo": ver_todo,
+            "ocultos": len(historial) - len(messages),
             "bot_paused": bool(conv and conv.state == "escalado"),
             # La vista muestra por cuál de las dos cuentas se responde: la
             # ventana de 24 h es por número y el remitente que ve el cliente
