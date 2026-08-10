@@ -159,3 +159,141 @@ def test_legacy_pending_service_id_context_still_confirms(session):
 
     assert "folio" in replies[0].lower()
     assert len(_tickets(session)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Pedido de dos trámites cuando uno de los dos queda ambiguo
+# ---------------------------------------------------------------------------
+#
+# Caso real (folio #33 en producción): el cliente escribió "quiero un acta y un
+# rfc". El rfc se resuelve solo (sinónimo del catálogo), pero "un acta" no dice
+# cuál de las cuatro — y el agente levantaba SOLO el rfc, tirando el acta sin
+# avisar. Ahora pregunta y confirma los dos juntos.
+
+AMBIGUO_Y_CLARO = "quiero un acta y un rfc"
+
+
+def _hasta_pedir(session):
+    handle_incoming(session, PHONE, "hola")
+    handle_incoming(session, PHONE, "Fernando")
+
+
+def test_tramite_ambiguo_junto_a_uno_claro_pregunta_y_levanta_ambos(session):
+    _sin_requisitos("sb-acta-nacimiento", "sat-csf-original")
+    _hasta_pedir(session)
+
+    pregunta = handle_incoming(session, PHONE, AMBIGUO_Y_CLARO)[0]
+
+    # No confirma todavía: avisa lo que ya entendió y pregunta por lo que falta.
+    assert "Constancia de situación fiscal original" in pregunta
+    assert "Acta de nacimiento" in pregunta and "Acta de divorcio" in pregunta
+    assert "Responde con el número" in pregunta
+    conv = session.get(Conversation, PHONE)
+    assert conv.state == "eligiendo_sugerencia"
+
+    confirmacion = handle_incoming(session, PHONE, "1")[0]
+    assert "2 trámites" in confirmacion
+
+    handle_incoming(session, PHONE, "sí")
+    nombres = {t.service_name for t in _tickets(session)}
+    assert nombres == {"Constancia de situación fiscal original", "Acta de nacimiento"}
+
+
+def test_pedido_completo_no_dispara_la_pregunta(session):
+    # Guarda anti-vacuidad: suggestions() matchea por palabra compartida, así
+    # que "acta de nacimiento" arrastra a las otras tres actas. Si el recorte
+    # de menciones fallara, ESTE pedido —que no tiene nada pendiente— se
+    # volvería una pregunta y el agente daría lata en el caso más común.
+    _sin_requisitos("sb-acta-nacimiento")
+    _hasta_pedir(session)
+
+    replies = handle_incoming(session, PHONE, "quiero mi acta de nacimiento")
+
+    assert "¿Confirmas" in replies[0]
+    assert session.get(Conversation, PHONE).state == "confirmar"
+
+
+def test_dos_tramites_ambos_claros_siguen_por_la_via_multi(session):
+    # Ambas partes son literales: deduce_all las agarra y nunca se llega a
+    # preguntar. Fija que el camino viejo no cambió.
+    _sin_requisitos("sb-acta-nacimiento", "sat-csf-original")
+    _hasta_pedir(session)
+
+    replies = handle_incoming(session, PHONE, "quiero mi acta de nacimiento y un rfc")
+
+    assert "2 trámites" in replies[0]
+    assert session.get(Conversation, PHONE).state == "confirmar"
+
+
+def test_si_no_elige_no_se_pierde_lo_que_ya_se_habia_entendido(session):
+    # Piso duro: antes de este flujo el cliente ya tendría el folio del rfc.
+    # Responder cualquier cosa NO puede dejarlo con menos que eso.
+    _sin_requisitos("sat-csf-original")
+    _hasta_pedir(session)
+    handle_incoming(session, PHONE, AMBIGUO_Y_CLARO)
+
+    confirmacion = handle_incoming(session, PHONE, "mmm no sé")[0]
+
+    assert "Constancia de situación fiscal original" in confirmacion
+    handle_incoming(session, PHONE, "sí")
+    assert [t.service_name for t in _tickets(session)] == [
+        "Constancia de situación fiscal original"
+    ]
+
+
+def test_los_codigos_del_mensaje_original_sobreviven_a_la_pregunta(session):
+    # El mensaje que trae la CURP es el original; el turno de la elección solo
+    # trae "1". Sin arrastrar los códigos en el contexto, el dato se perdería
+    # y el agente se lo volvería a pedir al cliente dos mensajes después.
+    _sin_requisitos("sat-csf-original")
+    _hasta_pedir(session)
+    handle_incoming(session, PHONE, AMBIGUO_Y_CLARO + " mi curp es GOMC800101HDFXXX01")
+
+    contexto = json.loads(session.get(Conversation, PHONE).context_json)
+    guardados = json.dumps(contexto.get("codigos", {}))
+    assert "GOMC800101HDFXXX01" in guardados
+
+    handle_incoming(session, PHONE, "1")
+    contexto = json.loads(session.get(Conversation, PHONE).context_json)
+    assert "GOMC800101HDFXXX01" in json.dumps(contexto.get("codigos", {}))
+
+
+def test_muletillas_no_disparan_la_pregunta(session):
+    # Los nombres del catálogo contienen palabras funcionales ("Amparo PARA
+    # liberar pensión"), así que sin filtrarlas cualquier frase con "para"
+    # —de lo más común— hacía que el agente preguntara por trámites de
+    # pensión que el cliente jamás pidió. El test negativo anterior usaba una
+    # frase sin muletillas y no lo cazaba.
+    _sin_requisitos("sb-acta-nacimiento", "sb-curp")
+    _hasta_pedir(session)
+
+    for frase in (
+        "necesito mi acta de nacimiento para tramite escolar",
+        "quiero mi curp para el banco por favor",
+    ):
+        replies = handle_incoming(session, PHONE, frase)
+        assert "¿Confirmas" in replies[0], f"{frase!r} disparó la pregunta de más"
+        assert session.get(Conversation, PHONE).state == "confirmar"
+        handle_incoming(session, PHONE, "no")
+
+
+def test_la_eleccion_del_cliente_nunca_se_recorta_por_el_tope(session):
+    # Si los ya resueltos llenan MULTI_MAX_SERVICES, lo que se recorta debe
+    # ser un resuelto viejo, jamás la respuesta que el cliente acaba de dar.
+    from app.conversation import _handle_sugerencia, _set_state
+    from app.models import Client
+
+    _hasta_pedir(session)
+    conv = session.get(Conversation, PHONE)
+    llenos = ["sb-acta-nacimiento", "sb-acta-matrimonio", "sb-acta-defuncion",
+              "sb-acta-divorcio", "sb-curp"]
+    _set_state(session, conv, "eligiendo_sugerencia", {
+        "suggestion_ids": ["sb-recibo-cfe", "sat-csf-original"],
+        "resueltos_ids": llenos,
+    })
+    client = session.get(Client, PHONE)
+
+    _handle_sugerencia(session, client, conv, "1 y 2", "1 y 2")
+
+    elegidos = json.loads(session.get(Conversation, PHONE).context_json)["pending_service_ids"]
+    assert "sb-recibo-cfe" in elegidos and "sat-csf-original" in elegidos

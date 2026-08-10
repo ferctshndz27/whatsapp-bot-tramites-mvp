@@ -442,7 +442,7 @@ def _social_kind(text: str) -> str | None:
     return "despedida" if "despedida" in kinds else "saludo"
 
 
-def _pendiente(service_ids: list[str], text: str) -> dict:
+def _pendiente(service_ids: list[str], text: str, detectados: dict | None = None) -> dict:
     """Contexto del estado "confirmar". Guarda los códigos que venían en el
     MISMO mensaje que pidió el trámite ("acta de nacimiento CURP1 CURP2"): el
     folio todavía no existe —falta que el cliente confirme— y sin esto el dato
@@ -453,6 +453,19 @@ def _pendiente(service_ids: list[str], text: str) -> dict:
     volver a detectar. Así la cantidad que se le cotizó al cliente y la que
     acaba en el folio son la misma, y el "sí" sigue costando cero."""
     context: dict = {"pending_service_ids": service_ids}
+    if detectados is None:
+        detectados = _detectar_codigos(text)
+    if detectados:
+        context["codigos"] = detectados
+    return context
+
+
+def _detectar_codigos(text: str) -> dict:
+    """Códigos del cliente en el texto, ya clasificados por tipo. Vive aparte
+    de _pendiente porque cuando el agente tiene que preguntar por un trámite
+    ambiguo, los códigos hay que detectarlos en ESE turno y arrastrarlos al
+    siguiente: el mensaje que los trae es el original, no el "1" con que el
+    cliente elige después."""
     detectados = codigos.detectar(text)
     sueltos = detectados.get(codigos.SUELTO)
     if sueltos:
@@ -462,23 +475,71 @@ def _pendiente(service_ids: list[str], text: str) -> dict:
         detectados = codigos.aplicar_clasificacion(
             detectados, nlu.clasificar_codigos(sueltos)
         )
-    if detectados:
-        context["codigos"] = detectados
-    return context
+    return detectados
 
 
 def _confirmar(
-    session: Session, conv: Conversation, services: list, text: str, prefijo: str = ""
+    session: Session, conv: Conversation, services: list, text: str, prefijo: str = "",
+    detectados: dict | None = None,
 ) -> list[str]:
     """Deja la conversación esperando el sí/no y arma el mensaje de
     confirmación. Fuente única: los códigos se detectan y clasifican una sola
     vez, y de ahí salen tanto la cotización que ve el cliente como lo que se
-    copia al folio cuando confirme."""
-    context = _pendiente([s.id for s in services], text)
+    copia al folio cuando confirme. `detectados` los trae ya resueltos de un
+    turno anterior (ver _confirmar_o_aclarar); None = detectarlos de `text`."""
+    context = _pendiente([s.id for s in services], text, detectados)
     _set_state(session, conv, "confirmar", context)
     if len(services) > 1:
         return [prefijo + _confirm_multi_message(services)]
     return [prefijo + _confirm_message(services[0], context.get("codigos"))]
+
+
+def _pendientes_por_aclarar(text: str, services: list) -> list:
+    """Trámites que el cliente pidió en el MISMO mensaje y quedaron sin
+    resolver ("quiero un acta y un rfc": el rfc se resuelve, el acta no dice
+    cuál de las cuatro). Se buscan sobre el texto SIN las menciones ya
+    resueltas: suggestions() matchea por palabra compartida, así que sin ese
+    recorte "acta de nacimiento" arrastraría a sus tres hermanas y el agente
+    preguntaría de más en un pedido que ya estaba completo."""
+    resueltos = {s.id for s in services}
+    resto = nlu.texto_sin_menciones(text, services)
+    return [s for s in nlu.suggestions(resto) if s.id not in resueltos]
+
+
+def _confirmar_o_aclarar(
+    session: Session, conv: Conversation, services: list, text: str, prefijo: str = ""
+) -> list[str]:
+    """Como _confirmar, pero si en el mismo mensaje quedó un trámite sin
+    identificar, primero pregunta cuál era — cargando los ya resueltos para
+    confirmarlos JUNTOS después. Antes ese pedazo se perdía en silencio: el
+    cliente pedía dos trámites, el agente entendía uno y levantaba un solo
+    folio sin avisar que había ignorado el otro.
+
+    OJO: esto se llama SOLO desde los handlers que acaban de deducir texto
+    libre, nunca desde _confirmar mismo. Si viviera dentro de _confirmar, el
+    turno en que el cliente elige del mini-menú volvería a detectar ambigüedad
+    y el agente preguntaría en círculos."""
+    pendientes = _pendientes_por_aclarar(text, services)
+    if not pendientes:
+        return _confirmar(session, conv, services, text, prefijo)
+    # Los códigos se detectan (y clasifican con Ollama) AQUÍ, en el turno que
+    # ya pagó la deducción: el turno de la elección solo trae "1" y ahí ya no
+    # habría de dónde sacarlos. Viajan en el contexto hasta el _confirmar real.
+    context: dict = {
+        "suggestion_ids": [s.id for s in pendientes],
+        "resueltos_ids": [s.id for s in services],
+    }
+    detectados = _detectar_codigos(text)
+    if detectados:
+        context["codigos"] = detectados
+    _set_state(session, conv, "eligiendo_sugerencia", context)
+    lines = "\n".join(f"{i}. {s.name}" for i, s in enumerate(pendientes, 1))
+    ya = ", ".join(f"'{s.name}'" for s in services)
+    return [
+        f"{prefijo}Voy anotando {ya} ✅\n\n"
+        "También me pediste otro trámite y tenemos varios parecidos 😊 "
+        f"¿Cuál necesitas? Responde con el número:\n{lines}"
+    ]
 
 
 def _handle_inicio(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -488,12 +549,12 @@ def _handle_inicio(session: Session, client: Client, conv: Conversation, text: s
     # curp"): se confirman juntos y se crea un ticket por cada uno.
     multi, service, category, options = _deduce_and_log(session, client.phone, text)
     if multi:
-        return _confirmar(session, conv, multi, text, "¡Hola! 😊 ")
+        return _confirmar_o_aclarar(session, conv, multi, text, "¡Hola! 😊 ")
 
     # Regla: si el primer mensaje ya trae el servicio ("necesito mi CURP, soy
     # Juan…"), no se listan servicios: saludo breve y directo a confirmar.
     if service is not None:
-        return _confirmar(session, conv, [service], text, "¡Hola! 😊 ")
+        return _confirmar_o_aclarar(session, conv, [service], text, "¡Hola! 😊 ")
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
@@ -544,9 +605,9 @@ def _handle_menu_categoria(session: Session, client: Client, conv: Conversation,
 
     multi, service, category, options = _deduce_and_log(session, client.phone, text)
     if multi:
-        return _confirmar(session, conv, multi, text)
+        return _confirmar_o_aclarar(session, conv, multi, text)
     if service is not None:
-        return _confirmar(session, conv, [service], text)
+        return _confirmar_o_aclarar(session, conv, [service], text)
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
@@ -592,9 +653,9 @@ def _handle_menu_servicio(session: Session, client: Client, conv: Conversation, 
     # principal ("mejor quiero una CURP" debe funcionar desde cualquier lado).
     multi, service, deduced_category, options = _deduce_and_log(session, client.phone, text)
     if multi:
-        return _confirmar(session, conv, multi, text)
+        return _confirmar_o_aclarar(session, conv, multi, text)
     if service is not None:
-        return _confirmar(session, conv, [service], text)
+        return _confirmar_o_aclarar(session, conv, [service], text)
     if deduced_category is not None and deduced_category.id != category_id:
         _set_state(session, conv, "menu_servicio", {"category_id": deduced_category.id, "page": 0})
         return [catalog.format_service_menu(deduced_category.id)]
@@ -1061,9 +1122,9 @@ def _try_service_request(session: Session, conv: Conversation, text: str) -> lis
     una categoría o parecidos por palabra clave. None si no pide nada."""
     multi, service, category, options = _deduce_and_log(session, conv.phone, text)
     if multi:
-        return _confirmar(session, conv, multi, text)
+        return _confirmar_o_aclarar(session, conv, multi, text)
     if service is not None:
-        return _confirmar(session, conv, [service], text)
+        return _confirmar_o_aclarar(session, conv, [service], text)
     if category is not None:
         _set_state(session, conv, "menu_servicio", {"category_id": category.id, "page": 0})
         return [catalog.format_service_menu(category.id)]
@@ -1136,12 +1197,34 @@ def _handle_sugerencia(session: Session, client: Client, conv: Conversation, tex
         s for s in (catalog.service_by_id(i) for i in context.get("suggestion_ids", []))
         if s is not None
     ]
+    # Trámites que ya se habían entendido en el mensaje original y esperan a
+    # que el cliente aclare el que faltaba (ver _confirmar_o_aclarar), con los
+    # códigos que venían en ESE mensaje y que este turno ya no trae.
+    resueltos = _unique_services(
+        s for s in (catalog.service_by_id(i) for i in context.get("resueltos_ids", []))
+        if s is not None
+    )
+    detectados = context.get("codigos")
     idx = _parse_int(normalized)
     picks = [idx] if idx is not None else _parse_indices(normalized)
     if picks and options:
         chosen = _unique_services(options[i - 1] for i in picks if 1 <= i <= len(options))
         if chosen:
-            return _confirmar(session, conv, chosen, text)
+            # Lo ELEGIDO va primero: es la respuesta directa a la pregunta que
+            # acabamos de hacer, y si el tope recorta, eso es lo último que
+            # debe caerse. Al revés, un cliente con el tope lleno de trámites
+            # ya resueltos veía cómo su elección desaparecía sin aviso — el
+            # mismo bug silencioso que este flujo vino a arreglar.
+            juntos = _unique_services(chosen + resueltos)[: nlu.MULTI_MAX_SERVICES]
+            return _confirmar(session, conv, juntos, text, detectados=detectados)
+    if resueltos:
+        # Piso duro: si el cliente no eligió, lo que YA se había entendido NO
+        # se tira. Sin esto el flujo nuevo sería PEOR que el viejo, donde ese
+        # trámite se confirmaba de inmediato.
+        # ponytail: aquí no se reintenta deducir su texto libre ("el de
+        # nacimiento"); si hace falta, deducir y sumar a `resueltos` antes de
+        # confirmar.
+        return _confirmar(session, conv, resueltos, text, detectados=detectados)
     # Cualquier otra cosa se procesa como texto libre normal.
     return _handle_menu_categoria(session, client, conv, text, normalized)
 

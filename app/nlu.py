@@ -285,6 +285,24 @@ MULTI_MAX_SERVICES = 5
 SUGGESTIONS_MAX = 6
 
 
+# Palabras funcionales que NO discriminan un trámite. El filtro hace falta
+# porque los NOMBRES del catálogo las contienen ("Amparo PARA liberar pensión",
+# "Alta PARA retiro por desempleo"): sin esto, "necesito mi acta PARA la
+# escuela" —una frase de lo más normal— sugiere trámites de pensión y el agente
+# pregunta por algo que el cliente nunca pidió. Solo entran preposiciones,
+# conjunciones, artículos y verbos de intención: nada que pueda ser, por sí
+# solo, el nombre de un servicio.
+PALABRAS_VACIAS = {
+    "para", "pero", "porque", "como", "sobre", "hasta", "entre", "desde",
+    "cuando", "donde", "mientras", "aunque", "segun", "sino",
+    "este", "esta", "esto", "esos", "esas", "unos", "unas", "ellos", "ellas",
+    "mismo", "misma", "otro", "otra", "otros", "otras",
+    "quiero", "quisiera", "necesito", "ocupo", "tengo", "puedo", "podria",
+    "saber", "favor", "porfa", "gracias", "hola", "buenas", "tardes", "dias",
+    "noches", "urgente", "ayuda", "ayudame",
+}
+
+
 def suggestions(text: str) -> list[Service]:
     """Servicios que comparten alguna palabra clave con el texto ("quiero un
     acta" → las cuatro actas). Es la red de seguridad cuando deduce() no
@@ -296,10 +314,36 @@ def suggestions(text: str) -> list[Service]:
         return []
     found: list[Service] = []
     for service, terms in _service_terms():
-        words = {w for term in terms for w in term.split() if len(w) >= 4}
+        words = {
+            w for term in terms for w in term.split()
+            if len(w) >= 4 and w not in PALABRAS_VACIAS
+        }
         if any(re.search(rf"\b{re.escape(w)}", normalized) for w in words):
             found.append(service)
     return found[:SUGGESTIONS_MAX]
+
+
+def texto_sin_menciones(text: str, services: list[Service]) -> str:
+    """El texto normalizado, sin las menciones que YA resolvieron esos servicios.
+
+    Sirve para preguntarle a lo que SOBRA del mensaje: en "quiero un acta y un
+    rfc" el rfc se resuelve solo, y quitarlo deja "quiero un acta y un", que sí
+    dispara suggestions() con las cuatro actas. Sin este recorte no se puede
+    distinguir un pedido incompleto de uno completo: suggestions() matchea por
+    palabra compartida, así que "quiero mi acta de nacimiento" —que no dejó
+    nada pendiente— también devolvería las otras tres actas.
+    """
+    ids = {s.id for s in services}
+    resto = _norm(text)
+    for service, terms in _service_terms():
+        if service.id not in ids:
+            continue
+        # De más largo a más corto: quitar "acta de nacimiento" antes que un
+        # sinónimo "acta" evita dejar suelto un "de nacimiento" que después
+        # vuelva a matchear a sus hermanas.
+        for term in sorted((t for t in terms if t), key=len, reverse=True):
+            resto = re.sub(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", " ", resto)
+    return resto
 
 
 def deduce_all(text: str) -> list[Service]:
