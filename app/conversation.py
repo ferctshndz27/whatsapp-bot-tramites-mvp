@@ -1210,7 +1210,12 @@ def _handle_sugerencia(session: Session, client: Client, conv: Conversation, tex
     if picks and options:
         chosen = _unique_services(options[i - 1] for i in picks if 1 <= i <= len(options))
         if chosen:
-            juntos = _unique_services(resueltos + chosen)[: nlu.MULTI_MAX_SERVICES]
+            # Lo ELEGIDO va primero: es la respuesta directa a la pregunta que
+            # acabamos de hacer, y si el tope recorta, eso es lo último que
+            # debe caerse. Al revés, un cliente con el tope lleno de trámites
+            # ya resueltos veía cómo su elección desaparecía sin aviso — el
+            # mismo bug silencioso que este flujo vino a arreglar.
+            juntos = _unique_services(chosen + resueltos)[: nlu.MULTI_MAX_SERVICES]
             return _confirmar(session, conv, juntos, text, detectados=detectados)
     if resueltos:
         # Piso duro: si el cliente no eligió, lo que YA se había entendido NO

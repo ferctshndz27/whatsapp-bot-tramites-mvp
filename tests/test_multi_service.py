@@ -256,3 +256,44 @@ def test_los_codigos_del_mensaje_original_sobreviven_a_la_pregunta(session):
     handle_incoming(session, PHONE, "1")
     contexto = json.loads(session.get(Conversation, PHONE).context_json)
     assert "GOMC800101HDFXXX01" in json.dumps(contexto.get("codigos", {}))
+
+
+def test_muletillas_no_disparan_la_pregunta(session):
+    # Los nombres del catálogo contienen palabras funcionales ("Amparo PARA
+    # liberar pensión"), así que sin filtrarlas cualquier frase con "para"
+    # —de lo más común— hacía que el agente preguntara por trámites de
+    # pensión que el cliente jamás pidió. El test negativo anterior usaba una
+    # frase sin muletillas y no lo cazaba.
+    _sin_requisitos("sb-acta-nacimiento", "sb-curp")
+    _hasta_pedir(session)
+
+    for frase in (
+        "necesito mi acta de nacimiento para tramite escolar",
+        "quiero mi curp para el banco por favor",
+    ):
+        replies = handle_incoming(session, PHONE, frase)
+        assert "¿Confirmas" in replies[0], f"{frase!r} disparó la pregunta de más"
+        assert session.get(Conversation, PHONE).state == "confirmar"
+        handle_incoming(session, PHONE, "no")
+
+
+def test_la_eleccion_del_cliente_nunca_se_recorta_por_el_tope(session):
+    # Si los ya resueltos llenan MULTI_MAX_SERVICES, lo que se recorta debe
+    # ser un resuelto viejo, jamás la respuesta que el cliente acaba de dar.
+    from app.conversation import _handle_sugerencia, _set_state
+    from app.models import Client
+
+    _hasta_pedir(session)
+    conv = session.get(Conversation, PHONE)
+    llenos = ["sb-acta-nacimiento", "sb-acta-matrimonio", "sb-acta-defuncion",
+              "sb-acta-divorcio", "sb-curp"]
+    _set_state(session, conv, "eligiendo_sugerencia", {
+        "suggestion_ids": ["sb-recibo-cfe", "sat-csf-original"],
+        "resueltos_ids": llenos,
+    })
+    client = session.get(Client, PHONE)
+
+    _handle_sugerencia(session, client, conv, "1 y 2", "1 y 2")
+
+    elegidos = json.loads(session.get(Conversation, PHONE).context_json)["pending_service_ids"]
+    assert "sb-recibo-cfe" in elegidos and "sat-csf-original" in elegidos

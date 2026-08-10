@@ -285,6 +285,24 @@ MULTI_MAX_SERVICES = 5
 SUGGESTIONS_MAX = 6
 
 
+# Palabras funcionales que NO discriminan un trámite. El filtro hace falta
+# porque los NOMBRES del catálogo las contienen ("Amparo PARA liberar pensión",
+# "Alta PARA retiro por desempleo"): sin esto, "necesito mi acta PARA la
+# escuela" —una frase de lo más normal— sugiere trámites de pensión y el agente
+# pregunta por algo que el cliente nunca pidió. Solo entran preposiciones,
+# conjunciones, artículos y verbos de intención: nada que pueda ser, por sí
+# solo, el nombre de un servicio.
+PALABRAS_VACIAS = {
+    "para", "pero", "porque", "como", "sobre", "hasta", "entre", "desde",
+    "cuando", "donde", "mientras", "aunque", "segun", "sino",
+    "este", "esta", "esto", "esos", "esas", "unos", "unas", "ellos", "ellas",
+    "mismo", "misma", "otro", "otra", "otros", "otras",
+    "quiero", "quisiera", "necesito", "ocupo", "tengo", "puedo", "podria",
+    "saber", "favor", "porfa", "gracias", "hola", "buenas", "tardes", "dias",
+    "noches", "urgente", "ayuda", "ayudame",
+}
+
+
 def suggestions(text: str) -> list[Service]:
     """Servicios que comparten alguna palabra clave con el texto ("quiero un
     acta" → las cuatro actas). Es la red de seguridad cuando deduce() no
@@ -296,7 +314,10 @@ def suggestions(text: str) -> list[Service]:
         return []
     found: list[Service] = []
     for service, terms in _service_terms():
-        words = {w for term in terms for w in term.split() if len(w) >= 4}
+        words = {
+            w for term in terms for w in term.split()
+            if len(w) >= 4 and w not in PALABRAS_VACIAS
+        }
         if any(re.search(rf"\b{re.escape(w)}", normalized) for w in words):
             found.append(service)
     return found[:SUGGESTIONS_MAX]
