@@ -302,6 +302,29 @@ def suggestions(text: str) -> list[Service]:
     return found[:SUGGESTIONS_MAX]
 
 
+def texto_sin_menciones(text: str, services: list[Service]) -> str:
+    """El texto normalizado, sin las menciones que YA resolvieron esos servicios.
+
+    Sirve para preguntarle a lo que SOBRA del mensaje: en "quiero un acta y un
+    rfc" el rfc se resuelve solo, y quitarlo deja "quiero un acta y un", que sí
+    dispara suggestions() con las cuatro actas. Sin este recorte no se puede
+    distinguir un pedido incompleto de uno completo: suggestions() matchea por
+    palabra compartida, así que "quiero mi acta de nacimiento" —que no dejó
+    nada pendiente— también devolvería las otras tres actas.
+    """
+    ids = {s.id for s in services}
+    resto = _norm(text)
+    for service, terms in _service_terms():
+        if service.id not in ids:
+            continue
+        # De más largo a más corto: quitar "acta de nacimiento" antes que un
+        # sinónimo "acta" evita dejar suelto un "de nacimiento" que después
+        # vuelva a matchear a sus hermanas.
+        for term in sorted((t for t in terms if t), key=len, reverse=True):
+            resto = re.sub(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", " ", resto)
+    return resto
+
+
 def deduce_all(text: str) -> list[Service]:
     """Todos los servicios mencionados textualmente en la frase ("necesito
     acta de nacimiento y mi curp"). Solo usa la capa literal (nombre o
