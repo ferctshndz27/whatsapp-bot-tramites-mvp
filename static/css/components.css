@@ -242,7 +242,21 @@
     .bubble img { max-width: 220px; border-radius: 10px; display: block; margin-top: .3rem; }
 
     /* ---- Chat ---- */
-    .chat { display: flex; flex-direction: column; gap: .5rem; }
+    /* max-height y no height: un folio de tres mensajes no deja una caja vacía
+       debajo. El panel scrollea solo, así el compositor no se va de pantalla. */
+    .chat {
+      display: flex; flex-direction: column; gap: .5rem;
+      max-height: 58vh; overflow-y: auto; overscroll-behavior: contain;
+      padding-right: .25rem;
+    }
+    .chat:focus-visible { outline: 2px solid var(--btn-border); outline-offset: 2px; }
+    .chat-scope {
+      display: flex; gap: .75rem; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; margin-bottom: .75rem; padding-bottom: .6rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .chat-scope .scope-label { margin: 0; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    .chat-scope .scope-note { color: var(--text-muted); font-size: .8rem; }
     .bubble {
       max-width: 70%; padding: .6rem .9rem; border-radius: 16px; line-height: 1.45;
       overflow-wrap: break-word;

@@ -36,7 +36,7 @@
     {% endif %}
     {% if ticket %}
     {# Lleva ?volver al chat: el botón de regreso del folio dirá «al chat». #}
-    <a class="btn-nav" href="/tickets/{{ ticket.id }}?volver={{ ('/inbox/' ~ phone) | urlencode }}">🎫 Ver solicitud #{{ ticket.id }}</a>
+    <a class="btn-nav" href="/tickets/{{ ticket.id }}?volver={{ ('/inbox/' ~ phone ~ '?folio=' ~ ticket.id) | urlencode }}">🎫 Ver solicitud #{{ ticket.id }}</a>
     {% if ticket.assigned_to %}<span class="badge asignada">atiende: {{ ticket.assigned_to }}</span>{% endif %}
     {% endif %}
     {% if client %}<a class="btn-nav" href="/clients/{{ phone }}?volver={{ ('/inbox/' ~ phone) | urlencode }}">👤 Ficha del cliente</a>{% endif %}
@@ -53,7 +53,28 @@
 </div>
 
 <div class="card">
-  <div class="chat">
+  {# Qué tramo se está viendo. Sin este renglón, acotar al folio se lee como
+     mensajes borrados: el asesor tiene que saber qué queda fuera y cómo verlo. #}
+  <div class="chat-scope">
+    <p class="scope-label">
+      {% if ver_todo %}
+      <span class="badge cerrado">Conversación completa</span>
+      {% else %}
+      <span class="badge asignada">
+        Conversación {{ 'del folio' if folios | length < 2 else 'de los folios' }}
+        {% for f in folios %}#{{ f.id }}{{ ', ' if not loop.last }}{% endfor %}
+      </span>
+      {% endif %}
+      <span class="scope-note">{{ messages | length }} mensaje{{ '' if messages | length == 1 else 's' }}</span>
+    </p>
+    {% if ver_todo and ticket %}
+    <a class="btn-sm" href="/inbox/{{ phone }}?folio={{ ticket.id }}{% if volver %}&volver={{ volver | urlencode }}{% endif %}">Ver solo el folio #{{ ticket.id }}</a>
+    {% elif ocultos %}
+    <a class="btn-sm" href="/inbox/{{ phone }}?todo=1{% if volver %}&volver={{ volver | urlencode }}{% endif %}">Ver conversación completa ({{ ocultos }} más)</a>
+    {% endif %}
+  </div>
+
+  <div class="chat" id="chat" tabindex="0" role="log" aria-label="Mensajes de la conversación">
     {% for m in messages %}
     <div class="bubble {{ m.direction.value }}">
       {{ m.body }}
@@ -77,6 +98,16 @@
     </div>
     {% endfor %}
   </div>
+  {# Como WhatsApp: al abrir se ve lo último, no el saludo de hace tres semanas.
+     Fuera del `if window_open` porque un chat con la ventana cerrada también se
+     lee. `scrollTop` directo y no `scrollIntoView`: nada de animación que
+     pelearse con prefers-reduced-motion, y el resto de la página no se mueve. #}
+  <script>
+    (function () {
+      var chat = document.getElementById('chat');
+      if (chat) chat.scrollTop = chat.scrollHeight;
+    })();
+  </script>
 
   <div class="composer">
     {% if error == 'window' %}

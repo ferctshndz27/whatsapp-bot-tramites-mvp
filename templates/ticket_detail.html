@@ -37,7 +37,9 @@
     <strong>Precio:</strong> {{ ticket.price_info }}<br>
     <strong>Asignado a:</strong> {{ ticket.assigned_to or '— sin asignar' }}<br>
     <strong>Conversación:</strong>
-    <a class="btn-nav" href="/inbox/{{ ticket.phone }}">💬 Abrir chat</a>
+    {# Con ?folio: abrir el chat desde el folio #30 debe mostrar el #30, no el
+       último del cliente. #}
+    <a class="btn-nav" href="/inbox/{{ ticket.phone }}?folio={{ ticket.id }}">💬 Abrir chat</a>
     <a class="btn-nav" href="/clients/{{ ticket.phone }}?volver={{ ('/tickets/' ~ ticket.id) | urlencode }}">👤 Ficha del cliente</a>
   </p>
 
