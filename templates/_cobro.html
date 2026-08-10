@@ -7,10 +7,13 @@
 
 {% if modo == 'lectura' %}
   {% if cobros or cobros_vivos_del_telefono %}
-  <h2 style="margin-top:1.5rem;">Cobro</h2>
+  {# El panel se abre DENTRO de la guardia: sin cobros no debe quedar una
+     tarjeta vacía flotando en el detalle del folio. #}
+  <div class="card">
+  <h2>Cobro</h2>
 
   {% for c in cobros %}
-  <div class="card" style="margin-bottom:.75rem;">
+  <div class="tile">
     <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
       {% if c.estado == 'pagado' %}
         <span class="badge cerrado">✓ Pagado</span>
@@ -121,7 +124,9 @@
   {% endfor %}
 
   {% for c in cobros_vivos_del_telefono %}
-  <div class="card" style="margin-bottom:.75rem; border-color:#92590a;">
+  {# Borde ámbar: aquí hay dinero en la calle. Antes era .card, que no define
+     `border`, así que este border-color no pintaba nada. #}
+  <div class="tile" style="border-color:#92590a;">
     <span class="badge tomado">⏳ Cobro vivo en otro folio</span>
     <strong style="margin-left:.5rem;">{{ formato_monto(c.monto_centavos, c.moneda) }}</strong>
     <span style="color:var(--text-muted);">{{ c.concepto }}</span>
@@ -132,11 +137,13 @@
     </p>
   </div>
   {% endfor %}
+  </div>
   {% endif %}
 
 {% elif modo == 'formulario' %}
   {% if ticket.status.value != 'cerrado' %}
-  <h2 style="margin-top:1.5rem;">Generar cobro</h2>
+  <div class="card">
+  <h2>Generar cobro</h2>
   {% if not stripe_configurado %}
   <p><span class="badge caducada">Stripe no está configurado — no se puede generar ningún cobro.</span></p>
   {% else %}
@@ -197,5 +204,6 @@
     <button type="submit" class="btn-sm" style="margin-top:.75rem;">Generar y enviar cobro</button>
   </form>
   {% endif %}
+  </div>
   {% endif %}
 {% endif %}
