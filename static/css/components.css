@@ -16,6 +16,16 @@
       background: var(--card-bg); border-radius: var(--radius-lg); box-shadow: var(--shadow);
       padding: 1.3rem 1.5rem; margin-bottom: 1.4rem;
     }
+    /* El primer h2 de un panel titula el panel: el margen de arriba sobra. */
+    .card > h2:first-child { margin-top: 0; }
+    /* Segundo nivel: lo que vive DENTRO de una .card (cada cobro, cada ítem de
+       una lista). Borde en vez de sombra — sombra sobre sombra se lee como dos
+       paneles del mismo rango y se pierde la jerarquía. */
+    .tile {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1rem 1.15rem; margin-bottom: .75rem;
+    }
+    .tile:last-child { margin-bottom: 0; }
 
     /* ---- Filter pills ---- */
     .pills { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
