@@ -360,6 +360,35 @@ def test_flujo_con_rag_apagado_es_el_de_siempre(monkeypatch):
     assert "rag" not in _capas_registradas()
 
 
+def test_answer_usa_ollama_cuando_esta_configurado(monkeypatch):
+    # Sin API de Anthropic: la capa informativa corre sobre el Ollama de labs.
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    llamadas = []
+
+    def _ollama_fake(messages, **kwargs):
+        llamadas.append(messages)
+        return {"content": "Sí, atendemos sábados de 9 a 13 😊"}
+
+    monkeypatch.setattr(nlu, "ollama_chat", _ollama_fake)
+
+    assert rag.answer("¿atienden sábados?") == "Sí, atendemos sábados de 9 a 13 😊"
+    # System con el corpus + pregunta del cliente, nada más.
+    assert llamadas[0][0]["role"] == "system" and llamadas[0][1]["role"] == "user"
+
+
+def test_con_ollama_la_validacion_sigue_mandando(monkeypatch):
+    # El guardrail no depende del modelo: una respuesta con dinero se tumba
+    # igual venga de Claude o de qwen3.
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    monkeypatch.setattr(nlu, "ollama_chat", lambda messages, **kw: {"content": "Cuesta $850"})
+
+    assert rag.answer_explained("¿cuánto cuesta el acta?") == (None, "dinero")
+
+
 def test_pregunta_libre_con_rag_prendido_se_responde(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")  # cascada sin LLM
     monkeypatch.setattr(settings, "rag_enabled", True)

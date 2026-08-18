@@ -1,5 +1,10 @@
 """Nodo agéntico acotado: el LLM resuelve con HERRAMIENTAS de solo lectura.
 
+Backend: el Ollama de labs (qwen3, tool calling nativo) si OLLAMA_URL está
+configurada — el negocio no paga API; Claude solo como alternativa si hay
+ANTHROPIC_API_KEY. Permisos, herramientas y validación son los mismos con
+cualquier modelo.
+
 Apagado por defecto (AGENT_TOOLS_ENABLED=1 lo enciende). Corre como ÚLTIMO
 recurso de _not_understood — cuando la cascada barata, la capa informativa y
 el mini-menú de parecidos ya no pudieron — para pedidos compuestos o fuera de
@@ -35,6 +40,7 @@ Manejo de excepciones con el patrón de toda la cadena NLU: cualquier falla
 de siempre responde. Este nodo jamás deja al cliente sin respuesta.
 """
 
+import json
 import logging
 import re
 
@@ -130,11 +136,31 @@ def tools_expuestos() -> list[dict]:
     return [t for t in _TOOLS if PERMISOS.get(t["name"]) == "allow"]
 
 
+def _tools_ollama() -> list[dict]:
+    """Las mismas herramientas en el formato de /api/chat de Ollama (estilo
+    OpenAI). Derivadas de _TOOLS vía tools_expuestos: una sola definición."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in tools_expuestos()
+    ]
+
+
 def responder(session: Session, phone: str, text: str) -> str | None:
     """Respuesta del nodo agéntico validada, o None (= flujo normal).
 
     Nunca lanza: red, modelo, herramienta o validación fallando son un None."""
-    if not settings.agent_tools_enabled or not settings.anthropic_api_key:
+    # Backend: el Ollama de labs si está configurado (el negocio no paga
+    # API); Claude solo como alternativa si hay ANTHROPIC_API_KEY.
+    if not settings.agent_tools_enabled or not (
+        settings.ollama_url or settings.anthropic_api_key
+    ):
         return None
     try:
         # Liberar el lock de escritura ANTES del bucle: la sesión del webhook
@@ -144,13 +170,66 @@ def responder(session: Session, phone: str, text: str) -> str | None:
         # turno) — cualquier otro escritor (panel, cron, webhooks de estatus)
         # esperaría el busy_timeout y tronaría con "database is locked".
         session.commit()
-        return _loop(session, phone, text.strip()[: nlu.MAX_INPUT_CHARS])
+        recortado = text.strip()[: nlu.MAX_INPUT_CHARS]
+        if settings.ollama_url:
+            return _loop_ollama(session, phone, recortado)
+        return _loop_anthropic(session, phone, recortado)
     except Exception as exc:
         logger.warning("Nodo agéntico falló, sigue el flujo normal: %s", exc)
         return None
 
 
-def _loop(session: Session, phone: str, text: str) -> str | None:
+def _loop_ollama(session: Session, phone: str, text: str) -> str | None:
+    """Bucle de tool calling contra el Ollama de labs (qwen3 soporta tools).
+    Mismos permisos, mismas herramientas y misma validación que el bucle de
+    Claude — solo cambia el protocolo del mensaje."""
+    system = _SYSTEM_TEMPLATE.format(listing=nlu.catalog_listing(), no_se=rag.NO_SE)
+    messages: list[dict] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": text},
+    ]
+    salidas_tools: list[str] = []
+    salidas_cotizar: list[str] = []
+
+    for _ in range(MAX_TURNOS):
+        message = nlu.ollama_chat(messages, tools=_tools_ollama(), num_predict=400)
+        calls = message.get("tool_calls") or []
+        if not calls:
+            respuesta = (message.get("content") or "").strip()
+            return _respuesta_valida(respuesta, salidas_tools, salidas_cotizar)
+
+        messages.append(message)
+        for call in calls:
+            funcion = call.get("function") or {}
+            args = funcion.get("arguments") or {}
+            if isinstance(args, str):
+                # Algunas versiones mandan los argumentos como JSON en texto.
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = {}
+            nombre = funcion.get("name") or ""
+            contenido, es_error = _ejecutar(session, phone, nombre, args)
+            if not es_error:
+                salidas_tools.append(contenido)
+                if nombre == "cotizar_servicio":
+                    salidas_cotizar.append(contenido)
+            messages.append(
+                {
+                    "role": "tool",
+                    # tool_name asocia resultado↔llamada cuando hay varias
+                    # tools en un turno; sin él, la plantilla solo asocia por
+                    # orden (y otras plantillas lo renderizan explícito).
+                    "tool_name": nombre,
+                    "content": f"ERROR: {contenido}" if es_error else contenido,
+                }
+            )
+
+    # Se agotó el tope de turnos sin respuesta final: flujo normal.
+    return None
+
+
+def _loop_anthropic(session: Session, phone: str, text: str) -> str | None:
     system = _SYSTEM_TEMPLATE.format(listing=nlu.catalog_listing(), no_se=rag.NO_SE)
     messages: list[dict] = [{"role": "user", "content": text}]
     salidas_tools: list[str] = []

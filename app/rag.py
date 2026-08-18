@@ -225,24 +225,43 @@ def answer_explained(text: str) -> tuple[str | None, str | None]:
     tumbó una respuesta candidata (GUARDRAIL_MOTIVOS); apagado, sin respuesta
     del modelo o error de red es (None, None).
 
+    Backend: el Ollama de labs si OLLAMA_URL está configurada (el negocio no
+    paga API); Claude solo como alternativa si hay ANTHROPIC_API_KEY. La
+    validación de la respuesta es la misma con cualquier modelo.
+
     Nunca lanza: cualquier falla (red, modelo, validación) es un None y el
     cliente recibe el aviso de siempre con su escalada a humano."""
-    if not settings.rag_enabled or not settings.anthropic_api_key:
+    if not settings.rag_enabled or not (settings.ollama_url or settings.anthropic_api_key):
         return None, None
     try:
-        corpus = _retriever().contexto(text.strip()[:MAX_INPUT_CHARS])
+        pregunta = text.strip()[:MAX_INPUT_CHARS]
+        corpus = _retriever().contexto(pregunta)
         system = _SYSTEM_TEMPLATE.format(no_se=NO_SE, corpus=corpus)
-        response = nlu._get_client().messages.create(
-            model=settings.nlu_model,
-            max_tokens=150,
-            # Mismo patrón que nlu._deduce_llm: prefijo estable cacheado (con
-            # CorpusCompleto el system no cambia entre preguntas).
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": text.strip()[:MAX_INPUT_CHARS]}],
-        )
-        if response.stop_reason == "refusal":
-            return None, None
-        respuesta = next((b.text for b in response.content if b.type == "text"), "").strip()
+        if settings.ollama_url:
+            message = nlu.ollama_chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": pregunta},
+                ],
+                num_predict=150,
+            )
+            respuesta = (message.get("content") or "").strip()
+        else:
+            response = nlu._get_client().messages.create(
+                model=settings.nlu_model,
+                max_tokens=150,
+                # Mismo patrón que nlu._deduce_llm: prefijo estable cacheado
+                # (con CorpusCompleto el system no cambia entre preguntas).
+                system=[
+                    {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+                ],
+                messages=[{"role": "user", "content": pregunta}],
+            )
+            if response.stop_reason == "refusal":
+                return None, None
+            respuesta = next(
+                (b.text for b in response.content if b.type == "text"), ""
+            ).strip()
         segura, motivo = _evaluar_respuesta(respuesta)
         return segura, motivo if motivo in GUARDRAIL_MOTIVOS else None
     except Exception as exc:
