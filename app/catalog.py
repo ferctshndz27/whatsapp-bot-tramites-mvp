@@ -86,6 +86,14 @@ def parse_requirements(text: str) -> list[str]:
     return items[:MAX_REQUISITOS]
 
 
+def requisitos_texto(service) -> str:
+    """Requisitos en una línea para mostrar ("INE, CURP" o "no especificados").
+    Fuente única del formato: lo usan el corpus de la capa informativa
+    (rag._docs) y el tool_result de cotizar_servicio (agent_tools)."""
+    items = parse_requirements(service.requirements)
+    return ", ".join(items) if items else "no especificados"
+
+
 def requisitos_iniciales(requirements: str) -> str | None:
     """JSON para congelar en el ticket al darlo de alta; None si el servicio no
     tiene requisitos documentados (entonces el agente no pregunta nada).

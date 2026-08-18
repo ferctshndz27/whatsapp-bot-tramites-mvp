@@ -34,6 +34,10 @@ class Settings:
         # usando SOLO el corpus público (catálogo + INFO_DOCS_PATH). Apagada por
         # defecto; requiere ANTHROPIC_API_KEY. Ver app/rag.py.
         self.rag_enabled = os.environ.get("RAG_ENABLED", "0") == "1"
+        # Nodo agéntico con herramientas de SOLO LECTURA (cotizar, folios).
+        # Apagado por defecto; requiere ANTHROPIC_API_KEY. Último recurso de
+        # _not_understood — nunca ruta principal. Ver app/agent_tools.py.
+        self.agent_tools_enabled = os.environ.get("AGENT_TOOLS_ENABLED", "0") == "1"
         # Documento curado OPCIONAL con información pública del negocio
         # (horarios, tiempos de entrega, políticas). Regla dura: solo texto que
         # cualquier cliente puede saber — jamás datos de clientes ni internos.

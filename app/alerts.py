@@ -20,7 +20,7 @@ from datetime import timedelta, timezone
 from sqlmodel import Session, func, select
 
 from app.db import get_session
-from app.models import Alert, NluEvent, SynonymProposal, utcnow
+from app.models import CAPAS_EXTRA, Alert, NluEvent, SynonymProposal, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,11 @@ def _no_entendidos_stats(session: Session, days: int = NO_ENTENDIDOS_DAYS) -> tu
         .select_from(NluEvent)
         .where(NluEvent.created_at >= cutoff)
         .where(NluEvent.habilitado == True)  # noqa: E712
-        # La fila "rag" es EXTRA del mismo mensaje (conversation._try_informative):
-        # contarla diluiría el % y podría silenciar la alerta de no entendidos.
-        .where(NluEvent.capa != "rag")
+        # Las filas de CAPAS_EXTRA son EXTRA del mismo mensaje (rag y
+        # rag_descartado las deja conversation._try_informative; tools,
+        # conversation._try_agent_tools): contarlas diluiría el % y podría
+        # silenciar la alerta.
+        .where(NluEvent.capa.not_in(CAPAS_EXTRA))
     ).one()
     if not total:
         return 0, 0.0
