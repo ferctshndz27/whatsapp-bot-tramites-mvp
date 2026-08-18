@@ -363,7 +363,7 @@ def test_flujo_con_rag_apagado_es_el_de_siempre(monkeypatch):
 def test_pregunta_libre_con_rag_prendido_se_responde(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")  # cascada sin LLM
     monkeypatch.setattr(settings, "rag_enabled", True)
-    monkeypatch.setattr(rag, "answer", lambda text: "Sí, sábados de 9 a 13 😊")
+    monkeypatch.setattr(rag, "answer_explained", lambda text: ("Sí, sábados de 9 a 13 😊", None))
     _sembrar()
 
     respuestas = _conversar("¿atienden los sábados?")
@@ -381,7 +381,9 @@ def test_pregunta_con_palabra_del_catalogo_prefiere_la_respuesta_al_menu(monkeyp
     # respuesta; sin ella, el menú de siempre (prueba siguiente).
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "rag_enabled", True)
-    monkeypatch.setattr(rag, "answer", lambda text: "Entregamos en 3 a 5 días hábiles 😊")
+    monkeypatch.setattr(
+        rag, "answer_explained", lambda text: ("Entregamos en 3 a 5 días hábiles 😊", None)
+    )
     _sembrar()
 
     respuestas = _conversar("¿cuánto tarda el acta?")
@@ -392,7 +394,9 @@ def test_pregunta_con_palabra_del_catalogo_prefiere_la_respuesta_al_menu(monkeyp
 def test_sin_respuesta_con_evidencia_el_menu_de_sugerencias_sigue_vivo(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "rag_enabled", True)
-    monkeypatch.setattr(rag, "answer", lambda text: None)  # NO_SE / falla / validación
+    monkeypatch.setattr(
+        rag, "answer_explained", lambda text: (None, None)
+    )  # NO_SE / falla / apagada
     _sembrar()
 
     respuestas = _conversar("¿cuánto tarda el acta?")
@@ -426,7 +430,7 @@ def test_informes_genericos_siguen_en_su_embudo_calido(monkeypatch):
     # el embudo de informes gana y la capa rag NI SE INTENTA.
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "rag_enabled", True)
-    monkeypatch.setattr(rag, "answer", lambda text: "no debería llamarse")
+    monkeypatch.setattr(rag, "answer_explained", lambda text: ("no debería llamarse", None))
     _sembrar()
 
     respuestas = _conversar("¿cuánto cuesta?")

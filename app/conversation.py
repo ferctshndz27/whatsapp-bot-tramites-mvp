@@ -5,7 +5,7 @@ from datetime import timedelta, timezone
 
 from sqlmodel import Session, select
 
-from app import codigos, nlu, rag
+from app import agent_tools, codigos, nlu, rag
 from app.catalog import (
     PAGE_SIZE,
     catalog,
@@ -16,6 +16,7 @@ from app.catalog import (
 from app.config import settings
 from app.dinero import formato_monto, parse_monto
 from app.models import (
+    CAPAS_EXTRA,
     PROVIDER_META,
     Client,
     ClientNote,
@@ -1110,6 +1111,10 @@ def _mark_nlu_ticket(session: Session, phone: str) -> None:
         select(NluEvent)
         .where(NluEvent.phone == phone)
         .where(NluEvent.termino_en_ticket == False)  # noqa: E712
+        # Las filas extra (rag/rag_descartado/tools) no cuentan como mensaje:
+        # marcar la conversión ahí la volvería invisible para el KPI de
+        # tickets, que solo suma sobre filas de mensaje real.
+        .where(NluEvent.capa.not_in(CAPAS_EXTRA))
         .order_by(NluEvent.id.desc())
     ).first()
     if event is not None:
@@ -1173,6 +1178,12 @@ def _not_understood(
         return [respuesta_rag]
     if options:
         return _suggest_reply(session, conv, options, text)
+    # Último recurso antes de reintentar/escalar: el nodo agéntico con
+    # herramientas de solo lectura (AGENT_TOOLS_ENABLED). Atiende pedidos
+    # compuestos o fuera de guion que nada de lo anterior resolvió.
+    respuesta_tools = _try_agent_tools(session, client.phone, text)
+    if respuesta_tools is not None:
+        return [respuesta_tools]
     return _bump_or_escalate(session, client, conv, text, NOT_RECOGNIZED_HINT)
 
 
@@ -1181,13 +1192,28 @@ def _try_informative(session: Session, phone: str, text: str) -> str | None:
     capa="rag" ADEMÁS de la que ya dejó _deduce_and_log ("ninguna" o
     "sugerencia"): el minado de sinónimos sigue viendo lo mismo, y las
     métricas por mensaje (alerts._no_entendidos_stats, nlu_metrics) EXCLUYEN
-    esta fila extra para no inflar su denominador."""
+    las filas extra (models.CAPAS_EXTRA) para no inflar su denominador."""
     if not settings.rag_enabled or not rag.es_pregunta_informativa(text):
         return None
-    respuesta = rag.answer(text)
+    respuesta, motivo = rag.answer_explained(text)
     if respuesta is None:
+        if motivo in rag.GUARDRAIL_MOTIVOS:
+            # El guardrail tumbó una respuesta candidata: fila propia con el
+            # motivo (en service_id) para que el disparo se vea en el panel —
+            # antes un descarte en producción era invisible.
+            _log_nlu(session, phone, text, "rag_descartado", motivo)
         return None
     _log_nlu(session, phone, text, "rag")
+    return respuesta
+
+
+def _try_agent_tools(session: Session, phone: str, text: str) -> str | None:
+    """Nodo agéntico (app/agent_tools.py) con su bitácora: fila capa="tools"
+    EXTRA del mismo mensaje, excluida de los denominadores igual que "rag"."""
+    respuesta = agent_tools.responder(session, phone, text)
+    if respuesta is None:
+        return None
+    _log_nlu(session, phone, text, "tools")
     return respuesta
 
 

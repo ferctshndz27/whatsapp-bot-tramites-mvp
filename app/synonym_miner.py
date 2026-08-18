@@ -26,7 +26,7 @@ from app.catalog import catalog
 from app.config import settings
 from app.conversation import NOT_RECOGNIZED_MARKER
 from app.db import get_session
-from app.models import Direction, Message, NluEvent, SynonymProposal, utcnow
+from app.models import CAPAS_EXTRA, Direction, Message, NluEvent, SynonymProposal, utcnow
 from app.system import _admin_or_redirect, _csv_response
 
 logger = logging.getLogger(__name__)
@@ -264,7 +264,7 @@ CAPA_COLORS = {
     "llm": "#8b5cf6", "ollama": "#84cc16", "nombre": "#2563eb", "sinonimo": "#10b981",
     "keyword": "#22d3ee", "fuzzy": "#f59e0b", "multi": "#ec4899",
     "categoria": "#14b8a6", "sugerencia": "#64748b", "ninguna": "#f43f5e",
-    "rag": "#a3e635",
+    "rag": "#a3e635", "rag_descartado": "#fb923c", "tools": "#38bdf8",
 }
 
 
@@ -308,10 +308,11 @@ def nlu_metrics(days: int = METRICS_DAYS) -> dict:
         if bucket is None:
             continue
         capa_totals[e.capa] = capa_totals.get(e.capa, 0) + 1
-        if e.capa == "rag":
-            # Fila EXTRA del mismo mensaje (ver conversation._try_informative):
-            # se mide en la dona de capas, pero contarla como mensaje inflaría
-            # el denominador y taparía el % real de no entendidos.
+        if e.capa in CAPAS_EXTRA:
+            # Fila EXTRA del mismo mensaje (rag, rag_descartado, tools — ver
+            # conversation._try_informative): se mide en la dona de capas, pero
+            # contarla como mensaje inflaría el denominador y taparía el %
+            # real de no entendidos.
             continue
         total += 1
         ok = e.capa != "ninguna"

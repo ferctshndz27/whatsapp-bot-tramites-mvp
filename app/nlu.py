@@ -207,12 +207,17 @@ def _get_client():
     return _client
 
 
-def _catalog_system_prompt() -> str:
-    listing = "\n".join(
+def catalog_listing() -> str:
+    """Listado "- id: nombre — categoría" del catálogo. Fuente única: lo usan
+    el prompt clasificador de aquí y el system del nodo agéntico."""
+    return "\n".join(
         f"- {s.id}: {s.name} — {c.name}" for c in catalog.categories for s in c.services
     )
+
+
+def _catalog_system_prompt() -> str:
     categories = "\n".join(f"- {c.id}: {c.name}" for c in catalog.categories)
-    return _SYSTEM_TEMPLATE.format(listing=listing, categories=categories)
+    return _SYSTEM_TEMPLATE.format(listing=catalog_listing(), categories=categories)
 
 
 def _validated(data: dict) -> tuple[Service | None, Category | None]:

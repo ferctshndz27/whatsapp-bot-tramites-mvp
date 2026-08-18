@@ -37,7 +37,7 @@ from typing import Protocol
 import httpx
 
 from app import nlu
-from app.catalog import catalog, parse_requirements
+from app.catalog import catalog, requisitos_texto
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -119,10 +119,8 @@ def _docs() -> list[str]:
     docs = []
     for c in catalog.categories:
         for s in c.services:
-            items = parse_requirements(s.requirements)
-            requisitos = ", ".join(items) if items else "no especificados"
             # SIN price_info a propósito: cotizar es del flujo determinista.
-            docs.append(f"«{s.name}» ({c.name}). Requisitos: {requisitos}.")
+            docs.append(f"«{s.name}» ({c.name}). Requisitos: {requisitos_texto(s)}.")
     if settings.info_docs_path:
         try:
             with open(settings.info_docs_path, encoding="utf-8") as f:
@@ -209,13 +207,28 @@ def _retriever() -> Retriever:
 # ---------------------------------------------------------------------------
 
 
+# Motivos de descarte que cuentan como disparo de guardrail: hubo una
+# respuesta candidata y la validación la tumbó. Un NO_SE no está aquí — el
+# modelo declinó, no fue atajado. conversation._try_informative los registra
+# en nluevent (capa "rag_descartado") para que dejen de ser invisibles.
+GUARDRAIL_MOTIVOS = frozenset({"larga", "pii", "dinero"})
+
+
 def answer(text: str) -> str | None:
-    """Respuesta informativa validada, o None (= que siga el flujo normal).
+    """Respuesta informativa validada, o None (= que siga el flujo normal)."""
+    respuesta, _ = answer_explained(text)
+    return respuesta
+
+
+def answer_explained(text: str) -> tuple[str | None, str | None]:
+    """(respuesta, motivo_descarte). El motivo solo viene cuando un guardrail
+    tumbó una respuesta candidata (GUARDRAIL_MOTIVOS); apagado, sin respuesta
+    del modelo o error de red es (None, None).
 
     Nunca lanza: cualquier falla (red, modelo, validación) es un None y el
     cliente recibe el aviso de siempre con su escalada a humano."""
     if not settings.rag_enabled or not settings.anthropic_api_key:
-        return None
+        return None, None
     try:
         corpus = _retriever().contexto(text.strip()[:MAX_INPUT_CHARS])
         system = _SYSTEM_TEMPLATE.format(no_se=NO_SE, corpus=corpus)
@@ -228,27 +241,35 @@ def answer(text: str) -> str | None:
             messages=[{"role": "user", "content": text.strip()[:MAX_INPUT_CHARS]}],
         )
         if response.stop_reason == "refusal":
-            return None
+            return None, None
         respuesta = next((b.text for b in response.content if b.type == "text"), "").strip()
-        return _respuesta_segura(respuesta)
+        segura, motivo = _evaluar_respuesta(respuesta)
+        return segura, motivo if motivo in GUARDRAIL_MOTIVOS else None
     except Exception as exc:
         logger.warning("Capa informativa falló, sigue el flujo normal: %s", exc)
-        return None
+        return None, None
 
 
 def _respuesta_segura(respuesta: str) -> str | None:
     """Valida la respuesta EN CÓDIGO. El prompt pide; aquí se exige."""
+    segura, _ = _evaluar_respuesta(respuesta)
+    return segura
+
+
+def _evaluar_respuesta(respuesta: str) -> tuple[str | None, str | None]:
+    """(respuesta validada, motivo del descarte). El motivo distingue un
+    guardrail que disparó ("larga"/"pii"/"dinero") de un simple "no sé"."""
     if not respuesta or NO_SE in respuesta:
-        return None
+        return None, "sin_respuesta"
     if len(respuesta.split()) > MAX_RESPONSE_WORDS:
-        return None
+        return None, "larga"
     # Un CURP o un teléfono en la respuesta = fuga en potencia. El corpus no
     # trae ninguno, así que cualquiera que aparezca fue inventado o inducido.
     if _CURP_RE.search(respuesta) or _TELEFONO_RE.search(_SEPARADORES_RE.sub("", respuesta)):
-        return None
+        return None, "pii"
     # Regla de oro: nunca inventar ni cruzar precios. Esta capa no cotiza —
     # cualquier mención de dinero se descarta y el cliente cae al flujo
     # determinista, que cita el price_info textual del servicio correcto.
     if _DINERO_RE.search(respuesta):
-        return None
-    return respuesta
+        return None, "dinero"
+    return respuesta, None

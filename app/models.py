@@ -329,6 +329,13 @@ class Feedback(SQLModel, table=True):
     habilitado: bool = True
 
 
+# Capas de nluevent que son fila EXTRA de un mensaje ya contado por
+# _deduce_and_log ("ninguna"/"sugerencia"): se miden en la dona del panel,
+# pero NO entran al denominador de mensajes (alerts._no_entendidos_stats,
+# synonym_miner.nlu_metrics) — contarlas diluiría el % de no entendidos.
+CAPAS_EXTRA = frozenset({"rag", "rag_descartado", "tools"})
+
+
 class NluEvent(SQLModel, table=True):
     """Bitácora de deducción del agente: qué entendió (o no) de cada texto
     libre, con qué capa, y si terminó en solicitud. Alimenta las métricas
@@ -338,10 +345,14 @@ class NluEvent(SQLModel, table=True):
     phone: str = Field(index=True)
     text: str  # truncado a 200 caracteres
     # ollama | llm | nombre | sinonimo | keyword | fuzzy | categoria | multi |
-    # sugerencia | ninguna | rag (capa informativa de app/rag.py; convive con
-    # la fila "ninguna"/"sugerencia" del mismo mensaje — ver _try_informative)
+    # sugerencia | ninguna | rag (capa informativa de app/rag.py) |
+    # rag_descartado (guardrail de la capa informativa tumbó la respuesta;
+    # el motivo viaja en service_id) | tools (nodo agéntico de
+    # app/agent_tools.py). Las tres últimas conviven con la fila
+    # "ninguna"/"sugerencia" del mismo mensaje — ver CAPAS_EXTRA.
     capa: str = Field(index=True)
-    # Uno o varios service_id separados por coma (multi/sugerencia).
+    # Uno o varios service_id separados por coma (multi/sugerencia). En la
+    # capa "rag_descartado" lleva el motivo del guardrail (larga|pii|dinero).
     service_id: str | None = None
     confianza: float | None = None  # solo capa fuzzy (score 0-1)
     termino_en_ticket: bool = False
