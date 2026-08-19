@@ -210,9 +210,13 @@ def _numerar(body: str, opciones: list[tuple[str, str]]) -> str:
 
 
 def send_list(to_phone: str, body: str, button: str, rows: list[tuple[str, str]]) -> str | None:
-    # ponytail: degradado a texto numerado. Las listas nativas de Twilio exigen
+    # ponytail: degradado a texto plano. Las listas nativas de Twilio exigen
     # una plantilla de la Content API (twilio/list-picker); llegan en la Fase 4.
-    return send_text(to_phone, _numerar(body, rows))
+    # SIN _numerar: el body de todo menú ya trae sus opciones numeradas
+    # (conversation.presentation solo arma listas de cuerpos con MENU_MARKER),
+    # y re-anexar las filas duplicaba el menú completo en el chat. Los botones
+    # (send_buttons) sí la necesitan: su body no lista opciones.
+    return send_text(to_phone, body)
 
 
 def send_buttons(
