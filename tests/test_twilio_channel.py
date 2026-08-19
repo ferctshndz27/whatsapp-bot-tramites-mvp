@@ -392,8 +392,29 @@ def test_escribir_al_otro_numero_mueve_el_canal_sin_reiniciar_el_tramite():
 # ---------------------------------------------------------------------------
 
 
-def test_una_lista_se_degrada_a_texto_numerado_con_los_mismos_ids():
-    # REGLA: Twilio no acepta listas inline. El texto degradado tiene que
+def test_una_lista_no_duplica_el_menu_del_cuerpo(monkeypatch):
+    # REGLA: el body de un menú YA trae las opciones numeradas ("1. Acta…",
+    # "0. Volver…"). Re-anexar las filas degradadas mostraba el menú dos veces
+    # en el chat (bug reportado con captura el 2026-08-18).
+    enviados = []
+    monkeypatch.setattr(
+        twilio_client, "send_text", lambda phone, body: enviados.append(body) or "SM1"
+    )
+    body = (
+        "Servicios de Actas — responde con el número:\n"
+        "1. Acta de nacimiento\n0. Volver al menú anterior"
+    )
+
+    twilio_client.send_list(
+        "5215512345678", body, "Ver opciones",
+        [("1", "Acta de nacimiento"), ("0", "⬅ Volver al menú")],
+    )
+
+    assert enviados == [body]  # tal cual, sin filas re-anexadas
+
+
+def test_el_degradado_numerado_conserva_los_ids():
+    # REGLA: _numerar (hoy usada por los botones sin plantilla) tiene que
     # conservar el id de cada opción, porque es lo que el cliente va a responder
     # y lo que la máquina de estados espera.
     texto = twilio_client._numerar("Elige:", [("1", "Actas"), ("2", "SAT")])
