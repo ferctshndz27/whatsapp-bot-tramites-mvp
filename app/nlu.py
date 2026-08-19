@@ -159,29 +159,15 @@ def clasificar_codigos(codigos: list[str]) -> dict[str, str]:
 
 
 def _clasificar_codigos_ollama(codigos: list[str]) -> dict[str, str]:
-    import httpx
-
-    headers = {}
-    if settings.ollama_token:
-        headers["Authorization"] = f"Bearer {settings.ollama_token}"
-    response = httpx.post(
-        f"{settings.ollama_url}/api/chat",
-        headers=headers,
-        json={
-            "model": settings.ollama_model,
-            "messages": [
-                {"role": "system", "content": _CODIGOS_SYSTEM},
-                {"role": "user", "content": "\n".join(codigos)},
-            ],
-            "stream": False,
-            "think": False,
-            "format": _CODIGOS_SCHEMA,
-            "options": {"temperature": 0, "num_predict": 256},
-        },
-        timeout=httpx.Timeout(settings.ollama_timeout, connect=2.0),
+    message = ollama_chat(
+        [
+            {"role": "system", "content": _CODIGOS_SYSTEM},
+            {"role": "user", "content": "\n".join(codigos)},
+        ],
+        format=_CODIGOS_SCHEMA,
+        num_predict=256,
     )
-    response.raise_for_status()
-    data = json.loads(response.json()["message"]["content"])
+    data = json.loads(message["content"])
     # Igual que _validated con los ids del catálogo: un código que el modelo se
     # inventó (o devolvió cambiado) no entra.
     pedidos = set(codigos)
@@ -247,39 +233,60 @@ def _deduce_llm(text: str) -> tuple[Service | None, Category | None]:
     return _validated(json.loads(next(b.text for b in response.content if b.type == "text")))
 
 
-def _deduce_ollama(text: str) -> tuple[Service | None, Category | None]:
-    """Clasificación con el modelo abierto local (Ollama detrás de nginx en
-    labs). Mismo prompt, mismo esquema y misma validación que la capa Claude.
-    "think" apagado: elegir un id no necesita cadena de razonamiento y el
-    cliente de WhatsApp sí siente cada segundo de latencia."""
+def ollama_chat(
+    messages: list[dict],
+    *,
+    format: dict | None = None,
+    tools: list[dict] | None = None,
+    num_predict: int = 128,
+) -> dict:
+    """El `message` de /api/chat de Ollama (labs, detrás de nginx). Fuente
+    única de la llamada: la usan el clasificador, el validador de códigos, la
+    capa informativa y el nodo agéntico. "think" apagado: nada de esto
+    necesita cadena de razonamiento y el cliente de WhatsApp sí siente cada
+    segundo de latencia."""
     import httpx
 
     headers = {}
     if settings.ollama_token:
         headers["Authorization"] = f"Bearer {settings.ollama_token}"
+    payload: dict = {
+        "model": settings.ollama_model,
+        "messages": messages,
+        "stream": False,
+        "think": False,
+        "options": {"temperature": 0, "num_predict": num_predict},
+    }
+    if format is not None:
+        # Ollama fuerza la salida al esquema (structured outputs), igual
+        # que output_config en la API de Claude.
+        payload["format"] = format
+    if tools is not None:
+        payload["tools"] = tools
     response = httpx.post(
         f"{settings.ollama_url}/api/chat",
         headers=headers,
-        json={
-            "model": settings.ollama_model,
-            "messages": [
-                {"role": "system", "content": _catalog_system_prompt()},
-                {"role": "user", "content": text},
-            ],
-            "stream": False,
-            "think": False,
-            # Ollama fuerza la salida al esquema (structured outputs), igual
-            # que output_config en la API de Claude.
-            "format": _SCHEMA,
-            "options": {"temperature": 0, "num_predict": 128},
-        },
+        json=payload,
         # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
         # lento); conectar a un servidor caído corta a los 2s. Un float suelto
         # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
         timeout=httpx.Timeout(settings.ollama_timeout, connect=2.0),
     )
     response.raise_for_status()
-    return _validated(json.loads(response.json()["message"]["content"]))
+    return response.json()["message"]
+
+
+def _deduce_ollama(text: str) -> tuple[Service | None, Category | None]:
+    """Clasificación con el modelo abierto local. Mismo prompt, mismo esquema
+    y misma validación que la capa Claude."""
+    message = ollama_chat(
+        [
+            {"role": "system", "content": _catalog_system_prompt()},
+            {"role": "user", "content": text},
+        ],
+        format=_SCHEMA,
+    )
+    return _validated(json.loads(message["content"]))
 
 
 # FUZZY_THRESHOLD ahora es configurable (settings.fuzzy_threshold, .env).

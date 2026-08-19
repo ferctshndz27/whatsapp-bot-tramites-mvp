@@ -241,6 +241,108 @@ def test_bucle_se_corta_en_max_turnos(monkeypatch, session):
 
 
 # ---------------------------------------------------------------------------
+# Bucle sobre Ollama (sin API de Anthropic — el caso de producción)
+# ---------------------------------------------------------------------------
+
+
+class _OllamaGuionado:
+    def __init__(self, mensajes):
+        self._mensajes = list(mensajes)
+        self.llamadas: list[dict] = []
+
+    def __call__(self, messages, **kwargs):
+        self.llamadas.append({"messages": list(messages), **kwargs})
+        return self._mensajes.pop(0)
+
+
+def _nodo_ollama(monkeypatch, fake):
+    monkeypatch.setattr(settings, "agent_tools_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    monkeypatch.setattr(nlu, "ollama_chat", fake)
+
+
+def test_ollama_cotiza_con_el_precio_del_catalogo(monkeypatch, session):
+    servicio = _servicio()
+    final = f"'{servicio.name}' cuesta {servicio.price_info} 😊"
+    fake = _OllamaGuionado(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "cotizar_servicio", "arguments": {"service_id": servicio.id}}}
+                ],
+            },
+            {"role": "assistant", "content": final},
+        ]
+    )
+    _nodo_ollama(monkeypatch, fake)
+
+    assert agent_tools.responder(session, PHONE, "¿cuánto cuesta eso?") == final
+    # Herramientas en formato Ollama (function calling estilo OpenAI), solo
+    # las permitidas.
+    nombres = [t["function"]["name"] for t in fake.llamadas[0]["tools"]]
+    assert nombres == ["cotizar_servicio", "consultar_folios"]
+    # El segundo turno lleva el tool_result como mensaje role=tool.
+    ultimo = fake.llamadas[1]["messages"][-1]
+    assert ultimo["role"] == "tool" and servicio.price_info in ultimo["content"]
+
+
+def test_ollama_argumentos_como_json_en_texto(monkeypatch, session):
+    # Algunas versiones mandan arguments como string JSON: se parsea igual.
+    servicio = _servicio()
+    final = f"Sale en {servicio.price_info}"
+    fake = _OllamaGuionado(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "cotizar_servicio",
+                            "arguments": f'{{"service_id": "{servicio.id}"}}',
+                        }
+                    }
+                ],
+            },
+            {"role": "assistant", "content": final},
+        ]
+    )
+    _nodo_ollama(monkeypatch, fake)
+
+    assert agent_tools.responder(session, PHONE, "precio?") == final
+
+
+def test_ollama_cifra_inventada_se_tumba_igual(monkeypatch, session):
+    servicio = _servicio()
+    fake = _OllamaGuionado(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "cotizar_servicio", "arguments": {"service_id": servicio.id}}}
+                ],
+            },
+            {"role": "assistant", "content": "Cuesta 99999 pesos"},
+        ]
+    )
+    _nodo_ollama(monkeypatch, fake)
+
+    assert agent_tools.responder(session, PHONE, "precio?") is None
+
+
+def test_sin_ollama_ni_anthropic_devuelve_none(monkeypatch, session):
+    monkeypatch.setattr(settings, "agent_tools_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "")
+
+    assert agent_tools.responder(session, PHONE, "cotiza algo") is None
+
+
+# ---------------------------------------------------------------------------
 # Cableado en conversation (_not_understood)
 # ---------------------------------------------------------------------------
 
