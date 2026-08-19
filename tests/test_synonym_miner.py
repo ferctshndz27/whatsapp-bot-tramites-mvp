@@ -90,6 +90,29 @@ def test_mine_validates_against_catalog(monkeypatch):
     ]
 
 
+def test_mine_usa_ollama_cuando_esta_configurado(monkeypatch):
+    # Sin API de Anthropic el minero corre sobre el Ollama de labs — el ciclo
+    # de aprendizaje nocturno no depende de una API de pago.
+    svc = next(s for c in miner.catalog.categories for s in c.services)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    monkeypatch.setattr(
+        nlu,
+        "ollama_chat",
+        lambda messages, **kw: {
+            "content": json.dumps(
+                {"proposals": [{"service_id": svc.id, "synonym": "papelito azul"}]}
+            )
+        },
+    )
+
+    proposals = miner.mine_synonyms(["mensaje de prueba"])
+
+    assert proposals == [
+        {"service_id": svc.id, "service_name": svc.name, "synonym": "papelito azul"}
+    ]
+
+
 def test_mine_with_no_texts_skips_api(monkeypatch):
     monkeypatch.setattr(nlu, "_client", None)  # si llamara al API, explotaría
     assert miner.mine_synonyms([]) == []

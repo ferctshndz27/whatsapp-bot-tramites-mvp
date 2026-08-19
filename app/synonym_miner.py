@@ -116,31 +116,46 @@ def unmatched_messages(session: Session, days: int = DAYS_BACK, limit: int = MAX
 
 
 def mine_synonyms(texts: list[str]) -> list[dict]:
-    """Pide a Claude propuestas de sinónimos y las valida contra el catálogo."""
+    """Pide al LLM propuestas de sinónimos y las valida contra el catálogo.
+
+    Backend: el Ollama de labs si OLLAMA_URL está configurada (el negocio no
+    paga API, y el texto de clientes se queda en infra propia); Claude solo
+    como alternativa si hay ANTHROPIC_API_KEY."""
     if not texts:
         return []
     listing = "\n".join(
         f"- {s.id}: {s.name}" for c in catalog.categories for s in c.services
     )
     body = "\n".join(f"{i}. {t[:200]}" for i, t in enumerate(texts[:MAX_MESSAGES], start=1))
+    system = _MINE_SYSTEM.format(listing=listing)
 
-    response = nlu._get_client().messages.create(
-        model=settings.nlu_model,
-        max_tokens=2048,
-        system=[
-            {
-                "type": "text",
-                "text": _MINE_SYSTEM.format(listing=listing),
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        output_config={"format": {"type": "json_schema", "schema": _MINE_SCHEMA}},
-        messages=[{"role": "user", "content": body}],
-    )
-    if response.stop_reason == "refusal":
-        return []
-
-    data = json.loads(next(b.text for b in response.content if b.type == "text"))
+    if settings.ollama_url:
+        message = nlu.ollama_chat(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": body},
+            ],
+            format=_MINE_SCHEMA,
+            num_predict=1024,
+        )
+        data = json.loads(message["content"])
+    else:
+        response = nlu._get_client().messages.create(
+            model=settings.nlu_model,
+            max_tokens=2048,
+            system=[
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            output_config={"format": {"type": "json_schema", "schema": _MINE_SCHEMA}},
+            messages=[{"role": "user", "content": body}],
+        )
+        if response.stop_reason == "refusal":
+            return []
+        data = json.loads(next(b.text for b in response.content if b.type == "text"))
     proposals, seen = [], set()
     for p in data.get("proposals", []):
         service = catalog.service_by_id(p.get("service_id", ""))
@@ -375,7 +390,7 @@ def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
             "metrics": nlu_metrics(),
             "alerts": alerts,
             "health": health,
-            "mining_available": bool(settings.anthropic_api_key),
+            "mining_available": bool(settings.ollama_url or settings.anthropic_api_key),
             "error": error,
             "ok": ok,
         },

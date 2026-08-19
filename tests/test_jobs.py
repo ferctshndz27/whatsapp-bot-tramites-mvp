@@ -144,7 +144,7 @@ def test_nightly_sin_api_key_no_consulta_a_claude(monkeypatch, infra_sana):
 
     result = nightly()
 
-    assert result["motivo"] == "sin ANTHROPIC_API_KEY"
+    assert result["motivo"] == "sin OLLAMA_URL ni ANTHROPIC_API_KEY"
     assert result["propuestas"] == 0
     assert "nuevas" in result["alertas"]  # las alertas se evalúan igual
     with Session(db.engine) as session:
@@ -163,7 +163,7 @@ def test_nightly_persiste_propuestas_pendientes_y_deja_rastro_en_la_bitacora(min
 
     assert (prop.service_id, prop.synonym) == (mineria_lista.servicio.id, SINONIMO_PROPUESTO)
     assert prop.status == "pendiente"
-    assert prop.origin == "claude-nocturno"
+    assert prop.origin == "mineria-nocturna"
     assert prop.decided_by is None and prop.decided_at is None
     assert (audit.admin, audit.action) == ("sistema", "catalogo:mineria-nocturna")
     assert result["alertas"]["nuevas"] == 0  # infraestructura sana: ninguna alerta
