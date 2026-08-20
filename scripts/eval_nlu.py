@@ -82,9 +82,13 @@ def _medir(caso) -> dict:
         # Hueco conocido de catálogo/sinónimos: la regla dura es no inventar
         # OTRO servicio (eso cotiza el trámite equivocado).
         acierto = False
+    elif obtenido == caso.espera:
+        # Hueco conocido que HOY sí resuelve (un sinónimo aprobado, el modelo
+        # local): es la mejora que el corpus promete, no un fallo.
+        acierto = True
     else:
-        # Sin deducción directa, el acierto es que el cliente vea su opción en
-        # el mini-menú (o que no vea una lista sin su trámite).
+        # Sin deducción, el acierto es que el cliente vea su opción en el
+        # mini-menú (o que no vea una lista sin su trámite).
         acierto = (
             caso.espera in sugerencias
             if caso.en_sugerencias
