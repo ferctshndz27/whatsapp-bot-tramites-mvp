@@ -49,7 +49,39 @@ Reglas:
 - Si el mensaje apunta claramente a UN servicio, responde su service_id (category_id null).
 - Si solo se distingue el tipo/categoría, responde category_id (service_id null).
 - Si el mensaje es ambiguo, un saludo, o no se relaciona con el catálogo, ambos null.
-- Nunca inventes ids que no estén en el catálogo."""
+- Nunca inventes ids que no estén en el catálogo.
+
+Un mensaje que solo nombra un TEMA ("algo de", "información de", "los servicios \
+de") NO apunta a un servicio: es categoría. Elegir uno a ciegas le cotiza al \
+cliente un trámite que no pidió. Ejemplos:
+- "algo de infonavit" → category_id de INFONAVIT, service_id null.
+- "quiero información de afore" → category_id de AFORE, service_id null.
+- "me interesan los servicios del imss" → category_id del IMSS, service_id null."""
+
+
+# Marcadores de mensaje VAGO: el cliente nombra un tema, no un trámite ("algo
+# de infonavit", "quiero información de afore"). Medido contra el Ollama real
+# (scripts/eval_nlu.py, 2026-08-19): qwen3:4b ignora la regla de categoría del
+# prompt y elige un servicio concreto a ciegas — le cotiza al cliente un
+# trámite que no pidió, que es justo la regla de oro del producto. El prompt
+# pide; aquí se exige: en un texto vago se descarta el service_id del LLM y
+# decide la cascada barata, que ya resuelve categoría por nombre y mini-menú
+# por parecidos. Ojo: esto solo alcanza a lo que el matching literal NO
+# resolvió (va antes), así que "quiero información de mi acta de nacimiento"
+# sigue resolviendo por nombre exacto.
+_VAGO_RE = re.compile(
+    r"\balgo (?:de|sobre|para)\b"
+    r"|\b(?:informacion|info|informes|datos)\s+(?:de|sobre|acerca)\b"
+    r"|\bque (?:tienen|manejan|ofrecen|hacen)\b"
+    r"|\b(?:los |sus )?servicios\s+(?:de|del|para)\b"
+    r"|\bme interesan?\s+(?:los |sus )?servicios\b"
+    r"|\bquiero saber\s+(?:de|sobre)\b"
+)
+
+
+def es_vago(text: str) -> bool:
+    """¿El mensaje nombra un TEMA en vez de pedir un trámite concreto?"""
+    return _VAGO_RE.search(_norm(text)) is not None
 
 
 def deduce(text: str) -> tuple[Service | None, Category | None]:
@@ -77,9 +109,15 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
         service = next(iter(matches.values()))
         return service, None, _capa_exacta(service, cleaned, capa), None
 
+    vago = es_vago(cleaned)
+
     if settings.ollama_url:
         try:
             service, category = _deduce_ollama(cleaned[:MAX_INPUT_CHARS])
+            if service is not None and vago:
+                # Tema, no trámite: la categoría del servicio que eligió es la
+                # respuesta honesta; si no la hay, decide la cascada barata.
+                service, category = None, _categoria_de(service)
             if service is not None or category is not None:
                 return service, category, "ollama", None
             # Un "no sé" no detiene la cadena (misma regla que la capa Claude):
@@ -91,6 +129,10 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
     if settings.anthropic_api_key:
         try:
             service, category = _deduce_llm(cleaned[:MAX_INPUT_CHARS])
+            if service is not None and vago:
+                # Tema, no trámite: la categoría del servicio que eligió es la
+                # respuesta honesta; si no la hay, decide la cascada barata.
+                service, category = None, _categoria_de(service)
             if service is not None or category is not None:
                 return service, category, "llm", None
             # Ambos null ya NO es veredicto final: las capas literales/fuzzy
@@ -204,6 +246,11 @@ def catalog_listing() -> str:
 def _catalog_system_prompt() -> str:
     categories = "\n".join(f"- {c.id}: {c.name}" for c in catalog.categories)
     return _SYSTEM_TEMPLATE.format(listing=catalog_listing(), categories=categories)
+
+
+def _categoria_de(service: Service) -> Category | None:
+    """La categoría que contiene al servicio (None si el catálogo cambió)."""
+    return next((c for c in catalog.categories if service in c.services), None)
 
 
 def _validated(data: dict) -> tuple[Service | None, Category | None]:
