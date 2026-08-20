@@ -173,14 +173,16 @@ CASOS_VAGOS = [c for c in CORPUS if c.tipo == "vaga"]
 CASOS_RUIDO = [c for c in CORPUS if c.tipo == "ruido"]
 
 # PISO HISTÓRICO de precisión sobre los casos tipo="servicio" del corpus.
-# Medido hoy contra el catálogo de producción: 59/64 = 92.19% con el umbral
-# difuso por defecto (85). El margen deja pasar exactamente UNA regresión
-# (90.63%) y se pone rojo con dos (89.06%).
-# Este número SOLO debe SUBIR. Aprobar en /unmatched los sinónimos que faltan
-# ("mi curp" → sb-curp, "numero de seguro social" → con-nss-pdf, "sindo f7" →
-# sin-f7, "recibo de cfe" → sb-recibo-cfe) lo sube solo. Si alguien lo baja
-# para dejar la suite verde, está tapando una degradación real del bot.
-MIN_ACCURACY = 90.0
+# Medido contra el catálogo de producción con el umbral difuso por defecto
+# (85): 62/64 = 96.88% (2026-08-19, scripts/eval_nlu.py). Subió desde el
+# 59/64 = 92.19% original justo como prometía este comentario: los sinónimos
+# que faltaban ("mi curp" → sb-curp, "recibo de cfe" → sb-recibo-cfe…) se
+# aprobaron en /unmatched y entraron al catálogo.
+# El margen deja pasar exactamente UNA regresión (95.31%) y se pone rojo con
+# dos (93.75%).
+# Este número SOLO debe SUBIR. Si alguien lo baja para dejar la suite verde,
+# está tapando una degradación real del bot.
+MIN_ACCURACY = 95.0
 
 # Umbral difuso de producción, fijado en la fixture para que la medición no
 # dependa del .env del que corre pytest.
