@@ -531,3 +531,62 @@ def test_clasificar_codigos_nunca_revienta(monkeypatch, url, revienta):
 
     # {} = "no pude verificar": quien llama sigue adelante y crea el folio.
     assert nlu.clasificar_codigos(CODIGOS_RAROS) == {}
+
+
+# ---------------------------------------------------------------------------
+# Guardrail de vaguedad: un tema no es un trámite
+# ---------------------------------------------------------------------------
+
+
+def test_es_vago_reconoce_temas_y_no_pedidos_concretos():
+    for texto in [
+        "algo de infonavit",
+        "me interesa algo de pensiones",
+        "quiero informacion de afore",
+        "me interesan los servicios imss",
+        "quiero algo de servicios sat",
+        "que manejan de pensiones",
+        "quiero saber sobre creditos",
+    ]:
+        assert nlu.es_vago(texto), texto
+
+    for texto in [
+        "quiero mi acta de nacimiento",
+        "necesito mi curp",
+        "1",
+        "hola",
+        "ya quedo mi tramite?",
+    ]:
+        assert not nlu.es_vago(texto), texto
+
+
+def test_en_texto_vago_el_servicio_del_llm_se_degrada_a_su_categoria(monkeypatch, tmp_path):
+    # REGLA DE ORO: "algo de infonavit" no pide un trámite. Medido contra el
+    # Ollama real, qwen3 responde un servicio concreto pese al prompt; aceptarlo
+    # le cotiza al cliente algo que no pidió. El código lo degrada a la
+    # categoría de ESE servicio, que es la respuesta honesta.
+    catalogo = _catalog_with_synonyms(tmp_path)
+    monkeypatch.setattr(nlu, "catalog", catalogo)
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    servicio = catalogo.categories[0].services[0]
+    monkeypatch.setattr(nlu, "_deduce_ollama", lambda text: (servicio, None))
+
+    service, category, capa, _ = nlu.deduce_explained("quiero algo de tramites")
+
+    assert service is None, "aceptó un servicio concreto para un tema"
+    assert category is not None and category.id == catalogo.categories[0].id
+    assert capa == "ollama"
+
+
+def test_en_texto_concreto_el_servicio_del_llm_se_respeta(monkeypatch, tmp_path):
+    catalogo = _catalog_with_synonyms(tmp_path)
+    monkeypatch.setattr(nlu, "catalog", catalogo)
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    servicio = catalogo.categories[0].services[0]
+    monkeypatch.setattr(nlu, "_deduce_ollama", lambda text: (servicio, None))
+
+    service, category, capa, _ = nlu.deduce_explained("necesito tramitar eso urgente")
+
+    assert service is servicio and category is None
