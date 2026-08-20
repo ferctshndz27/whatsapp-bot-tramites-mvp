@@ -200,23 +200,31 @@ def main() -> int:
             print(f"  «{f['texto']}» esperaba {f['espera']} — dio {f['obtenido']} ({f['capa']})")
 
     if args.json:
-        Path(args.json).write_text(
-            json.dumps(
-                {
-                    "modelo": settings.ollama_model if settings.ollama_url else None,
-                    "umbral_difuso": settings.fuzzy_threshold,
-                    "resolucion_directa": directa,
-                    "acierto_negocio": precision,
-                    "p50_ms": round(_percentil(tiempos, 0.5)),
-                    "p90_ms": round(_percentil(tiempos, 0.9)),
-                    "casos": filas,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        print(f"\nDetalle guardado en {args.json}")
+        # Crear el directorio si falta y NUNCA perder una corrida por un error
+        # de escritura: el benchmark tarda minutos contra el modelo real y su
+        # resultado ya se imprimió arriba.
+        destino = Path(args.json)
+        try:
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            destino.write_text(
+                json.dumps(
+                    {
+                        "modelo": settings.ollama_model if settings.ollama_url else None,
+                        "umbral_difuso": settings.fuzzy_threshold,
+                        "resolucion_directa": directa,
+                        "acierto_negocio": precision,
+                        "p50_ms": round(_percentil(tiempos, 0.5)),
+                        "p90_ms": round(_percentil(tiempos, 0.9)),
+                        "casos": filas,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            print(f"\nDetalle guardado en {destino}")
+        except OSError as exc:
+            print(f"\nNo se pudo guardar el detalle en {destino}: {exc}", file=sys.stderr)
 
     return 0
 
