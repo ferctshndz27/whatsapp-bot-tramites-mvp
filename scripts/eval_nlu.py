@@ -82,9 +82,13 @@ def _medir(caso) -> dict:
         # Hueco conocido de catálogo/sinónimos: la regla dura es no inventar
         # OTRO servicio (eso cotiza el trámite equivocado).
         acierto = False
+    elif obtenido == caso.espera:
+        # Hueco conocido que HOY sí resuelve (un sinónimo aprobado, el modelo
+        # local): es la mejora que el corpus promete, no un fallo.
+        acierto = True
     else:
-        # Sin deducción directa, el acierto es que el cliente vea su opción en
-        # el mini-menú (o que no vea una lista sin su trámite).
+        # Sin deducción, el acierto es que el cliente vea su opción en el
+        # mini-menú (o que no vea una lista sin su trámite).
         acierto = (
             caso.espera in sugerencias
             if caso.en_sugerencias
@@ -200,23 +204,31 @@ def main() -> int:
             print(f"  «{f['texto']}» esperaba {f['espera']} — dio {f['obtenido']} ({f['capa']})")
 
     if args.json:
-        Path(args.json).write_text(
-            json.dumps(
-                {
-                    "modelo": settings.ollama_model if settings.ollama_url else None,
-                    "umbral_difuso": settings.fuzzy_threshold,
-                    "resolucion_directa": directa,
-                    "acierto_negocio": precision,
-                    "p50_ms": round(_percentil(tiempos, 0.5)),
-                    "p90_ms": round(_percentil(tiempos, 0.9)),
-                    "casos": filas,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        print(f"\nDetalle guardado en {args.json}")
+        # Crear el directorio si falta y NUNCA perder una corrida por un error
+        # de escritura: el benchmark tarda minutos contra el modelo real y su
+        # resultado ya se imprimió arriba.
+        destino = Path(args.json)
+        try:
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            destino.write_text(
+                json.dumps(
+                    {
+                        "modelo": settings.ollama_model if settings.ollama_url else None,
+                        "umbral_difuso": settings.fuzzy_threshold,
+                        "resolucion_directa": directa,
+                        "acierto_negocio": precision,
+                        "p50_ms": round(_percentil(tiempos, 0.5)),
+                        "p90_ms": round(_percentil(tiempos, 0.9)),
+                        "casos": filas,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            print(f"\nDetalle guardado en {destino}")
+        except OSError as exc:
+            print(f"\nNo se pudo guardar el detalle en {destino}: {exc}", file=sys.stderr)
 
     return 0
 
