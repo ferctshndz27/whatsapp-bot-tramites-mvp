@@ -309,7 +309,8 @@ class SynonymProposal(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     service_id: str = Field(index=True)
     synonym: str
-    origin: str = "claude"  # claude | claude-nocturno | cluster
+    # claude | mineria-nocturna | cluster (filas viejas traen "claude-nocturno")
+    origin: str = "claude"
     status: str = Field(default="pendiente", index=True)  # pendiente|aprobada|rechazada
     decided_by: str | None = None
     decided_at: datetime | None = None
