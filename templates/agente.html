@@ -302,6 +302,7 @@ document.getElementById("btn-probar").onclick = () => {
     if (r.es_vago) msg += ` · <em>mensaje vago (guardrail activo)</em>`;
     if (r.respuesta_rag) msg += `<br>RAG respondería: “${esc(r.respuesta_rag)}”`;
     if (r.rag_descartada) msg += ` · guardrail descartó la respuesta (${r.rag_descartada})`;
+    if (r.rag_sin_respuesta) msg += `<br><em>La capa RAG corrió pero no dio respuesta (NO_SE del modelo, timeout o red — revisar logs del bot).</em>`;
     if (r.sugerencias && r.sugerencias.length && !r.respuesta_rag)
       msg += `<br>Mini-menú: ${r.sugerencias.map(esc).join(", ")}`;
     if (r.le_tocaria_tools) msg += `<br><em>Le tocaría al nodo agéntico (no se ejecuta en pruebas).</em>`;

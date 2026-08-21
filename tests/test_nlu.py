@@ -590,3 +590,38 @@ def test_en_texto_concreto_el_servicio_del_llm_se_respeta(monkeypatch, tmp_path)
     service, category, capa, _ = nlu.deduce_explained("necesito tramitar eso urgente")
 
     assert service is servicio and category is None
+
+
+def test_ollama_chat_propaga_num_ctx_y_timeout(monkeypatch):
+    # num_ctx viaja en options (sin él, Ollama trunca prompts largos en
+    # silencio) y el timeout por llamada desplaza a OLLAMA_TIMEOUT.
+    import httpx
+
+    from app.config import settings
+
+    capturado = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"content": "ok"}}
+
+    def _post(url, headers=None, json=None, timeout=None):
+        capturado["payload"] = json
+        capturado["timeout"] = timeout
+        return _Resp()
+
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    monkeypatch.setattr(httpx, "post", _post)
+
+    nlu.ollama_chat([{"role": "user", "content": "hola"}], num_ctx=8192, timeout=45.0)
+    assert capturado["payload"]["options"]["num_ctx"] == 8192
+    assert capturado["timeout"].read == 45.0
+
+    # Sin num_ctx explícito no se manda (queda el default del servidor) y el
+    # timeout vuelve al de configuración.
+    nlu.ollama_chat([{"role": "user", "content": "hola"}])
+    assert "num_ctx" not in capturado["payload"]["options"]
+    assert capturado["timeout"].read == settings.ollama_timeout

@@ -465,3 +465,29 @@ def test_informes_genericos_siguen_en_su_embudo_calido(monkeypatch):
     respuestas = _conversar("¿cuánto cuesta?")
 
     assert respuestas == [INFO_REPLY]
+
+
+def test_ollama_recibe_contexto_amplio_y_timeout_holgado(monkeypatch):
+    # Causa raíz del "no responde" en producción: el corpus completo rebasa el
+    # contexto default de Ollama (truncado silencioso) y su procesamiento en
+    # CPU rebasa OLLAMA_TIMEOUT (ReadTimeout tragado). Candado del cableado.
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    monkeypatch.setattr(settings, "ollama_timeout", 12.0)
+    capturado = {}
+
+    def _ollama_fake(messages, **kwargs):
+        capturado.update(kwargs)
+        return {"content": "Sí, atendemos sábados 😊"}
+
+    monkeypatch.setattr(nlu, "ollama_chat", _ollama_fake)
+
+    assert rag.answer("¿atienden sábados?") is not None
+    assert capturado["num_ctx"] == rag.OLLAMA_NUM_CTX
+    assert capturado["timeout"] == rag.OLLAMA_TIMEOUT_MIN
+
+
+def test_timeout_configurado_mas_holgado_manda(monkeypatch):
+    monkeypatch.setattr(settings, "ollama_timeout", 60.0)
+    assert rag._timeout_prompt_largo() == 60.0

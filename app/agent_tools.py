@@ -192,7 +192,15 @@ def _loop_ollama(session: Session, phone: str, text: str) -> str | None:
     salidas_cotizar: list[str] = []
 
     for _ in range(MAX_TURNOS):
-        message = nlu.ollama_chat(messages, tools=_tools_ollama(), num_predict=400)
+        # Prompt largo (catálogo + esquemas de tools): mismo contexto amplio y
+        # timeout holgado que la capa RAG, o el servidor trunca / corta a 12s.
+        message = nlu.ollama_chat(
+            messages,
+            tools=_tools_ollama(),
+            num_predict=400,
+            num_ctx=rag.OLLAMA_NUM_CTX,
+            timeout=rag._timeout_prompt_largo(),
+        )
         calls = message.get("tool_calls") or []
         if not calls:
             respuesta = (message.get("content") or "").strip()
