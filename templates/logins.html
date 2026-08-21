@@ -43,7 +43,7 @@
     <a href="/logins" {% if not result %}aria-current="true"{% endif %}>Todos</a>
     <a href="/logins?result=ok" {% if result == 'ok' %}aria-current="true"{% endif %}>Exitosos</a>
     <a href="/logins?result=fail" {% if result == 'fail' %}aria-current="true"{% endif %}>Fallidos</a>
-    <a href="/export/logins.csv">⬇ CSV completo</a>
+    <a href="/export/logins.csv" class="btn-sm" style="text-decoration:none;">⬇ CSV completo</a>
   </div>
   {% if entries %}
   <div class="table-wrap">
