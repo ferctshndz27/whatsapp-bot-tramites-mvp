@@ -233,6 +233,13 @@ _COLUMNAS_QUE_AGREGA_LA_MIGRACION = {
 # que es lo que la crea en la base de producción. Este snapshot solo crece
 # cuando se agrega una TABLA nueva (esas create_all() las crea completas).
 _ESQUEMA_DESPLEGADO = {
+    # Estudio del Agente (/agente): tablas nuevas, create_all() las crea
+    # completas — no hay migración de columnas.
+    "agentconfig": ("key", "value", "updated_by", "updated_at", "habilitado"),
+    "infodoc": (
+        "id", "texto", "position", "habilitado", "updated_by",
+        "created_at", "updated_at",
+    ),
     # Cobranza con Stripe: cinco tablas NUEVAS, no columnas agregadas a tablas
     # existentes — por eso no hay dict de migracion para ellas y create_all()
     # las crea completas. Generadas desde los modelos, no tecleadas a mano.

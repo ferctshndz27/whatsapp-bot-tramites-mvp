@@ -25,6 +25,8 @@ from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
 from app.models import (
+    AgentConfig,
+    InfoDoc,
     AdminAudit,
     Alert,
     CatalogAudit,
@@ -77,6 +79,8 @@ MIRROR_TABLES = [
     (CatalogService, "catalog_services"),
     (CatalogAudit, "catalog_audit"),
     (NluEvent, "nlu_events"),
+    (AgentConfig, "agent_config"),
+    (InfoDoc, "info_docs"),
     (Feedback, "feedback"),
     (SynonymProposal, "synonym_proposals"),
     (Alert, "alerts"),
