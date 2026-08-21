@@ -159,3 +159,30 @@ def test_admin_ve_la_pagina_con_el_pipeline():
     assert "Estudio del Agente" in r.text
     assert "Capa informativa (RAG)" in r.text
     assert "/static/vendor/joint.min.js" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Probador (el "Run" del estudio)
+# ---------------------------------------------------------------------------
+
+
+def test_probar_corre_la_cascada_en_seco_sin_dejar_rastro():
+    from sqlmodel import select
+
+    from app.models import NluEvent
+
+    c = _sesion_de("admin")
+    r = c.post("/agente/probar", json={"texto": "quiero mi acta de nacimiento"})
+
+    assert r.status_code == 200
+    datos = r.json()
+    assert datos["capa"] in ("nombre", "sinonimo", "keyword")
+    assert datos["servicio"] is not None
+    # Banco de pruebas, no tráfico: cero filas en la bitácora del agente.
+    with Session(db.engine) as s:
+        assert s.exec(select(NluEvent)).first() is None
+
+
+def test_probar_es_solo_para_admins():
+    c = _sesion_de("colab")
+    assert c.post("/agente/probar", json={"texto": "hola"}).status_code == 403

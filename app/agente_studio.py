@@ -208,3 +208,51 @@ def editar_parrafo(request: Request, doc_id: int, data: ParrafoEdit):
         session.commit()
     log_admin(user, accion, str(doc_id))
     return {"ok": True}
+
+
+class PruebaIn(BaseModel):
+    texto: str
+
+
+@router.post("/agente/probar")
+def probar(request: Request, data: PruebaIn):
+    """El "Run" del estudio: corre el mensaje por la cascada REAL en seco.
+
+    Sin efectos: nlu.deduce_explained y rag.answer_explained solo LEEN; aquí
+    no se escribe nluevent ni se manda WhatsApp — es un banco de pruebas, no
+    tráfico. El nodo agéntico no se ejecuta (haría commits y llamadas caras);
+    se reporta si le tocaría el turno."""
+    import time
+
+    from app import nlu
+
+    user = _admin_or_403(request)
+    if not user:
+        return JSONResponse({"error": "solo administradores"}, status_code=403)
+    texto = data.texto.strip()
+    if not texto or len(texto) > 500:
+        return JSONResponse({"error": "el mensaje va de 1 a 500 caracteres"}, status_code=400)
+
+    inicio = time.perf_counter()
+    service, category, capa, confianza = nlu.deduce_explained(texto)
+    resultado = {
+        "capa": capa,
+        "servicio": service.name if service else None,
+        "categoria": category.name if category else None,
+        "confianza": confianza,
+        "es_vago": nlu.es_vago(texto),
+        "respuesta_rag": None,
+        "le_tocaria_tools": False,
+    }
+    if service is None and category is None:
+        sugerencias = [s.name for s in nlu.suggestions(texto)]
+        resultado["sugerencias"] = sugerencias
+        if settings.rag_enabled and rag.es_pregunta_informativa(texto):
+            respuesta, motivo = rag.answer_explained(texto)
+            resultado["respuesta_rag"] = respuesta
+            resultado["rag_descartada"] = motivo
+        if resultado["respuesta_rag"] is None and not sugerencias:
+            resultado["le_tocaria_tools"] = settings.agent_tools_enabled
+    resultado["ms"] = round((time.perf_counter() - inicio) * 1000)
+    log_admin(user, "agente:prueba", texto[:80])
+    return resultado
