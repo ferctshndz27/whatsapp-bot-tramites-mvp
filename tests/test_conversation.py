@@ -807,3 +807,31 @@ def test_escalado_con_ticket_abierto_no_duplica_solicitudes(session):
 
     tickets = session.exec(select(Ticket).where(Ticket.phone == PHONE)).all()
     assert len(tickets) == 1
+
+
+def test_escalada_ignora_tickets_borrados_suavemente(session):
+    # El caso de producción: un ticket de prueba borrado del panel (habilitado
+    # False) pero no CERRADO seguía contando como "abierto" — la escalada le
+    # marcaba escalado=True al folio invisible y ninguna solicitud aparecía.
+    handle_incoming(session, PHONE, "Hola")
+    fantasma = Ticket(
+        phone=PHONE,
+        client_name="Cliente Prueba",
+        category="Constancias",
+        service_id="prueba",
+        service_name="Prueba borrada",
+        price_info="$1",
+        status=TicketStatus.NUEVO,
+        habilitado=False,
+    )
+    session.add(fantasma)
+    session.commit()
+
+    replies = handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    assert "asesor" in replies[0].lower()
+    visibles = session.exec(
+        select(Ticket).where(Ticket.phone == PHONE, Ticket.habilitado == True)  # noqa: E712
+    ).all()
+    assert len(visibles) == 1 and visibles[0].escalado is True
+    assert fantasma.escalado is False

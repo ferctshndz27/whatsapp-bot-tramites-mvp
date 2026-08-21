@@ -346,6 +346,11 @@ def _latest_open_ticket(session: Session, phone: str) -> Ticket | None:
         select(Ticket)
         .where(Ticket.phone == phone)
         .where(Ticket.status != TicketStatus.CERRADO)
+        # Un ticket borrado suavemente desde el panel NO es un ticket abierto:
+        # sin este filtro la escalada marcaba escalado=True en un folio
+        # invisible (y ninguna solicitud aparecía), y un agent_active=False
+        # borrado silenciaba al bot para siempre.
+        .where(Ticket.habilitado == True)  # noqa: E712
         .order_by(Ticket.created_at.desc())
     ).first()
 
