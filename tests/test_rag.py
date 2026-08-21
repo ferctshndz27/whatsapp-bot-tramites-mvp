@@ -522,3 +522,31 @@ def test_ollama_recibe_contexto_amplio_y_timeout_holgado(monkeypatch):
 def test_timeout_configurado_mas_holgado_manda(monkeypatch):
     monkeypatch.setattr(settings, "ollama_timeout", 60.0)
     assert rag._timeout_prompt_largo() == 60.0
+
+
+def test_respuesta_larga_se_recorta_a_oraciones_en_vez_de_tirarse():
+    # qwen3:4b ignora el "máximo 30 palabras": tirar la respuesta entera por
+    # verbosa dejaba la capa muda. Se quedan las primeras oraciones completas.
+    primera = "Entregamos los documentos en digital por WhatsApp o correo 😊."
+    relleno = "Además " + "detalle " * 50 + "final."
+    respuesta, motivo = rag._evaluar_respuesta(f"{primera} {relleno}")
+    assert respuesta == primera and motivo is None
+
+
+def test_sin_oracion_completa_que_quepa_sigue_siendo_larga():
+    parrafada = "palabra " * (rag.MAX_RESPONSE_WORDS + 5) + "."
+    assert rag._evaluar_respuesta(parrafada) == (None, "larga")
+
+
+def test_el_recorte_no_salva_una_respuesta_con_dinero():
+    # La seguridad corre sobre el texto YA recortado: si lo que viaja trae
+    # dinero, se tumba igual.
+    con_dinero = "El trámite cuesta $850 pesos." + " Bla bla." * 30
+    assert rag._evaluar_respuesta(con_dinero) == (None, "dinero")
+
+
+def test_final_trunco_por_num_predict_se_limpia():
+    # num_predict corta a media frase: el fragmento sin cierre no viaja.
+    texto = "Atendemos sábados de 9 a 13 😊. Entre semana el horario es de nueve a"
+    respuesta, motivo = rag._evaluar_respuesta(texto + " " + "x " * 40)
+    assert respuesta == "Atendemos sábados de 9 a 13 😊." and motivo is None
