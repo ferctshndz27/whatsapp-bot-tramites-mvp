@@ -40,6 +40,7 @@
     <a href="/?status={{ s }}" {% if current_filter == s %}aria-current="true"{% endif %}>{{ s.replace('_', ' ') }} ({{ ticket_counts[s] }})</a>
     {% endfor %}
     <a href="/?assigned=none" {% if assigned_filter == 'none' %}aria-current="true"{% endif %}>sin asignar ({{ ticket_counts.sin_asignar }})</a>
+    <a href="/?status=escalados" {% if current_filter == 'escalados' %}aria-current="true"{% endif %}>escalados ({{ ticket_counts.escalados }})</a>
     <a href="/?conv=esperando" {% if conv_filter == 'esperando' %}aria-current="true"{% endif %}>esperando respuesta ({{ conv_counts.esperando }})</a>
     <a href="/?conv=caducadas" {% if conv_filter == 'caducadas' %}aria-current="true"{% endif %}>caducadas ({{ conv_counts.caducadas }})</a>
     <a href="/?conv=pausadas" {% if conv_filter == 'pausadas' %}aria-current="true"{% endif %}>bot pausado ({{ conv_counts.pausadas }})</a>
