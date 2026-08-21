@@ -149,3 +149,13 @@ def test_borrado_es_suave_y_sale_del_corpus():
         fila = s.get(InfoDoc, doc_id)
     assert fila is not None and fila.habilitado is False  # sigue en la base (espejo)
     assert "Párrafo temporal." not in rag._docs()
+
+
+def test_admin_ve_la_pagina_con_el_pipeline():
+    c = _sesion_de("admin")
+    r = c.get("/agente")
+    assert r.status_code == 200
+    # El estado viaja embebido: nodos del pipeline y la librería vendoreada.
+    assert "Estudio del Agente" in r.text
+    assert "Capa informativa (RAG)" in r.text
+    assert "/static/vendor/joint.min.js" in r.text
