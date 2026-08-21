@@ -257,8 +257,37 @@ def test_el_corpus_no_lleva_precios(monkeypatch):
 
 
 def test_sin_embeddings_url_se_usa_corpus_completo(monkeypatch):
+    # Solo en el camino Claude: prompt largo barato (caché), sin prefill CPU.
     monkeypatch.setattr(settings, "embeddings_url", "")
+    monkeypatch.setattr(settings, "ollama_url", "")
     assert isinstance(rag._retriever(), rag.CorpusCompleto)
+
+
+def test_con_ollama_se_usa_top_k_lexico(monkeypatch):
+    # La CPU de labs no aguanta el corpus completo (timeout aun con 45s):
+    # a Ollama solo viajan los párrafos que traslapan con la pregunta.
+    monkeypatch.setattr(settings, "embeddings_url", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    assert isinstance(rag._retriever(), rag.TopKLexical)
+
+
+def test_lexico_elige_el_parrafo_relevante_y_descarta_el_resto(monkeypatch):
+    parrafo = (
+        "Entregamos los documentos en formato digital por WhatsApp o correo. "
+        "Si necesita el documento físico, el asesor le indica las opciones."
+    )
+    ruido = "El clima de la ciudad es templado la mayor parte del año."
+    monkeypatch.setattr(rag, "_docs", lambda: [ruido, parrafo])
+
+    contexto = rag.TopKLexical().contexto("¿entregas documento físico?")
+
+    # "entregas"/"Entregamos", "documento(s)" y "físico" traslapan por prefijo.
+    assert parrafo in contexto and ruido not in contexto
+
+
+def test_lexico_sin_traslape_devuelve_corpus_vacio(monkeypatch):
+    monkeypatch.setattr(rag, "_docs", lambda: ["Solo hablamos de actas aquí."])
+    assert rag.TopKLexical().contexto("¿aceptan mascotas?") == ""
 
 
 def test_con_embeddings_url_se_usa_top_k(monkeypatch):
@@ -484,8 +513,10 @@ def test_ollama_recibe_contexto_amplio_y_timeout_holgado(monkeypatch):
     monkeypatch.setattr(nlu, "ollama_chat", _ollama_fake)
 
     assert rag.answer("¿atienden sábados?") is not None
-    assert capturado["num_ctx"] == rag.OLLAMA_NUM_CTX
     assert capturado["timeout"] == rag.OLLAMA_TIMEOUT_MIN
+    # SIN num_ctx: TopKLexical acota el prompt por construcción, y no fijarlo
+    # evita que Ollama recargue el runner al alternar con el clasificador.
+    assert capturado.get("num_ctx") is None
 
 
 def test_timeout_configurado_mas_holgado_manda(monkeypatch):

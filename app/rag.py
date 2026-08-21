@@ -49,9 +49,11 @@ MAX_RESPONSE_WORDS = 45
 # Centinela que el modelo debe responder cuando el corpus no trae la respuesta.
 NO_SE = "NO_SE"
 
-# El corpus completo (~17k caracteres ≈ 4-5k tokens) rebasa el contexto default
-# de Ollama (4096): sin num_ctx explícito el servidor trunca el prompt EN
-# SILENCIO y el modelo contesta sin haber visto el corpus.
+# Contexto amplio para el nodo agéntico (catálogo + esquemas de tools): sin
+# num_ctx explícito, Ollama trunca EN SILENCIO lo que rebase su default (4096).
+# La capa RAG ya no lo necesita: TopKLexical acota el prompt por construcción,
+# y no fijarlo evita que Ollama recargue el runner al alternar con el
+# clasificador (cada num_ctx distinto es un runner distinto).
 OLLAMA_NUM_CTX = 8192
 # Procesar ese prompt en la CPU de labs tarda más que OLLAMA_TIMEOUT (calibrado
 # para el clasificador, de prompt corto). Piso propio de las capas de prompt
@@ -177,6 +179,44 @@ class CorpusCompleto:
         return "\n".join(_docs())
 
 
+class TopKLexical:
+    """Top-k por traslape léxico, para el Ollama de labs (CPU): el corpus
+    completo (~4-5k tokens) tarda más de un minuto de prefill y la capa moría
+    por timeout aun con 45s. Prefijos normalizados a 5 letras: "entregas" /
+    "entregamos" y "físico"/"físicamente" cuentan como el mismo término, sin
+    stemmer ni dependencias. Documentos sin traslape no viajan: si nada
+    empata, el modelo recibe corpus vacío y contesta NO_SE — mejor que
+    truncar o esperar en vano.
+
+    ponytail: el traslape léxico pierde sinónimos puros ("horario" vs
+    "abrimos"); cuando duela, EMBEDDINGS_URL activa el vectorial sin tocar
+    código.
+    """
+
+    MAX_CHARS = 4000  # ≈1k tokens: prefill de segundos en la CPU de labs
+
+    def contexto(self, pregunta: str) -> str:
+        terminos = _terminos(pregunta)
+        puntuados = sorted(
+            ((len(terminos & _terminos(d)), d) for d in _docs()),
+            key=lambda par: par[0],
+            reverse=True,
+        )
+        elegidos: list[str] = []
+        total = 0
+        for puntos, doc in puntuados[: settings.rag_top_k]:
+            if puntos == 0 or total + len(doc) > self.MAX_CHARS:
+                break
+            elegidos.append(doc)
+            total += len(doc)
+        return "\n".join(elegidos)
+
+
+def _terminos(texto: str) -> set[str]:
+    """Prefijos (5 letras) de las palabras con sustancia, normalizados."""
+    return {p[:5] for p in re.findall(r"[a-z]+", nlu._norm(texto)) if len(p) > 3}
+
+
 class TopKVectorial:
     """Top-k por similitud coseno con embeddings remotos (EMBEDDINGS_URL).
 
@@ -233,7 +273,14 @@ _retriever_vectorial = TopKVectorial()
 
 
 def _retriever() -> Retriever:
-    return _retriever_vectorial if settings.embeddings_url else CorpusCompleto()
+    """Vectorial con EMBEDDINGS_URL; léxico acotado para el Ollama de labs
+    (su CPU no aguanta el corpus completo); corpus entero solo con Claude,
+    donde el prompt largo es barato (caché de prompts) y no hay prefill."""
+    if settings.embeddings_url:
+        return _retriever_vectorial
+    if settings.ollama_url:
+        return TopKLexical()
+    return CorpusCompleto()
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +325,6 @@ def answer_explained(text: str) -> tuple[str | None, str | None]:
                     {"role": "user", "content": pregunta},
                 ],
                 num_predict=150,
-                num_ctx=OLLAMA_NUM_CTX,
                 timeout=_timeout_prompt_largo(),
             )
             respuesta = (message.get("content") or "").strip()
