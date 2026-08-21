@@ -550,3 +550,37 @@ def test_final_trunco_por_num_predict_se_limpia():
     texto = "Atendemos sábados de 9 a 13 😊. Entre semana el horario es de nueve a"
     respuesta, motivo = rag._evaluar_respuesta(texto + " " + "x " * 40)
     assert respuesta == "Atendemos sábados de 9 a 13 😊." and motivo is None
+
+
+def test_razonamiento_fugado_en_ingles_se_descarta():
+    # Lo que llegó a producción: qwen3 escupió su cadena de pensamiento al
+    # content. Jamás debe llegar a un cliente, ni recortada.
+    fuga = (
+        'Okay, the user is asking if we deliver physical documents. '
+        'Let me check the corpus. The corpus says: "Entregamos los documentos '
+        'en formato digital por este mismo WhatsApp o por correo electrónico."'
+    )
+    assert rag._evaluar_respuesta(fuga) == (None, "meta")
+
+
+def test_bloque_think_se_poda_y_la_respuesta_sobrevive():
+    texto = "<think>razono en secreto</think>Entregamos en digital por WhatsApp 😊."
+    assert rag._evaluar_respuesta(texto) == ("Entregamos en digital por WhatsApp 😊.", None)
+
+
+def test_ollama_responde_json_estructurado(monkeypatch):
+    # Structured outputs: el content viene como {"respuesta": …} y se extrae;
+    # si el modelo desobedece el esquema, el texto crudo pasa a validación.
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    capturado = {}
+
+    def _ollama_fake(messages, **kwargs):
+        capturado.update(kwargs)
+        return {"content": '{"respuesta": "Entregamos en digital por WhatsApp 😊"}'}
+
+    monkeypatch.setattr(nlu, "ollama_chat", _ollama_fake)
+
+    assert rag.answer("¿entregan documentos físicos?") == "Entregamos en digital por WhatsApp 😊"
+    assert capturado["format"] == rag._FORMATO_RESPUESTA

@@ -777,3 +777,33 @@ def test_el_ticket_de_escalado_tambien_hereda_el_canal(session):
     ticket = _ticket(session)
     assert ticket is not None
     assert ticket.provider == PROVIDER_TWILIO
+
+
+def test_escalado_sin_ticket_abierto_recrea_la_solicitud(session):
+    # El caso de producción: la conversación quedó en "escalado", el ticket de
+    # la escalada se cerró, y los mensajes del cliente recibían el acuse sin
+    # registrar NADA — el bot prometía asesor y ningún asesor se enteraba.
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+    ticket = session.exec(select(Ticket).where(Ticket.phone == PHONE)).first()
+    ticket.status = TicketStatus.CERRADO
+    session.add(ticket)
+    session.commit()
+
+    replies = handle_incoming(session, PHONE, "sigo esperando, ¿me ayudan?")
+
+    assert "asesor" in replies[0].lower()
+    abiertos = session.exec(
+        select(Ticket).where(Ticket.phone == PHONE, Ticket.status != TicketStatus.CERRADO)
+    ).all()
+    assert len(abiertos) == 1 and abiertos[0].escalado is True
+
+
+def test_escalado_con_ticket_abierto_no_duplica_solicitudes(session):
+    handle_incoming(session, PHONE, "Hola")
+    handle_incoming(session, PHONE, "quiero hablar con un asesor")
+
+    handle_incoming(session, PHONE, "¿ya me van a atender?")
+
+    tickets = session.exec(select(Ticket).where(Ticket.phone == PHONE)).all()
+    assert len(tickets) == 1

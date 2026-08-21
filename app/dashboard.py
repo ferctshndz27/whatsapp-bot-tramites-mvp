@@ -374,9 +374,15 @@ def ticket_list(
         ticket_counts[t.status.value] += 1
     ticket_counts["todas"] = len(all_tickets)
     ticket_counts["sin_asignar"] = sum(1 for t in all_tickets if t.assigned_to is None)
+    # La bandera escalado cruza estados (un folio escalado puede estar nuevo,
+    # tomado o en proceso): la tarjeta de arriba ya la contaba, pero sin chip
+    # no había forma de LISTAR esos folios.
+    ticket_counts["escalados"] = stats["escalados"]
 
     tickets = all_tickets
-    if status:
+    if status == "escalados":
+        tickets = [t for t in tickets if t.escalado]
+    elif status:
         tickets = [t for t in tickets if t.status.value == status]
     if assigned == "none":
         tickets = [t for t in tickets if t.assigned_to is None]

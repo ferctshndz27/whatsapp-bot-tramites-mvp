@@ -30,6 +30,7 @@ el caché de prompts) y TopKVectorial (embeddings remotos vía EMBEDDINGS_URL,
 para cuando el corpus crezca). La elección es por configuración, no por código.
 """
 
+import json
 import logging
 import re
 from typing import Protocol
@@ -292,7 +293,25 @@ def _retriever() -> Retriever:
 # respuesta candidata y la validación la tumbó. Un NO_SE no está aquí — el
 # modelo declinó, no fue atajado. conversation._try_informative los registra
 # en nluevent (capa "rag_descartado") para que dejen de ser invisibles.
-GUARDRAIL_MOTIVOS = frozenset({"larga", "pii", "dinero"})
+GUARDRAIL_MOTIVOS = frozenset({"larga", "pii", "dinero", "meta"})
+
+# Cadena de razonamiento de qwen3 fugada al content ("Okay, the user is
+# asking… The corpus says: …"): meta-parloteo en inglés que JAMÁS debe llegar
+# a un cliente. Una respuesta legítima de esta capa es español dirigido al
+# cliente y no contiene estas frases.
+_META_RE = re.compile(r"\b(the user|the corpus|let me|the question|okay,)", re.IGNORECASE)
+# Bloque de razonamiento explícito, por si el servidor lo devolviera pese a
+# think=False (versiones/plantillas de Ollama varían): se poda, no se castiga.
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+# Salida forzada a JSON (structured outputs de Ollama, como el clasificador):
+# la gramática restringe el decoding y el parloteo fuera del campo no puede
+# existir. Lo que el modelo meta DENTRO del campo lo cazan _META_RE y el resto.
+_FORMATO_RESPUESTA = {
+    "type": "object",
+    "properties": {"respuesta": {"type": "string"}},
+    "required": ["respuesta"],
+}
 
 
 def answer(text: str) -> str | None:
@@ -329,9 +348,15 @@ def answer_explained(text: str) -> tuple[str | None, str | None]:
                 # token de más es un segundo que el cliente espera); el
                 # recorte a oraciones limpia el final si corta a media frase.
                 num_predict=90,
+                format=_FORMATO_RESPUESTA,
                 timeout=_timeout_prompt_largo(),
             )
-            respuesta = (message.get("content") or "").strip()
+            crudo = (message.get("content") or "").strip()
+            try:
+                respuesta = (json.loads(crudo).get("respuesta") or "").strip()
+            except (ValueError, AttributeError):
+                # Modelo desobediente con el esquema: que decida la validación.
+                respuesta = crudo
         else:
             response = nlu._get_client().messages.create(
                 model=settings.nlu_model,
@@ -380,8 +405,13 @@ def _recortar_a_oraciones(respuesta: str) -> str | None:
 def _evaluar_respuesta(respuesta: str) -> tuple[str | None, str | None]:
     """(respuesta validada, motivo del descarte). El motivo distingue un
     guardrail que disparó ("larga"/"pii"/"dinero") de un simple "no sé"."""
+    respuesta = _THINK_RE.sub("", respuesta).strip()
     if not respuesta or NO_SE in respuesta:
         return None, "sin_respuesta"
+    # Razonamiento fugado = respuesta entera no confiable: se tumba, no se
+    # intenta rescatar recortando (las "oraciones" serían el propio monólogo).
+    if _META_RE.search(respuesta):
+        return None, "meta"
     if len(respuesta.split()) > MAX_RESPONSE_WORDS:
         # qwen3:4b ignora el "máximo 30 palabras" del prompt y parlotea. La
         # verbosidad no es motivo para tirar una respuesta correcta: se

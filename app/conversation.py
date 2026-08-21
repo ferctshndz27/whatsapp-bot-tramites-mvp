@@ -280,7 +280,16 @@ def handle_incoming(
             # Aunque esté esperando a un asesor, un pedido concreto de trámite
             # se atiende (deducción, multi-servicio o mini-menú de parecidos):
             # el "espera" enlatado es solo para mensajes sin petición clara.
-            replies = _try_service_request(session, conv, text) or [ESCALATED_WAIT_REPLY]
+            replies = _try_service_request(session, conv, text)
+            if not replies:
+                if _latest_open_ticket(session, phone) is None:
+                    # Promesa sin registro: el ticket de la escalada ya se
+                    # cerró (o nunca existió) y el cliente sigue escribiendo.
+                    # Sin esto, "un asesor te contactará" no avisa a NADIE —
+                    # se re-crea la solicitud para que el panel la muestre.
+                    replies = _escalate(session, client, conv, text, reply=ESCALATED_WAIT_REPLY)
+                else:
+                    replies = [ESCALATED_WAIT_REPLY]
     else:
         normalized = text.strip().lower()
         # Captura caducada (CAPTURE_TTL_HOURS sin respuesta): este mensaje ya
