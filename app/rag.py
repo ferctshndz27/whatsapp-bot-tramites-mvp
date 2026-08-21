@@ -121,6 +121,26 @@ def _docs() -> list[str]:
         for s in c.services:
             # SIN price_info a propósito: cotizar es del flujo determinista.
             docs.append(f"«{s.name}» ({c.name}). Requisitos: {requisitos_texto(s)}.")
+    # Párrafos curados por el admin en /agente (tabla infodoc). Cumplen la
+    # pregunta de la frontera: los escribe el admin BAJO la misma regla que el
+    # archivo (solo información pública) y el router los valida al guardar
+    # (sin dinero, sin CURP, sin teléfonos). Import y sesión locales: rag no
+    # arrastra la base al importarse.
+    from sqlmodel import Session, select
+
+    import app.db as db
+    from app.models import InfoDoc
+
+    try:
+        with Session(db.engine) as sesion:
+            filas = sesion.exec(
+                select(InfoDoc)
+                .where(InfoDoc.habilitado == True)  # noqa: E712
+                .order_by(InfoDoc.position, InfoDoc.id)
+            ).all()
+        docs.extend(f.texto.strip() for f in filas if f.texto.strip())
+    except Exception as exc:
+        logger.warning("Corpus en base ilegible, sigue el resto: %s", exc)
     if settings.info_docs_path:
         try:
             with open(settings.info_docs_path, encoding="utf-8") as f:

@@ -303,6 +303,29 @@ _SCHEMA_DDL = [
         created_at         DATETIME2     NOT NULL
     )
     """,
+    # Estudio del Agente (/agente): configuración runtime y corpus informativo.
+    """
+    IF OBJECT_ID('agent_config', 'U') IS NULL
+    CREATE TABLE agent_config (
+        [key]       NVARCHAR(64)   NOT NULL PRIMARY KEY,
+        value       NVARCHAR(200)  NOT NULL,
+        updated_by  NVARCHAR(150)  NULL,
+        updated_at  DATETIME2      NOT NULL,
+        habilitado  BIT            NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    IF OBJECT_ID('info_docs', 'U') IS NULL
+    CREATE TABLE info_docs (
+        source_id   BIGINT         NOT NULL PRIMARY KEY,
+        texto       NVARCHAR(MAX)  NOT NULL,
+        position    INT            NOT NULL DEFAULT 0,
+        habilitado  BIT            NOT NULL DEFAULT 1,
+        updated_by  NVARCHAR(150)  NULL,
+        created_at  DATETIME2      NOT NULL,
+        updated_at  DATETIME2      NOT NULL
+    )
+    """,
     # Catálogo de plantillas aprobadas. Una fila por plantilla, con su
     # identificador en CADA proveedor: es lo que impide que las dos cuentas
     # diverjan cuando alguien actualiza solo una.
@@ -985,6 +1008,32 @@ def archive_nlu_event(e) -> None:
     )
 
 
+def archive_agent_config(a) -> None:
+    _upsert(
+        "agent_config", "[key]", a.key,
+        {
+            "value": a.value,
+            "updated_by": a.updated_by,
+            "updated_at": _naive_utc(a.updated_at),
+            "habilitado": a.habilitado,
+        },
+    )
+
+
+def archive_info_doc(d) -> None:
+    _upsert(
+        "info_docs", "source_id", d.id,
+        {
+            "texto": d.texto,
+            "position": d.position,
+            "habilitado": d.habilitado,
+            "updated_by": d.updated_by,
+            "created_at": _naive_utc(d.created_at),
+            "updated_at": _naive_utc(d.updated_at),
+        },
+    )
+
+
 def archive_conversation(c) -> None:
     _upsert(
         "conversations", "phone", c.phone,
@@ -1289,6 +1338,8 @@ def backfill() -> None:
         IntentoCobro,
         Invitation,
         LoginEvent,
+        AgentConfig,
+        InfoDoc,
         NluEvent,
         PaymentMethod,
         PlanCobro,
@@ -1341,6 +1392,10 @@ def backfill() -> None:
                 archive_catalog_audit(ca)
             for ne in session.exec(select(NluEvent)).all():
                 archive_nlu_event(ne)
+            for ac in session.exec(select(AgentConfig)).all():
+                archive_agent_config(ac)
+            for doc in session.exec(select(InfoDoc)).all():
+                archive_info_doc(doc)
             for f in session.exec(select(Feedback)).all():
                 archive_feedback(f)
             for sp in session.exec(select(SynonymProposal)).all():
@@ -1385,6 +1440,8 @@ def _register_listeners() -> None:
         Invitation,
         LoginEvent,
         Message,
+        AgentConfig,
+        InfoDoc,
         NluEvent,
         PaymentMethod,
         PlanCobro,
@@ -1493,6 +1550,16 @@ def _register_listeners() -> None:
     @event.listens_for(NluEvent, "after_update")
     def _nlu_event_upsert(mapper, connection, target):
         _safe(archive_nlu_event, target)
+
+    @event.listens_for(AgentConfig, "after_insert")
+    @event.listens_for(AgentConfig, "after_update")
+    def _agent_config_upsert(mapper, connection, target):
+        _safe(archive_agent_config, target)
+
+    @event.listens_for(InfoDoc, "after_insert")
+    @event.listens_for(InfoDoc, "after_update")
+    def _info_doc_upsert(mapper, connection, target):
+        _safe(archive_info_doc, target)
 
     @event.listens_for(Feedback, "after_insert")
     @event.listens_for(Feedback, "after_update")

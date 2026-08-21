@@ -247,6 +247,8 @@ RUTAS: list[Ruta] = [
         "GET /export/no-entendidos.csv", "GET", "/export/no-entendidos.csv", "/",
         filtracion=TEXTO_NO_ENTENDIDO,
     ),
+    # --- Estudio del Agente ---
+    Ruta("GET /agente", "GET", "/agente", "/"),
     # --- Sistema, bitácoras y exportaciones ---
     Ruta("GET /system", "GET", "/system", "/"),
     Ruta(

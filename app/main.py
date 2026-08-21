@@ -5,8 +5,13 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from sqlmodel import Session
+
+import app.db as db
 from app import (
     activity,
+    agent_settings,
+    agente_studio,
     archive,
     authlog,
     catalog_admin,
@@ -127,6 +132,7 @@ app.include_router(my.router)
 app.include_router(clients.router)
 app.include_router(replies.router)
 app.include_router(kb.router)
+app.include_router(agente_studio.router)
 app.include_router(authlog.router)
 
 
@@ -148,6 +154,10 @@ def _aplicar_eventos_pendientes() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    # Overrides del Estudio del Agente (/agente): lo guardado en la base pisa
+    # el .env ANTES de atender el primer mensaje.
+    with Session(db.engine) as sesion:
+        agent_settings.aplicar_overrides(sesion)
     dashboard.seed_dashboard_user(settings)
     archive.init()
     activity.backfill_closed_tickets()

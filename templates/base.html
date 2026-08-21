@@ -37,6 +37,7 @@
         <a href="/cobros" {% if request.url.path.startswith('/cobros') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💳</span>Cobros</a>
         {% set st = request.state | default(none) %}{% set pp = (st.pending_proposals | default(0)) if st else 0 %}
         <a href="/unmatched" {% if request.url.path.startswith('/unmatched') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🤖</span>Agente WhatsApp{% if pp %}<span class="nav-badge" aria-label="{{ pp }} propuestas por revisar">{{ pp }}</span>{% endif %}</a>
+        <a href="/agente" {% if request.url.path.startswith('/agente') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🧠</span>Estudio del Agente</a>
         <a href="/system" {% if request.url.path.startswith('/system') or request.url.path.startswith('/audit') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">⚙️</span>Sistema</a>
         {% endif %}
       </nav>

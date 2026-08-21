@@ -41,8 +41,16 @@ def _barrer_cobranza_safe() -> dict:
 
 def nightly() -> dict:
     init_db()
-    from app import synonym_miner
+    from app import agent_settings, synonym_miner
     from app.audit import log_admin
+
+    # El cron corre en OTRO proceso: sin esto ignoraría lo configurado desde
+    # /agente y usaría solo el .env.
+    try:
+        with get_session() as _s:
+            agent_settings.aplicar_overrides(_s)
+    except Exception:
+        logger.warning("Overrides del agente ilegibles; el cron usa el .env")
 
     # La cobranza se barre SIEMPRE y antes que nada: es lo único del job que
     # mueve dinero, y no depende de que haya minería ni API key.

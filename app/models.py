@@ -674,3 +674,34 @@ class PaymentMethod(SQLModel, table=True):
     estado: str = "activo"  # activo | vencido | revocado
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+
+
+class AgentConfig(SQLModel, table=True):
+    """Configuración del agente editable desde /agente (Estudio del Agente).
+
+    Solo claves de la allowlist de app.agent_settings; el .env es el default
+    de cada una y los SECRETOS (tokens, API keys, URLs de infra) jamás viven
+    aquí. Una fila por clave, con quién la cambió — el detalle queda además
+    en AdminAudit."""
+
+    key: str = Field(primary_key=True)
+    value: str
+    updated_by: str | None = None
+    updated_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
+class InfoDoc(SQLModel, table=True):
+    """Párrafo del corpus informativo de la capa RAG (app/rag.py), editable
+    desde /agente. Cada fila es un documento del corpus — mismo contrato que
+    los párrafos de INFO_DOCS_PATH (que sigue funcionando como fuente
+    adicional). Regla dura heredada: solo información pública, sin precios ni
+    datos de clientes (el router lo valida al guardar)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    texto: str
+    position: int = Field(default=0, index=True)
+    habilitado: bool = True
+    updated_by: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
