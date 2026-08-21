@@ -17,16 +17,9 @@
 <div id="probar-resultado" class="est-resultado" aria-live="polite"></div>
 
 <div class="agente-layout">
-  <aside class="est-paleta card">
-    <h2>Corpus informativo</h2>
-    <p class="muted mini">La capa RAG responde con estos párrafos. Solo información pública:
-    los precios, CURPs y teléfonos se rechazan al guardar.</p>
-    <button class="btn-mini primario" id="btn-nuevo-parrafo">＋ Nuevo párrafo</button>
-    <div id="lista-parrafos"></div>
-  </aside>
   <div id="lienzo-wrap">
     <div id="lienzo" aria-label="Pipeline del agente"></div>
-    <div id="minimapa" aria-hidden="true"></div>
+    <div id="minimapa" aria-hidden="true"><div id="minimapa-paper"></div><div class="mini-ctl"><button class="btn-mini" id="mz-menos">−</button><span id="mz-pct">100%</span><button class="btn-mini" id="mz-mas">+</button><button class="btn-mini" id="mz-fit">⛶</button></div></div>
     <p class="est-hint">Arrastra los nodos · clic para configurar · el punto verde = capa encendida</p>
   </div>
   <aside id="panel" class="agente-panel card" aria-live="polite">
@@ -34,7 +27,15 @@
     <div id="panel-cuerpo"><p class="muted">Cada nodo es una capa REAL de la cascada, en su orden
     de ejecución. Haz clic en uno para configurarlo; usa ▶ Probar para ver qué capa
     respondería un mensaje.</p></div>
+    <hr class="est-hr" id="corpus-hr" hidden>
+    <section id="bloque-corpus" hidden>
+      <p class="muted mini">La capa RAG responde con estos párrafos. Solo información pública:
+      los precios, CURPs y teléfonos se rechazan al guardar.</p>
+      <button class="btn-mini primario" id="btn-nuevo-parrafo">＋ Nuevo párrafo</button>
+      <div id="lista-parrafos"></div>
+    </section>
   </aside>
+  </div>
 </div>
 </div><!-- /est-scope -->
 
@@ -57,22 +58,23 @@
   padding:.6rem .9rem;display:inline-block}
 .est-resultado .err{color:#f85149}
 .agente-layout{display:flex;gap:14px;align-items:stretch;flex-wrap:wrap}
-.est-paleta{flex:0 0 220px;max-height:max(78vh,640px);overflow-y:auto;padding:12px;
+.agente-panel{flex:0 0 300px;max-height:max(78vh,640px);overflow-y:auto}
+.est-hr{border:0;border-top:1px solid var(--borde);margin:14px 0}
+.parrafo-chip textarea{width:100%;min-height:84px;margin-bottom:6px}
+.est-paleta{overflow-y:auto;padding:12px;
   background:var(--tarjeta);border:1px solid var(--borde);border-radius:14px}
 .est-paleta h2{margin:0 0 4px;font-size:1rem}
 .mini{font-size:.78rem}
 .parrafo-chip{border:1px solid var(--borde);border-radius:10px;padding:8px;margin:8px 0;
   cursor:grab;background:var(--tarjeta2)}
 .parrafo-chip p{margin:0 0 6px;font-size:.8rem;white-space:pre-wrap;color:var(--texto)}
-#lienzo-wrap{flex:1 1 520px;position:relative;min-width:0}
-#lienzo{height:max(78vh,640px);border-radius:14px;overflow:hidden;background:var(--fondo);
+#lienzo-wrap{flex:1 1 520px;position:relative;min-width:0;display:flex;flex-direction:column}
+#lienzo{min-height:640px;height:max(78vh,640px);position:relative;border-radius:14px;overflow:hidden;background:var(--fondo);
   background-image:radial-gradient(#21262d 1px,transparent 1px);background-size:22px 22px;
   border:1px solid var(--borde)}
-#minimapa{position:absolute;right:12px;bottom:34px;width:150px;height:110px;
-  background:#161b22e6;border:1px solid var(--borde);border-radius:10px;overflow:hidden;
-  pointer-events:none}
+#minimapa{position:absolute;right:14px;bottom:44px;width:172px;background:#161b22f2;border:1px solid #30363d;border-radius:10px;padding:6px;z-index:5}#minimapa-paper{width:160px;height:92px;overflow:hidden;border-radius:6px}.mini-ctl{display:flex;align-items:center;gap:4px;justify-content:center;margin-top:4px}.mini-ctl .btn-mini{padding:1px 8px;margin:0;font-size:.75rem}.mini-ctl span{color:#8b949e;font-size:.72rem;min-width:34px;text-align:center}
 .est-hint{color:var(--texto2);font-size:.78rem;margin:.4rem 0 0}
-.agente-panel{flex:0 0 300px;max-height:max(78vh,640px);overflow-y:auto;padding:14px;
+.agente-panel{overflow-y:auto;padding:14px;
   background:var(--tarjeta);border:1px solid var(--borde);border-radius:14px}
 .agente-panel h2{margin-top:0;font-size:1rem}
 .agente-panel label{display:block;margin:10px 0 4px;font-weight:600;font-size:.85rem;color:var(--texto)}
@@ -100,12 +102,13 @@ const post = (url, body) => fetch(url, {method:"POST",headers:{"Content-Type":"a
   body:JSON.stringify(body),credentials:"same-origin"})
   .then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; });
 
-const { dia, shapes, util } = joint;
+const { dia, shapes } = joint;
+const esc = t => { const d = document.createElement("div"); d.textContent = t ?? ""; return d.innerHTML; };
 const graph = new dia.Graph({}, { cellNamespace: shapes });
 const paper = new dia.Paper({ el: document.getElementById("lienzo"), model: graph,
-  width: "100%", height: "100%", cellViewNamespace: shapes, background: { color: "transparent" },
+  width: "100%", height: Math.max(640, Math.round(window.innerHeight * .78)), cellViewNamespace: shapes, background: { color: "transparent" },
   interactive: { linkMove: false } });
-new dia.Paper({ el: document.getElementById("minimapa"), model: graph, width: 150, height: 110,
+new dia.Paper({ el: document.getElementById("minimapa-paper"), model: graph, width: 160, height: 92,
   cellViewNamespace: shapes, interactive: false, background: { color: "transparent" } }).scale(0.11);
 
 const POS_KEY = "agente-pos-v2";
@@ -132,11 +135,13 @@ function nodoRico(n) {
     attrs: {
       body: { fill: "#161b22", stroke: n.activo ? "#2ea043" : "#30363d", strokeWidth: 1.5, rx: 12, ry: 12,
         filter: { name: "dropShadow", args: { dx: 0, dy: 3, blur: 8, color: "rgba(0,0,0,.55)" } } },
-      header: { fill: n.activo ? "#1c2128" : "#13171d", stroke: "none", height: 26 },
+      header: { fill: n.activo ? "#1c2128" : "#13171d", stroke: "none", height: 26, rx: 12, ry: 12 },
       headerText: { text: `${({literal:"🔤",ollama:"🤖",llm:"✨",fuzzy:"≈",rag:"📚",tools:"🔧",escalada:"🙋"})[n.id] || "•"} ${n.activo ? "●" : "○"} ${n.nombre}`, fill: n.activo ? "#7ee787" : "#8b949e",
-        fontSize: 11.5, fontWeight: 600, refX: 10, textAnchor: "start" },
+        fontSize: 11.5, fontWeight: 600,
+        x: 12, y: 13, textAnchor: "start", textVerticalAnchor: "middle" },
       bodyText: { text: `${n.mensajes} msgs · 14d${n.descartes ? `  ·  ${n.descartes} descartes` : ""}`,
-        fill: "#8b949e", fontSize: 10.5, refY: conToggle ? "42%" : "58%" },
+        fill: "#8b949e", fontSize: 10.5,
+        x: "calc(0.5*w)", y: "calc(h-20)", textAnchor: "middle", textVerticalAnchor: "middle" },
     },
   });
   el.prop("datos", n);
@@ -171,7 +176,11 @@ paper.on("element:pointerup", v => { pos[v.model.id] = v.model.position();
 
 // ---- Zoom / ajustar / reacomodar ----
 let escala = 1;
-const zoom = f => { escala = Math.min(1.6, Math.max(0.4, escala * f)); paper.scale(escala); };
+const pct = () => document.getElementById("mz-pct").textContent = Math.round(escala * 100) + "%";
+const zoom = f => { escala = Math.min(1.6, Math.max(0.4, escala * f)); paper.scale(escala); pct(); };
+document.getElementById("mz-menos").onclick = () => zoom(1/1.15);
+document.getElementById("mz-mas").onclick = () => zoom(1.15);
+document.getElementById("mz-fit").onclick = () => { paper.transformToFitContent({ padding: 30, maxScale: 1.3 }); escala = paper.scale().sx; pct(); };
 document.getElementById("zoom-mas").onclick = () => zoom(1.15);
 document.getElementById("zoom-menos").onclick = () => zoom(1/1.15);
 document.getElementById("zoom-ajustar").onclick = () =>
@@ -188,7 +197,20 @@ const err = msg => { const e = document.getElementById("err"); if (e) e.textCont
 const guardar = (key, value) => post("/agente/config", { key, value: String(value) })
   .then(() => location.reload()).catch(e => err(e.message));
 
+function ocultarCorpus() {
+  document.getElementById("bloque-corpus").hidden = true;
+  document.getElementById("corpus-hr").hidden = true;
+}
+
+function mostrarCorpus() {
+  titulo.textContent = "Corpus informativo";
+  cuerpo.innerHTML = "";
+  document.getElementById("bloque-corpus").hidden = false;
+  document.getElementById("corpus-hr").hidden = false;
+}
+
 function panelNodo(n) {
+  ocultarCorpus();
   titulo.textContent = n.nombre;
   const c = ESTADO.config;
   let h = `<p class="muted mini">${n.detalle}</p>
@@ -217,38 +239,50 @@ window.guardar = guardar;
 window.guardarOllama = () => guardar("ollama_model", document.getElementById("f-modelo").value)
   .then(() => guardar("ollama_timeout", document.getElementById("f-timeout").value));
 
-function panelParrafo(pf) {
-  titulo.textContent = pf ? "Editar párrafo" : "Nuevo párrafo";
-  cuerpo.innerHTML = `<textarea id="t-parrafo" maxlength="1200">${pf ? util.escapeHTML(pf.texto) : ""}</textarea>
-    <p><button class="btn-mini primario" id="btn-g">Guardar</button>` +
-    (pf ? `<button class="btn-mini" id="btn-q">Quitar</button>` : "") +
-    `</p><p class="agente-error" id="err"></p>`;
-  document.getElementById("btn-g").onclick = () => {
-    const texto = document.getElementById("t-parrafo").value;
-    (pf ? post(`/agente/corpus/${pf.id}`, { texto }) : post("/agente/corpus", { texto }))
-      .then(() => location.reload()).catch(e => err(e.message));
-  };
-  const q = document.getElementById("btn-q");
-  if (q) q.onclick = () => post(`/agente/corpus/${pf.id}`, { borrar: true })
-    .then(() => location.reload()).catch(e => err(e.message));
-}
+
 
 paper.on("element:pointerclick", v => {
-  if (v.model.id === "corpus") { panelParrafo(null); titulo.textContent = "Corpus — nuevo párrafo"; return; }
+  if (v.model.id === "corpus") { mostrarCorpus(); return; }
   const d = v.model.prop("datos"); if (d) panelNodo(d);
 });
 
-// ---- Paleta de párrafos ----
+// ---- Corpus: chips con edición inline ----
 const lista = document.getElementById("lista-parrafos");
-ESTADO.parrafos.forEach(pf => {
-  const div = document.createElement("div");
-  div.className = "parrafo-chip";
-  const p = document.createElement("p"); p.textContent = pf.texto;  // sin inyección
+
+function chipLectura(div, pf) {
+  div.innerHTML = "";
+  const t = document.createElement("p"); t.textContent = pf.texto;   // sin inyección
   const b = document.createElement("button"); b.className = "btn-mini"; b.textContent = "Editar";
-  b.onclick = () => panelParrafo(pf);
-  div.append(p, b); lista.append(div);
+  b.onclick = () => chipEdicion(div, pf);
+  const q = document.createElement("button"); q.className = "btn-mini"; q.textContent = "🗑";
+  q.setAttribute("aria-label", "Quitar párrafo");
+  q.onclick = () => { if (confirm("¿Quitar este párrafo del corpus?"))
+    post(`/agente/corpus/${pf.id}`, { borrar: true }).then(() => location.reload()); };
+  div.append(t, b, q);
+}
+
+function chipEdicion(div, pf) {
+  div.innerHTML = "";
+  const ta = document.createElement("textarea"); ta.maxLength = 1200; ta.value = pf ? pf.texto : "";
+  const g = document.createElement("button"); g.className = "btn-mini primario"; g.textContent = "Guardar";
+  const c = document.createElement("button"); c.className = "btn-mini"; c.textContent = "Cancelar";
+  const e = document.createElement("p"); e.className = "agente-error";
+  g.onclick = () => (pf ? post(`/agente/corpus/${pf.id}`, { texto: ta.value })
+                        : post("/agente/corpus", { texto: ta.value }))
+    .then(() => location.reload()).catch(x => e.textContent = x.message);
+  c.onclick = () => pf ? chipLectura(div, pf) : div.remove();
+  div.append(ta, g, c, e);
+  ta.focus();
+}
+
+ESTADO.parrafos.forEach(pf => {
+  const div = document.createElement("div"); div.className = "parrafo-chip";
+  chipLectura(div, pf); lista.append(div);
 });
-document.getElementById("btn-nuevo-parrafo").onclick = () => panelParrafo(null);
+document.getElementById("btn-nuevo-parrafo").onclick = () => {
+  const div = document.createElement("div"); div.className = "parrafo-chip";
+  chipEdicion(div, null); lista.prepend(div);
+};
 
 // ---- Probador (el "Run" del demo, contra la cascada real) ----
 const res = document.getElementById("probar-resultado");
@@ -263,16 +297,16 @@ document.getElementById("btn-probar").onclick = () => {
     const gana = r.respuesta_rag ? "rag" : capaNodo;
     porId[gana]?.attr({ body: { stroke: "#d29922", strokeWidth: 3 } });
     let msg = `Capa <strong>${r.capa}</strong> en ${r.ms} ms`;
-    if (r.servicio) msg += ` → servicio <strong>${util.escapeHTML(r.servicio)}</strong>`;
-    if (r.categoria) msg += ` → categoría <strong>${util.escapeHTML(r.categoria)}</strong>`;
+    if (r.servicio) msg += ` → servicio <strong>${esc(r.servicio)}</strong>`;
+    if (r.categoria) msg += ` → categoría <strong>${esc(r.categoria)}</strong>`;
     if (r.es_vago) msg += ` · <em>mensaje vago (guardrail activo)</em>`;
-    if (r.respuesta_rag) msg += `<br>RAG respondería: “${util.escapeHTML(r.respuesta_rag)}”`;
+    if (r.respuesta_rag) msg += `<br>RAG respondería: “${esc(r.respuesta_rag)}”`;
     if (r.rag_descartada) msg += ` · guardrail descartó la respuesta (${r.rag_descartada})`;
     if (r.sugerencias && r.sugerencias.length && !r.respuesta_rag)
-      msg += `<br>Mini-menú: ${r.sugerencias.map(util.escapeHTML).join(", ")}`;
+      msg += `<br>Mini-menú: ${r.sugerencias.map(esc).join(", ")}`;
     if (r.le_tocaria_tools) msg += `<br><em>Le tocaría al nodo agéntico (no se ejecuta en pruebas).</em>`;
     res.innerHTML = `<span class="ok">${msg}</span>`;
-  }).catch(e => res.innerHTML = `<span class="err">${util.escapeHTML(e.message)}</span>`);
+  }).catch(e => res.innerHTML = `<span class="err">${esc(e.message)}</span>`);
 };
 document.getElementById("probar-texto").addEventListener("keydown",
   e => { if (e.key === "Enter") document.getElementById("btn-probar").click(); });
