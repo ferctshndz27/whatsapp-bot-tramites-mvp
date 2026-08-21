@@ -12,7 +12,7 @@
 
 <div class="card">
   <p style="margin:0; display:flex; gap:.75rem; flex-wrap:wrap;">
-    <a href="/inbox/{{ client.phone }}" class="btn-sm" style="text-decoration:none; color:#fff; display:inline-flex; align-items:center; background:var(--green-2); border-radius:6px; padding:.35rem .9rem;">💬 Abrir chat</a>
+    <a href="/inbox/{{ client.phone }}" class="btn-sm" style="text-decoration:none; color:#fff; display:inline-flex; align-items:center; background:var(--green-2); border-radius:999px; padding:.35rem .9rem;">💬 Abrir chat</a>
     <span style="color:var(--text-muted); align-self:center;">
       Cliente desde {{ client.created_at | local('%Y-%m-%d') }} · {{ tickets | length }} solicitud(es)
     </span>
