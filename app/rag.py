@@ -324,7 +324,11 @@ def answer_explained(text: str) -> tuple[str | None, str | None]:
                     {"role": "system", "content": system},
                     {"role": "user", "content": pregunta},
                 ],
-                num_predict=150,
+                # 90 tokens ≈ 60-70 palabras: margen sobre el tope de 45 sin
+                # pagar la generación completa en CPU (~10 tokens/s — cada
+                # token de más es un segundo que el cliente espera); el
+                # recorte a oraciones limpia el final si corta a media frase.
+                num_predict=90,
                 timeout=_timeout_prompt_largo(),
             )
             respuesta = (message.get("content") or "").strip()
@@ -357,13 +361,37 @@ def _respuesta_segura(respuesta: str) -> str | None:
     return segura
 
 
+def _recortar_a_oraciones(respuesta: str) -> str | None:
+    """Primeras oraciones completas que quepan en MAX_RESPONSE_WORDS, en
+    orden. También limpia el final trunco cuando num_predict corta a media
+    frase (el fragmento sin puntuación de cierre queda fuera)."""
+    oraciones = re.findall(r"[^.!?]+[.!?]+", respuesta)
+    recorte: list[str] = []
+    palabras = 0
+    for oracion in oraciones:
+        n = len(oracion.split())
+        if palabras + n > MAX_RESPONSE_WORDS:
+            break
+        recorte.append(oracion.strip())
+        palabras += n
+    return " ".join(recorte) if recorte else None
+
+
 def _evaluar_respuesta(respuesta: str) -> tuple[str | None, str | None]:
     """(respuesta validada, motivo del descarte). El motivo distingue un
     guardrail que disparó ("larga"/"pii"/"dinero") de un simple "no sé"."""
     if not respuesta or NO_SE in respuesta:
         return None, "sin_respuesta"
     if len(respuesta.split()) > MAX_RESPONSE_WORDS:
-        return None, "larga"
+        # qwen3:4b ignora el "máximo 30 palabras" del prompt y parlotea. La
+        # verbosidad no es motivo para tirar una respuesta correcta: se
+        # recorta a oraciones completas y los chequeos de seguridad corren
+        # sobre lo que SÍ viaja. Sin una oración completa que quepa, se
+        # descarta como siempre.
+        recorte = _recortar_a_oraciones(respuesta)
+        if recorte is None:
+            return None, "larga"
+        respuesta = recorte
     # Un CURP o un teléfono en la respuesta = fuga en potencia. El corpus no
     # trae ninguno, así que cualquiera que aparezca fue inventado o inducido.
     if _CURP_RE.search(respuesta) or _TELEFONO_RE.search(_SEPARADORES_RE.sub("", respuesta)):
