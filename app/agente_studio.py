@@ -251,6 +251,10 @@ def probar(request: Request, data: PruebaIn):
             respuesta, motivo = rag.answer_explained(texto)
             resultado["respuesta_rag"] = respuesta
             resultado["rag_descartada"] = motivo
+            # Sin respuesta y sin guardrail = el modelo dijo NO_SE o la
+            # llamada falló (timeout/red). Antes esto era indistinguible de
+            # "la capa está apagada" y el admin no sabía qué revisar.
+            resultado["rag_sin_respuesta"] = respuesta is None and motivo is None
         if resultado["respuesta_rag"] is None and not sugerencias:
             resultado["le_tocaria_tools"] = settings.agent_tools_enabled
     resultado["ms"] = round((time.perf_counter() - inicio) * 1000)

@@ -387,3 +387,18 @@ def test_nodo_sin_respuesta_deja_el_flujo_de_siempre(monkeypatch):
 
     assert len(respuestas) == 1 and NOT_RECOGNIZED_MARKER in respuestas[0]
     assert "tools" not in _capas()
+
+
+def test_ollama_del_nodo_recibe_contexto_amplio_y_timeout_holgado(monkeypatch, session):
+    # Mismo mal que la capa RAG: catálogo + esquemas de tools truncados o
+    # cortados a los 12s del clasificador. Candado del cableado.
+    from app import rag
+
+    fake = _OllamaGuionado([{"role": "assistant", "content": "NO_SE"}])
+    _nodo_ollama(monkeypatch, fake)
+    monkeypatch.setattr(settings, "ollama_timeout", 12.0)
+
+    agent_tools.responder(session, "5215550000000", "¿me ayudas con un pedido compuesto?")
+
+    assert fake.llamadas[0]["num_ctx"] == rag.OLLAMA_NUM_CTX
+    assert fake.llamadas[0]["timeout"] == rag.OLLAMA_TIMEOUT_MIN

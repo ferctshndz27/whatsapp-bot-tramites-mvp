@@ -49,6 +49,20 @@ MAX_RESPONSE_WORDS = 45
 # Centinela que el modelo debe responder cuando el corpus no trae la respuesta.
 NO_SE = "NO_SE"
 
+# El corpus completo (~17k caracteres ≈ 4-5k tokens) rebasa el contexto default
+# de Ollama (4096): sin num_ctx explícito el servidor trunca el prompt EN
+# SILENCIO y el modelo contesta sin haber visto el corpus.
+OLLAMA_NUM_CTX = 8192
+# Procesar ese prompt en la CPU de labs tarda más que OLLAMA_TIMEOUT (calibrado
+# para el clasificador, de prompt corto). Piso propio de las capas de prompt
+# largo; las llamadas siguientes se amortizan con el caché de prompts de Ollama.
+OLLAMA_TIMEOUT_MIN = 45.0
+
+
+def _timeout_prompt_largo() -> float:
+    """OLLAMA_TIMEOUT manda solo si es MÁS holgado que el piso."""
+    return max(OLLAMA_TIMEOUT_MIN, settings.ollama_timeout)
+
 # Señales de pregunta informativa sobre texto normalizado (nlu._norm). No
 # incluye verbos de pedido ("quiero", "necesito" a secas): esos son solicitudes
 # de trámite y les toca la cascada de deducción, no esta capa.
@@ -264,6 +278,8 @@ def answer_explained(text: str) -> tuple[str | None, str | None]:
                     {"role": "user", "content": pregunta},
                 ],
                 num_predict=150,
+                num_ctx=OLLAMA_NUM_CTX,
+                timeout=_timeout_prompt_largo(),
             )
             respuesta = (message.get("content") or "").strip()
         else:

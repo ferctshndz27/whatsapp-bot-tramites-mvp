@@ -286,6 +286,8 @@ def ollama_chat(
     format: dict | None = None,
     tools: list[dict] | None = None,
     num_predict: int = 128,
+    num_ctx: int | None = None,
+    timeout: float | None = None,
 ) -> dict:
     """El `message` de /api/chat de Ollama (labs, detrás de nginx). Fuente
     única de la llamada: la usan el clasificador, el validador de códigos, la
@@ -304,6 +306,11 @@ def ollama_chat(
         "think": False,
         "options": {"temperature": 0, "num_predict": num_predict},
     }
+    if num_ctx is not None:
+        # Sin esto, un prompt más grande que el contexto default del servidor
+        # (4096) se TRUNCA en silencio: el modelo contesta sin haber visto el
+        # principio del prompt. Lo fijan las capas de prompt largo (RAG, tools).
+        payload["options"]["num_ctx"] = num_ctx
     if format is not None:
         # Ollama fuerza la salida al esquema (structured outputs), igual
         # que output_config en la API de Claude.
@@ -317,7 +324,9 @@ def ollama_chat(
         # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
         # lento); conectar a un servidor caído corta a los 2s. Un float suelto
         # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
-        timeout=httpx.Timeout(settings.ollama_timeout, connect=2.0),
+        # Las capas de prompt largo pasan su propio timeout: procesar miles de
+        # tokens en la CPU de labs tarda más que el clasificador.
+        timeout=httpx.Timeout(timeout or settings.ollama_timeout, connect=2.0),
     )
     response.raise_for_status()
     return response.json()["message"]
