@@ -260,3 +260,64 @@ def probar(request: Request, data: PruebaIn):
     resultado["ms"] = round((time.perf_counter() - inicio) * 1000)
     log_admin(user, "agente:prueba", texto[:80])
     return resultado
+
+
+# ---------------------------------------------------------------------------
+# Match literal: sinónimos del catálogo
+#
+# La capa literal no tiene "configuración": lo que la alimenta son los datos
+# del catálogo (nombre oficial + sinónimos). Editarlos desde aquí NO crea un
+# segundo catálogo — todo pasa por app.catalog, que es quien audita el cambio
+# y refresca su caché. Las keywords no son un campo: la capa keyword empata
+# subcadenas del NOMBRE del servicio (catalog.search_by_keyword).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/agente/sinonimos")
+def listar_sinonimos(request: Request):
+    """Servicios con sus sinónimos, para el panel del nodo literal. Se pide al
+    hacer clic en el nodo (no viaja en cada carga de /agente)."""
+    if not _admin_or_403(request):
+        return JSONResponse({"error": "solo administradores"}, status_code=403)
+    from app.catalog import catalog
+
+    servicios = [
+        {
+            "id": s.id,
+            "nombre": s.name,
+            "categoria": c.name,
+            "sinonimos": list(s.synonyms),
+        }
+        for c in catalog.categories
+        for s in c.services
+    ]
+    return {"servicios": servicios}
+
+
+class SinonimoIn(BaseModel):
+    service_id: str
+    texto: str
+    quitar: bool = False
+
+
+@router.post("/agente/sinonimos")
+def editar_sinonimo(request: Request, data: SinonimoIn):
+    user = _admin_or_403(request)
+    if not user:
+        return JSONResponse({"error": "solo administradores"}, status_code=403)
+    from app.catalog import catalog
+
+    texto = data.texto.strip()
+    if not texto or len(texto) > 80:
+        return JSONResponse({"error": "el sinónimo va de 1 a 80 caracteres"}, status_code=400)
+    # catalog devuelve el error como texto (no lanza), igual que catalog_admin.
+    error = (
+        catalog.remove_synonym(data.service_id, texto, admin=user)
+        if data.quitar
+        else catalog.add_synonym(data.service_id, texto, admin=user)
+    )
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    accion = "quitar" if data.quitar else "agregar"
+    log_admin(user, f"agente:sinonimo-{accion}", f"{data.service_id}: {texto[:60]}")
+    return {"ok": True}

@@ -186,3 +186,88 @@ def test_probar_corre_la_cascada_en_seco_sin_dejar_rastro():
 def test_probar_es_solo_para_admins():
     c = _sesion_de("colab")
     assert c.post("/agente/probar", json={"texto": "hola"}).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Match literal: sinónimos del catálogo
+#
+# La capa literal no tiene flags — la alimenta el catálogo. Lo que se protege
+# aquí: solo el admin los toca, el cambio pasa por app.catalog (con su
+# auditoría y su caché refrescada) y el NLU empata con el sinónimo nuevo.
+# ---------------------------------------------------------------------------
+
+
+def _primer_servicio():
+    from app.catalog import catalog
+
+    return catalog.categories[0].services[0]
+
+
+def test_colaborador_no_ve_ni_toca_sinonimos():
+    c = _sesion_de("colab")
+    assert c.get("/agente/sinonimos").status_code == 403
+    assert c.post(
+        "/agente/sinonimos", json={"service_id": _primer_servicio().id, "texto": "x"}
+    ).status_code == 403
+
+
+def test_listado_trae_servicios_con_sus_sinonimos():
+    servicio = _primer_servicio()
+    datos = _sesion_de("admin").get("/agente/sinonimos").json()
+    fila = next(s for s in datos["servicios"] if s["id"] == servicio.id)
+    assert fila["nombre"] == servicio.name and fila["sinonimos"] == list(servicio.synonyms)
+
+
+def test_sinonimo_agregado_lo_empata_el_nlu():
+    from app import nlu
+
+    servicio = _primer_servicio()
+    c = _sesion_de("admin")
+
+    r = c.post("/agente/sinonimos", json={"service_id": servicio.id, "texto": "papelito magico"})
+
+    assert r.status_code == 200
+    encontrado, _, capa, _ = nlu.deduce_explained("necesito el papelito magico")
+    assert encontrado is not None and encontrado.id == servicio.id and capa == "sinonimo"
+
+
+def test_sinonimo_quitado_deja_de_empatar():
+    from app import nlu
+
+    servicio = _primer_servicio()
+    c = _sesion_de("admin")
+    c.post("/agente/sinonimos", json={"service_id": servicio.id, "texto": "papelito magico"})
+
+    r = c.post(
+        "/agente/sinonimos",
+        json={"service_id": servicio.id, "texto": "papelito magico", "quitar": True},
+    )
+
+    assert r.status_code == 200
+    encontrado, _, _, _ = nlu.deduce_explained("necesito el papelito magico")
+    assert encontrado is None
+
+
+def test_el_cambio_de_sinonimos_queda_auditado():
+    from app.models import CatalogAudit
+
+    servicio = _primer_servicio()
+    _sesion_de("admin").post(
+        "/agente/sinonimos", json={"service_id": servicio.id, "texto": "papelito magico"}
+    )
+
+    with Session(db.engine) as s:
+        from sqlmodel import select
+
+        filas = s.exec(select(CatalogAudit).where(CatalogAudit.field == "synonyms")).all()
+    assert filas and "papelito magico" in filas[-1].new_value
+
+
+def test_sinonimo_invalido_o_servicio_inexistente_es_400():
+    c = _sesion_de("admin")
+    assert c.post(
+        "/agente/sinonimos", json={"service_id": _primer_servicio().id, "texto": "  "}
+    ).status_code == 400
+    assert c.post(
+        "/agente/sinonimos", json={"service_id": "no-existe", "texto": "algo"}
+    ).status_code == 400
