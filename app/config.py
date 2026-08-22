@@ -1,8 +1,15 @@
+import logging
 import os
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Interruptor único de la ruta Claude (API de Anthropic). En False la llave se
+# ignora aunque esté en el .env: el agente corre 100% sobre Ollama. No es una
+# variable de entorno a propósito — que no se encienda por accidente en el
+# servidor; encenderla es un cambio de código, revisado y desplegado.
+CLAUDE_HABILITADO = False
 
 
 class Settings:
@@ -28,7 +35,20 @@ class Settings:
         )
         # Deducción de intención con Claude (opcional): sin API key el bot
         # usa el matching por palabras clave de siempre.
+        # Decisión del negocio (2026-08-22): la capa Claude NO se usa — no hay
+        # presupuesto de API y el agente corre entero sobre el Ollama de labs.
+        # El apagador vive aquí, donde nace la llave, y no repartido por los
+        # siete `if settings.anthropic_api_key` que ya existen: con la llave en
+        # blanco todos esos gates quedan cerrados de una vez. El código de la
+        # ruta Claude se conserva (y sus pruebas también): está inerte, y el día
+        # que el negocio quiera pagar API se reactiva poniendo esto en True.
         self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if self.anthropic_api_key and not CLAUDE_HABILITADO:
+            logging.getLogger(__name__).warning(
+                "ANTHROPIC_API_KEY presente pero IGNORADA: la capa Claude está "
+                "apagada en config.CLAUDE_HABILITADO. El agente usa Ollama."
+            )
+            self.anthropic_api_key = ""
         self.nlu_model = os.environ.get("NLU_MODEL", "claude-opus-4-8")
         # Capa informativa ("rag"): responde dudas de horarios/tiempos/requisitos
         # usando SOLO el corpus público (catálogo + INFO_DOCS_PATH). Apagada por
@@ -39,6 +59,18 @@ class Settings:
         # como alternativa). Último recurso de _not_understood — nunca ruta
         # principal. Ver app/agent_tools.py.
         self.agent_tools_enabled = os.environ.get("AGENT_TOOLS_ENABLED", "0") == "1"
+        # Encendido POR HERRAMIENTA, encima del permiso de agent_tools.PERMISOS
+        # (que es el piso de seguridad y NO se toca desde el panel). Sirve para
+        # "hoy no quiero que cotice, solo que consulte folios" sin apagar el
+        # nodo entero. "cobrar" no tiene flag a propósito: es deny por
+        # construcción y mover dinero jamás es del modelo.
+        self.tool_cotizar_enabled = os.environ.get("TOOL_COTIZAR_ENABLED", "1") == "1"
+        self.tool_folios_enabled = os.environ.get("TOOL_FOLIOS_ENABLED", "1") == "1"
+        # Topes del bucle agéntico. Los defaults son espejo de
+        # agent_tools.MAX_TURNOS / MAX_RESPONSE_WORDS (un test lo verifica);
+        # aquí viven para poder ajustarlos en caliente desde /agente.
+        self.agent_max_turnos = int(os.environ.get("AGENT_MAX_TURNOS", "3"))
+        self.agent_max_words = int(os.environ.get("AGENT_MAX_WORDS", "80"))
         # Documento curado OPCIONAL con información pública del negocio
         # (horarios, tiempos de entrega, políticas). Regla dura: solo texto que
         # cualquier cliente puede saber — jamás datos de clientes ni internos.

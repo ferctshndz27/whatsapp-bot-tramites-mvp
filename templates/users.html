@@ -64,7 +64,7 @@
             {% endif %}
           </td>
           <td>
-            <details style="display:inline-block; margin-right:.5rem;">
+            <details id="pass-{{ u.username }}" style="display:inline-block; margin-right:.5rem;">
               <summary class="btn-sm" style="cursor:pointer; display:inline-block;">Restablecer contraseña</summary>
               <form method="post" action="/users/{{ u.username }}/password"
                 style="margin-top:.5rem; display:flex; gap:.5rem; align-items:center;">

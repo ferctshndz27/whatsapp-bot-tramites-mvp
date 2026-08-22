@@ -271,3 +271,34 @@ def test_sinonimo_invalido_o_servicio_inexistente_es_400():
     assert c.post(
         "/agente/sinonimos", json={"service_id": "no-existe", "texto": "algo"}
     ).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Capa Claude apagada (decisión del negocio: todo corre sobre Ollama)
+# ---------------------------------------------------------------------------
+
+
+def test_la_llave_de_anthropic_se_ignora_aunque_este_en_el_entorno(monkeypatch):
+    # El apagador vive donde NACE la llave: así los siete gates que ya existen
+    # (`if settings.anthropic_api_key`) quedan cerrados sin repetir condiciones.
+    # Sin esto, poner la llave en el .env del VPS haría que el bot empezara a
+    # pagar API sin que nadie lo decidiera.
+    from app import config
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-de-mentiras")
+    assert config.CLAUDE_HABILITADO is False, "el apagador de la capa Claude cambió"
+    assert config.Settings().anthropic_api_key == ""
+
+
+def test_el_lienzo_ya_no_dibuja_el_nodo_de_claude():
+    datos = _sesion_de("admin").get("/agente")
+
+    assert datos.status_code == 200
+    with Session(db.engine) as s:
+        from app.agente_studio import _estado
+
+        nodos = {n["id"] for n in _estado(s)["nodos"]}
+    assert "llm" not in nodos
+    # Y el resto de la cascada sigue completa: quitar un nodo no puede borrar
+    # los demás por accidente.
+    assert {"literal", "ollama", "fuzzy", "rag", "tools", "escalada"} <= nodos

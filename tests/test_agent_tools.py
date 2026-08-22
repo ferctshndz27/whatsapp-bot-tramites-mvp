@@ -91,7 +91,7 @@ def test_consultar_folios_no_acepta_telefono_como_argumento():
 
 
 def test_herramienta_en_deny_ejecutada_es_error(session):
-    contenido, es_error = agent_tools._ejecutar(session, PHONE, "cobrar", {})
+    contenido, es_error = agent_tools._ejecutar(session, PHONE, "quiero cobrar", "cobrar", {})
     assert es_error
 
 
@@ -402,3 +402,124 @@ def test_ollama_del_nodo_recibe_contexto_amplio_y_timeout_holgado(monkeypatch, s
 
     assert fake.llamadas[0]["num_ctx"] == rag.OLLAMA_NUM_CTX
     assert fake.llamadas[0]["timeout"] == rag.OLLAMA_TIMEOUT_MIN
+
+
+# ---------------------------------------------------------------------------
+# Telemetría por herramienta (observabilidad del nodo agéntico)
+# ---------------------------------------------------------------------------
+
+
+def _eventos_de_tool(session):
+    from sqlmodel import select
+
+    from app.models import NluEvent
+
+    return [
+        (e.capa, e.service_id)
+        for e in session.exec(select(NluEvent).where(NluEvent.capa.in_(("tool", "tool_error")))).all()
+    ]
+
+
+def test_cada_llamada_de_herramienta_deja_su_rastro(monkeypatch, session):
+    # Sin esto, de un nodo agéntico en producción solo quedaba "atendió N
+    # mensajes": qué herramienta usó era invisible cuando algo salía raro.
+    servicio = _servicio()
+    fake = _OllamaGuionado([
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"function": {"name": "cotizar_servicio",
+                                      "arguments": {"service_id": servicio.id}}}]},
+        {"role": "assistant", "content": f"'{servicio.name}' cuesta {servicio.price_info} 😊"},
+    ])
+    _nodo_ollama(monkeypatch, fake)
+
+    agent_tools.responder(session, PHONE, "cuánto cuesta")
+
+    assert ("tool", "cotizar_servicio") in _eventos_de_tool(session)
+
+
+def test_la_herramienta_que_falla_se_registra_como_error(session):
+    agent_tools._ejecutar(session, PHONE, "cotiza algo", "cotizar_servicio", {"service_id": "no-existe"})
+
+    assert ("tool_error", "cotizar_servicio") in _eventos_de_tool(session)
+
+
+def test_las_filas_por_llamada_no_inflan_los_denominadores():
+    # Una llamada de herramienta NO es un mensaje del cliente: si entrara al
+    # denominador, el porcentaje de "no entendidos" se diluiría solo.
+    from app.models import CAPAS_EXTRA
+
+    assert {"tool", "tool_error"} <= CAPAS_EXTRA
+
+
+def test_la_telemetria_no_puede_tumbar_la_respuesta(monkeypatch, session):
+    # Best-effort de verdad: si la bitácora revienta, el cliente igual recibe
+    # su respuesta.
+    def _boom(*a, **kw):
+        raise RuntimeError("base caída")
+
+    monkeypatch.setattr(session, "add", _boom)
+    contenido, es_error = agent_tools._ejecutar(session, PHONE, "hola", "cobrar", {})
+    assert es_error and "no disponible" in contenido
+
+
+# ---------------------------------------------------------------------------
+# Perillas del panel: apagan lo PERMITIDO, jamás encienden lo prohibido
+# ---------------------------------------------------------------------------
+
+
+def test_ninguna_clave_del_panel_puede_encender_cobrar():
+    # EL candado de esta feature. PERMISOS es el piso de seguridad (código
+    # revisado); las perillas de /agente viven encima y solo pueden APAGAR.
+    # Si alguien agrega mañana una clave que toque "cobrar", esto se pone rojo.
+    from app.agent_settings import CONFIG_EDITABLE
+
+    assert "cobrar" not in agent_tools.FLAG_POR_HERRAMIENTA
+    assert not any("cobrar" in clave for clave in CONFIG_EDITABLE)
+    # Y aunque un flag existiera con ese nombre, el permiso manda:
+    assert agent_tools._encendida("cobrar") is False
+
+
+def test_apagar_una_herramienta_la_saca_de_lo_que_ve_el_modelo(monkeypatch):
+    monkeypatch.setattr(settings, "tool_cotizar_enabled", False)
+
+    nombres = [t["name"] for t in agent_tools.tools_activos()]
+
+    assert nombres == ["consultar_folios"]
+    # El piso de permisos NO cambia: apagar es operativo, no de seguridad.
+    assert {t["name"] for t in agent_tools.tools_expuestos()} == {
+        "cotizar_servicio", "consultar_folios"
+    }
+
+
+def test_una_herramienta_apagada_tampoco_se_ejecuta(monkeypatch, session):
+    # Defensa en profundidad: que no aparezca en el prompt no basta — un modelo
+    # puede nombrarla igual (respuesta vieja, inyección). Se rechaza al ejecutar.
+    monkeypatch.setattr(settings, "tool_cotizar_enabled", False)
+    servicio = _servicio()
+
+    contenido, es_error = agent_tools._ejecutar(
+        session, PHONE, "cotiza", "cotizar_servicio", {"service_id": servicio.id}
+    )
+
+    assert es_error and "no disponible" in contenido
+
+
+def test_los_topes_se_leen_en_caliente(monkeypatch, session):
+    # Bajar el tope de palabras tumba una respuesta que antes pasaba, sin
+    # reiniciar nada.
+    larga = " ".join(["palabra"] * 50)
+    assert agent_tools._respuesta_valida(larga, [], []) == larga
+
+    monkeypatch.setattr(settings, "agent_max_words", 30)
+    assert agent_tools._respuesta_valida(larga, [], []) is None
+
+
+def test_los_defaults_de_config_no_se_separan_de_las_constantes():
+    # Fuente única: los defaults del .env son espejo de las constantes del
+    # módulo. Si una cambia y la otra no, el comportamiento por defecto
+    # dependería de dónde se lea — este test lo impide.
+    from app.config import Settings
+
+    limpio = Settings()
+    assert limpio.agent_max_turnos == agent_tools.MAX_TURNOS
+    assert limpio.agent_max_words == agent_tools.MAX_RESPONSE_WORDS
