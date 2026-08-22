@@ -388,6 +388,30 @@ class Catalog:
         self._refresh()
         return None
 
+    def remove_synonym(self, service_id: str, synonym: str, admin: str = "sistema") -> str | None:
+        """Quita un sinónimo aprobado. Espejo exacto de add_synonym (misma
+        auditoría y mismo refresco de caché): el catálogo sigue siendo el
+        único dueño de sus sinónimos, sin importar qué pantalla los edite."""
+        cleaned = synonym.strip()
+        self._refresh()
+        with get_session() as session:
+            svc = session.get(CatalogService, service_id)
+            if svc is None:
+                return "Servicio no encontrado."
+            existing = json.loads(svc.synonyms_json or "[]")
+            new_list = [s for s in existing if s.lower() != cleaned.lower()]
+            if len(new_list) == len(existing):
+                return "Ese sinónimo no está en el servicio."
+            self._audit(
+                session, "servicio", service_id, "synonyms",
+                ", ".join(existing), ", ".join(new_list), admin,
+            )
+            svc.synonyms_json = json.dumps(new_list, ensure_ascii=False)
+            session.add(svc)
+            session.commit()
+        self._refresh()
+        return None
+
     def toggle_service(self, service_id: str, admin: str = "sistema") -> str | None:
         self._refresh()
         with get_session() as session:

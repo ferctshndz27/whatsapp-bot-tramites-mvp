@@ -704,8 +704,16 @@ def test_el_alta_de_un_sinonimo_cambia_la_deduccion_y_se_reporta_como_capa_sinon
 LLAMADORES_AUTORIZADOS_DE_ADD_SYNONYM = {
     ("synonym_miner.py", "proposal_approve"),       # POST /unmatched/proposals/{id}/approve
     ("synonym_miner.py", "unmatched_add_synonym"),  # POST /unmatched/synonyms
+    # Tercera ruta legítima, agregada a mano el 2026-08-21 (la revisión humana
+    # que este candado exige): el panel del nodo "Match literal" del Estudio
+    # del Agente. Sigue siendo un admin tecleando el sinónimo — no auto-aprende
+    # nada; solo evita el viaje a otra pantalla para curar el catálogo.
+    ("agente_studio.py", "editar_sinonimo"),        # POST /agente/sinonimos
 }
-GUARDIA_DE_ADMIN = "_admin_or_redirect"
+# Dos guardias equivalentes: ambas exigen is_admin y difieren solo en el
+# contrato de rechazo — redirect para formularios, 403 JSON para las rutas que
+# consume fetch (un redirect a /login le devolvería HTML al JS).
+GUARDIAS_DE_ADMIN = {"_admin_or_redirect", "_admin_or_403"}
 
 
 def _funcion_contenedora(funciones, linea: int) -> str:
@@ -766,6 +774,15 @@ def test_add_synonym_solo_se_invoca_desde_las_dos_rutas_de_aprobacion_humana():
     )
 
 
+def test_remove_synonym_tambien_tiene_un_solo_llamador_autorizado():
+    # La otra mitad del catálogo de sinónimos: QUITAR uno cambia cómo empata el
+    # bot igual que agregarlo (un servicio deja de reconocerse), así que la
+    # puerta se vigila con el mismo criterio que add_synonym.
+    assert _referencias_en_app("remove_synonym") == {
+        ("agente_studio.py", "editar_sinonimo"),  # POST /agente/sinonimos {quitar: true}
+    }, "cambió quién puede borrar sinónimos del catálogo"
+
+
 @pytest.mark.parametrize(
     "archivo, funcion",
     sorted(LLAMADORES_AUTORIZADOS_DE_ADD_SYNONYM),
@@ -786,7 +803,7 @@ def test_los_llamadores_de_add_synonym_van_por_post_y_detras_del_gate_de_admin(
         for nodo in ast.walk(definicion)
         if isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name)
     }
-    assert GUARDIA_DE_ADMIN in llamadas, f"{archivo}:{funcion} escribe sinónimos sin gate de admin"
+    assert GUARDIAS_DE_ADMIN & llamadas, f"{archivo}:{funcion} escribe sinónimos sin gate de admin"
 
     metodos = {
         dec.func.attr
