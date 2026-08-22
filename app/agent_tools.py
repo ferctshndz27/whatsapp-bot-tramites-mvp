@@ -130,15 +130,40 @@ def _corridas(texto: str) -> set[str]:
     return set(_DIGITOS_RE.findall(_MILES_RE.sub("", texto)))
 
 
+# Apagador operativo por herramienta, ENCIMA del permiso. Dos capas distintas
+# a propósito: PERMISOS es el piso de seguridad (código revisado, "cobrar"
+# jamás sale de deny) y este mapa es la perilla del día a día que el admin
+# mueve desde /agente. Una herramienta sin flag aquí no se puede apagar.
+FLAG_POR_HERRAMIENTA = {
+    "cotizar_servicio": "tool_cotizar_enabled",
+    "consultar_folios": "tool_folios_enabled",
+}
+
+
 def tools_expuestos() -> list[dict]:
     """Solo las herramientas con permiso "allow". El candado de tests exige
     que "cobrar" jamás aparezca aquí."""
     return [t for t in _TOOLS if PERMISOS.get(t["name"]) == "allow"]
 
 
+def _encendida(name: str) -> bool:
+    """¿La herramienta está permitida Y encendida? El permiso manda: apagar
+    una herramienta permitida es reversible desde el panel; encender una en
+    deny no es posible por ningún camino."""
+    if PERMISOS.get(name) != "allow":
+        return False
+    flag = FLAG_POR_HERRAMIENTA.get(name)
+    return True if flag is None else bool(getattr(settings, flag, True))
+
+
+def tools_activos() -> list[dict]:
+    """Lo que de verdad ve el modelo: permitidas y encendidas."""
+    return [t for t in tools_expuestos() if _encendida(t["name"])]
+
+
 def _tools_ollama() -> list[dict]:
     """Las mismas herramientas en el formato de /api/chat de Ollama (estilo
-    OpenAI). Derivadas de _TOOLS vía tools_expuestos: una sola definición."""
+    OpenAI). Derivadas de _TOOLS vía tools_activos: una sola definición."""
     return [
         {
             "type": "function",
@@ -148,7 +173,7 @@ def _tools_ollama() -> list[dict]:
                 "parameters": t["input_schema"],
             },
         }
-        for t in tools_expuestos()
+        for t in tools_activos()
     ]
 
 
@@ -191,7 +216,7 @@ def _loop_ollama(session: Session, phone: str, text: str) -> str | None:
     salidas_tools: list[str] = []
     salidas_cotizar: list[str] = []
 
-    for _ in range(MAX_TURNOS):
+    for _ in range(settings.agent_max_turnos):
         # Prompt largo (catálogo + esquemas de tools): mismo contexto amplio y
         # timeout holgado que la capa RAG, o el servidor trunca / corta a 12s.
         message = nlu.ollama_chat(
@@ -217,7 +242,7 @@ def _loop_ollama(session: Session, phone: str, text: str) -> str | None:
                 except ValueError:
                     args = {}
             nombre = funcion.get("name") or ""
-            contenido, es_error = _ejecutar(session, phone, nombre, args)
+            contenido, es_error = _ejecutar(session, phone, text, nombre, args)
             if not es_error:
                 salidas_tools.append(contenido)
                 if nombre == "cotizar_servicio":
@@ -243,13 +268,13 @@ def _loop_anthropic(session: Session, phone: str, text: str) -> str | None:
     salidas_tools: list[str] = []
     salidas_cotizar: list[str] = []
 
-    for _ in range(MAX_TURNOS):
+    for _ in range(settings.agent_max_turnos):
         response = nlu._get_client().messages.create(
             model=settings.nlu_model,
             max_tokens=500,
             # Prefijo estable (catálogo) cacheado, igual que nlu._deduce_llm.
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            tools=tools_expuestos(),
+            tools=tools_activos(),
             messages=messages,
         )
         if response.stop_reason == "refusal":
@@ -265,7 +290,7 @@ def _loop_anthropic(session: Session, phone: str, text: str) -> str | None:
         for block in response.content:
             if block.type != "tool_use":
                 continue
-            contenido, es_error = _ejecutar(session, phone, block.name, block.input or {})
+            contenido, es_error = _ejecutar(session, phone, text, block.name, block.input or {})
             if not es_error:
                 salidas_tools.append(contenido)
                 if block.name == "cotizar_servicio":
@@ -284,11 +309,40 @@ def _loop_anthropic(session: Session, phone: str, text: str) -> str | None:
     return None
 
 
-def _ejecutar(session: Session, phone: str, name: str, args: dict) -> tuple[str, bool]:
-    """(contenido, es_error) de una herramienta. El phone viene del servidor,
-    jamás de args. Una herramienta no expuesta o un id alucinado son error."""
+def _registrar_uso(session: Session, phone: str, texto: str, name: str, es_error: bool) -> None:
+    """Una fila por LLAMADA de herramienta, con su nombre en service_id.
+
+    Sin esto, de un nodo agéntico en producción solo quedaba "atendió N
+    mensajes": qué herramienta usó, y si falló, era invisible. Se escribe aquí
+    —el único punto por donde pasa toda ejecución— y no vía
+    conversation._log_nlu, que descarta saludos y cortesías: esa higiene existe
+    para clasificar mensajes, no para contar llamadas.
+
+    Best-effort: la telemetría jamás puede tumbar la respuesta al cliente."""
+    from app.models import NluEvent
+
     try:
-        if PERMISOS.get(name) != "allow":
+        session.add(NluEvent(
+            phone=phone, text=texto[:200],
+            capa="tool_error" if es_error else "tool", service_id=name[:60],
+        ))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudo registrar el uso de %s: %s", name, exc)
+
+
+def _ejecutar(session: Session, phone: str, texto: str, name: str, args: dict) -> tuple[str, bool]:
+    """(contenido, es_error) de una herramienta, dejando su rastro en la
+    bitácora. El phone viene del servidor, jamás de args."""
+    contenido, es_error = _ejecutar_sin_registro(session, phone, name, args)
+    _registrar_uso(session, phone, texto, name, es_error)
+    return contenido, es_error
+
+
+def _ejecutar_sin_registro(session: Session, phone: str, name: str, args: dict) -> tuple[str, bool]:
+    """La ejecución en sí. Una herramienta no expuesta o un id alucinado son
+    error (y como tales quedan registrados por quien llama)."""
+    try:
+        if not _encendida(name):
             return f"Herramienta '{name}' no disponible.", True
         if name == "cotizar_servicio":
             return _cotizar_servicio(str(args.get("service_id", "")))
@@ -332,7 +386,7 @@ def _respuesta_valida(
        "cuesta ochocientos pesos" escrito en palabras se tumba entero."""
     if not respuesta or rag.NO_SE in respuesta:
         return None
-    if len(respuesta.split()) > MAX_RESPONSE_WORDS:
+    if len(respuesta.split()) > settings.agent_max_words:
         return None
     if rag._CURP_RE.search(respuesta):
         return None

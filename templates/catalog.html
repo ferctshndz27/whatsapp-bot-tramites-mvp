@@ -103,7 +103,10 @@
         </tr>
         <tr class="req-row" data-form="f-{{ svc.id }}">
           <td colspan="5">
-            <details {% if svc.requirements %}open{% endif %}>
+            {# id estable = la sección abierta sobrevive a guardar un servicio.
+               Por id del servicio y no por posición: al filtrar el catálogo la
+               posición cambia y se abriría la sección equivocada. #}
+            <details id="req-{{ svc.id }}" {% if svc.requirements %}open{% endif %}>
               <summary>
                 Requisitos del trámite
                 {% if svc.requirements %}<span class="req-hint">✓ capturados</span>{% endif %}

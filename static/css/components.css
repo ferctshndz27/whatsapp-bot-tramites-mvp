@@ -286,3 +286,21 @@
     .login-card button { width: 100%; margin-top: .5rem; }
 
     .empty { color: var(--text-muted); padding: 2rem 0; text-align: center; }
+
+/* Aviso de la auto-recarga en pausa (static/js/estado-vista.js). Fijo abajo a
+   la izquierda: no tapa el compositor de mensajes ni los botones de acción.
+   Es un role="status", así que el lector de pantalla lo anuncia sin robar el
+   foco de quien está escribiendo. */
+.auto-recarga-aviso {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  margin: 0;
+  padding: .45rem .8rem;
+  font-size: .78rem;
+  background: var(--card, #fff);
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .12);
+  z-index: 40;
+}

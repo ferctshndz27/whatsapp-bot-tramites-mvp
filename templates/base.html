@@ -59,6 +59,10 @@
   {% else %}
   {% block content_public %}{% endblock %}
   {% endif %}
+  {# Preservación de estado (scroll, secciones abiertas, foco, selección) para
+     todas las vistas, y la auto-recarga que espera a que el usuario termine
+     de escribir. defer: corre tras el HTML, antes de DOMContentLoaded. #}
+  <script src="/static/js/estado-vista.js" defer></script>
   <script>
     // Filas con data-href: toda la fila navega, como una tarjeta de
     // conversación. Mejora progresiva: sin JS el enlace interno de la fila

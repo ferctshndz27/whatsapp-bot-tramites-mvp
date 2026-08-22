@@ -1,12 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Chat de equipo{% endblock %}
-{% block head %}<meta http-equiv="refresh" content="20">{% endblock %}
+{% block head %}<meta name="auto-recarga" content="20">{% endblock %}
 {% block content %}
 <h1>Chat de equipo</h1>
 
 <div class="card">
   {% if messages %}
-  <div class="chat">
+  {# id: sin llave, estado-vista.js no puede preservar su scroll, y esta vista
+     se refresca sola cada 20 s — quien estuviera leyendo hacia atrás volvía al
+     tope en cada refresco. Aquí el tope es lo MÁS NUEVO (created_at.desc), así
+     que no lleva el anclaje al fondo de inbox_chat: estar arriba es lo
+     correcto y ese caso se preserva solo (un scroll en 0 no se guarda). #}
+  <div class="chat" id="chat">
     {% for m in messages %}
     <div class="bubble {{ 'out' if m.author == user else 'in' }}">
       {{ m.body }}

@@ -86,6 +86,45 @@ def _metricas_por_capa(session: Session) -> dict[str, int]:
     return {capa: n for capa, n in filas}
 
 
+def _herramientas(session: Session) -> list[dict]:
+    """Uso por herramienta del nodo agéntico (14 días).
+
+    Cuenta las filas capa "tool"/"tool_error" — una por LLAMADA — y NO se mezcla
+    con `mensajes` del nodo, que sigue siendo "mensajes que el nodo respondió".
+    Son números distintos: un mensaje puede gastar varias llamadas.
+
+    Se listan todas las herramientas del catálogo de permisos, aunque nunca se
+    hayan usado: un cero explícito es información, una fila ausente no."""
+    from datetime import timedelta
+
+    from app import agent_tools
+
+    cutoff = utcnow() - timedelta(days=METRICAS_DIAS)
+    filas = session.exec(
+        select(NluEvent.service_id, NluEvent.capa, func.count())
+        .where(NluEvent.created_at >= cutoff)
+        .where(NluEvent.capa.in_(("tool", "tool_error")))
+        .where(NluEvent.habilitado == True)  # noqa: E712
+        .group_by(NluEvent.service_id, NluEvent.capa)
+    ).all()
+    conteo: dict[str, dict[str, int]] = {}
+    for nombre, capa, n in filas:
+        registro = conteo.setdefault(nombre or "?", {"ok": 0, "error": 0})
+        registro["error" if capa == "tool_error" else "ok"] += n
+    return [
+        {
+            "nombre": nombre,
+            "permiso": permiso,
+            # "cobrar" es DENY por construcción y NO se puede encender desde
+            # aquí: mover dinero es del panel del asesor, nunca del modelo.
+            "bloqueada": permiso != "allow",
+            "usos": conteo.get(nombre, {}).get("ok", 0),
+            "errores": conteo.get(nombre, {}).get("error", 0),
+        }
+        for nombre, permiso in agent_tools.PERMISOS.items()
+    ]
+
+
 def _estado(session: Session) -> dict:
     m = _metricas_por_capa(session)
     config = agent_settings.estado_actual()
@@ -98,8 +137,10 @@ def _estado(session: Session) -> dict:
         {"id": "ollama", "nombre": f"Ollama · {settings.ollama_model}", "activo": bool(settings.ollama_url),
          "fijo": not settings.ollama_url, "detalle": "clasificador local en labs",
          "mensajes": m.get("ollama", 0)},
-        {"id": "llm", "nombre": "Claude (respaldo)", "activo": bool(settings.anthropic_api_key),
-         "fijo": True, "detalle": "solo con ANTHROPIC_API_KEY en el .env", "mensajes": m.get("llm", 0)},
+        # El nodo "Claude (respaldo)" ya no se dibuja: config.CLAUDE_HABILITADO
+        # está en False, así que esa capa nunca puede encenderse y pintarla solo
+        # ensuciaba el lienzo con un nodo apagado para siempre. Sus mensajes
+        # históricos (capa "llm") siguen contando en las métricas del panel.
         {"id": "fuzzy", "nombre": f"Difuso · umbral {settings.fuzzy_threshold}", "activo": True,
          "fijo": True, "detalle": "tolera faltas de ortografía", "mensajes": m.get("fuzzy", 0)},
         {"id": "rag", "nombre": "Capa informativa (RAG)", "activo": settings.rag_enabled,
@@ -111,7 +152,8 @@ def _estado(session: Session) -> dict:
         {"id": "escalada", "nombre": "Asesor humano", "activo": True, "fijo": True,
          "detalle": "el último recurso de siempre", "mensajes": m.get("ninguna", 0)},
     ]
-    return {"nodos": nodos, "config": config, "parrafos": _parrafos(session)}
+    return {"nodos": nodos, "config": config, "parrafos": _parrafos(session),
+            "herramientas": _herramientas(session)}
 
 
 @router.get("/agente")

@@ -334,7 +334,11 @@ class Feedback(SQLModel, table=True):
 # _deduce_and_log ("ninguna"/"sugerencia"): se miden en la dona del panel,
 # pero NO entran al denominador de mensajes (alerts._no_entendidos_stats,
 # synonym_miner.nlu_metrics) — contarlas diluiría el % de no entendidos.
-CAPAS_EXTRA = frozenset({"rag", "rag_descartado", "tools"})
+# "tool"/"tool_error" son una fila POR LLAMADA de herramienta del nodo agéntico
+# (varias por mensaje), no por mensaje: entran aquí para que no inflen ningún
+# denominador — igual que rag_descartado. El nombre de la herramienta viaja en
+# service_id, como el motivo del guardrail en las filas rag_descartado.
+CAPAS_EXTRA = frozenset({"rag", "rag_descartado", "tools", "tool", "tool_error"})
 
 
 class NluEvent(SQLModel, table=True):

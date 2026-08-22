@@ -18,6 +18,25 @@
 
 <div class="agente-layout">
   <div id="lienzo-wrap">
+    {# node-elevation del demo: dos sombras apiladas. En SVG no hay box-shadow,
+       así que viven aquí como filtro y los nodos lo referencian por id. #}
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+      <defs>
+        <filter id="node-elevation" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#000" flood-opacity=".16"/>
+          <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000" flood-opacity=".24"/>
+        </filter>
+        {# node-glow-selected del demo: el halo azul del nodo seleccionado.
+           Sus cuatro box-shadow no existen en SVG, así que se apilan como
+           feDropShadow con el color --primary (oklch(.64 .13 250) = #4790d8). #}
+        <filter id="node-glow" x="-60%" y="-60%" width="220%" height="220%">
+          <feDropShadow dx="0" dy="0" stdDeviation="1" flood-color="#4790d8" flood-opacity=".75"/>
+          <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#4790d8" flood-opacity=".28"/>
+          <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#4790d8" flood-opacity=".22"/>
+          <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity=".22"/>
+        </filter>
+      </defs>
+    </svg>
     <div id="lienzo" aria-label="Pipeline del agente"></div>
     <div id="minimapa" aria-hidden="true"><div id="minimapa-paper"></div><div class="mini-ctl"><button class="btn-mini" id="mz-menos">−</button><span id="mz-pct">100%</span><button class="btn-mini" id="mz-mas">+</button><button class="btn-mini" id="mz-fit">⛶</button></div></div>
     <p class="est-hint">Arrastra los nodos · clic para configurar · el punto verde = capa encendida</p>
@@ -68,11 +87,82 @@
 .parrafo-chip{border:1px solid var(--borde);border-radius:10px;padding:8px;margin:8px 0;
   cursor:grab;background:var(--tarjeta2)}
 .parrafo-chip p{margin:0 0 6px;font-size:.8rem;white-space:pre-wrap;color:var(--texto)}
-.sinonimos{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
-.sinonimo-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 10px;
+/* animate-node-in del demo (0.28s, cubic-bezier(.16,1,.3,1)). El demo también
+   anima scale/translateY, pero aquí los nodos son <g> de SVG cuya posición la
+   fija JointJS con el atributo transform: una transform de CSS lo pisaría y
+   los mandaría al origen mientras dura la animación. Queda el fundido. */
+@keyframes node-in { from { opacity: 0 } }
+#lienzo .joint-cell{animation:node-in .28s cubic-bezier(.16,1,.3,1)}
+/* transition-[box-shadow,border-color] duration-200 ease-out */
+#lienzo .joint-cell rect{transition:stroke .2s ease-out,filter .2s ease-out}
+
+/* ---- Estados del nodo (hover → focus → selected → activo → ganador) ----
+   Todos viven en CSS y en ESTE orden a propósito: el último que toca una
+   propiedad gana, así que el resaltado del probador (ámbar) se pinta encima
+   de la selección sin que ninguno tenga que saber del otro. El nodo no se
+   mueve en ningún estado: una transform de CSS pisaría el atributo transform
+   con que JointJS lo posiciona. */
+#lienzo .joint-cell{cursor:pointer;outline:none}
+#lienzo .joint-cell:hover rect{stroke:color-mix(in oklch, #4790d8 35%, #2b2e32)}
+/* selected: node-glow-selected del demo — borde teñido de --primary y halo. */
+#lienzo .joint-cell.est-sel rect{
+  stroke:color-mix(in oklch, #4790d8 55%, #2b2e32);
+  filter:url(#node-glow)}
+/* focus VISIBLE (teclado): el mismo halo más un borde pleno, que es el único
+   indicador para quien no usa ratón. No se usa :focus a secas para no
+   dibujarlo en cada clic. */
+#lienzo .joint-cell:focus-visible rect{stroke:#4790d8;stroke-width:2;filter:url(#node-glow)}
+/* active: el nodo se "hunde" — pierde el halo y queda con su sombra base. */
+#lienzo .joint-cell:active rect{filter:url(#node-elevation)}
+/* El ganador del probador manda sobre el color del borde en cualquier estado. */
+#lienzo .joint-cell.est-ganador rect{stroke:#d29922;stroke-width:3}
+@media (prefers-reduced-motion: reduce){
+  #lienzo .joint-cell rect{transition:none}
+}
+@media (prefers-reduced-motion: reduce){
+  #lienzo .joint-cell{animation:none}
+  #lienzo .joint-cell rect{transition:none}
+}
+.mini-titulo{margin:12px 0 6px;font-size:.85rem;color:var(--texto)}
+.tools-lista{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.tool-fila{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:8px 10px;border:1px solid var(--borde);border-radius:8px;background:var(--tarjeta2)}
+.tool-fila strong{display:block;font-size:.8rem;font-weight:600}
+.tool-fila .mini{font-size:.72rem}
+/* La bloqueada se lee bloqueada sin depender solo del color (WCAG 1.4.1). */
+.tool-fila.bloqueada{border-style:dashed;opacity:.75}
+.tool-candado{font-size:.72rem;color:#b3b8be;white-space:nowrap}
+.sinonimos{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.sinonimo-chip{display:flex;align-items:center;justify-content:space-between;gap:4px;
+  width:290px;max-width:100%;padding:3px 4px 3px 12px;
   border:1px solid var(--borde);border-radius:999px;background:var(--tarjeta2);
   font-size:.78rem;color:var(--texto)}
-.sinonimo-chip .btn-mini{padding:0 7px;margin:0;font-size:.85rem;line-height:1.5}
+/* Solo se recorta el padding lateral: el alto lo fija el min-height de 44 px
+   del sistema de diseño (objetivo táctil WCAG) y no se toca. */
+.est-scope .sinonimo-chip .btn-mini{padding:0 10px;margin:0;font-size:.9rem}
+/* SelectTrigger del demo (shadcn), traducido a un <select> nativo: h-9,
+   rounded-md (--radius menos 2px), border-input, bg-background, text-sm,
+   shadow-sm, transition-colors y el chevron-down de lucide a size-4 con
+   opacity-50. El icono va como background-image porque un <select> nativo no
+   admite hijos; la CSP ya permite data: en img-src. */
+.est-scope select#f-servicio{
+  appearance:none;-webkit-appearance:none;
+  display:block;width:100%;min-width:0;
+  /* Sin la h-9 (36 px) del demo a propósito: components.css fija 44 px de alto
+     mínimo en todo control de formulario (objetivo táctil) y esa regla gana.
+     Declarar 36 px aquí sería CSS muerto que aparenta lo que no pasa. */
+  padding:8px 34px 8px 12px;
+  border:1px solid #26292d;border-radius:6px;
+  background-color:#151719;color:#f0f2f4;
+  font-size:14px;line-height:1.25;
+  box-shadow:0 1px 2px 0 rgba(0,0,0,.05);
+  transition:color .15s ease,background-color .15s ease,border-color .15s ease;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23b3b8be' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' opacity='.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;background-size:16px 16px}
+/* focus-visible:ring-2 ring-ring */
+.est-scope select#f-servicio:focus-visible{outline:none;box-shadow:0 0 0 2px #4790d8}
+/* La lista desplegable la pinta el sistema: al menos que herede el popover. */
+.est-scope select#f-servicio option{background:#202326;color:#f0f2f4}
 .fila-sinonimo{display:flex;gap:6px;align-items:center}
 .fila-sinonimo input{flex:1;min-width:0}
 #lienzo-wrap{flex:1 1 520px;position:relative;min-width:0;display:flex;flex-direction:column}
@@ -123,19 +213,33 @@ new dia.Paper({ el: document.getElementById("minimapa-paper"), model: graph, wid
 
 const POS_KEY = "agente-pos-v2";
 const pos = JSON.parse(localStorage.getItem(POS_KEY) || "{}");
-const BASE = { literal:[70,40], ollama:[70,155], llm:[70,270], fuzzy:[70,385], rag:[70,500],
-  tools:[70,615], escalada:[380,615], corpus:[380,440] };
+// Sin el nodo Claude: la cascada se recorre y cierra el hueco que dejó.
+const BASE = { literal:[70,40], ollama:[70,155], fuzzy:[70,270], rag:[70,385],
+  tools:[70,500], escalada:[380,500], corpus:[380,325] };
+
+// Tokens del demo ai-workflow-builder (tema oscuro), convertidos de oklch a
+// hex: card / card-foreground / border / muted-foreground. El header del demo
+// NO tiene fondo propio — el nodo es UNA sola superficie sobre bg-card; solo
+// los nodos de tipo "tool" se tiñen con bg-muted/30 y llevan borde punteado.
+const T = { card: "#1e2123", texto: "#f0f2f4", borde: "#2b2e32", tenue: "#b3b8be",
+            cardTool: "#202325", bordeTool: "rgba(240,242,244,.45)" };
+const ICONO = { literal:"🔤", ollama:"🤖", fuzzy:"≈", rag:"📚", tools:"🔧", escalada:"🙋" };
 
 function nodoRico(n) {
-  // Tarjeta estilo demo: header (estado + nombre), métricas, y acción embebida
-  // cuando la capa tiene flag (RAG/tools): el botón vive EN el nodo.
-  const conToggle = ["rag", "tools"].includes(n.id);
-  const alto = conToggle ? 84 : 64;
+  // Chrome del demo: rounded-lg (--radius .5rem = 8px), borde de 1px,
+  // node-elevation por filtro SVG y animate-node-in por CSS.
+  const esTool = n.id === "tools";  // el único de tipo herramienta: borde punteado
   const puerto = activo => ({ r: 4.5, fill: activo ? "#2ea043" : "#484f58",
-    stroke: "#0d1117", strokeWidth: 1.5, magnet: false });
-  const el = new shapes.standard.HeaderedRectangle({ id: n.id,
+    stroke: T.card, strokeWidth: 1.5, magnet: false });
+  const el = new shapes.standard.Rectangle({ id: n.id,
     position: pos[n.id] ? pos[n.id] : { x: BASE[n.id][0], y: BASE[n.id][1] },
-    size: { width: 220, height: alto },
+    size: { width: 256, height: 86 },
+    markup: [
+      { tagName: "rect", selector: "body" },
+      { tagName: "text", selector: "titulo" },
+      { tagName: "text", selector: "descripcion" },
+      { tagName: "text", selector: "metricas" },
+    ],
     ports: { groups: {
       entrada: { position: "top", attrs: { portBody: puerto(n.activo) },
         markup: [{ tagName: "circle", selector: "portBody" }] },
@@ -143,15 +247,19 @@ function nodoRico(n) {
         markup: [{ tagName: "circle", selector: "portBody" }] },
     }, items: [{ group: "entrada" }, { group: "salida" }] },
     attrs: {
-      body: { fill: "#161b22", stroke: n.activo ? "#2ea043" : "#30363d", strokeWidth: 1.5, rx: 12, ry: 12,
-        filter: { name: "dropShadow", args: { dx: 0, dy: 3, blur: 8, color: "rgba(0,0,0,.55)" } } },
-      header: { fill: n.activo ? "#1c2128" : "#13171d", stroke: "none", height: 26, rx: 12, ry: 12 },
-      headerText: { text: `${({literal:"🔤",ollama:"🤖",llm:"✨",fuzzy:"≈",rag:"📚",tools:"🔧",escalada:"🙋"})[n.id] || "•"} ${n.activo ? "●" : "○"} ${n.nombre}`, fill: n.activo ? "#7ee787" : "#8b949e",
-        fontSize: 11.5, fontWeight: 600,
-        x: 12, y: 13, textAnchor: "start", textVerticalAnchor: "middle" },
-      bodyText: { text: `${n.mensajes} msgs · 14d${n.descartes ? `  ·  ${n.descartes} descartes` : ""}`,
-        fill: "#8b949e", fontSize: 10.5,
-        x: "calc(0.5*w)", y: "calc(h-20)", textAnchor: "middle", textVerticalAnchor: "middle" },
+      body: { fill: esTool ? T.cardTool : T.card, rx: 8, ry: 8, strokeWidth: 1,
+        stroke: esTool ? T.bordeTool : (n.activo ? "#2ea043" : T.borde),
+        strokeDasharray: esTool ? "6,4" : "none",
+        filter: "url(#node-elevation)" },
+      titulo: { text: `${ICONO[n.id] || "•"} ${n.activo ? "●" : "○"} ${n.nombre}`,
+        fill: T.texto, fontSize: 13, fontWeight: 600,
+        x: 14, y: 22, textAnchor: "start", textVerticalAnchor: "middle" },
+      descripcion: { text: n.detalle || "", fill: T.tenue, fontSize: 11,
+        x: 14, y: 44, textAnchor: "start", textVerticalAnchor: "middle",
+        textWrap: { width: -28, maxLineCount: 1, ellipsis: "…" } },
+      metricas: { text: `${n.mensajes} msgs · 14d${n.descartes ? `  ·  ${n.descartes} descartes` : ""}`,
+        fill: T.tenue, fontSize: 10.5,
+        x: 14, y: 68, textAnchor: "start", textVerticalAnchor: "middle" },
     },
   });
   el.prop("datos", n);
@@ -160,19 +268,42 @@ function nodoRico(n) {
 
 const porId = {};
 ESTADO.nodos.forEach(n => { porId[n.id] = nodoRico(n); graph.addCell(porId[n.id]); });
+
+// height: max-content del demo. En SVG el alto es un atributo, no CSS: se mide
+// el contenido ya renderizado (bbox local de cada <text>, antes del translate
+// del nodo) y se ajusta la caja. Así el nodo crece si mañana el cuerpo lleva
+// otra línea, en vez de arrastrar un alto mágico. El ancho sí queda fijo en
+// 256 px, igual que en el demo (config.width).
+const ALTO_MIN = 64, RELLENO_INFERIOR = 14;
+
+function ajustarAltoAContenido(elementos) {
+  elementos.forEach(el => {
+    const vista = paper.findViewByModel(el);
+    if (!vista) return;
+    let fondo = 0;
+    vista.el.querySelectorAll("text").forEach(t => {
+      const b = t.getBBox();
+      if (b.height) fondo = Math.max(fondo, b.y + b.height);
+    });
+    if (fondo) el.resize(256, Math.max(ALTO_MIN, Math.ceil(fondo + RELLENO_INFERIOR)));
+  });
+}
+
 ESTADO.nodos.slice(0, -1).forEach((n, i) => graph.addCell(new shapes.standard.Link({
   source: { id: n.id }, target: { id: ESTADO.nodos[i + 1].id },
   connector: { name: "smooth" },
-  attrs: { line: { stroke: "#30363d", strokeWidth: 1.6,
-    targetMarker: { type: "path", d: "M 7 -3.5 0 0 7 3.5 z", fill: "#8b949e" } } },
+  attrs: { line: { stroke: T.borde, strokeWidth: 1.6,
+    targetMarker: { type: "path", d: "M 7 -3.5 0 0 7 3.5 z", fill: T.tenue } } },
 })));
 
 const corpus = new shapes.standard.Rectangle({ id: "corpus",
   position: pos["corpus"] || { x: BASE.corpus[0], y: BASE.corpus[1] }, size: { width: 200, height: 58 },
-  ports: { groups: { salida: { position: "right", attrs: { portBody: { r: 4.5, fill: "#2ea043", stroke: "#0d1117", strokeWidth: 1.5 } }, markup: [{ tagName: "circle", selector: "portBody" }] } }, items: [{ group: "salida" }] },
-  attrs: { body: { fill: "#12261e", stroke: "#2ea043", strokeWidth: 1.5, rx: 12, ry: 12, strokeDasharray: "5,4",
-    filter: { name: "dropShadow", args: { dx: 0, dy: 3, blur: 8, color: "rgba(0,0,0,.55)" } } },
-    label: { text: `📄 Corpus informativo\n${ESTADO.parrafos.length} párrafos`, fill: "#7ee787", fontSize: 11 } } });
+  ports: { groups: { salida: { position: "right", attrs: { portBody: { r: 4.5, fill: "#2ea043", stroke: T.card, strokeWidth: 1.5 } }, markup: [{ tagName: "circle", selector: "portBody" }] } }, items: [{ group: "salida" }] },
+  // Recurso adjuntable = mismo lenguaje visual que un nodo "tool" del demo:
+  // superficie tenue y borde punteado, no una tarjeta sólida más.
+  attrs: { body: { fill: T.cardTool, stroke: T.bordeTool, strokeWidth: 1, rx: 8, ry: 8,
+    strokeDasharray: "6,4", filter: "url(#node-elevation)" },
+    label: { text: `📄 Corpus informativo\n${ESTADO.parrafos.length} párrafos`, fill: T.tenue, fontSize: 11 } } });
 graph.addCell(corpus);
 graph.addCell(new shapes.standard.Link({ source: { id: "corpus" }, target: { id: "rag" },
   connector: { name: "smooth" },
@@ -180,6 +311,13 @@ graph.addCell(new shapes.standard.Link({ source: { id: "corpus" }, target: { id:
     rect: { fill: "#0d1117" } }, position: 0.45 }],
   attrs: { line: { stroke: "#2ea043", strokeWidth: 1.4, strokeDasharray: "4,3",
     targetMarker: { type: "path", d: "M 7 -3.5 0 0 7 3.5 z", fill: "#2ea043" } } } }));
+
+// Ya están todos los nodos en el lienzo: se miden juntos (el corpus incluido).
+ajustarAltoAContenido([...Object.values(porId), corpus]);
+// Las métricas del texto cambian cuando termina de cargar la tipografía: se
+// vuelve a medir para que el alto no quede calculado con la fuente de respaldo.
+if (document.fonts && document.fonts.ready)
+  document.fonts.ready.then(() => ajustarAltoAContenido([...Object.values(porId), corpus]));
 
 paper.on("element:pointerup", v => { pos[v.model.id] = v.model.position();
   localStorage.setItem(POS_KEY, JSON.stringify(pos)); });
@@ -284,6 +422,32 @@ function panelNodo(n) {
     setTimeout(() => document.getElementById("btn-toggle").onclick =
       () => guardar(key, n.activo ? 0 : 1), 0);
   }
+  if (n.id === "tools") {
+    // Herramientas: uso real (14 d) + apagador por herramienta. Las de permiso
+    // "deny" se muestran BLOQUEADAS y sin control: que se vea el candado.
+    h += `<h3 class="mini-titulo">Herramientas</h3><div class="tools-lista">` +
+      (ESTADO.herramientas || []).map(t => `
+        <div class="tool-fila${t.bloqueada ? " bloqueada" : ""}">
+          <div><strong>${esc(t.nombre)}</strong>
+            <span class="muted mini">${t.usos} usos · ${t.errores} errores · 14d</span></div>
+          ${t.bloqueada
+            ? `<span class="tool-candado" title="Mover dinero es del panel del asesor, nunca del modelo">🔒 bloqueada</span>`
+            : `<button class="btn-mini" data-tool="${esc(t.nombre)}">${
+                 (t.nombre === "cotizar_servicio" ? c.tool_cotizar_enabled : c.tool_folios_enabled).valor
+                   ? "Apagar" : "Encender"}</button>`}
+        </div>`).join("") + `</div>
+      <label for="f-turnos">Turnos máximos (1–5): <output id="f-turnos-out">${c.agent_max_turnos.valor}</output></label>
+      <input id="f-turnos" type="range" min="1" max="5" value="${c.agent_max_turnos.valor}"
+        oninput="document.getElementById('f-turnos-out').value=this.value">
+      <label for="f-palabras">Palabras máximas (30–120): <output id="f-palabras-out">${c.agent_max_words.valor}</output></label>
+      <input id="f-palabras" type="range" min="30" max="120" step="5" value="${c.agent_max_words.valor}"
+        oninput="document.getElementById('f-palabras-out').value=this.value">
+      <p><button class="btn-mini primario" onclick="guardarTopes()">Guardar topes</button></p>`;
+    setTimeout(() => document.querySelectorAll("[data-tool]").forEach(b => {
+      const clave = b.dataset.tool === "cotizar_servicio" ? "tool_cotizar_enabled" : "tool_folios_enabled";
+      b.onclick = () => guardar(clave, c[clave].valor ? 0 : 1);
+    }), 0);
+  }
   if (n.id === "ollama" && !n.fijo) h += `
     <label for="f-modelo">Modelo</label><input id="f-modelo" value="${c.ollama_model.valor}">
     <label for="f-timeout">Timeout (s)</label><input id="f-timeout" type="number" min="1" max="60" step="0.5" value="${c.ollama_timeout.valor}">
@@ -317,7 +481,6 @@ function panelNodo(n) {
                        if (s) s.innerHTML = "<option>error al cargar</option>"; });
     }, 0);
   }
-  // El nodo "llm" no lleva línea extra: su detalle ya dice de dónde sale la key.
   if (n.id === "ollama" && n.fijo)
     h += `<p class="muted mini">Apagado: falta OLLAMA_URL en el .env del servidor.</p>`;
   if (n.id === "escalada")
@@ -328,12 +491,74 @@ function panelNodo(n) {
 window.guardar = guardar;
 window.guardarOllama = () => guardar("ollama_model", document.getElementById("f-modelo").value)
   .then(() => guardar("ollama_timeout", document.getElementById("f-timeout").value));
+window.guardarTopes = () => guardar("agent_max_turnos", document.getElementById("f-turnos").value)
+  .then(() => guardar("agent_max_words", document.getElementById("f-palabras").value));
 
 
 
-paper.on("element:pointerclick", v => {
-  if (v.model.id === "corpus") { mostrarCorpus(); return; }
-  const d = v.model.prop("datos"); if (d) panelNodo(d);
+// Selección del lienzo: qué nodo está abierto NO vive en el DOM, así que se
+// preserva por el gancho compartido (static/js/estado-vista.js). Sin esto,
+// cualquier botón que recargue —guardar un párrafo, quitar un sinónimo— te
+// devolvía al panel genérico y había que volver a buscar el nodo.
+const SELECCION = "nodo-abierto";
+
+function grupoDe(id) {
+  const vista = paper.findViewByModel(id === "corpus" ? corpus : porId[id]);
+  return vista && vista.el;
+}
+
+function abrirNodo(id, opciones) {
+  if (window.EstadoVista) EstadoVista.guardar(SELECCION, id);
+  // Un solo nodo seleccionado a la vez, y el estado se refleja también en
+  // aria-current: un lector de pantalla anuncia cuál está abierto.
+  document.querySelectorAll("#lienzo .joint-cell.est-sel").forEach(g => {
+    g.classList.remove("est-sel");
+    g.removeAttribute("aria-current");
+  });
+  const g = grupoDe(id);
+  if (g) {
+    g.classList.add("est-sel");
+    g.setAttribute("aria-current", "true");
+    // El foco sigue a la selección, como en el demo: quien navega con teclado
+    // continúa desde el nodo que acaba de abrir.
+    if (opciones && opciones.enfocar) g.focus();
+  }
+  if (id === "corpus") { mostrarCorpus(); return; }
+  const d = porId[id] && porId[id].prop("datos");
+  if (d) panelNodo(d);
+}
+
+paper.on("element:pointerclick", v => abrirNodo(v.model.id));
+
+// ---- Teclado: el lienzo deja de ser solo para ratón --------------------
+// Cada nodo entra en el orden de tabulación con su rol y su nombre, y se
+// abre con Enter o Espacio. Sin esto, toda la configuración del agente era
+// inalcanzable sin ratón.
+[...ESTADO.nodos.map(n => n.id), "corpus"].forEach(id => {
+  const g = grupoDe(id);
+  if (!g) return;
+  const datos = porId[id] && porId[id].prop("datos");
+  g.setAttribute("tabindex", "0");
+  g.setAttribute("role", "button");
+  // Sin prefijo cuando el nombre ya empieza por "Capa" ("Capa Capa informativa").
+  const nombre = id === "corpus" ? "Corpus informativo" : (datos ? datos.nombre : id);
+  g.setAttribute("aria-label", /^capa/i.test(nombre) ? nombre : `Capa ${nombre}`);
+  g.addEventListener("keydown", e => {
+    if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+    e.preventDefault();  // Espacio no debe desplazar la página
+    abrirNodo(id);
+  });
+  // Llegar por teclado (Tab) también selecciona, como el onFocus del demo.
+  g.addEventListener("focus", () => { if (!g.classList.contains("est-sel")) abrirNodo(id); });
+});
+
+// Al cargar, se reabre el último nodo que el usuario tenía abierto. Va en
+// DOMContentLoaded porque estado-vista.js se carga con defer: cuando este
+// script corre (durante el parseo) window.EstadoVista todavía no existe.
+document.addEventListener("DOMContentLoaded", () => {
+  if (!window.EstadoVista) return;
+  const previo = EstadoVista.leer(SELECCION);
+  if (previo && (previo === "corpus" || porId[previo])) abrirNodo(previo);
 });
 
 // ---- Corpus: chips con edición inline ----
@@ -381,11 +606,16 @@ document.getElementById("btn-probar").onclick = () => {
   if (!texto) return;
   res.innerHTML = `<em>Probando contra el pipeline real… (la capa local tarda ~5 s)</em>`;
   post("/agente/probar", { texto }).then(r => {
-    Object.values(porId).forEach(el => el.attr("body/strokeWidth", 1.5));
+    // Por clase y no por atributo: así el ganador convive con la selección y
+    // el foco en una sola cascada, en vez de dos sistemas pisándose el borde.
+    document.querySelectorAll("#lienzo .joint-cell.est-ganador")
+      .forEach(g => g.classList.remove("est-ganador"));
+    // Sin entrada para "llm": esa capa ya no existe en el lienzo, y un evento
+    // histórico suyo cae al fallback (escalada) en vez de no resaltar nada.
     const capaNodo = { nombre:"literal", sinonimo:"literal", keyword:"literal", ollama:"ollama",
-      llm:"llm", fuzzy:"fuzzy", categoria:"literal", multi:"literal", ninguna:"escalada" }[r.capa] || "escalada";
+      fuzzy:"fuzzy", categoria:"literal", multi:"literal", ninguna:"escalada" }[r.capa] || "escalada";
     const gana = r.respuesta_rag ? "rag" : capaNodo;
-    porId[gana]?.attr({ body: { stroke: "#d29922", strokeWidth: 3 } });
+    grupoDe(gana)?.classList.add("est-ganador");
     let msg = `Capa <strong>${r.capa}</strong> en ${r.ms} ms`;
     if (r.servicio) msg += ` → servicio <strong>${esc(r.servicio)}</strong>`;
     if (r.categoria) msg += ` → categoría <strong>${esc(r.categoria)}</strong>`;

@@ -43,6 +43,24 @@ def _timeout(raw: str) -> float:
     return valor
 
 
+def _turnos(raw: str) -> int:
+    valor = int(raw)
+    # Menos de 1 apagaría el bucle sin apagar el nodo (confuso); más de 5 es
+    # latencia y gasto que el cliente de WhatsApp sí siente.
+    if not 1 <= valor <= 5:
+        raise ValueError("los turnos van de 1 a 5")
+    return valor
+
+
+def _palabras(raw: str) -> int:
+    valor = int(raw)
+    # Abajo de 30 un resumen de folios legítimo se tumba solo; arriba de 120
+    # deja de parecer un mensaje de WhatsApp.
+    if not 30 <= valor <= 120:
+        raise ValueError("el tope de palabras va de 30 a 120")
+    return valor
+
+
 def _modelo(raw: str) -> str:
     limpio = raw.strip()
     if not limpio or len(limpio) > _MODELO_MAX or any(c.isspace() for c in limpio):
@@ -58,6 +76,13 @@ CONFIG_EDITABLE = {
     "fuzzy_threshold": (_umbral, "Umbral difuso"),
     "ollama_model": (_modelo, "Modelo de Ollama"),
     "ollama_timeout": (_timeout, "Timeout de Ollama (s)"),
+    # Perillas del nodo agéntico. Apagan herramientas PERMITIDAS; no existe
+    # clave alguna que encienda una en deny —"cobrar" no tiene flag— porque
+    # esa frontera es de código revisado, no de un clic en el panel.
+    "tool_cotizar_enabled": (_bool, "Herramienta: cotizar servicio"),
+    "tool_folios_enabled": (_bool, "Herramienta: consultar folios"),
+    "agent_max_turnos": (_turnos, "Turnos máximos del bucle"),
+    "agent_max_words": (_palabras, "Palabras máximas de la respuesta"),
 }
 
 
