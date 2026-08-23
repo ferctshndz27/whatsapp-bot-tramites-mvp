@@ -302,3 +302,236 @@ def test_el_lienzo_ya_no_dibuja_el_nodo_de_claude():
     # Y el resto de la cascada sigue completa: quitar un nodo no puede borrar
     # los demás por accidente.
     assert {"literal", "ollama", "fuzzy", "rag", "tools", "escalada"} <= nodos
+
+
+# ---------------------------------------------------------------------------
+# Avisos de nodo mal configurado
+#
+# La idea viene del WarningEffect del demo ai-agent-builder de JointJS: un nodo
+# encendido que NO puede hacer su trabajo se marca en el lienzo. Aquí importa
+# más que el ícono: durante días la capa RAG estuvo encendida con el corpus
+# vacío y desde el panel se veía idéntica a una capa sana.
+# ---------------------------------------------------------------------------
+
+
+def _nodos_por_id(session) -> dict:
+    from app.agente_studio import _estado
+
+    return {n["id"]: n for n in _estado(session)["nodos"]}
+
+
+def test_rag_encendido_con_corpus_vacio_avisa(monkeypatch):
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "ollama_url", "http://labs:11434")
+
+    with Session(db.engine) as s:
+        avisos = _nodos_por_id(s)["rag"]["avisos"]
+
+    assert any("VACÍO" in a for a in avisos), avisos
+
+
+def test_rag_con_corpus_no_avisa(monkeypatch):
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "ollama_url", "http://labs:11434")
+    with Session(db.engine) as s:
+        s.add(InfoDoc(texto="El horario de atención es de 9 a 6.", position=1))
+        s.commit()
+
+        assert _nodos_por_id(s)["rag"]["avisos"] == []
+
+
+def test_rag_apagado_no_avisa_aunque_le_falte_todo(monkeypatch):
+    # Un nodo apagado no está "mal configurado": está apagado. Avisar ahí sería
+    # ruido permanente y enseñaría a ignorar los avisos.
+    monkeypatch.setattr(settings, "rag_enabled", False)
+    monkeypatch.setattr(settings, "ollama_url", "")
+
+    with Session(db.engine) as s:
+        assert _nodos_por_id(s)["rag"]["avisos"] == []
+
+
+def test_tools_encendido_sin_herramientas_activas_avisa(monkeypatch):
+    monkeypatch.setattr(settings, "agent_tools_enabled", True)
+    monkeypatch.setattr(settings, "ollama_url", "http://labs:11434")
+    monkeypatch.setattr(settings, "tool_cotizar_enabled", False)
+    monkeypatch.setattr(settings, "tool_folios_enabled", False)
+
+    with Session(db.engine) as s:
+        avisos = _nodos_por_id(s)["tools"]["avisos"]
+
+    assert any("sin ninguna herramienta activa" in a for a in avisos), avisos
+
+
+def test_capa_encendida_sin_ollama_avisa_que_falta_la_url(monkeypatch):
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "ollama_url", "")
+    with Session(db.engine) as s:
+        s.add(InfoDoc(texto="Traemos actas de cualquier estado.", position=1))
+        s.commit()
+        avisos = _nodos_por_id(s)["rag"]["avisos"]
+
+    # Y dice DÓNDE se arregla: OLLAMA_URL es infra, no se toca desde el panel.
+    assert any("OLLAMA_URL" in a for a in avisos), avisos
+
+
+def test_fallas_de_ollama_avisan_en_su_nodo(monkeypatch):
+    from app.models import NluEvent
+
+    monkeypatch.setattr(settings, "ollama_url", "http://labs:11434")
+    with Session(db.engine) as s:
+        s.add(NluEvent(phone="5215500000000", text="hola", capa="ollama_error",
+                       service_id="timeout"))
+        s.commit()
+        avisos = _nodos_por_id(s)["ollama"]["avisos"]
+
+    # En singular: "1 fallas" delata que nadie leyó el aviso que escribió.
+    assert any("1 falla de conexión" in a for a in avisos), avisos
+
+
+def test_una_falla_vieja_ya_no_tiene_el_nodo_en_ambar(monkeypatch):
+    """Un aviso que no se apaga solo deja de ser un aviso: si un timeout de
+    anteayer mantiene el nodo marcado dos semanas, se aprende a ignorarlo."""
+    from datetime import timedelta
+
+    from app.agente_studio import HORAS_FALLA
+    from app.models import NluEvent, utcnow
+
+    monkeypatch.setattr(settings, "ollama_url", "http://labs:11434")
+    with Session(db.engine) as s:
+        s.add(NluEvent(phone="5215500000000", text="hola", capa="ollama_error",
+                       service_id="timeout",
+                       created_at=utcnow() - timedelta(hours=HORAS_FALLA + 1)))
+        s.commit()
+
+        assert _nodos_por_id(s)["ollama"]["avisos"] == []
+
+
+def test_un_solo_descarte_no_acusa_al_corpus(monkeypatch):
+    """Con un caso no hay nada que concluir. El aviso de proporción pide un
+    mínimo antes de mandar a alguien a reescribir el corpus."""
+    from app.models import NluEvent
+
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "ollama_url", "http://labs:11434")
+    with Session(db.engine) as s:
+        s.add(InfoDoc(texto="Atendemos de lunes a viernes.", position=1))
+        s.add(NluEvent(phone="5215500000000", text="?", capa="rag_descartado",
+                       service_id="larga"))
+        s.commit()
+
+        assert _nodos_por_id(s)["rag"]["avisos"] == []
+
+
+def test_un_guardrail_que_tumba_todo_si_avisa(monkeypatch):
+    from app.models import NluEvent
+
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "ollama_url", "http://labs:11434")
+    with Session(db.engine) as s:
+        s.add(InfoDoc(texto="Atendemos de lunes a viernes.", position=1))
+        for _ in range(4):
+            s.add(NluEvent(phone="5215500000000", text="?", capa="rag_descartado",
+                           service_id="dinero"))
+        s.commit()
+        avisos = _nodos_por_id(s)["rag"]["avisos"]
+
+    assert any("guardrail descartó" in a for a in avisos), avisos
+
+
+# ---------------------------------------------------------------------------
+# Descriptor de configuración: una sola fuente para el rango
+# ---------------------------------------------------------------------------
+
+
+def test_el_panel_publica_el_rango_de_cada_perilla():
+    # Sin esto el <input> se dibujaba con cotas escritas a mano en el HTML que
+    # podían no coincidir con las que valida el servidor.
+    config = agent_settings.estado_actual()
+
+    umbral = config["fuzzy_threshold"]
+    assert (umbral["tipo"], umbral["minimo"], umbral["maximo"]) == ("entero", 70, 95)
+    assert umbral["ayuda"], "una perilla sin ayuda deja al admin adivinando"
+    assert config["rag_enabled"]["tipo"] == "bool"
+
+
+def test_el_error_de_rango_cita_las_mismas_cotas_que_publica_el_panel():
+    config = agent_settings.estado_actual()
+    c = _sesion_de("admin")
+
+    r = c.post("/agente/config", json={"key": "agent_max_turnos", "value": "9"})
+
+    assert r.status_code == 400
+    detalle = r.json()["error"]
+    assert str(int(config["agent_max_turnos"]["minimo"])) in detalle
+    assert str(int(config["agent_max_turnos"]["maximo"])) in detalle
+
+
+def test_la_plantilla_no_reescribe_los_rangos_a_mano():
+    """Candado de fuente única: si alguien vuelve a escribir min/max del
+    umbral o de los topes en el HTML, la validación del servidor y el
+    deslizador pueden separarse en silencio."""
+    from pathlib import Path
+
+    html = Path("templates/agente.html").read_text(encoding="utf-8")
+
+    for cota in ('min="70"', 'max="95"', 'min="30"', 'max="120"', 'min="1" max="5"'):
+        assert cota not in html, f"{cota} volvió a la plantilla: usa el descriptor"
+
+
+# ---------------------------------------------------------------------------
+# Etiquetas de las aristas
+# ---------------------------------------------------------------------------
+
+
+def test_cada_nodo_declara_por_que_se_llega_a_el():
+    """La condición de caída se pinta sobre la flecha (como el `prompt` de las
+    aristas del demo). Vive en el servidor, junto a la cascada que describe."""
+    with Session(db.engine) as s:
+        nodos = _nodos_por_id(s)
+
+    assert all(n["entra_si"] for n in nodos.values())
+    assert nodos["ollama"]["entra_si"] == "sin coincidencia exacta"
+
+
+def test_el_nombre_del_modelo_solo_admite_lo_que_ollama_entiende():
+    """Allowlist, no lista negra. El valor viaja a la URL de la API y al
+    atributo value= del panel: una comilla ahí cierra el atributo."""
+    c = _sesion_de("admin")
+
+    assert c.post("/agente/config",
+                  json={"key": "ollama_model", "value": "qwen3:4b"}).status_code == 200
+    for basura in ('qwen" onfocus=alert(1) x="', "qwen3 4b", "<script>", "'"):
+        assert c.post("/agente/config",
+                      json={"key": "ollama_model", "value": basura}).status_code == 400
+    assert settings.ollama_model == "qwen3:4b"
+
+
+# ---------------------------------------------------------------------------
+# Navegador del lienzo (minimapa)
+# ---------------------------------------------------------------------------
+
+
+def test_el_minimapa_trae_sus_controles_y_son_alcanzables_sin_raton():
+    """Portado del navigator-panel del demo ai-workflow-builder. El dibujo del
+    minimapa es decorativo (aria-hidden) a propósito: arrastrar el recuadro es
+    un atajo, y todo lo que hace está también en botones y en el deslizador."""
+    html = _sesion_de("admin").get("/agente").text
+
+    for control in ('id="mz-toggle"', 'id="mz-rango"', 'id="mz-menos"',
+                    'id="mz-mas"', 'id="mz-fit"', 'id="mini-vista"'):
+        assert control in html, control
+    assert 'aria-expanded="true"' in html and 'aria-controls="minimapa-caja"' in html
+    assert 'aria-label="Nivel de zoom"' in html
+    # El porcentaje se anuncia al cambiar; si no, el zoom por teclado es mudo.
+    assert 'id="mz-pct" aria-live="polite"' in html
+
+
+def test_el_contenedor_del_minimapa_ya_no_esconde_sus_controles():
+    """Regresión: el minimapa entero llevaba aria-hidden. Al meterle botones y
+    un deslizador, eso los sacaba del árbol de accesibilidad — controles
+    enfocables que un lector de pantalla no puede nombrar."""
+    from pathlib import Path
+
+    html = Path("templates/agente.html").read_text(encoding="utf-8")
+
+    assert '<div id="minimapa" aria-hidden' not in html

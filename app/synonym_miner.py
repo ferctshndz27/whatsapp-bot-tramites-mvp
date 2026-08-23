@@ -280,6 +280,9 @@ CAPA_COLORS = {
     "keyword": "#22d3ee", "fuzzy": "#f59e0b", "multi": "#ec4899",
     "categoria": "#14b8a6", "sugerencia": "#64748b", "ninguna": "#f43f5e",
     "rag": "#a3e635", "rag_descartado": "#fb923c", "tools": "#38bdf8",
+    # Rojo oscuro, distinto del rosa de "ninguna": no entender es normal, que
+    # el servidor de Ollama no conteste no lo es.
+    "ollama_error": "#991b1b",
 }
 
 

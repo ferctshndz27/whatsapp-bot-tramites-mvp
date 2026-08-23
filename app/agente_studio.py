@@ -118,6 +118,10 @@ def _herramientas(session: Session) -> list[dict]:
             # "cobrar" es DENY por construcción y NO se puede encender desde
             # aquí: mover dinero es del panel del asesor, nunca del modelo.
             "bloqueada": permiso != "allow",
+            # Lo que el modelo VE hoy: permiso allow + interruptor encendido.
+            # Sale de agent_tools y no se recalcula aquí para que el panel no
+            # pueda contradecir al runtime.
+            "activa": agent_tools._encendida(nombre),
             "usos": conteo.get(nombre, {}).get("ok", 0),
             "errores": conteo.get(nombre, {}).get("error", 0),
         }
@@ -125,35 +129,123 @@ def _herramientas(session: Session) -> list[dict]:
     ]
 
 
+# Un aviso que no se apaga solo deja de ser un aviso. Las fallas de Ollama se
+# miran en una ventana CORTA: un timeout aislado de anteayer no puede tener el
+# nodo en ámbar dos semanas. Y los avisos de proporción piden un mínimo de
+# casos: con un solo descarte no hay nada que concluir.
+HORAS_FALLA = 48
+MINIMO_PARA_CONCLUIR = 3
+
+
+def _fallos_recientes(session: Session, horas: int = HORAS_FALLA) -> int:
+    from datetime import timedelta
+
+    cutoff = utcnow() - timedelta(hours=horas)
+    return session.exec(
+        select(func.count())
+        .select_from(NluEvent)
+        .where(NluEvent.created_at >= cutoff)
+        .where(NluEvent.capa == "ollama_error")
+        .where(NluEvent.habilitado == True)  # noqa: E712
+    ).one()
+
+
+def _avisos(
+    m: dict[str, int], parrafos: list[dict], herramientas: list[dict], fallos: int
+) -> dict[str, list[str]]:
+    """Nodos que están encendidos pero NO pueden hacer su trabajo.
+
+    Se calcula aquí, en el servidor, y no en el lienzo: la regla depende de la
+    config vigente, del corpus y de los permisos, y tener esa lógica duplicada
+    en JavaScript sería un segundo catálogo que se desincroniza.
+
+    Cada aviso responde "qué reviso": un nodo encendido y roto era invisible
+    en el panel —el RAG estuvo respondiendo nada con el corpus vacío y desde
+    aquí se veía idéntico a un RAG sano."""
+    avisos: dict[str, list[str]] = {}
+
+    def anotar(nodo: str, texto: str) -> None:
+        avisos.setdefault(nodo, []).append(texto)
+
+    if fallos:
+        plural = "fallas" if fallos > 1 else "falla"
+        anotar("ollama", f"{fallos} {plural} de conexión en las últimas "
+                         f"{HORAS_FALLA} h: revisa el servidor de labs.")
+
+    if settings.rag_enabled:
+        if not parrafos:
+            anotar("rag", "Capa encendida con el corpus VACÍO: no tiene de dónde "
+                          "responder. Agrega párrafos abajo.")
+        if not settings.ollama_url:
+            anotar("rag", "Capa encendida sin modelo: falta OLLAMA_URL en el .env "
+                          "del servidor (no se configura desde aquí).")
+        descartes, pasadas = m.get("rag_descartado", 0), m.get("rag", 0)
+        if descartes >= max(MINIMO_PARA_CONCLUIR, pasadas):
+            anotar("rag", f"El guardrail descartó {descartes} respuestas y solo dejó "
+                          f"pasar {pasadas}: revisa la redacción del corpus.")
+
+    if settings.agent_tools_enabled:
+        if not any(h["activa"] for h in herramientas):
+            anotar("tools", "Nodo encendido sin ninguna herramienta activa: el "
+                            "modelo no tiene con qué responder.")
+        if not settings.ollama_url:
+            anotar("tools", "Nodo encendido sin modelo: falta OLLAMA_URL en el .env "
+                            "del servidor.")
+        for h in herramientas:
+            if h["bloqueada"] and h["activa"]:
+                # Candado: hoy no puede pasar (una herramienta en deny no tiene
+                # interruptor), y este aviso es lo que hace ruidoso el día que
+                # alguien agregue uno por error.
+                anotar("tools", f"«{h['nombre']}» está en deny pero su interruptor "
+                                "aparece encendido.")
+            if h["errores"] >= max(MINIMO_PARA_CONCLUIR, h["usos"]):
+                anotar("tools", f"«{h['nombre']}» falló {h['errores']} veces y "
+                                f"funcionó {h['usos']}.")
+    return avisos
+
+
 def _estado(session: Session) -> dict:
     m = _metricas_por_capa(session)
     config = agent_settings.estado_actual()
     # Los nodos del pipeline REAL, en el orden real de la cascada. "activo"
     # sale de la config vigente; las capas sin flag siempre corren.
+    # "entra_si" es la condición REAL de caída a ese nodo, la que decide
+    # conversation/nlu en código. Vive aquí, junto a la cascada que describe, y
+    # el lienzo la pinta sobre la flecha: así el dibujo es documentación y no
+    # una segunda versión de la verdad escrita en JavaScript.
     literal = m.get("nombre", 0) + m.get("sinonimo", 0) + m.get("keyword", 0)
     nodos = [
         {"id": "literal", "nombre": "Match literal", "activo": True, "fijo": True,
-         "detalle": "nombre / sinónimo / keyword — gratis e instantáneo", "mensajes": literal},
+         "detalle": "nombre / sinónimo / keyword — gratis e instantáneo",
+         "mensajes": literal, "entra_si": "todo mensaje"},
         {"id": "ollama", "nombre": f"Ollama · {settings.ollama_model}", "activo": bool(settings.ollama_url),
          "fijo": not settings.ollama_url, "detalle": "clasificador local en labs",
-         "mensajes": m.get("ollama", 0)},
+         "mensajes": m.get("ollama", 0), "entra_si": "sin coincidencia exacta"},
         # El nodo "Claude (respaldo)" ya no se dibuja: config.CLAUDE_HABILITADO
         # está en False, así que esa capa nunca puede encenderse y pintarla solo
         # ensuciaba el lienzo con un nodo apagado para siempre. Sus mensajes
         # históricos (capa "llm") siguen contando en las métricas del panel.
         {"id": "fuzzy", "nombre": f"Difuso · umbral {settings.fuzzy_threshold}", "activo": True,
-         "fijo": True, "detalle": "tolera faltas de ortografía", "mensajes": m.get("fuzzy", 0)},
+         "fijo": True, "detalle": "tolera faltas de ortografía", "mensajes": m.get("fuzzy", 0),
+         "entra_si": "el modelo no eligió servicio"},
         {"id": "rag", "nombre": "Capa informativa (RAG)", "activo": settings.rag_enabled,
          "fijo": False, "detalle": "responde dudas con el corpus público",
-         "mensajes": m.get("rag", 0), "descartes": m.get("rag_descartado", 0)},
+         "mensajes": m.get("rag", 0), "descartes": m.get("rag_descartado", 0),
+         "entra_si": "sin servicio y suena a pregunta"},
         {"id": "tools", "nombre": "Nodo agéntico (tools)", "activo": settings.agent_tools_enabled,
          "fijo": False, "detalle": "cotiza y consulta folios con herramientas",
-         "mensajes": m.get("tools", 0)},
+         "mensajes": m.get("tools", 0), "entra_si": "el corpus no respondió"},
         {"id": "escalada", "nombre": "Asesor humano", "activo": True, "fijo": True,
-         "detalle": "el último recurso de siempre", "mensajes": m.get("ninguna", 0)},
+         "detalle": "el último recurso de siempre", "mensajes": m.get("ninguna", 0),
+         "entra_si": "nada de lo anterior resolvió"},
     ]
-    return {"nodos": nodos, "config": config, "parrafos": _parrafos(session),
-            "herramientas": _herramientas(session)}
+    parrafos = _parrafos(session)
+    herramientas = _herramientas(session)
+    avisos = _avisos(m, parrafos, herramientas, _fallos_recientes(session))
+    for nodo in nodos:
+        nodo["avisos"] = avisos.get(nodo["id"], [])
+    return {"nodos": nodos, "config": config, "parrafos": parrafos,
+            "herramientas": herramientas}
 
 
 @router.get("/agente")
@@ -299,6 +391,9 @@ def probar(request: Request, data: PruebaIn):
             resultado["rag_sin_respuesta"] = respuesta is None and motivo is None
         if resultado["respuesta_rag"] is None and not sugerencias:
             resultado["le_tocaria_tools"] = settings.agent_tools_enabled
+    # Un timeout de Ollama y un "no sé" del modelo daban EXACTAMENTE el mismo
+    # resultado en el probador; aquí se separan.
+    resultado["ollama_error"] = nlu.limpiar_fallo_ollama()
     resultado["ms"] = round((time.perf_counter() - inicio) * 1000)
     log_admin(user, "agente:prueba", texto[:80])
     return resultado

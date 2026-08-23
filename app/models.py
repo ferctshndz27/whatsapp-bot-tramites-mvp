@@ -338,7 +338,13 @@ class Feedback(SQLModel, table=True):
 # (varias por mensaje), no por mensaje: entran aquí para que no inflen ningún
 # denominador — igual que rag_descartado. El nombre de la herramienta viaja en
 # service_id, como el motivo del guardrail en las filas rag_descartado.
-CAPAS_EXTRA = frozenset({"rag", "rag_descartado", "tools", "tool", "tool_error"})
+# "ollama_error" es una falla de TRANSPORTE (timeout, conexión, 5xx) que
+# conversation registra ADEMÁS de la capa que sí acabó respondiendo: el
+# mensaje ya está contado, y contarlo otra vez diluiría el % de no entendidos
+# justo cuando el servidor está caído — que es cuando la alerta debe sonar.
+CAPAS_EXTRA = frozenset(
+    {"rag", "rag_descartado", "tools", "tool", "tool_error", "ollama_error"}
+)
 
 
 class NluEvent(SQLModel, table=True):

@@ -152,3 +152,82 @@ def test_metrics_summarize_events(monkeypatch, session):
     assert metrics["ticket_pct"] == 50
     assert metrics["donut"]["total"] == 2
     assert {s["user"] for s in metrics["donut"]["segments"]} == {"nombre", "ninguna"}
+
+
+# ---------------------------------------------------------------------------
+# Fallas de transporte de Ollama
+#
+# Hasta ahora un servidor caído solo dejaba un logger.warning: desde el panel
+# era indistinguible de un bot que "de pronto dejó de entender", y no había
+# nada que revisar. Ahora deja fila propia con el motivo.
+# ---------------------------------------------------------------------------
+
+
+def _ollama_caido(monkeypatch, exc):
+    import httpx
+
+    monkeypatch.setattr(nlu.settings, "ollama_url", "http://labs:11434")
+
+    def revienta(*_a, **_k):
+        raise exc
+
+    monkeypatch.setattr(httpx, "post", revienta)
+
+
+def test_ollama_caido_deja_fila_con_el_motivo(monkeypatch, session):
+    import httpx
+
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _keywords_only(monkeypatch)
+    _ollama_caido(monkeypatch, httpx.ConnectError("sin ruta al host"))
+
+    handle_incoming(session, PHONE, "quiero saber de un tramite raro que no existe")
+
+    fallas = session.exec(
+        select(NluEvent).where(NluEvent.capa == "ollama_error")
+    ).all()
+    assert len(fallas) == 1
+    assert fallas[0].service_id == "conexion"
+
+
+def test_el_timeout_se_distingue_de_la_conexion(monkeypatch, session):
+    import httpx
+
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _keywords_only(monkeypatch)
+    _ollama_caido(monkeypatch, httpx.ReadTimeout("tardó demasiado"))
+
+    handle_incoming(session, PHONE, "otra cosa rarisima que nadie pide")
+
+    falla = session.exec(select(NluEvent).where(NluEvent.capa == "ollama_error")).one()
+    # El motivo es lo que el admin va a revisar: un timeout es el modelo
+    # penando en CPU; una conexión rota es el servidor o el nginx.
+    assert falla.service_id == "timeout"
+
+
+def test_la_falla_no_se_imputa_al_mensaje_siguiente(monkeypatch, session):
+    """Regresión: el ContextVar sobrevive a la llamada, y el cron procesa
+    muchos mensajes en el MISMO contexto. Sin limpiarlo al arrancar cada
+    mensaje, un fallo viejo se registraba una y otra vez."""
+    import httpx
+
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _keywords_only(monkeypatch)
+    _ollama_caido(monkeypatch, httpx.ConnectError("sin ruta"))
+    handle_incoming(session, PHONE, "algo que nadie entiende ni de chiste")
+
+    # Segundo mensaje con el servidor ya sano: no debe heredar el fallo.
+    monkeypatch.setattr(nlu.settings, "ollama_url", "")
+    handle_incoming(session, PHONE, "necesito un acta de nacimiento por favor")
+
+    fallas = session.exec(select(NluEvent).where(NluEvent.capa == "ollama_error")).all()
+    assert len(fallas) == 1
+
+
+def test_la_falla_no_diluye_el_porcentaje_de_no_entendidos():
+    """Es una fila EXTRA del mismo mensaje: contarla en el denominador bajaría
+    el % de no entendidos justo cuando el servidor está caído, que es cuando
+    la alerta tiene que sonar."""
+    from app.models import CAPAS_EXTRA
+
+    assert "ollama_error" in CAPAS_EXTRA
