@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import unicodedata
+from contextvars import ContextVar
 
 from rapidfuzz import fuzz
 
@@ -22,6 +23,44 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _client = None
+
+# Última falla de transporte de la capa Ollama EN ESTE mensaje. ContextVar y no
+# global: los endpoints síncronos de FastAPI corren en un pool de hilos y una
+# global mezclaría la falla de un cliente con la de otro.
+#
+# Existe porque hasta ahora un Ollama caído solo dejaba un logger.warning: en
+# el panel se veía como "el bot dejó de entender" y no había forma de
+# distinguir un servidor muerto de un modelo que declinó. conversation lo
+# registra en nluevent (capa "ollama_error") y el Estudio lo pinta como aviso.
+_FALLO_OLLAMA: ContextVar[str | None] = ContextVar("fallo_ollama", default=None)
+
+
+def fallo_ollama() -> str | None:
+    """El motivo de la última falla de Ollama en este mensaje, o None."""
+    return _FALLO_OLLAMA.get()
+
+
+def limpiar_fallo_ollama() -> str | None:
+    """Devuelve el motivo y lo consume: quien registra la fila lo apaga para
+    que un mismo fallo no se cuente dos veces en el mismo mensaje."""
+    motivo = _FALLO_OLLAMA.get()
+    if motivo is not None:
+        _FALLO_OLLAMA.set(None)
+    return motivo
+
+
+def _clasificar_fallo(exc: Exception) -> str:
+    """Motivo corto y accionable para el panel: no es el texto del error, es
+    qué tiene que ir a revisar el admin."""
+    import httpx
+
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.ConnectError):
+        return "conexion"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"http_{exc.response.status_code}"
+    return type(exc).__name__.lower()[:60]
 
 MAX_INPUT_CHARS = 500
 
@@ -317,19 +356,28 @@ def ollama_chat(
         payload["format"] = format
     if tools is not None:
         payload["tools"] = tools
-    response = httpx.post(
-        f"{settings.ollama_url}/api/chat",
-        headers=headers,
-        json=payload,
-        # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
-        # lento); conectar a un servidor caído corta a los 2s. Un float suelto
-        # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
-        # Las capas de prompt largo pasan su propio timeout: procesar miles de
-        # tokens en la CPU de labs tarda más que el clasificador.
-        timeout=httpx.Timeout(timeout or settings.ollama_timeout, connect=2.0),
-    )
-    response.raise_for_status()
-    return response.json()["message"]
+    # El try envuelve la llamada porque este es el ÚNICO punto por donde pasan
+    # todas las capas que usan Ollama (clasificador, códigos, RAG, nodo
+    # agéntico): registrar la falla aquí la hace visible para todas sin
+    # repetir el except en cada una. Se re-lanza sin tocar: cada capa sigue
+    # decidiendo por su cuenta cómo degradar.
+    try:
+        response = httpx.post(
+            f"{settings.ollama_url}/api/chat",
+            headers=headers,
+            json=payload,
+            # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
+            # lento); conectar a un servidor caído corta a los 2s. Un float suelto
+            # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
+            # Las capas de prompt largo pasan su propio timeout: procesar miles de
+            # tokens en la CPU de labs tarda más que el clasificador.
+            timeout=httpx.Timeout(timeout or settings.ollama_timeout, connect=2.0),
+        )
+        response.raise_for_status()
+        return response.json()["message"]
+    except Exception as exc:
+        _FALLO_OLLAMA.set(_clasificar_fallo(exc))
+        raise
 
 
 def _deduce_ollama(text: str) -> tuple[Service | None, Category | None]:

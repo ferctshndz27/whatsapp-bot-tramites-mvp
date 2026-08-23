@@ -1089,15 +1089,35 @@ def _log_nlu(
     )
 
 
+def _log_fallo_ollama(session: Session, phone: str, text: str) -> None:
+    """Deja constancia de que el servidor de Ollama no contestó.
+
+    Fila EXTRA (models.CAPAS_EXTRA) con el motivo en service_id: el mensaje ya
+    lo contó la capa que sí respondió. Antes de esto un Ollama caído solo
+    dejaba un logger.warning y desde el panel era indistinguible de un bot que
+    de pronto "dejó de entender". Se llama en los dos puntos donde una capa
+    pudo haberlo usado (clasificador y capa informativa) y el motivo se
+    consume al leerlo, así que un mismo fallo no genera dos filas."""
+    motivo = nlu.limpiar_fallo_ollama()
+    if motivo is not None:
+        _log_nlu(session, phone, text, "ollama_error", motivo)
+
+
 def _deduce_and_log(session: Session, phone: str, text: str):
     """Corre la cascada de deducción UNA sola vez por mensaje y deja
     constancia en nluevent (capa que entendió, o "ninguna"). Devuelve
     (multi, service, category, options) para que cada handler arme su UX."""
+    # Arranca limpio. El ContextVar se copia por request, pero el cron procesa
+    # muchos mensajes en el MISMO contexto: sin esto, un fallo de Ollama de
+    # hace dos mensajes se registraba como si fuera de este.
+    nlu.limpiar_fallo_ollama()
     multi = nlu.deduce_all(text)
     if multi:
         _log_nlu(session, phone, text, "multi", ",".join(s.id for s in multi))
         return multi, None, None, []
     service, category, capa, confianza = nlu.deduce_explained(text)
+    # Aquí y no antes: deduce_all es puramente literal y nunca toca Ollama.
+    _log_fallo_ollama(session, phone, text)
     if service is not None:
         _log_nlu(session, phone, text, capa, service.id, confianza)
         return [], service, None, []
@@ -1210,6 +1230,9 @@ def _try_informative(session: Session, phone: str, text: str) -> str | None:
     if not settings.rag_enabled or not rag.es_pregunta_informativa(text):
         return None
     respuesta, motivo = rag.answer_explained(text)
+    # La capa informativa tiene su propio timeout (prompt largo): puede caerse
+    # aunque el clasificador haya pasado, así que se revisa otra vez.
+    _log_fallo_ollama(session, phone, text)
     if respuesta is None:
         if motivo in rag.GUARDRAIL_MOTIVOS:
             # El guardrail tumbó una respuesta candidata: fila propia con el
@@ -1225,6 +1248,10 @@ def _try_agent_tools(session: Session, phone: str, text: str) -> str | None:
     """Nodo agéntico (app/agent_tools.py) con su bitácora: fila capa="tools"
     EXTRA del mismo mensaje, excluida de los denominadores igual que "rag"."""
     respuesta = agent_tools.responder(session, phone, text)
+    # También aquí: el nodo agéntico habla con el mismo servidor y su nodo del
+    # Estudio ya muestra avisos. Sin esta línea, "el agéntico no pudo hablar
+    # con Ollama" era el único fallo que seguía siendo invisible.
+    _log_fallo_ollama(session, phone, text)
     if respuesta is None:
         return None
     _log_nlu(session, phone, text, "tools")

@@ -38,7 +38,30 @@
       </defs>
     </svg>
     <div id="lienzo" aria-label="Pipeline del agente"></div>
-    <div id="minimapa" aria-hidden="true"><div id="minimapa-paper"></div><div class="mini-ctl"><button class="btn-mini" id="mz-menos">−</button><span id="mz-pct">100%</span><button class="btn-mini" id="mz-mas">+</button><button class="btn-mini" id="mz-fit">⛶</button></div></div>
+    {# Navegador del lienzo, portado del navigator-panel del demo
+       ai-workflow-builder: minimapa plegable + deslizador de zoom con sus
+       topes + ajustar a la pantalla. El contenedor ya NO lleva aria-hidden
+       (tiene controles enfocables); lo lleva el dibujo, que es decorativo:
+       todo lo que se hace arrastrando el recuadro se puede hacer también con
+       los botones y el deslizador. #}
+    <div id="minimapa">
+      <div id="minimapa-caja" aria-hidden="true">
+        <div id="minimapa-paper"></div>
+        <div id="mini-vista" title="Arrastra para moverte por el lienzo"></div>
+      </div>
+      <div class="mini-ctl">
+        <button class="btn-mini" id="mz-toggle" aria-expanded="true"
+          aria-controls="minimapa-caja" aria-label="Ocultar minimapa">▾</button>
+        <span class="mini-sep" aria-hidden="true"></span>
+        <button class="btn-mini" id="mz-menos" aria-label="Alejar">−</button>
+        <input id="mz-rango" type="range" min="0" max="100" step="1" value="100"
+          aria-label="Nivel de zoom">
+        <button class="btn-mini" id="mz-mas" aria-label="Acercar">+</button>
+        <span id="mz-pct" aria-live="polite">100%</span>
+        <span class="mini-sep" aria-hidden="true"></span>
+        <button class="btn-mini" id="mz-fit" aria-label="Ajustar a la pantalla">⛶</button>
+      </div>
+    </div>
     <p class="est-hint">Arrastra los nodos · clic para configurar · el punto verde = capa encendida</p>
   </div>
   <aside id="panel" class="agente-panel card" aria-live="polite">
@@ -124,6 +147,14 @@
   #lienzo .joint-cell rect{transition:none}
 }
 .mini-titulo{margin:12px 0 6px;font-size:.85rem;color:var(--texto)}
+/* Avisos del nodo: el ⚠ y el texto cargan el significado, el ámbar solo
+   acompaña (WCAG 1.4.1 — el color no es el único indicador). */
+.avisos{list-style:none;margin:0 0 10px;padding:8px 10px;
+  border:1px solid #f0b429;border-left-width:3px;border-radius:8px;
+  background:rgba(240,180,41,.08)}
+.avisos li{font-size:.78rem;line-height:1.35;color:var(--texto)}
+.avisos li+li{margin-top:6px}
+.panel-grupo{margin-top:4px}
 .tools-lista{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 .tool-fila{display:flex;align-items:center;justify-content:space-between;gap:8px;
   padding:8px 10px;border:1px solid var(--borde);border-radius:8px;background:var(--tarjeta2)}
@@ -169,7 +200,26 @@
 #lienzo{min-height:640px;height:max(78vh,640px);position:relative;border-radius:14px;overflow:hidden;background:var(--fondo);
   background-image:radial-gradient(#21262d 1px,transparent 1px);background-size:22px 22px;
   border:1px solid var(--borde)}
-#minimapa{position:absolute;right:14px;bottom:44px;width:172px;background:#161b22f2;border:1px solid #30363d;border-radius:10px;padding:6px;z-index:5}#minimapa-paper{width:160px;height:92px;overflow:hidden;border-radius:6px}.mini-ctl{display:flex;align-items:center;gap:4px;justify-content:center;margin-top:4px}.mini-ctl .btn-mini{padding:1px 8px;margin:0;font-size:.75rem}.mini-ctl span{color:#8b949e;font-size:.72rem;min-width:34px;text-align:center}
+#minimapa{position:absolute;right:14px;bottom:44px;width:206px;background:#161b22f2;border:1px solid #30363d;border-radius:10px;padding:6px;z-index:5}
+#minimapa-caja{position:relative;width:194px;height:92px;overflow:hidden;border-radius:6px}
+#minimapa-caja[hidden]{display:none}
+#minimapa-paper{width:194px;height:92px}
+/* Recuadro de lo que se está viendo. Va como div sobre el minimapa y no como
+   <rect> dentro del SVG porque el transform del mini lo fijamos nosotros
+   (encuadrarMini): la conversión papel→píxel es una multiplicación, y así el
+   recuadro se estiliza y se arrastra con CSS y pointer events normales. */
+#mini-vista{position:absolute;top:0;left:0;border:1.5px solid #58a6ff;
+  background:rgba(88,166,255,.12);border-radius:3px;cursor:grab;touch-action:none}
+#mini-vista.agarrando{cursor:grabbing;background:rgba(88,166,255,.2)}
+#lienzo.agarrando{cursor:grabbing}
+.mini-ctl{display:flex;align-items:center;gap:3px;justify-content:center;margin-top:5px}
+.mini-ctl .btn-mini{padding:1px 6px;margin:0;font-size:.75rem;min-height:24px}
+.mini-ctl .btn-mini[disabled]{opacity:.4;cursor:not-allowed}
+.mini-ctl #mz-pct{color:#8b949e;font-size:.72rem;min-width:34px;text-align:center;
+  font-variant-numeric:tabular-nums}
+.mini-sep{width:1px;height:14px;background:#30363d;flex:0 0 auto}
+#mz-rango{width:56px;margin:0;padding:0;accent-color:#58a6ff;cursor:pointer}
+#mz-rango:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
 .est-hint{color:var(--texto2);font-size:.78rem;margin:.4rem 0 0}
 .agente-panel{overflow-y:auto;padding:14px;
   background:var(--tarjeta);border:1px solid var(--borde);border-radius:14px}
@@ -203,13 +253,20 @@ const post = (url, body) => fetch(url, {method:"POST",headers:{"Content-Type":"a
   .then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; });
 
 const { dia, shapes } = joint;
-const esc = t => { const d = document.createElement("div"); d.textContent = t ?? ""; return d.innerHTML; };
+// textContent→innerHTML escapa < > &, pero NO las comillas, y varias de estas
+// interpolaciones caen DENTRO de un atributo (value="…", data-tool="…"): sin
+// escapar la comilla, un valor con " cierra el atributo y lo que siga se
+// interpreta como marcado. Es panel de admin, pero el descuido no se hereda.
+const esc = t => { const d = document.createElement("div"); d.textContent = t ?? "";
+  return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;"); };
 const graph = new dia.Graph({}, { cellNamespace: shapes });
 const paper = new dia.Paper({ el: document.getElementById("lienzo"), model: graph,
   width: "100%", height: Math.max(640, Math.round(window.innerHeight * .78)), cellViewNamespace: shapes, background: { color: "transparent" },
   interactive: { linkMove: false } });
-new dia.Paper({ el: document.getElementById("minimapa-paper"), model: graph, width: 160, height: 92,
-  cellViewNamespace: shapes, interactive: false, background: { color: "transparent" } }).scale(0.11);
+const MINI_W = 194, MINI_H = 92;
+const mini = new dia.Paper({ el: document.getElementById("minimapa-paper"), model: graph,
+  width: MINI_W, height: MINI_H, cellViewNamespace: shapes, interactive: false,
+  background: { color: "transparent" } });
 
 const POS_KEY = "agente-pos-v2";
 const pos = JSON.parse(localStorage.getItem(POS_KEY) || "{}");
@@ -222,7 +279,10 @@ const BASE = { literal:[70,40], ollama:[70,155], fuzzy:[70,270], rag:[70,385],
 // NO tiene fondo propio — el nodo es UNA sola superficie sobre bg-card; solo
 // los nodos de tipo "tool" se tiñen con bg-muted/30 y llevan borde punteado.
 const T = { card: "#1e2123", texto: "#f0f2f4", borde: "#2b2e32", tenue: "#b3b8be",
-            cardTool: "#202325", bordeTool: "rgba(240,242,244,.45)" };
+            cardTool: "#202325", bordeTool: "rgba(240,242,244,.45)",
+            // Ámbar del ícono warning.svg del demo, con contraste suficiente
+            // sobre la superficie oscura de la tarjeta.
+            aviso: "#f0b429" };
 const ICONO = { literal:"🔤", ollama:"🤖", fuzzy:"≈", rag:"📚", tools:"🔧", escalada:"🙋" };
 
 function nodoRico(n) {
@@ -231,6 +291,7 @@ function nodoRico(n) {
   const esTool = n.id === "tools";  // el único de tipo herramienta: borde punteado
   const puerto = activo => ({ r: 4.5, fill: activo ? "#2ea043" : "#484f58",
     stroke: T.card, strokeWidth: 1.5, magnet: false });
+  const conAviso = (n.avisos || []).length > 0;
   const el = new shapes.standard.Rectangle({ id: n.id,
     position: pos[n.id] ? pos[n.id] : { x: BASE[n.id][0], y: BASE[n.id][1] },
     size: { width: 256, height: 86 },
@@ -239,6 +300,10 @@ function nodoRico(n) {
       { tagName: "text", selector: "titulo" },
       { tagName: "text", selector: "descripcion" },
       { tagName: "text", selector: "metricas" },
+      // Aviso "encendido pero no puede trabajar" (idea del demo ai-agent-builder:
+      // WarningEffect marca el nodo sin configurar). QUÉ cuenta como aviso lo
+      // decide el servidor (agente_studio._avisos); aquí solo se pinta.
+      { tagName: "text", selector: "aviso" },
     ],
     ports: { groups: {
       entrada: { position: "top", attrs: { portBody: puerto(n.activo) },
@@ -247,8 +312,12 @@ function nodoRico(n) {
         markup: [{ tagName: "circle", selector: "portBody" }] },
     }, items: [{ group: "entrada" }, { group: "salida" }] },
     attrs: {
-      body: { fill: esTool ? T.cardTool : T.card, rx: 8, ry: 8, strokeWidth: 1,
-        stroke: esTool ? T.bordeTool : (n.activo ? "#2ea043" : T.borde),
+      body: { fill: esTool ? T.cardTool : T.card, rx: 8, ry: 8,
+        // El aviso engorda y tiñe el borde ADEMÁS del ícono: el color nunca
+        // es el único indicador (WCAG 1.4.1) y a 100% de zoom el ícono solo
+        // se pierde entre seis nodos.
+        strokeWidth: conAviso ? 2 : 1,
+        stroke: conAviso ? T.aviso : (esTool ? T.bordeTool : (n.activo ? "#2ea043" : T.borde)),
         strokeDasharray: esTool ? "6,4" : "none",
         filter: "url(#node-elevation)" },
       titulo: { text: `${ICONO[n.id] || "•"} ${n.activo ? "●" : "○"} ${n.nombre}`,
@@ -260,6 +329,8 @@ function nodoRico(n) {
       metricas: { text: `${n.mensajes} msgs · 14d${n.descartes ? `  ·  ${n.descartes} descartes` : ""}`,
         fill: T.tenue, fontSize: 10.5,
         x: 14, y: 68, textAnchor: "start", textVerticalAnchor: "middle" },
+      aviso: { text: conAviso ? "⚠" : "", fill: T.aviso, fontSize: 15,
+        x: 242, y: 22, textAnchor: "end", textVerticalAnchor: "middle" },
     },
   });
   el.prop("datos", n);
@@ -289,12 +360,23 @@ function ajustarAltoAContenido(elementos) {
   });
 }
 
-ESTADO.nodos.slice(0, -1).forEach((n, i) => graph.addCell(new shapes.standard.Link({
-  source: { id: n.id }, target: { id: ESTADO.nodos[i + 1].id },
-  connector: { name: "smooth" },
-  attrs: { line: { stroke: T.borde, strokeWidth: 1.6,
-    targetMarker: { type: "path", d: "M 7 -3.5 0 0 7 3.5 z", fill: T.tenue } } },
-})));
+// Cada flecha lleva escrita la condición REAL de caída (nodo.entra_si, que
+// arma el servidor). Es lo que el demo hace con `to: [{prompt, id}]`: la regla
+// de ruteo se lee en la arista. Sin esto el lienzo eran seis cajas en fila y
+// para saber por qué se pasa de una a otra había que abrir nlu.py.
+ESTADO.nodos.slice(0, -1).forEach((n, i) => {
+  const destino = ESTADO.nodos[i + 1];
+  graph.addCell(new shapes.standard.Link({
+    source: { id: n.id }, target: { id: destino.id },
+    connector: { name: "smooth" },
+    labels: destino.entra_si ? [{
+      attrs: { text: { text: destino.entra_si, fill: T.tenue, fontSize: 9.5 },
+               rect: { fill: "#0d1117" } }, position: 0.5 },
+    ] : [],
+    attrs: { line: { stroke: T.borde, strokeWidth: 1.6,
+      targetMarker: { type: "path", d: "M 7 -3.5 0 0 7 3.5 z", fill: T.tenue } } },
+  }));
+});
 
 const corpus = new shapes.standard.Rectangle({ id: "corpus",
   position: pos["corpus"] || { x: BASE.corpus[0], y: BASE.corpus[1] }, size: { width: 200, height: 58 },
@@ -322,28 +404,228 @@ if (document.fonts && document.fonts.ready)
 paper.on("element:pointerup", v => { pos[v.model.id] = v.model.position();
   localStorage.setItem(POS_KEY, JSON.stringify(pos)); });
 
-// ---- Zoom / ajustar / reacomodar ----
-let escala = 1;
-const pct = () => document.getElementById("mz-pct").textContent = Math.round(escala * 100) + "%";
-const zoom = f => { escala = Math.min(1.6, Math.max(0.4, escala * f)); paper.scale(escala); pct(); };
-document.getElementById("mz-menos").onclick = () => zoom(1/1.15);
-document.getElementById("mz-mas").onclick = () => zoom(1.15);
-document.getElementById("mz-fit").onclick = () => { paper.transformToFitContent({ padding: 30, maxScale: 1.3 }); escala = paper.scale().sx; pct(); };
-document.getElementById("zoom-mas").onclick = () => zoom(1.15);
-document.getElementById("zoom-menos").onclick = () => zoom(1/1.15);
-document.getElementById("zoom-ajustar").onclick = () =>
-  paper.transformToFitContent({ padding: 30, maxScale: 1.3 });
+// ---- Navegador del lienzo: zoom, arrastre, encuadre y minimapa ------------
+//
+// Portado del navigator-panel del demo ai-workflow-builder: deslizador de zoom
+// con sus topes, botones que se deshabilitan al llegar al límite, ajustar a la
+// pantalla y un minimapa que además de MOSTRAR dónde estás deja MOVERTE.
+//
+// Todo pasa por aplicarVista(): antes cada botón escribía por su cuenta y
+// "Ajustar" no actualizaba el contador, así que el siguiente zoom multiplicaba
+// una escala vieja y el lienzo pegaba un brinco. La escala vigente se lee del
+// paper, que es quien la tiene de verdad; ya no hay copia en una variable.
+const ZOOM_MIN = 0.3, ZOOM_MAX = 2, ZOOM_PASO = 0.2, MARGEN_FIT = 60, TICKS = 100;
+
+const limitarZoom = z => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+const aTick = z => Math.round((z - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN) * TICKS);
+const aZoom = t => ZOOM_MIN + (t / TICKS) * (ZOOM_MAX - ZOOM_MIN);
+
+const ctlPct = document.getElementById("mz-pct");
+const ctlRango = document.getElementById("mz-rango");
+const ctlMenos = document.getElementById("mz-menos");
+const ctlMas = document.getElementById("mz-mas");
+const cajaMini = document.getElementById("minimapa-caja");
+const recuadro = document.getElementById("mini-vista");
+
+// Encuadre del minimapa. Antes era una escala fija (0.11): al mover un nodo
+// lejos, el dibujo se salía del recuadro y el minimapa dejaba de representar
+// el lienzo. Ahora se calcula del contenido real.
+let miniEscala = 1, miniTx = 0, miniTy = 0;
+
+function encuadrarMini() {
+  const caja = graph.getBBox();
+  if (!caja || !caja.width || !caja.height) return;
+  const margen = 8;
+  miniEscala = Math.min((MINI_W - margen * 2) / caja.width,
+                        (MINI_H - margen * 2) / caja.height);
+  miniTx = -caja.x * miniEscala + (MINI_W - caja.width * miniEscala) / 2;
+  miniTy = -caja.y * miniEscala + (MINI_H - caja.height * miniEscala) / 2;
+  mini.scale(miniEscala);
+  mini.translate(miniTx, miniTy);
+}
+
+// El recuadro = el área visible del lienzo, llevada a píxeles del minimapa.
+function pintarRecuadro() {
+  if (cajaMini.hidden) return;
+  const s = paper.scale().sx, t = paper.translate();
+  const area = paper.el.getBoundingClientRect();
+  const x = (-t.tx / s) * miniEscala + miniTx;
+  const y = (-t.ty / s) * miniEscala + miniTy;
+  const w = (area.width / s) * miniEscala;
+  const h = (area.height / s) * miniEscala;
+  // Se recorta a la caja: con el lienzo muy alejado el recuadro cubriría todo
+  // y desbordaría el minimapa.
+  const x0 = Math.max(0, x), y0 = Math.max(0, y);
+  recuadro.style.left = x0 + "px";
+  recuadro.style.top = y0 + "px";
+  recuadro.style.width = Math.max(8, Math.min(MINI_W - x0, w + Math.min(0, x))) + "px";
+  recuadro.style.height = Math.max(8, Math.min(MINI_H - y0, h + Math.min(0, y))) + "px";
+}
+
+function aplicarVista() {
+  const z = paper.scale().sx;
+  ctlPct.textContent = Math.round(z * 100) + "%";
+  ctlRango.value = aTick(z);
+  // El deslizador trabaja en "ticks" 0–100; un lector de pantalla debe oír el
+  // porcentaje, no el tick.
+  ctlRango.setAttribute("aria-valuetext", Math.round(z * 100) + "%");
+  ctlMenos.disabled = z <= ZOOM_MIN + 0.001;
+  ctlMas.disabled = z >= ZOOM_MAX - 0.001;
+  pintarRecuadro();
+}
+
+// Zoom alrededor del CENTRO de lo que se está viendo (o de un punto dado):
+// escalar desde la esquina, como se hacía antes, empuja el contenido fuera de
+// la pantalla en cuanto te acercas un poco.
+function zoomA(nivel, centro) {
+  const antes = paper.scale().sx, z = limitarZoom(nivel);
+  if (Math.abs(z - antes) > 1e-6) {
+    const area = paper.el.getBoundingClientRect();
+    const cx = centro ? centro.x : area.width / 2;
+    const cy = centro ? centro.y : area.height / 2;
+    const t = paper.translate();
+    const px = (cx - t.tx) / antes, py = (cy - t.ty) / antes;
+    paper.scale(z);
+    paper.translate(cx - px * z, cy - py * z);
+  }
+  aplicarVista();
+}
+
+function ajustar() {
+  paper.transformToFitContent({ padding: MARGEN_FIT, maxScale: 1, minScale: ZOOM_MIN });
+  aplicarVista();
+}
+
+// ---- Arrastrar el lienzo -------------------------------------------------
+// Requisito del minimapa: sin desplazamiento, el recuadro no tendría a dónde
+// mover. blank:pointerdown es el evento correcto porque excluye los nodos, que
+// siguen arrastrándose por su cuenta.
+let panDesde = null;
+
+paper.on("blank:pointerdown", evt => {
+  const t = paper.translate();
+  panDesde = { x: evt.clientX, y: evt.clientY, tx: t.tx, ty: t.ty };
+  paper.el.classList.add("agarrando");
+});
+
+document.addEventListener("pointermove", e => {
+  if (!panDesde) return;
+  paper.translate(panDesde.tx + e.clientX - panDesde.x,
+                  panDesde.ty + e.clientY - panDesde.y);
+  pintarRecuadro();
+});
+
+document.addEventListener("pointerup", () => {
+  if (!panDesde) return;
+  panDesde = null;
+  paper.el.classList.remove("agarrando");
+});
+
+// ---- Arrastrar el recuadro del minimapa ----------------------------------
+let miniDesde = null;
+
+recuadro.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  const t = paper.translate();
+  miniDesde = { x: e.clientX, y: e.clientY, tx: t.tx, ty: t.ty };
+  recuadro.setPointerCapture(e.pointerId);
+  recuadro.classList.add("agarrando");
+});
+
+recuadro.addEventListener("pointermove", e => {
+  if (!miniDesde) return;
+  // Un píxel del minimapa son (escalaLienzo / escalaMini) píxeles de lienzo, y
+  // el lienzo se mueve al REVÉS que el recuadro.
+  const factor = paper.scale().sx / miniEscala;
+  paper.translate(miniDesde.tx - (e.clientX - miniDesde.x) * factor,
+                  miniDesde.ty - (e.clientY - miniDesde.y) * factor);
+  pintarRecuadro();
+});
+
+recuadro.addEventListener("pointerup", () => {
+  miniDesde = null;
+  recuadro.classList.remove("agarrando");
+});
+
+// Clic en el minimapa (fuera del recuadro): centra el lienzo ahí.
+cajaMini.addEventListener("pointerdown", e => {
+  if (e.target === recuadro) return;
+  const caja = cajaMini.getBoundingClientRect();
+  const px = ((e.clientX - caja.left) - miniTx) / miniEscala;
+  const py = ((e.clientY - caja.top) - miniTy) / miniEscala;
+  const z = paper.scale().sx, area = paper.el.getBoundingClientRect();
+  paper.translate(area.width / 2 - px * z, area.height / 2 - py * z);
+  pintarRecuadro();
+});
+
+// ---- Plegar el minimapa --------------------------------------------------
+const PLEGADO = "minimapa-plegado";
+const ctlToggle = document.getElementById("mz-toggle");
+
+function pintarPlegado(plegado) {
+  cajaMini.hidden = plegado;
+  ctlToggle.setAttribute("aria-expanded", String(!plegado));
+  ctlToggle.setAttribute("aria-label", plegado ? "Mostrar minimapa" : "Ocultar minimapa");
+  ctlToggle.textContent = plegado ? "🗺" : "▾";
+  if (!plegado) { encuadrarMini(); pintarRecuadro(); }
+}
+
+ctlToggle.onclick = () => {
+  const plegado = ctlToggle.getAttribute("aria-expanded") === "true";
+  pintarPlegado(plegado);
+  // Por el mismo camino que el resto del panel: si lo pliegas, sigue plegado
+  // después de guardar un párrafo o de cualquier recarga.
+  if (window.EstadoVista) EstadoVista.guardar(PLEGADO, plegado);
+};
+
+// ---- Controles -----------------------------------------------------------
+ctlMenos.onclick = () => zoomA(paper.scale().sx - ZOOM_PASO);
+ctlMas.onclick = () => zoomA(paper.scale().sx + ZOOM_PASO);
+ctlRango.oninput = () => zoomA(aZoom(Number(ctlRango.value)));
+document.getElementById("mz-fit").onclick = ajustar;
+// La barra de arriba y el minimapa mandan al MISMO sitio: dos controles que
+// hacen lo mismo no pueden acabar contando escalas distintas.
+document.getElementById("zoom-ajustar").onclick = ajustar;
+document.getElementById("zoom-mas").onclick = () => zoomA(paper.scale().sx + ZOOM_PASO);
+document.getElementById("zoom-menos").onclick = () => zoomA(paper.scale().sx - ZOOM_PASO);
+
 document.getElementById("reacomodar").onclick = () => {
   localStorage.removeItem(POS_KEY);
   Object.entries(BASE).forEach(([id, [x, y]]) => graph.getCell(id)?.position(x, y));
+  encuadrarMini();
+  aplicarVista();
 };
+
+// Mover un nodo cambia el contenido: el minimapa se reencuadra para seguir
+// representando el lienzo completo.
+paper.on("element:pointerup", () => { encuadrarMini(); pintarRecuadro(); });
+window.addEventListener("resize", () => { encuadrarMini(); pintarRecuadro(); });
+
+encuadrarMini();
+aplicarVista();
+// EstadoVista lo publica static/js/estado-vista.js, que todavía no ha corrido
+// mientras se parsea este script: la preferencia se recupera después.
+document.addEventListener("DOMContentLoaded", () => {
+  if (window.EstadoVista && EstadoVista.leer(PLEGADO) === true) pintarPlegado(true);
+});
 
 // ---- Panel de propiedades ----
 const titulo = document.getElementById("panel-titulo");
 const cuerpo = document.getElementById("panel-cuerpo");
 const err = msg => { const e = document.getElementById("err"); if (e) e.textContent = msg; };
-const guardar = (key, value) => post("/agente/config", { key, value: String(value) })
-  .then(() => location.reload()).catch(e => err(e.message));
+// Varias perillas en UNA acción: se mandan en orden y la vista se recarga al
+// final. Antes cada guardado recargaba por su cuenta, así que un "Guardar" que
+// tocaba dos claves perdía la segunda: la página se iba antes de mandarla.
+function guardarVarios(pares) {
+  return pares
+    .reduce((cadena, [key, value]) =>
+      cadena.then(() => post("/agente/config", { key, value: String(value) })),
+      Promise.resolve())
+    .then(() => location.reload())
+    .catch(e => err(e.message));
+}
+
+const guardar = (key, value) => guardarVarios([[key, value]]);
 
 function ocultarCorpus() {
   document.getElementById("bloque-corpus").hidden = true;
@@ -409,6 +691,47 @@ function montarEditorSinonimos() {
   pintarSinonimos(actual());
 }
 
+// ---- Controles armados desde el descriptor del servidor -------------------
+// El tipo, las cotas, el paso y la ayuda de cada perilla los publica
+// agent_settings.CONFIG_EDITABLE. Antes estaban escritos aquí a mano (min="1"
+// max="5"…) y podían quedar por debajo o por encima de lo que el servidor
+// acepta; ahora agregar una perilla no toca este archivo.
+
+function ayudaDe(p) {
+  return p.ayuda ? `<p class="muted mini">${esc(p.ayuda)}</p>` : "";
+}
+
+function campo(clave) {
+  const p = ESTADO.config[clave], id = "f-" + clave, out = id + "-out";
+  const comun = `id="${id}" data-clave="${clave}"`;
+  if (p.tipo === "texto")
+    return `<label for="${id}">${esc(p.etiqueta)}</label>
+      <input ${comun} maxlength="${p.maximo}" value="${esc(String(p.valor))}">` + ayudaDe(p);
+  if (p.tipo === "entero")
+    // Deslizador con su <output>: el valor se lee sin arrastrar, y el output
+    // es un live region nativo para lectores de pantalla.
+    return `<label for="${id}">${esc(p.etiqueta)} (${p.minimo}–${p.maximo}):
+        <output id="${out}">${p.valor}</output></label>
+      <input ${comun} type="range" min="${p.minimo}" max="${p.maximo}" step="${p.paso}"
+        value="${p.valor}" oninput="document.getElementById('${out}').value=this.value">` + ayudaDe(p);
+  return `<label for="${id}">${esc(p.etiqueta)}${
+      p.unidad ? ` (${esc(p.unidad.trim())})` : ""}</label>
+    <input ${comun} type="number" min="${p.minimo}" max="${p.maximo}" step="${p.paso}"
+      value="${p.valor}">` + ayudaDe(p);
+}
+
+function grupoCampos(claves, etiquetaBoton) {
+  return `<div class="panel-grupo">` + claves.map(campo).join("") +
+    `<p><button class="btn-mini primario" onclick="guardarGrupo(this)">${
+       etiquetaBoton || "Guardar"}</button></p></div>`;
+}
+
+window.guardarGrupo = function (boton) {
+  const campos = Array.from(
+    boton.closest(".panel-grupo").querySelectorAll("[data-clave]"));
+  return guardarVarios(campos.map(el => [el.dataset.clave, el.value]));
+};
+
 function panelNodo(n) {
   ocultarCorpus();
   titulo.textContent = n.nombre;
@@ -416,6 +739,10 @@ function panelNodo(n) {
   let h = `<p class="muted mini">${n.detalle}</p>
     <p><strong>${n.mensajes}</strong> mensajes en 14 días` +
     (n.descartes ? ` · <strong>${n.descartes}</strong> descartes de guardrail` : "") + `</p>`;
+  // Los avisos van ARRIBA de todo: si el nodo no puede trabajar, eso es lo
+  // primero que hay que leer, no la configuración.
+  if ((n.avisos || []).length) h += `<ul class="avisos" role="alert">` +
+    n.avisos.map(a => `<li>⚠ ${esc(a)}</li>`).join("") + `</ul>`;
   if (n.id === "rag" || n.id === "tools") {
     const key = n.id === "rag" ? "rag_enabled" : "agent_tools_enabled";
     h += `<p><button class="btn-mini primario" id="btn-toggle">${n.activo ? "Apagar" : "Encender"} capa</button></p>`;
@@ -433,30 +760,17 @@ function panelNodo(n) {
           ${t.bloqueada
             ? `<span class="tool-candado" title="Mover dinero es del panel del asesor, nunca del modelo">🔒 bloqueada</span>`
             : `<button class="btn-mini" data-tool="${esc(t.nombre)}">${
-                 (t.nombre === "cotizar_servicio" ? c.tool_cotizar_enabled : c.tool_folios_enabled).valor
-                   ? "Apagar" : "Encender"}</button>`}
-        </div>`).join("") + `</div>
-      <label for="f-turnos">Turnos máximos (1–5): <output id="f-turnos-out">${c.agent_max_turnos.valor}</output></label>
-      <input id="f-turnos" type="range" min="1" max="5" value="${c.agent_max_turnos.valor}"
-        oninput="document.getElementById('f-turnos-out').value=this.value">
-      <label for="f-palabras">Palabras máximas (30–120): <output id="f-palabras-out">${c.agent_max_words.valor}</output></label>
-      <input id="f-palabras" type="range" min="30" max="120" step="5" value="${c.agent_max_words.valor}"
-        oninput="document.getElementById('f-palabras-out').value=this.value">
-      <p><button class="btn-mini primario" onclick="guardarTopes()">Guardar topes</button></p>`;
+                 t.activa ? "Apagar" : "Encender"}</button>`}
+        </div>`).join("") + `</div>` +
+      grupoCampos(["agent_max_turnos", "agent_max_words"], "Guardar topes");
     setTimeout(() => document.querySelectorAll("[data-tool]").forEach(b => {
       const clave = b.dataset.tool === "cotizar_servicio" ? "tool_cotizar_enabled" : "tool_folios_enabled";
       b.onclick = () => guardar(clave, c[clave].valor ? 0 : 1);
     }), 0);
   }
-  if (n.id === "ollama" && !n.fijo) h += `
-    <label for="f-modelo">Modelo</label><input id="f-modelo" value="${c.ollama_model.valor}">
-    <label for="f-timeout">Timeout (s)</label><input id="f-timeout" type="number" min="1" max="60" step="0.5" value="${c.ollama_timeout.valor}">
-    <p><button class="btn-mini primario" onclick="guardarOllama()">Guardar</button></p>`;
-  if (n.id === "fuzzy") h += `
-    <label for="f-umbral">Umbral (70–95): <output id="f-out">${c.fuzzy_threshold.valor}</output></label>
-    <input id="f-umbral" type="range" min="70" max="95" value="${c.fuzzy_threshold.valor}"
-      oninput="document.getElementById('f-out').value=this.value">
-    <p><button class="btn-mini primario" onclick="guardar('fuzzy_threshold',document.getElementById('f-umbral').value)">Guardar</button></p>`;
+  if (n.id === "ollama" && !n.fijo)
+    h += grupoCampos(["ollama_model", "ollama_timeout"]);
+  if (n.id === "fuzzy") h += grupoCampos(["fuzzy_threshold"]);
   if (n.id === "literal") {
     // Esta capa no tiene flags: la alimentan los DATOS del catálogo.
     h += `<p class="muted mini">No se configura con flags: la alimenta el <strong>catálogo</strong>
@@ -489,10 +803,6 @@ function panelNodo(n) {
   cuerpo.innerHTML = h + `<p class="agente-error" id="err"></p>`;
 }
 window.guardar = guardar;
-window.guardarOllama = () => guardar("ollama_model", document.getElementById("f-modelo").value)
-  .then(() => guardar("ollama_timeout", document.getElementById("f-timeout").value));
-window.guardarTopes = () => guardar("agent_max_turnos", document.getElementById("f-turnos").value)
-  .then(() => guardar("agent_max_words", document.getElementById("f-palabras").value));
 
 
 
@@ -542,7 +852,13 @@ paper.on("element:pointerclick", v => abrirNodo(v.model.id));
   g.setAttribute("role", "button");
   // Sin prefijo cuando el nombre ya empieza por "Capa" ("Capa Capa informativa").
   const nombre = id === "corpus" ? "Corpus informativo" : (datos ? datos.nombre : id);
-  g.setAttribute("aria-label", /^capa/i.test(nombre) ? nombre : `Capa ${nombre}`);
+  const base = /^capa/i.test(nombre) ? nombre : `Capa ${nombre}`;
+  // El ⚠ del lienzo es puramente visual: sin esto, un lector de pantalla
+  // recorre los nodos sin enterarse de cuál está roto.
+  const cuantos = (datos && datos.avisos || []).length;
+  g.setAttribute("aria-label", cuantos
+    ? `${base} — ${cuantos} aviso${cuantos > 1 ? "s" : ""} de configuración`
+    : base);
   g.addEventListener("keydown", e => {
     if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
     e.preventDefault();  // Espacio no debe desplazar la página
@@ -623,6 +939,9 @@ document.getElementById("btn-probar").onclick = () => {
     if (r.respuesta_rag) msg += `<br>RAG respondería: “${esc(r.respuesta_rag)}”`;
     if (r.rag_descartada) msg += ` · guardrail descartó la respuesta (${r.rag_descartada})`;
     if (r.rag_sin_respuesta) msg += `<br><em>La capa RAG corrió pero no dio respuesta (NO_SE del modelo, timeout o red — revisar logs del bot).</em>`;
+    // El motivo exacto cuando el servidor no contestó: antes un timeout y un
+    // "no sé" del modelo se veían idénticos desde aquí.
+    if (r.ollama_error) msg += `<br>⚠ <strong>Ollama falló</strong> (${esc(r.ollama_error)}): la respuesta salió de una capa de abajo.`;
     if (r.sugerencias && r.sugerencias.length && !r.respuesta_rag)
       msg += `<br>Mini-menú: ${r.sugerencias.map(esc).join(", ")}`;
     if (r.le_tocaria_tools) msg += `<br><em>Le tocaría al nodo agéntico (no se ejecuta en pruebas).</em>`;
