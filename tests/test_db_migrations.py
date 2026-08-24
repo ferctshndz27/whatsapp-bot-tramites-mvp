@@ -460,6 +460,7 @@ _ESQUEMA_DESPLEGADO = {
         "habilitado",
     ),
     "ipgeocache": ("ip", "geo", "resolved_at"),
+    "label": ("id", "nombre", "color", "descripcion", "created_at", "habilitado"),
     "loginevent": (
         "id",
         "username",
@@ -543,6 +544,14 @@ _ESQUEMA_DESPLEGADO = {
         "habilitado",
     ),
     "ticketactivity": ("id", "ticket_id", "username", "action", "created_at", "habilitado"),
+    "ticketlabel": (
+        "id",
+        "ticket_id",
+        "label_id",
+        "created_at",
+        "created_by",
+        "habilitado",
+    ),
     "user": ("id", "username", "password_hash", "is_admin", "habilitado", "estado", "phone"),
     "websession": (
         "id",
@@ -572,6 +581,8 @@ _DICTS_DE_MIGRACION = {
     # último gana. Se fusionan para no perder de vista ninguno de los dos dicts
     # que init_db() le aplica a esta tabla.
     "conversation": {**db._HABILITADO_COLUMN, **db._CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH},
+    # client también aparece en el spread de habilitado: misma fusión.
+    "client": {**db._HABILITADO_COLUMN, **db._CLIENT_COLUMNS_ADDED_AFTER_LAUNCH},
 }
 
 

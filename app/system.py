@@ -41,6 +41,7 @@ from app.models import (
     FollowUp,
     IntentoCobro,
     Invitation,
+    Label,
     LoginEvent,
     Message,
     NluEvent,
@@ -52,6 +53,7 @@ from app.models import (
     TeamMessage,
     Ticket,
     TicketActivity,
+    TicketLabel,
     User,
     WebSession,
 )
@@ -98,6 +100,9 @@ MIRROR_TABLES = [
     (EventoPasarela, "eventos_pasarela"),
     (PlanCobro, "planes_cobro"),
     (PaymentMethod, "payment_methods"),
+    # Etiquetas (fase 1).
+    (Label, "labels"),
+    (TicketLabel, "ticket_labels"),
 ]
 
 
@@ -238,11 +243,19 @@ def audit_view(request: Request, limit: int = 200):
     )
 
 
+def _celda_segura(valor):
+    # Inyección de fórmulas: un texto que empieza con = + - @ se ejecuta al
+    # abrir el CSV en Excel/Sheets; la comilla inicial lo vuelve literal.
+    # Los enteros pasan intactos (aquí ninguno es negativo).
+    s = str(valor)
+    return "'" + s if s[:1] in ("=", "+", "-", "@") else valor
+
+
 def _csv_response(filename: str, header: list[str], rows) -> Response:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(header)
-    writer.writerows(rows)
+    writer.writerows([_celda_segura(c) for c in fila] for fila in rows)
     # BOM UTF-8: sin él, Excel (es-MX) muestra mal los acentos.
     # ponytail: CSV completo en memoria — a este volumen sobra; pasar a
     # StreamingResponse con generador si algún día son cientos de miles de filas.
@@ -261,16 +274,31 @@ def export_tickets(request: Request):
         return redirect
     with get_session() as session:
         tickets = session.exec(select(Ticket).order_by(Ticket.created_at)).all()
+        # Etiquetas por folio en un solo viaje (no una consulta por fila).
+        pares = session.exec(
+            select(TicketLabel.ticket_id, Label.nombre)
+            .join(Label, Label.id == TicketLabel.label_id)
+            .where(TicketLabel.habilitado == True, Label.habilitado == True)  # noqa: E712
+        ).all()
+    etiquetas: dict[int, list[str]] = {}
+    for tid, nombre in pares:
+        etiquetas.setdefault(tid, []).append(nombre)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     return _csv_response(
         f"solicitudes-{stamp}.csv",
         ["id", "telefono", "cliente", "categoria", "servicio", "precio", "estado",
-         "escalado", "asignado_a", "habilitado", "creado", "actualizado"],
+         "escalado", "asignado_a", "etiquetas", "habilitado", "creado", "actualizado",
+         "primera_respuesta", "resuelto"],
         (
             [t.id, t.phone, t.client_name or "", t.category, t.service_name, t.price_info,
-             t.status.value, int(t.escalado), t.assigned_to or "", int(t.habilitado),
+             t.status.value, int(t.escalado), t.assigned_to or "",
+             "|".join(sorted(etiquetas.get(t.id or 0, []))), int(t.habilitado),
              t.created_at.isoformat(sep=" ", timespec="seconds"),
-             t.updated_at.isoformat(sep=" ", timespec="seconds")]
+             t.updated_at.isoformat(sep=" ", timespec="seconds"),
+             t.first_response_at.isoformat(sep=" ", timespec="seconds")
+             if t.first_response_at else "",
+             t.resolved_at.isoformat(sep=" ", timespec="seconds")
+             if t.resolved_at else ""]
             for t in tickets
         ),
     )

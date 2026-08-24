@@ -20,7 +20,11 @@ from app.models import (
 ARCHIVE_DDL = [
     """CREATE TABLE wa_clients (
         phone TEXT PRIMARY KEY, name TEXT,
-        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP,
+        email TEXT, origen TEXT, idioma TEXT DEFAULT 'es-MX',
+        opt_in_at TIMESTAMP, opt_in_source TEXT, opt_out_at TIMESTAMP,
+        atributos_json TEXT, last_activity_at TIMESTAMP,
+        notas_internas TEXT)""",
     """CREATE TABLE wa_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         phone TEXT REFERENCES wa_clients(phone), direction TEXT, body TEXT,
@@ -58,7 +62,17 @@ ARCHIVE_DDL = [
         habilitado INTEGER DEFAULT 1, agent_active INTEGER DEFAULT 1,
         requirements_json TEXT,
         provider TEXT DEFAULT 'meta',
+        first_response_at TIMESTAMP, first_response_by TEXT,
+        resolved_at TIMESTAMP, status_changed_at TIMESTAMP,
         created_at TIMESTAMP, updated_at TIMESTAMP)""",
+    """CREATE TABLE labels (
+        source_id INTEGER PRIMARY KEY, nombre TEXT, color TEXT,
+        descripcion TEXT, habilitado INTEGER DEFAULT 1,
+        created_at TIMESTAMP)""",
+    """CREATE TABLE ticket_labels (
+        source_id INTEGER PRIMARY KEY, ticket_id INTEGER, label_id INTEGER,
+        created_by TEXT, habilitado INTEGER DEFAULT 1,
+        created_at TIMESTAMP)""",
     """CREATE TABLE ticket_activity (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT,
         action TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",

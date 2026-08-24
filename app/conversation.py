@@ -1446,10 +1446,14 @@ def _parse_int(normalized: str) -> int | None:
 def _get_or_create_client(session: Session, phone: str) -> Client:
     client = session.get(Client, phone)
     if client is None:
-        client = Client(phone=phone)
+        client = Client(phone=phone, last_activity_at=utcnow())
         session.add(client)
         session.commit()
         session.refresh(client)
+    else:
+        # Se sella en cada entrante; el commit lo hace el flujo que ya corre.
+        client.last_activity_at = utcnow()
+        session.add(client)
     return client
 
 

@@ -38,6 +38,29 @@ class Client(SQLModel, table=True):
     name: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    # Ficha CRM (fase 1 del análisis de brechas, docs/ANALISIS-BRECHAS-ERP-CRM.md).
+    # Se normaliza a minúsculas al guardar (ver clients.update_client).
+    email: str | None = None
+    # Canal de adquisición: meta | twilio | referido | manual
+    origen: str | None = None
+    # server_default: mismo patrón que provider — una base nueva (create_all)
+    # debe nacer con el mismo DEFAULT que deja la migración en la base vieja.
+    idioma: str = Field(
+        default="es-MX", sa_column_kwargs={"server_default": text("'es-MX'")}
+    )
+    # Consentimiento para mensajes iniciados por el negocio. Meta exige poder
+    # probar cuándo y cómo se dio (un mensaje entrante NO es opt-in de
+    # marketing). opt_out_at presente = excluido de cualquier audiencia, siempre.
+    opt_in_at: datetime | None = None
+    opt_in_source: str | None = None
+    opt_out_at: datetime | None = None
+    # ponytail: campos personalizados como JSON en vez de tablas de definición
+    # tipo Chatwoot; subir a tablas reales si algún día hay que validar o
+    # filtrar por campo.
+    atributos_json: str | None = None
+    last_activity_at: datetime | None = None
+    # Resumen fijado del cliente; el historial granular vive en ClientNote.
+    notas_internas: str | None = None
 
 
 class Conversation(SQLModel, table=True):
@@ -128,6 +151,17 @@ class Ticket(SQLModel, table=True):
         default=PROVIDER_META,
         sa_column_kwargs={"server_default": text(f"'{PROVIDER_META}'")},
     )
+    # Métricas de operación (fase 1). Nullable a propósito: los folios previos
+    # no tienen el dato y un NULL honesto vale más que una métrica inventada —
+    # los reportes los excluyen.
+    # Primer mensaje saliente de un HUMANO en este folio; el bot nunca lo llena
+    # (es justo lo que se quiere medir).
+    first_response_at: datetime | None = None
+    first_response_by: str | None = None
+    # Cuándo pasó a CERRADO.
+    resolved_at: datetime | None = None
+    # Último cambio de status; permite medir tiempo en etapa.
+    status_changed_at: datetime | None = None
 
 
 class User(SQLModel, table=True):
@@ -153,6 +187,31 @@ class FollowUp(SQLModel, table=True):
     due_at: datetime = Field(index=True)
     done_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
+class Label(SQLModel, table=True):
+    """Etiqueta transversal para clasificar folios (fase 1)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    nombre: str = Field(unique=True, index=True)
+    color: str = "#dcf24c"
+    descripcion: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
+class TicketLabel(SQLModel, table=True):
+    """Puente folio-etiqueta. Quitar una etiqueta la deshabilita (soft delete,
+    como todo en este repo) — así el espejo MSSQL se entera vía after_update y
+    no hace falta un listener de DELETE. Re-etiquetar reactiva la fila (hay
+    índice único parcial ux_ticketlabel_viva en db.init_db)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    ticket_id: int = Field(index=True)
+    label_id: int = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    created_by: str | None = None
     habilitado: bool = True
 
 

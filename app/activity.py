@@ -8,16 +8,26 @@ completo y pueden abrir el histórico de cualquiera.
 
 import logging
 import math
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 from app.templating import BUSINESS_TZ, templates
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.auth import is_admin
 from app.db import get_session
-from app.models import Feedback, Ticket, TicketActivity, TicketStatus, User
+from app.models import (
+    Feedback,
+    Label,
+    Ticket,
+    TicketActivity,
+    TicketLabel,
+    TicketStatus,
+    User,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +155,97 @@ def daily_dispatches(
     ]
 
 
+def _mediana(valores: list[float]) -> float | None:
+    if not valores:
+        return None
+    ordenados = sorted(valores)
+    n = len(ordenados)
+    if n % 2:
+        return ordenados[n // 2]
+    return (ordenados[n // 2 - 1] + ordenados[n // 2]) / 2
+
+
+def primera_respuesta_diaria(session, start: date, end: date) -> list[dict]:
+    """Mediana (minutos) de primera respuesta humana, por día de creación.
+
+    Solo cuenta folios con first_response_at: los NULL previos a la migración
+    de fase 1 quedan fuera a propósito (el template lo declara). La salida es
+    compatible con build_line_chart — serie única «mediana»; un día sin datos
+    va en 0 y su punto lo dice en el tooltip.
+    """
+    # ponytail: filtrado en Python igual que daily_dispatches — mismas
+    # magnitudes, mismo upgrade path (WHERE por rango si crece).
+    tickets = session.exec(
+        select(Ticket).where(
+            Ticket.first_response_at.is_not(None),  # type: ignore[union-attr]
+            # Misma población que operacion_stats: la tarjeta y la gráfica del
+            # tablero deben contar lo mismo o los números no cuadran entre sí.
+            Ticket.habilitado == True,  # noqa: E712
+        )
+    ).all()
+    por_dia: dict[date, list[float]] = {
+        start + timedelta(days=i): [] for i in range((end - start).days + 1)
+    }
+    for t in tickets:
+        local_day = (
+            _as_naive_utc(t.created_at)
+            .replace(tzinfo=timezone.utc)
+            .astimezone(BUSINESS_TZ)
+            .date()
+        )
+        if local_day in por_dia:
+            delta = _as_naive_utc(t.first_response_at) - _as_naive_utc(t.created_at)
+            por_dia[local_day].append(delta.total_seconds() / 60)
+    out = []
+    for d, valores in por_dia.items():
+        m = _mediana(valores)
+        minutos = int(round(m)) if m is not None else 0
+        out.append(
+            {"date": d, "total": minutos, "by_user": {"mediana": minutos}, "n": len(valores)}
+        )
+    return out
+
+
+def operacion_stats(session) -> dict:
+    """Resumen de operación (fase 1): medianas globales, embudo y etiquetas."""
+    tickets = session.exec(
+        select(Ticket).where(Ticket.habilitado == True)  # noqa: E712
+    ).all()
+    espera_min = [
+        (_as_naive_utc(t.first_response_at) - _as_naive_utc(t.created_at)).total_seconds() / 60
+        for t in tickets
+        if t.first_response_at
+    ]
+    resolucion_h = [
+        (_as_naive_utc(t.resolved_at) - _as_naive_utc(t.created_at)).total_seconds() / 3600
+        for t in tickets
+        if t.resolved_at
+    ]
+    conteo = Counter(t.status.value for t in tickets)
+    top_etiquetas = session.exec(
+        select(Label.nombre, func.count(TicketLabel.id))
+        .join(TicketLabel, TicketLabel.label_id == Label.id)
+        .where(
+            TicketLabel.habilitado == True,  # noqa: E712
+            Label.habilitado == True,  # noqa: E712
+        )
+        .group_by(Label.nombre)
+        .order_by(func.count(TicketLabel.id).desc())
+        .limit(10)
+    ).all()
+    med_espera = _mediana(espera_min)
+    med_resolucion = _mediana(resolucion_h)
+    return {
+        "espera_mediana_min": int(round(med_espera)) if med_espera is not None else None,
+        "espera_n": len(espera_min),
+        "resolucion_mediana_h": round(med_resolucion, 1) if med_resolucion is not None else None,
+        "resolucion_n": len(resolucion_h),
+        "embudo": [(s.value, conteo.get(s.value, 0)) for s in TicketStatus],
+        "embudo_max": max(conteo.values(), default=0) or 1,
+        "top_etiquetas": top_etiquetas,
+    }
+
+
 def _smooth_path(pts: list[tuple[float, float]]) -> str:
     """Curva suave (Catmull-Rom → Bézier) por los puntos de la serie."""
     if len(pts) == 1:
@@ -189,8 +290,11 @@ def build_line_chart(chart: list[dict], colors: dict[str, str]) -> dict:
                 "points": [
                     {
                         "x": px, "y": py,
+                        # Un día con n=0 dibuja 0 pero el tooltip lo dice: un
+                        # cero real y un "sin datos" no deben verse iguales.
                         "label": f"{u} — {chart[i]['date'].strftime('%d/%m')}: "
-                                 f"{chart[i]['by_user'].get(u, 0)}",
+                                 f"{chart[i]['by_user'].get(u, 0)}"
+                                 + (" (sin datos)" if chart[i].get("n") == 0 else ""),
                     }
                     for i, (px, py) in enumerate(pts)
                 ],
@@ -322,6 +426,9 @@ def activity_view(
             .limit(RECENT_LIMIT)
         ).all()
         team = None
+        operacion = None
+        pr_chart = None
+        pr_dias_con_dato = 0
         if admin:
             usernames = [u.username for u in session.exec(select(User)).all()]
             fb = feedback_counts(session)
@@ -334,6 +441,12 @@ def activity_view(
                 }
                 for name in sorted(usernames)
             ]
+            # Métricas de operación (fase 1) — vista de equipo, solo admin.
+            operacion = operacion_stats(session)
+            pr_diaria = primera_respuesta_diaria(session, chart_start, chart_end)
+            pr_dias_con_dato = sum(1 for d in pr_diaria if d["n"])
+            if pr_dias_con_dato:
+                pr_chart = build_line_chart(pr_diaria, {"mediana": "#0ea5e9"})
 
     chart_users = sorted({u for d in chart for u in d["by_user"]})
     chart_colors = {
@@ -360,5 +473,8 @@ def activity_view(
             "donut": build_donut(chart, chart_colors),
             "desde": chart_start.isoformat(),
             "hasta": chart_end.isoformat(),
+            "operacion": operacion,
+            "pr_chart": pr_chart,
+            "pr_dias_con_dato": pr_dias_con_dato,
         },
     )

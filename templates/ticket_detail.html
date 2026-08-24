@@ -96,6 +96,30 @@
 </div>
 {% endif %}
 
+<div class="card">
+  <h2>Etiquetas</h2>
+  <div style="display:flex; flex-wrap:wrap; gap:.4rem; align-items:center;">
+    {% for et in etiquetas %}
+    <form method="post" action="/tickets/{{ ticket.id }}/labels/{{ et.id }}/remove" style="display:inline;">
+      <button type="submit" aria-label="Quitar etiqueta {{ et.nombre }}" title="Quitar etiqueta {{ et.nombre }}"
+              style="border:1px solid #d1d5db; border-radius:999px; padding:.2rem .7rem; background:{{ et.color }}; cursor:pointer; font-size:.85rem;">
+        {{ et.nombre }} ✕
+      </button>
+    </form>
+    {% else %}
+    <span style="color:var(--text-muted); font-size:.9rem;">Sin etiquetas todavía.</span>
+    {% endfor %}
+    <form method="post" action="/tickets/{{ ticket.id }}/labels" style="display:inline;">
+      <label for="nueva-etiqueta" style="position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0);">Agregar etiqueta</label>
+      <input id="nueva-etiqueta" name="nombre" list="lista-etiquetas" placeholder="+ etiqueta" maxlength="80" required
+             style="width:9rem; padding:.2rem .6rem; border:1px dashed #d1d5db; border-radius:999px; font-size:.85rem;">
+      <datalist id="lista-etiquetas">
+        {% for n in todas_las_etiquetas %}<option value="{{ n }}">{% endfor %}
+      </datalist>
+    </form>
+  </div>
+</div>
+
 {% if ticket.notes %}
 <div class="card">
   <h2>Notas del trámite</h2>

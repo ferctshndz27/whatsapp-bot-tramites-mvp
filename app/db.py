@@ -63,6 +63,23 @@ _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     # DEFAULT sobre una tabla con datos: tumbaría el arranque en el VPS).
     "requirements_json": "VARCHAR",
     "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
+    # Métricas de operación (fase 1). NULL en folios viejos a propósito: un
+    # NULL honesto vale más que un tiempo inventado desde created_at.
+    "first_response_at": "DATETIME",
+    "first_response_by": "VARCHAR",
+    "resolved_at": "DATETIME",
+    "status_changed_at": "DATETIME",
+}
+_CLIENT_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "email": "VARCHAR",
+    "origen": "VARCHAR",
+    "idioma": "VARCHAR NOT NULL DEFAULT 'es-MX'",
+    "opt_in_at": "DATETIME",
+    "opt_in_source": "VARCHAR",
+    "opt_out_at": "DATETIME",
+    "atributos_json": "VARCHAR",
+    "last_activity_at": "DATETIME",
+    "notas_internas": "VARCHAR",
 }
 
 
@@ -108,6 +125,7 @@ def init_db() -> None:
     _add_missing_columns("user", _USER_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("ticket", _TICKET_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("conversation", _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH)
+    _add_missing_columns("client", _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH)
     for table in _TABLES_NEEDING_HABILITADO:
         _add_missing_columns(table, _HABILITADO_COLUMN)
     with engine.begin() as conn:
@@ -126,6 +144,15 @@ def init_db() -> None:
         # van a mano igual que el de arriba.
         for sql in _COBRANZA_INDEXES:
             conn.execute(text(sql))
+        # Etiquetas: una fila puente VIVA por (folio, etiqueta). Parcial sobre
+        # habilitado para que re-etiquetar tras un quitar (soft delete) pueda
+        # reactivar la fila vieja o crear una nueva sin chocar con el índice.
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_ticketlabel_viva "
+                "ON ticketlabel(ticket_id, label_id) WHERE habilitado = 1"
+            )
+        )
 
     _normalize_phones()
 
