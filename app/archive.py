@@ -1408,6 +1408,97 @@ def _drenar_cola_espejo(sesion) -> None:
         _safe(fn, copia)
 
 
+# Tablas del espejo con teléfono de CLIENTE. app_users queda fuera a propósito:
+# su phone es el celular del colaborador (ver el comentario en app/db.py).
+_TABLAS_ESPEJO_TELEFONO_PK = ("wa_clients", "conversations")
+_TABLAS_ESPEJO_TELEFONO = (
+    "wa_messages",
+    "client_notes",
+    "invitations",
+    "tickets",
+    "feedback",
+    "nlu_events",
+    "cobros",
+    "planes_cobro",
+    "payment_methods",
+)
+
+
+def _normalize_phones_espejo() -> None:
+    """Réplica en MSSQL de db._normalize_phones().
+
+    Aquella corre con SQL directo sobre SQLite y brinca los listeners ORM, así
+    que el espejo nunca se entera de los renombres/fusiones y acumula filas con
+    el teléfono crudo de Meta ('5215…') junto a las canónicas ('525…') — el
+    "7 vs 14" que /system mostraba como 'al día' antes de este fix.
+
+    Orden por el FK de wa_messages → wa_clients: primero se garantiza el padre
+    canónico, luego se repuntan los hijos, y al final cae la fila cruda.
+    Idempotente: sobre datos canónicos no escribe nada.
+    """
+    from app.utils import normalize_phone
+
+    with _get_engine().begin() as conn:
+        for (crudo,) in conn.execute(text("SELECT phone FROM wa_clients")).fetchall():
+            canonico = normalize_phone(crudo)
+            if not canonico or canonico == crudo:
+                continue
+            ya_existe = conn.execute(
+                text("SELECT 1 FROM wa_clients WHERE phone = :c"), {"c": canonico}
+            ).first()
+            if not ya_existe:
+                conn.execute(
+                    text(
+                        "INSERT INTO wa_clients (phone, name, habilitado, created_at)"
+                        " SELECT :c, name, habilitado, created_at"
+                        " FROM wa_clients WHERE phone = :p"
+                    ),
+                    {"c": canonico, "p": crudo},
+                )
+            for hija in _TABLAS_ESPEJO_TELEFONO:
+                conn.execute(
+                    text(f"UPDATE {hija} SET phone = :c WHERE phone = :p"),
+                    {"c": canonico, "p": crudo},
+                )
+            conn.execute(text("DELETE FROM wa_clients WHERE phone = :p"), {"p": crudo})
+            logger.warning(
+                "Espejo: teléfono crudo %s fusionado con %s", crudo, canonico
+            )
+
+        # conversations: phone es PK pero sin hijos por FK — fusión directa.
+        for (crudo,) in conn.execute(text("SELECT phone FROM conversations")).fetchall():
+            canonico = normalize_phone(crudo)
+            if not canonico or canonico == crudo:
+                continue
+            ya_existe = conn.execute(
+                text("SELECT 1 FROM conversations WHERE phone = :c"), {"c": canonico}
+            ).first()
+            if ya_existe:
+                conn.execute(
+                    text("DELETE FROM conversations WHERE phone = :p"), {"p": crudo}
+                )
+            else:
+                conn.execute(
+                    text("UPDATE conversations SET phone = :c WHERE phone = :p"),
+                    {"c": canonico, "p": crudo},
+                )
+
+        # Barrido final: filas hijas cuyo crudo no tenía padre en wa_clients
+        # (p.ej. nlu_events de números que nunca llegaron a cliente).
+        for tabla in _TABLAS_ESPEJO_TELEFONO:
+            if tabla == "wa_messages":
+                continue  # FK: solo se repunta junto con su padre, arriba
+            for (crudo,) in conn.execute(
+                text(f"SELECT DISTINCT phone FROM {tabla}")
+            ).fetchall():
+                canonico = normalize_phone(crudo)
+                if canonico and canonico != crudo:
+                    conn.execute(
+                        text(f"UPDATE {tabla} SET phone = :c WHERE phone = :p"),
+                        {"c": canonico, "p": crudo},
+                    )
+
+
 def backfill() -> None:
     """Sincroniza a MSSQL toda la data que ya existe en SQLite. Idempotente
     (gracias al upsert), así que corre seguro en cada arranque: cubre el
@@ -1415,6 +1506,10 @@ def backfill() -> None:
     estuvo caído. Best-effort — no tumba el arranque si MSSQL no responde."""
     if not enabled():
         return
+    # Antes de upsertear: limpia los teléfonos crudos que el espejo acumuló
+    # (db._normalize_phones corre sin listeners y MSSQL nunca se enteró).
+    # _safe(fn, target) es la firma de los listeners; aquí no hay target.
+    _safe(lambda _: _normalize_phones_espejo(), None)
     from app.db import get_session
     from app.models import (
         AdminAudit,

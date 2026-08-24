@@ -65,6 +65,12 @@ ARCHIVE_DDL = [
         first_response_at TIMESTAMP, first_response_by TEXT,
         resolved_at TIMESTAMP, status_changed_at TIMESTAMP,
         created_at TIMESTAMP, updated_at TIMESTAMP)""",
+    # Mínimas: _normalize_phones_espejo solo les lee/escribe phone. Las demás
+    # columnas del espejo real no participan en ninguna prueba de este archivo.
+    """CREATE TABLE feedback (
+        source_id INTEGER PRIMARY KEY, phone TEXT)""",
+    """CREATE TABLE nlu_events (
+        source_id INTEGER PRIMARY KEY, phone TEXT)""",
     """CREATE TABLE labels (
         source_id INTEGER PRIMARY KEY, nombre TEXT, color TEXT,
         descripcion TEXT, habilitado INTEGER DEFAULT 1,
@@ -493,3 +499,57 @@ def test_listeners_mirror_new_entities(mirror):
         ticket = conn.execute(text("SELECT phone FROM tickets")).first()
     assert user[0] == "jefa"
     assert ticket[0] == "521111"
+
+
+# ---------------------------------------------------------------------------
+# Normalización de teléfonos del espejo (el "7 vs 14" de /system)
+# ---------------------------------------------------------------------------
+
+
+def test_backfill_fusiona_telefonos_crudos_del_espejo(mirror):
+    """El espejo acumuló la forma cruda de Meta junto a la canónica porque
+    db._normalize_phones() corre sin listeners ORM. backfill() debe fusionar
+    la cruda con la canónica y repuntar a sus hijos, en ese orden (FK)."""
+    with mirror.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO wa_clients (phone, name, habilitado, created_at) "
+            "VALUES ('5215500004444', 'Ana', 1, '2025-01-01')"))
+        conn.execute(text(
+            "INSERT INTO wa_clients (phone, name, habilitado, created_at) "
+            "VALUES ('525500004444', 'Ana', 1, '2025-01-01')"))
+        conn.execute(text(
+            "INSERT INTO wa_messages (source_id, phone, direction, body, created_at) "
+            "VALUES (1, '5215500004444', 'in', 'hola', '2025-01-01')"))
+    archive.backfill()
+    with mirror.connect() as conn:
+        clientes = [r[0] for r in conn.execute(text("SELECT phone FROM wa_clients"))]
+        assert clientes == ["525500004444"], "la cruda se fusiona con la canónica"
+        assert (
+            conn.execute(text("SELECT phone FROM wa_messages")).scalar()
+            == "525500004444"
+        ), "el mensaje viejo queda repuntado al padre canónico"
+
+
+def test_backfill_renombra_cuando_no_hay_canonica(mirror):
+    with mirror.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO wa_clients (phone, name, habilitado, created_at) "
+            "VALUES ('5215500007777', 'Beto', 1, '2025-01-01')"))
+    archive.backfill()
+    with mirror.connect() as conn:
+        clientes = [r[0] for r in conn.execute(text("SELECT phone FROM wa_clients"))]
+        assert clientes == ["525500007777"]
+
+
+def test_mirror_status_marca_desfase_cuando_el_espejo_tiene_de_mas(mirror):
+    """El '>=' viejo dejaba pasar un espejo inflado como 'al día'."""
+    from app.system import mirror_status
+
+    with mirror.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO wa_clients (phone, name, habilitado, created_at) "
+            "VALUES ('525500009999', 'Caro', 1, '2025-01-01')"))
+    filas = {f["table"]: f for f in mirror_status()}
+    assert filas["wa_clients"]["sqlite"] == 0
+    assert filas["wa_clients"]["mssql"] == 1
+    assert not filas["wa_clients"]["ok"], "más filas en el espejo también es desfase"

@@ -139,7 +139,10 @@ def mirror_status() -> list[dict]:
             "table": name,
             "sqlite": local[name],
             "mssql": remote[name],
-            "ok": remote[name] is not None and remote[name] >= local[name],
+            # Igualdad estricta: un espejo con filas DE MÁS también es
+            # divergencia (teléfonos crudos duplicados, p.ej.) — el ">=" de
+            # antes lo escondía y /system decía "al día" con 7 vs 14.
+            "ok": remote[name] is not None and remote[name] == local[name],
         }
         for name in local
     ]
