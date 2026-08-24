@@ -15,7 +15,11 @@ from sqlmodel import or_, select
 from app.audit import log_admin
 from app.auth import is_admin
 from app.db import get_session
-from app.models import Client, ClientNote, Ticket
+from app.codigos import EMAIL_RE
+from app.models import Client, ClientNote, Ticket, utcnow
+
+# El select de la ficha en client.html ofrece exactamente estos valores.
+_ORIGENES = {"meta", "twilio", "referido", "manual"}
 from app.utils import ruta_interna
 from app.utils import normalize_phone
 
@@ -175,6 +179,76 @@ def client_profile(request: Request, phone: str, volver: str = ""):
             "volver": ruta_interna(volver),
         },
     )
+
+
+@router.post("/clients/{phone}/update")
+def update_client(
+    request: Request,
+    phone: str,
+    email: str = Form(""),
+    origen: str = Form(""),
+    idioma: str = Form(""),
+    notas_internas: str = Form(""),
+):
+    """Ficha CRM (fase 1). El nombre se corrige en /clients (propaga a folios);
+    aquí va el resto de la ficha."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    with get_session() as session:
+        client = session.get(Client, phone)
+        if client is None:
+            return RedirectResponse("/", status_code=303)
+        nuevo_email = email.strip().lower()[:200]
+        if not nuevo_email:
+            client.email = None
+        elif EMAIL_RE.fullmatch(nuevo_email):
+            client.email = nuevo_email
+        # email inválido: se conserva el anterior — la ficha no tiene canal de
+        # error y guardar basura sería peor que ignorar el intento.
+        origen_limpio = origen.strip()[:20]
+        client.origen = origen_limpio if origen_limpio in _ORIGENES else None
+        client.idioma = idioma.strip()[:10] or "es-MX"
+        client.notas_internas = notas_internas.strip()[:2000] or None
+        session.add(client)
+        session.commit()
+    # Mismo criterio que el alta: a este cliente se le cobra; quién editó su
+    # ficha es dato de aclaración.
+    log_admin(user, "cliente:ficha", phone)
+    return RedirectResponse(f"/clients/{phone}", status_code=303)
+
+
+@router.post("/clients/{phone}/consentimiento")
+def set_consent(request: Request, phone: str, accion: str = Form(...), fuente: str = Form("")):
+    """Opt-in / opt-out para mensajes iniciados por el negocio.
+
+    Meta exige poder probar cuándo y cómo se dio el consentimiento; por eso el
+    opt-in guarda fuente y fecha en vez de ser un simple booleano. Un opt-in
+    nuevo limpia el opt-out anterior (consentimiento renovado); el opt-out
+    nunca se limpia solo.
+    """
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if accion not in ("opt_in", "opt_out"):
+        return RedirectResponse(f"/clients/{phone}", status_code=303)
+
+    with get_session() as session:
+        client = session.get(Client, phone)
+        if client is None:
+            return RedirectResponse("/", status_code=303)
+        if accion == "opt_in":
+            client.opt_in_at = utcnow()
+            client.opt_in_source = fuente.strip()[:120] or f"registrado por {user}"
+            client.opt_out_at = None
+        else:
+            client.opt_out_at = utcnow()
+        session.add(client)
+        session.commit()
+    log_admin(user, f"cliente:{accion}", phone)
+    logger.info("Consentimiento %s de %s por %s", accion, phone, user)
+    return RedirectResponse(f"/clients/{phone}", status_code=303)
 
 
 @router.post("/clients/{phone}/notes")

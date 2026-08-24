@@ -4,6 +4,10 @@
 __pycache__/
 data/
 media/
+CLAUDE.md
 
 # Artefactos de /graphify: se regeneran, no se versionan.
 graphify-out/
+.env.old
+.env.old
+.env.old

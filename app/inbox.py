@@ -299,6 +299,7 @@ def _pause_bot(session, phone: str, user: str) -> None:
         if ticket.assigned_to is None:
             ticket.assigned_to = user
             ticket.status = TicketStatus.TOMADO
+            ticket.status_changed_at = utcnow()
             session.add(TicketActivity(ticket_id=ticket.id, username=user, action="tomado"))
         if ticket.agent_active:
             ticket.agent_active = False
@@ -377,6 +378,28 @@ def inbox_send(
                 provider=canal,
             )
         )
+        # Primera respuesta HUMANA (fase 1): sella los folios abiertos de este
+        # teléfono que aún no la tienen. El bot nunca pasa por aquí — el inbox
+        # es de personas — y por eso este es EL punto de llenado, no _deliver.
+        # ponytail: SELECT+loop tiene una carrera de segundos si dos humanos
+        # contestan el mismo teléfono a la vez (gana el último commit, con
+        # timestamp casi idéntico). El UPDATE atómico la cerraría, pero
+        # brincaría los listeners ORM del espejo MSSQL — peor trato. Subir a
+        # UPDATE + archivado manual solo si la atribución exacta importa.
+        # ponytail: se sellan TODOS los folios abiertos del teléfono (una
+        # respuesta contesta la conversación, no un folio); un folio viejo
+        # jamás atendido entra como outlier real — la mediana lo aguanta.
+        ahora = utcnow()
+        for t in session.exec(
+            select(Ticket).where(
+                Ticket.phone == phone,
+                Ticket.status != TicketStatus.CERRADO,
+                Ticket.first_response_at.is_(None),  # type: ignore[union-attr]
+            )
+        ).all():
+            t.first_response_at = ahora
+            t.first_response_by = user
+            session.add(t)
         session.commit()
         _pause_bot(session, phone, user)
 

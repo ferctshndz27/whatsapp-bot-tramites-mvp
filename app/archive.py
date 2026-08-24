@@ -526,6 +526,29 @@ _SCHEMA_DDL = [
         habilitado               BIT           NOT NULL DEFAULT 1
     )
     """,
+    # Etiquetas (fase 1): catálogo + puente folio-etiqueta.
+    """
+    IF OBJECT_ID('labels', 'U') IS NULL
+    CREATE TABLE labels (
+        source_id   BIGINT        NOT NULL PRIMARY KEY,
+        nombre      NVARCHAR(80)  NOT NULL,
+        color      NVARCHAR(16)  NOT NULL,
+        descripcion NVARCHAR(300) NULL,
+        habilitado  BIT           NOT NULL DEFAULT 1,
+        created_at  DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('ticket_labels', 'U') IS NULL
+    CREATE TABLE ticket_labels (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        ticket_id  BIGINT       NOT NULL,
+        label_id   BIGINT       NOT NULL,
+        created_by NVARCHAR(64) NULL,
+        habilitado BIT          NOT NULL DEFAULT 1,
+        created_at DATETIME2    NOT NULL
+    )
+    """,
 ]
 
 # ponytail: igual que db.py, sin alembic — columnas agregadas después del
@@ -538,7 +561,19 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "provider": "NVARCHAR(20) NOT NULL DEFAULT 'meta'",
     },
     "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
-    "wa_clients": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "wa_clients": {
+        "habilitado": "BIT NOT NULL DEFAULT 1",
+        # Ficha CRM (fase 1) — mismos campos que Client en models.py.
+        "email": "NVARCHAR(200) NULL",
+        "origen": "NVARCHAR(20) NULL",
+        "idioma": "NVARCHAR(10) NOT NULL DEFAULT 'es-MX'",
+        "opt_in_at": "DATETIME2 NULL",
+        "opt_in_source": "NVARCHAR(120) NULL",
+        "opt_out_at": "DATETIME2 NULL",
+        "atributos_json": "NVARCHAR(MAX) NULL",
+        "last_activity_at": "DATETIME2 NULL",
+        "notas_internas": "NVARCHAR(MAX) NULL",
+    },
     "app_users": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "estado": "NVARCHAR(20) NOT NULL DEFAULT 'disponible'",
@@ -550,6 +585,11 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "agent_active": "BIT NOT NULL DEFAULT 1",
         "requirements_json": "NVARCHAR(MAX) NULL",
         "provider": "NVARCHAR(20) NOT NULL DEFAULT 'meta'",
+        # Métricas de operación (fase 1).
+        "first_response_at": "DATETIME2 NULL",
+        "first_response_by": "NVARCHAR(64) NULL",
+        "resolved_at": "DATETIME2 NULL",
+        "status_changed_at": "DATETIME2 NULL",
     },
     "ticket_activity": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "conversations": {
@@ -734,8 +774,28 @@ def sync_team_message(m) -> None:
 
 
 def sync_client_name(c) -> None:
-    with _get_engine().begin() as conn:
-        _upsert_client(conn, c.phone, c.name, c.habilitado)
+    # Nombre histórico; hoy sincroniza la ficha completa del cliente. El
+    # _upsert_client incremental sigue existiendo aparte: es el que garantiza
+    # la fila para el FK de wa_messages sin pisar campos que no conoce.
+    _upsert(
+        "wa_clients", "phone", c.phone,
+        {
+            "name": c.name,
+            "habilitado": c.habilitado,
+            "created_at": _naive_utc(c.created_at),
+            "email": c.email,
+            "origen": c.origen,
+            "idioma": c.idioma,
+            "opt_in_at": _naive_utc(c.opt_in_at) if c.opt_in_at else None,
+            "opt_in_source": c.opt_in_source,
+            "opt_out_at": _naive_utc(c.opt_out_at) if c.opt_out_at else None,
+            "atributos_json": c.atributos_json,
+            "last_activity_at": (
+                _naive_utc(c.last_activity_at) if c.last_activity_at else None
+            ),
+            "notas_internas": c.notas_internas,
+        },
+    )
 
 
 def _upsert(table: str, key_col: str, key_val, columns: dict) -> None:
@@ -844,6 +904,40 @@ def archive_ticket(t) -> None:
             "agent_active": t.agent_active,
             "requirements_json": t.requirements_json,
             "provider": t.provider,
+            "first_response_at": (
+                _naive_utc(t.first_response_at) if t.first_response_at else None
+            ),
+            "first_response_by": t.first_response_by,
+            "resolved_at": _naive_utc(t.resolved_at) if t.resolved_at else None,
+            "status_changed_at": (
+                _naive_utc(t.status_changed_at) if t.status_changed_at else None
+            ),
+        },
+    )
+
+
+def archive_label(l) -> None:
+    _upsert(
+        "labels", "source_id", l.id,
+        {
+            "nombre": l.nombre,
+            "color": l.color,
+            "descripcion": l.descripcion,
+            "habilitado": l.habilitado,
+            "created_at": _naive_utc(l.created_at),
+        },
+    )
+
+
+def archive_ticket_label(tl) -> None:
+    _upsert(
+        "ticket_labels", "source_id", tl.id,
+        {
+            "ticket_id": tl.ticket_id,
+            "label_id": tl.label_id,
+            "created_by": tl.created_by,
+            "habilitado": tl.habilitado,
+            "created_at": _naive_utc(tl.created_at),
         },
     )
 
@@ -1349,6 +1443,8 @@ def backfill() -> None:
         Ticket,
         TicketActivity,
         User,
+        Label,
+        TicketLabel,
         WebSession,
     )
     from sqlmodel import select
@@ -1414,6 +1510,10 @@ def backfill() -> None:
                 archive_payment_method(pm)
             for pl in session.exec(select(Plantilla)).all():
                 archive_plantilla(pl)
+            for lb in session.exec(select(Label)).all():
+                archive_label(lb)
+            for tl in session.exec(select(TicketLabel)).all():
+                archive_ticket_label(tl)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
@@ -1451,6 +1551,8 @@ def _register_listeners() -> None:
         TeamMessage,
         Ticket,
         TicketActivity,
+        Label,
+        TicketLabel,
         User,
         WebSession,
     )
@@ -1475,6 +1577,16 @@ def _register_listeners() -> None:
     @event.listens_for(Client, "after_update")
     def _client_upsert(mapper, connection, target):
         _safe(sync_client_name, target)
+
+    @event.listens_for(Label, "after_insert")
+    @event.listens_for(Label, "after_update")
+    def _label_upsert(mapper, connection, target):
+        _safe(archive_label, target)
+
+    @event.listens_for(TicketLabel, "after_insert")
+    @event.listens_for(TicketLabel, "after_update")
+    def _ticket_label_upsert(mapper, connection, target):
+        _safe(archive_ticket_label, target)
 
     @event.listens_for(User, "after_insert")
     @event.listens_for(User, "after_update")

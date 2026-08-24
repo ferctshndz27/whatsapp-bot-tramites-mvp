@@ -112,6 +112,97 @@
   {% endif %}
 </div>
 
+{% if operacion %}
+<div class="card">
+  <h2>Operación — primera respuesta y embudo</h2>
+  <div class="stats">
+    <div class="stat-card blue">
+      <div class="label">Mediana 1ª respuesta</div>
+      <div class="value">{% if operacion.espera_mediana_min is not none %}{{ operacion.espera_mediana_min }} min{% else %}—{% endif %}</div>
+    </div>
+    <div class="stat-card green">
+      <div class="label">Mediana resolución</div>
+      <div class="value">{% if operacion.resolucion_mediana_h is not none %}{{ operacion.resolucion_mediana_h }} h{% else %}—{% endif %}</div>
+    </div>
+    <div class="stat-card orange">
+      <div class="label">Folios con 1ª respuesta</div>
+      <div class="value">{{ operacion.espera_n }}</div>
+    </div>
+    <div class="stat-card red">
+      <div class="label">Folios resueltos (con dato)</div>
+      <div class="value">{{ operacion.resolucion_n }}</div>
+    </div>
+  </div>
+  <p style="color:var(--text-muted); font-size:.85rem;">Solo folios posteriores a la fase 1: los
+    previos no traen tiempos y se excluyen en vez de inventarles uno.</p>
+
+  {% if pr_chart %}
+  <h3 style="font-size:.95rem;">Mediana de primera respuesta por día (minutos)</h3>
+  <div class="line-wrap">
+    <svg viewBox="0 0 {{ pr_chart.width }} {{ pr_chart.height }}" role="img"
+      aria-label="Mediana de primera respuesta por día, en minutos ({{ pr_dias_con_dato }} días con datos)">
+      {% for y, val in pr_chart.y_ticks %}
+      <line x1="{{ pr_chart.pad_l }}" x2="{{ pr_chart.width - pr_chart.pad_r }}"
+        y1="{{ y }}" y2="{{ y }}" stroke="#eef0f3" stroke-width="1"/>
+      <text x="{{ pr_chart.pad_l - 8 }}" y="{{ y + 4 }}" text-anchor="end" font-size="10" fill="#9aa0aa">{{ val }}</text>
+      {% endfor %}
+      {% for x, lbl in pr_chart.x_labels %}
+      <text x="{{ x }}" y="{{ pr_chart.height - 6 }}" text-anchor="middle" font-size="10" fill="#9aa0aa">{{ lbl }}</text>
+      {% endfor %}
+      {% for s in pr_chart.series %}
+      <path d="{{ s.path }}" fill="none" stroke="{{ s.color }}" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+      {% for p in s.points %}
+      <circle cx="{{ p.x }}" cy="{{ p.y }}" r="3" fill="{{ s.color }}"><title>{{ p.label }}</title></circle>
+      {% endfor %}
+      {% endfor %}
+    </svg>
+  </div>
+  {% else %}
+  <p class="empty">Aún no hay folios con primera respuesta registrada en este rango.</p>
+  {% endif %}
+
+  <div class="chart-flex" style="margin-top:1rem;">
+    <div style="flex:1; min-width:260px;">
+      <h3 style="font-size:.95rem;">Embudo por etapa</h3>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            {% for etapa, n in operacion.embudo %}
+            <tr>
+              <td>{{ etapa }}</td>
+              <td style="width:140px;">
+                <svg width="120" height="12" role="img" aria-label="{{ etapa }}: {{ n }} folios">
+                  <rect width="{{ (120 * n / operacion.embudo_max) | round | int }}" height="12" rx="3" fill="#dcf24c"/>
+                </svg>
+              </td>
+              <td><strong>{{ n }}</strong></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div style="flex:1; min-width:260px;">
+      <h3 style="font-size:.95rem;">Top etiquetas</h3>
+      {% if operacion.top_etiquetas %}
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            {% for nombre, n in operacion.top_etiquetas %}
+            <tr><td>{{ nombre }}</td><td><strong>{{ n }}</strong></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="empty">Sin etiquetas asignadas todavía.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if team %}
 <div class="card">
   <h2>Equipo — solicitudes despachadas</h2>

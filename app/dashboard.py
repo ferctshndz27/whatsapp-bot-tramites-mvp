@@ -6,6 +6,7 @@ import time
 import bcrypt
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from app.templating import templates
 from sqlalchemy import or_, update
 from sqlmodel import select
@@ -21,9 +22,11 @@ from app.models import (
     Conversation,
     Direction,
     Invitation,
+    Label,
     Message,
     Ticket,
     TicketActivity,
+    TicketLabel,
     TicketStatus,
     User,
     utcnow,
@@ -326,6 +329,7 @@ def ticket_list(
     status: str | None = None,
     assigned: str | None = None,
     conv: str | None = None,
+    etiqueta: str | None = None,
     page: int = 1,
 ):
     """Solicitudes y conversaciones en una sola vista.
@@ -353,6 +357,23 @@ def ticket_list(
         # se auto-refresca cada 30 s; pasar a una consulta agregada si el
         # historial crece a decenas de miles.
         conversaciones = build_conversation_items(session)
+        nombres_etiquetas = session.exec(
+            select(Label.nombre).where(Label.habilitado == True).order_by(Label.nombre)  # noqa: E712
+        ).all()
+        etiqueta = (etiqueta or "").strip() or None
+        ids_con_etiqueta = None
+        if etiqueta:
+            ids_con_etiqueta = set(
+                session.exec(
+                    select(TicketLabel.ticket_id)
+                    .join(Label, Label.id == TicketLabel.label_id)
+                    .where(
+                        Label.nombre == etiqueta,
+                        TicketLabel.habilitado == True,  # noqa: E712
+                        Label.habilitado == True,  # noqa: E712
+                    )
+                ).all()
+            )
 
     # Un valor desconocido en ?conv= equivale a «todas»: la vista nunca queda en
     # un estado sin lista ni chip activo.
@@ -386,6 +407,8 @@ def ticket_list(
         tickets = [t for t in tickets if t.status.value == status]
     if assigned == "none":
         tickets = [t for t in tickets if t.assigned_to is None]
+    if ids_con_etiqueta is not None:
+        tickets = [t for t in tickets if t.id in ids_con_etiqueta]
 
     # ponytail: paginación en memoria — el filtrado ya trae todo para las
     # stats; pasar a OFFSET/LIMIT en SQL si los folios crecen a decenas de miles.
@@ -406,6 +429,8 @@ def ticket_list(
             "statuses": [s.value for s in TicketStatus],
             "current_filter": status,
             "assigned_filter": assigned,
+            "etiqueta_filter": etiqueta,
+            "nombres_etiquetas": nombres_etiquetas,
             "ticket_counts": ticket_counts,
             "conversaciones": conversaciones,
             "conv_counts": conv_counts,
@@ -470,6 +495,23 @@ def ticket_detail(
             .where(FollowUp.habilitado == True)  # noqa: E712
             .order_by(FollowUp.due_at)
         ).all()
+        etiquetas = session.exec(
+            select(Label)
+            .join(TicketLabel, TicketLabel.label_id == Label.id)
+            .where(
+                TicketLabel.ticket_id == ticket_id,
+                TicketLabel.habilitado == True,  # noqa: E712
+                Label.habilitado == True,  # noqa: E712
+            )
+            .order_by(Label.nombre)
+        ).all()
+        # Para el datalist del formulario «+ etiqueta».
+        todas_las_etiquetas = [
+            l.nombre
+            for l in session.exec(
+                select(Label).where(Label.habilitado == True).order_by(Label.nombre)  # noqa: E712
+            ).all()
+        ]
 
     from app.catalog import catalog, requisitos_del_ticket
 
@@ -488,6 +530,8 @@ def ticket_detail(
             # Lo que el agente pidió por WhatsApp en ESTE folio (congelado al
             # darlo de alta), con lo que el cliente contestó y lo que falta.
             "requisitos": requisitos,
+            "etiquetas": etiquetas,
+            "todas_las_etiquetas": todas_las_etiquetas,
             # Cuántas claves mandó el cliente y cuánto suman al precio del
             # catálogo. Es un ESTIMADO para que el asesor no cuente a mano; el
             # monto que se cobra lo sigue tecleando él.
@@ -688,6 +732,8 @@ def finish_ticket(request: Request, ticket_id: int, confirm: str = Form("")):
         ticket.status = TicketStatus.CERRADO
         ticket.agent_active = True  # ciclo terminado: el bot vuelve a cubrir el chat
         ticket.updated_at = utcnow()
+        ticket.status_changed_at = ticket.updated_at
+        ticket.resolved_at = ticket.updated_at
         session.add(ticket)
         # La conversación regresa al flujo normal — sin esto el cliente seguiría
         # recibiendo "un asesor te contactará" con el ticket ya cerrado.
@@ -901,6 +947,70 @@ def add_ticket_note(request: Request, ticket_id: int, note: str = Form(...)):
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
 
+@router.post("/tickets/{ticket_id}/labels")
+def add_ticket_label(request: Request, ticket_id: int, nombre: str = Form(...)):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    # Minúsculas: "Urgente" y "urgente" serían dos etiquetas distintas (SQLite
+    # colaciona BINARY) y partirían el conteo del top en /activity.
+    limpio = nombre.strip().lower()[:80]
+    if not limpio:
+        return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+    with get_session() as session:
+        if session.get(Ticket, ticket_id) is None:
+            return RedirectResponse("/", status_code=303)
+        try:
+            label = session.exec(select(Label).where(Label.nombre == limpio)).first()
+            if label is None:
+                label = Label(nombre=limpio)
+                session.add(label)
+                session.commit()
+                session.refresh(label)
+            # A lo más existe UNA fila por par (folio, etiqueta): quitar
+            # deshabilita y re-etiquetar reactiva — nunca hay duplicado.
+            vinculo = session.exec(
+                select(TicketLabel).where(
+                    TicketLabel.ticket_id == ticket_id,
+                    TicketLabel.label_id == label.id,
+                )
+            ).first()
+            if vinculo is None:
+                session.add(
+                    TicketLabel(ticket_id=ticket_id, label_id=label.id, created_by=user)
+                )
+            elif not vinculo.habilitado:
+                vinculo.habilitado = True
+                vinculo.created_by = user
+                session.add(vinculo)
+            session.commit()
+        except IntegrityError:
+            # Carrera check-then-insert: otro POST simultáneo ya creó la
+            # etiqueta o el vínculo. El estado final es el deseado; sin 500.
+            session.rollback()
+    return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
+@router.post("/tickets/{ticket_id}/labels/{label_id}/remove")
+def remove_ticket_label(request: Request, ticket_id: int, label_id: int):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with get_session() as session:
+        vinculo = session.exec(
+            select(TicketLabel).where(
+                TicketLabel.ticket_id == ticket_id,
+                TicketLabel.label_id == label_id,
+                TicketLabel.habilitado == True,  # noqa: E712
+            )
+        ).first()
+        if vinculo:
+            vinculo.habilitado = False
+            session.add(vinculo)
+            session.commit()
+    return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
 @router.post("/tickets/{ticket_id}/status")
 def update_ticket_status(request: Request, ticket_id: int, status: str = Form(...)):
     user = _current_user(request)
@@ -917,6 +1027,10 @@ def update_ticket_status(request: Request, ticket_id: int, status: str = Form(..
             changed = ticket.status != new_status
             ticket.status = new_status
             ticket.updated_at = utcnow()
+            if changed:
+                ticket.status_changed_at = ticket.updated_at
+                if new_status == TicketStatus.CERRADO:
+                    ticket.resolved_at = ticket.updated_at
             session.add(ticket)
             session.commit()
             if changed:

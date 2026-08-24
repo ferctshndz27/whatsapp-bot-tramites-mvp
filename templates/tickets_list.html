@@ -36,15 +36,37 @@
      y una línea vertical acaba suelta al inicio de un renglón. #}
   <nav class="pills" aria-label="Filtrar solicitudes y conversaciones">
     <a href="/" {% if not current_filter and not assigned_filter and not conv_filter %}aria-current="true"{% endif %}>todas ({{ ticket_counts.todas }})</a>
+    {# Los chips preservan la etiqueta activa (y el form preserva el chip):
+       los dos filtros son componibles, no excluyentes. #}
+    {% set etq = '&etiqueta=' ~ (etiqueta_filter | urlencode) if etiqueta_filter else '' %}
     {% for s in statuses %}
-    <a href="/?status={{ s }}" {% if current_filter == s %}aria-current="true"{% endif %}>{{ s.replace('_', ' ') }} ({{ ticket_counts[s] }})</a>
+    <a href="/?status={{ s }}{{ etq }}" {% if current_filter == s %}aria-current="true"{% endif %}>{{ s.replace('_', ' ') }} ({{ ticket_counts[s] }})</a>
     {% endfor %}
-    <a href="/?assigned=none" {% if assigned_filter == 'none' %}aria-current="true"{% endif %}>sin asignar ({{ ticket_counts.sin_asignar }})</a>
-    <a href="/?status=escalados" {% if current_filter == 'escalados' %}aria-current="true"{% endif %}>escalados ({{ ticket_counts.escalados }})</a>
-    <a href="/?conv=esperando" {% if conv_filter == 'esperando' %}aria-current="true"{% endif %}>esperando respuesta ({{ conv_counts.esperando }})</a>
-    <a href="/?conv=caducadas" {% if conv_filter == 'caducadas' %}aria-current="true"{% endif %}>caducadas ({{ conv_counts.caducadas }})</a>
-    <a href="/?conv=pausadas" {% if conv_filter == 'pausadas' %}aria-current="true"{% endif %}>bot pausado ({{ conv_counts.pausadas }})</a>
+    <a href="/?assigned=none{{ etq }}" {% if assigned_filter == 'none' %}aria-current="true"{% endif %}>sin asignar ({{ ticket_counts.sin_asignar }})</a>
+    <a href="/?status=escalados{{ etq }}" {% if current_filter == 'escalados' %}aria-current="true"{% endif %}>escalados ({{ ticket_counts.escalados }})</a>
+    <a href="/?conv=esperando{{ etq }}" {% if conv_filter == 'esperando' %}aria-current="true"{% endif %}>esperando respuesta ({{ conv_counts.esperando }})</a>
+    <a href="/?conv=caducadas{{ etq }}" {% if conv_filter == 'caducadas' %}aria-current="true"{% endif %}>caducadas ({{ conv_counts.caducadas }})</a>
+    <a href="/?conv=pausadas{{ etq }}" {% if conv_filter == 'pausadas' %}aria-current="true"{% endif %}>bot pausado ({{ conv_counts.pausadas }})</a>
   </nav>
+
+  {% if nombres_etiquetas %}
+  <form method="get" action="/" style="margin:.5rem 0; display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;">
+    {% if current_filter %}<input type="hidden" name="status" value="{{ current_filter }}">{% endif %}
+    {% if assigned_filter %}<input type="hidden" name="assigned" value="{{ assigned_filter }}">{% endif %}
+    {% if conv_filter %}<input type="hidden" name="conv" value="{{ conv_filter }}">{% endif %}
+    <label for="filtro-etiqueta" style="font-size:.9rem; color:var(--text-muted);">Etiqueta:</label>
+    <select id="filtro-etiqueta" name="etiqueta" onchange="this.form.submit()"
+            style="padding:.25rem .5rem; border:1px solid #d1d5db; border-radius:6px; font-size:.9rem;">
+      <option value="">todas</option>
+      {% for n in nombres_etiquetas %}
+      <option value="{{ n }}" {% if etiqueta_filter == n %}selected{% endif %}>{{ n }}</option>
+      {% endfor %}
+    </select>
+    {# Sin JS obligatorio: el botón cubre a quien tenga el onchange bloqueado. #}
+    <button type="submit" class="btn" style="font-size:.85rem;">Filtrar</button>
+    {% if etiqueta_filter %}<a href="/" style="font-size:.85rem;">Quitar filtro</a>{% endif %}
+  </form>
+  {% endif %}
 
   {% if conv_filter %}
   {% with items = conversaciones, volver_url = volver_actual, filtrada = true %}
