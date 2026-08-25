@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from app.templating import templates
 from sqlmodel import select
 
-from app import messaging
+from app import messaging, ventana
 from app.audit import log_admin
 from app.utils import ruta_interna
 from app.auth import is_admin
@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-WINDOW_HOURS = 24
+# Reexportado: `app.my` lo lee de aquí. La definición vive en app/ventana.py.
+WINDOW_HOURS = ventana.WINDOW_HOURS
 QUICK_REPLIES = json.loads((Path(__file__).parent / "quick_replies.json").read_text())
 
 
@@ -40,12 +41,8 @@ def _current_user(request: Request) -> str | None:
     return request.session.get("user")
 
 
-def _as_utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
 def _time_ago(dt: datetime) -> str:
-    seconds = (datetime.now(timezone.utc) - _as_utc(dt)).total_seconds()
+    seconds = (datetime.now(timezone.utc) - ventana.as_utc(dt)).total_seconds()
     if seconds < 60:
         return "ahora"
     if seconds < 3600:
@@ -53,12 +50,6 @@ def _time_ago(dt: datetime) -> str:
     if seconds < 86400:
         return f"{int(seconds // 3600)}h"
     return f"{int(seconds // 86400)}d"
-
-
-def _window_open(last_in_at: datetime | None) -> bool:
-    if last_in_at is None:
-        return False
-    return datetime.now(timezone.utc) - _as_utc(last_in_at) < timedelta(hours=WINDOW_HOURS)
 
 
 # Filtros de conversación. Una sola definición porque los comparten la Bandeja
@@ -115,7 +106,7 @@ def build_conversation_items(session) -> list[dict]:
         conv = convs.get(phone)
         ticket = tickets.get(phone)
         item["waiting"] = item["last_direction"] == "in"
-        item["window_open"] = _window_open(last_in.get(phone))
+        item["window_open"] = ventana.abierta(last_in.get(phone))
         item["bot_paused"] = bool(conv and conv.state == "escalado")
         item["assigned_to"] = ticket.assigned_to if ticket else None
         item["ticket_id"] = ticket.id if ticket else None
@@ -180,8 +171,8 @@ def _segmento_del_folio(
     """Rango `(inicio, fin]` de la conversación que pertenece a `ticket`.
 
     `None` en un extremo = sin límite por ese lado."""
-    creado = _as_utc(ticket.created_at)
-    todos = [_as_utc(t.created_at) for t in tickets]
+    creado = ventana.as_utc(ticket.created_at)
+    todos = [ventana.as_utc(t.created_at) for t in tickets]
     # El folio no viaja solo: se lleva a los de su mismo turno.
     turno = [c for c in todos if abs(c - creado) <= FOLIOS_MISMO_TURNO]
     primero, ultimo = min(turno), max(turno)
@@ -194,7 +185,7 @@ def _segmento_del_folio(
 
 
 def _en_segmento(dt: datetime, inicio: datetime | None, fin: datetime | None) -> bool:
-    momento = _as_utc(dt)
+    momento = ventana.as_utc(dt)
     return (inicio is None or momento > inicio) and (fin is None or momento <= fin)
 
 
@@ -254,6 +245,17 @@ def inbox_chat(
     last_in = next(
         (m.created_at for m in reversed(historial) if m.direction == Direction.IN), None
     )
+    # El umbral de urgencia es el MISMO que marca «Mi día» en su lista de chats
+    # que esperan respuesta: dos números distintos harían que un chat se viera
+    # urgente en una pantalla y tranquilo en la otra.
+    # ponytail: import dentro de la función porque `app.my` importa `app.inbox`
+    # al cargar (circular si se sube arriba). Techo: la constante vive en el
+    # panel personal y su casa natural es `app/ventana.py`, junto a
+    # WINDOW_HOURS — mudarla ahí borra este import diferido.
+    from app.my import EXPIRING_HOURS
+
+    window_open = ventana.abierta(last_in)
+    horas_restantes = ventana.horas_restantes(last_in)
     return templates.TemplateResponse(
         "inbox_chat.html",
         {
@@ -273,7 +275,25 @@ def inbox_chat(
             # ventana de 24 h es por número y el remitente que ve el cliente
             # cambia según el canal.
             "conversation": conv,
-            "window_open": _window_open(last_in),
+            "window_open": window_open,
+            # Cuánto queda, no solo si está abierta: el asesor tiene que poder
+            # decidir ANTES de escribir si le da tiempo. El texto y las horas
+            # salen de `app.ventana`; la vista no vuelve a calcular nada.
+            # ponytail: es una foto del momento del render — con la pestaña
+            # abierta dos horas, el «cierra en 3 h 12 min» miente. Techo
+            # aceptado porque el panel es server-rendered y cada envío
+            # repinta la página. Vía: un tick de JS sobre un
+            # <time datetime> o recargar la vista sola.
+            "window_left": ventana.restante_texto(last_in),
+            "window_hours_left": horas_restantes,
+            # Urgente = abierta pero por poco. Cerrada no es «urgente», es otro
+            # aviso completamente distinto.
+            "window_urgent": window_open and horas_restantes <= EXPIRING_HOURS,
+            "window_hours": ventana.WINDOW_HOURS,
+            # Un chat sin ningún mensaje del cliente (llegó por /unmatched o lo
+            # abrió cobranza) nunca tuvo ventana: el aviso no puede hablar de
+            # «su último mensaje» porque no existe.
+            "window_never": last_in is None,
             # Ruta de la Bandeja de origen (con su filtro) para el botón
             # «volver»; validada, un valor externo se descarta.
             "volver": ruta_interna(volver),
@@ -340,12 +360,7 @@ def inbox_send(
         return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
     with get_session() as session:
-        last_in = session.exec(
-            select(Message)
-            .where(Message.phone == phone, Message.direction == Direction.IN)
-            .order_by(Message.created_at.desc())
-        ).first()
-        if not _window_open(last_in.created_at if last_in else None):
+        if not ventana.abierta_para(session, phone):
             return RedirectResponse(f"/inbox/{phone}?err=window", status_code=303)
 
         media_path = None

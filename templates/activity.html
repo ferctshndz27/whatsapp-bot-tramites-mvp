@@ -38,6 +38,25 @@
   .chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .35rem; }
   .donut-list { font-size: .85rem; display: flex; flex-direction: column; gap: .35rem; }
   .donut-list i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .4rem; }
+  /* Mensajería: la leyenda lleva color Y patrón de trazo (el color no puede
+     ser el único indicador), y los números viven en la tabla, no en el hover. */
+  .msg-legend { justify-content: flex-start; align-items: center; gap: 1.2rem; }
+  .msg-legend span { display: inline-flex; align-items: center; gap: .4rem; }
+  /* #5f6572 y no --text-muted (#7c828d): este es el texto que impide leer
+     «sin dato» como «gratis», y a .85rem el muted da 3.86:1, debajo del
+     4.5:1 de WCAG AA. Mismo gris que ya usa .composer-hint. */
+  .msg-nota { color: #5f6572; font-size: .85rem; margin: .4rem 0 0; }
+  /* .line-wrap trae flex:2 y min-width:320px para convivir con la dona dentro
+     de .chart-flex. Aquí cuelga directo de la tarjeta: sin esto, a 360px de
+     ancho el piso de 320px desborda y el scroll lateral llega al body. */
+  .card > .line-wrap { flex: none; min-width: 0; }
+  .msg-dias { margin: .4rem 0 0; font-size: .85rem; color: #5f6572; }
+  .msg-dias summary { cursor: pointer; }
+  .msg-dias ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .msg-costo { display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; align-items: baseline; }
+  .msg-costo .monto { font-size: 1.8rem; font-weight: 800; }
+  .msg-costo .etiqueta { font-size: .75rem; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; background: #fdeedd; color: #92590a; border-radius: 999px; padding: .2rem .6rem; }
 </style>
 
 <div class="card">
@@ -200,6 +219,208 @@
       {% endif %}
     </div>
   </div>
+</div>
+{% endif %}
+
+{% if mensajeria %}
+<div class="card">
+  <h2>Mensajería y costo</h2>
+
+  {# El aviso va primero: es lo único de esta sección sobre lo que se puede
+     actuar HOY. No depende del rate card — se muestra aunque no se pueda leer. #}
+  <div class="banner-warn" role="note">
+    {% if mensajeria.aviso.vigente %}
+    <strong>⚠️ Desde el {{ mensajeria.aviso.desde }} Meta cobra los mensajes de servicio.</strong>
+    Las plantillas de <em>utilidad</em> respondidas dentro de la ventana de 24 h tampoco están exentas ya.
+    {% else %}
+    <strong>⚠️ Faltan {{ mensajeria.aviso.dias }} días ({{ mensajeria.aviso.desde }}):</strong>
+    los mensajes de servicio dejan de ser gratis y pasan a cobrarse uno por uno, y las plantillas
+    de <em>utilidad</em> respondidas dentro de la ventana de 24 h pierden su exención.
+    Hoy casi todo el saliente de este bot es servicio gratis en ventana, así que el renglón
+    «gratis» de aquí abajo es el que se va a convertir en costo.
+    {% endif %}
+    <br>
+    <span style="font-size:.85rem;">Fuente: Meta — {{ mensajeria.aviso.fuente }}
+      (consultada el {{ mensajeria.aviso.consultada_el }}).
+      {% if mensajeria.aviso.contempla_servicio and mensajeria.aviso.tarifa_servicio is none %}
+      El rate card ya contempla la categoría <code>service</code>, pero <strong>su tarifa sigue
+      sin capturarse</strong>{% if mensajeria.aviso.plazo_vencido %} y el plazo que Meta se puso
+      para publicarla ({{ mensajeria.aviso.plazo_tarifas }}) <strong>ya venció</strong>: hay que
+      revisar WhatsApp Manager y llenarla en <code>app/rate_card.json</code>{% else %} (Meta se
+      compromete a publicarla a más tardar el {{ mensajeria.aviso.plazo_tarifas }}){% endif %},
+      así que el costo estimado de abajo aún no incluye lo que costará ese saliente.
+      {% endif %}
+    </span>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card blue">
+      <div class="label">Salientes del periodo</div>
+      <div class="value">{{ mensajeria.salientes }}</div>
+    </div>
+    <div class="stat-card orange">
+      <div class="label">Cobrables (Meta: <code>regular</code>)</div>
+      <div class="value">{{ mensajeria.cobrables }}</div>
+    </div>
+    <div class="stat-card green">
+      <div class="label">Gratis (en ventana / punto de entrada)</div>
+      <div class="value">{{ mensajeria.gratis }}</div>
+    </div>
+    <div class="stat-card red">
+      <div class="label">Sin dato de cobro</div>
+      <div class="value">{{ mensajeria.sin_dato }}</div>
+    </div>
+  </div>
+
+  {# El denominador honesto: sin él, «no cobrado» y «no sabemos» se confunden
+     y el total se lee completo sin estarlo. #}
+  <p class="msg-nota"><strong>{{ mensajeria.sin_dato }} sin dato de cobro</strong> =
+    salientes para los que Meta nunca mandó veredicto: los de Twilio (ese canal no reporta precio
+    a este sistema) y aquellos cuyo acuse no emparejó con su mensaje. No son gratis: son
+    desconocidos, y por eso van al lado del total en vez de sumarse a «gratis».
+    De {{ mensajeria.salientes }} salientes, {{ mensajeria.con_veredicto }} traen veredicto de Meta.</p>
+
+  <h3 style="font-size:.95rem;">Costo del periodo</h3>
+  <div class="msg-costo">
+    {% if mensajeria.costo_estimable %}
+    <span class="etiqueta">Estimado</span>
+    <span class="monto">{{ mensajeria.costo_texto }}</span>
+    <span class="msg-nota" style="margin:0;">El bot nunca fija un precio final; esto es un
+      estimado de lo que Meta cobra por entregar mensajes, no una factura.</span>
+    {% else %}
+    <span class="monto">{{ mensajeria.costo_texto }}</span>
+    <span class="msg-nota" style="margin:0;">
+      {% if mensajeria.salientes %}Ningún saliente del periodo trae veredicto de cobro de Meta,
+      así que no hay nada que estimar. Un «$0.00» aquí afirmaría que costó cero, y eso no se
+      sabe.{% else %}No salió ningún mensaje en el periodo: no hay nada que costear.{% endif %}
+    </span>
+    {% endif %}
+  </div>
+  {% if mensajeria.costo_estimable and mensajeria.costo_parcial %}
+  {# La bandera que faltaba: el total se queda corto por los mensajes SIN veredicto,
+     no solo por tarifas ausentes. Pegada al número, no en un párrafo aparte. #}
+  <p class="msg-nota"><strong>Este total es parcial.</strong> Cubre
+    {{ mensajeria.cobertura_texto }} de los salientes del periodo; los
+    {{ mensajeria.sin_dato }} sin veredicto no están costeados y podrían no ser gratis.</p>
+  {% endif %}
+  {% if mensajeria.rate_card_multiple %}
+  <p class="msg-nota">El periodo cruza un cambio de rate card: cada mensaje se cotiza con la
+    tarjeta vigente el día de su entrega, así que abajo aparece más de una vigencia.</p>
+  {% endif %}
+
+  {% if mensajeria.rate_card %}
+  <p class="msg-nota">Tarifas vigentes desde <strong>{{ mensajeria.rate_card.vigencia_desde }}</strong>
+    ({{ mensajeria.rate_card.pais }}) · confianza declarada:
+    <strong>{{ mensajeria.rate_card.confianza }}</strong>.
+    {% if mensajeria.rate_card.confianza != 'confirmada_contra_la_cuenta' %}
+    <strong>Las tarifas no están confirmadas contra el rate card de esta cuenta</strong>: vienen de
+    recopilaciones de terceros. El real se lee en WhatsApp Manager (configuración de la cuenta →
+    facturación). Mientras diga eso, cada peso de aquí es una referencia, no un cobro verificado.
+    {% endif %}
+    <br>Fuente de las tarifas: {{ mensajeria.rate_card.fuente }}</p>
+  {% else %}
+  <p class="msg-nota"><strong>No se pudo leer el rate card.</strong> Los conteos de arriba siguen
+    siendo exactos (salen del veredicto de Meta), pero el costo no se puede estimar.</p>
+  {% endif %}
+
+  {% if mensajeria.costo_incompleto %}
+  <div class="banner-warn" role="note">
+    <strong>El costo estimado está incompleto.</strong> Salieron mensajes cobrables de categorías
+    sin tarifa conocida: <strong>{{ mensajeria.categorias_sin_tarifa | join(', ') }}</strong>.
+    Se cuentan pero no se cotizan — sumarlos como 0 haría que el total pareciera barato justo
+    cuando aparece una categoría nueva. Se arregla agregando la tarifa en
+    <code>app/rate_card.json</code>.
+  </div>
+  {% endif %}
+
+  <h3 style="font-size:.95rem;">Desglose por categoría</h3>
+  {% if mensajeria.por_categoria %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th scope="col">Categoría (como la reporta Meta)</th><th scope="col">Mensajes</th>
+          <th scope="col">Cobrables</th><th scope="col">Gratis</th>
+          <th scope="col">Costo estimado</th></tr>
+      </thead>
+      <tbody>
+        {% for c in mensajeria.por_categoria %}
+        <tr>
+          <td><code>{{ c.categoria }}</code></td>
+          <td>{{ c.total }}</td>
+          <td>{{ c.cobrables }}</td>
+          <td>{{ c.gratis }}</td>
+          <td>{{ c.costo }}{% if c.sin_tarifa %}
+            <span class="msg-nota">· {{ c.sin_tarifa }} sin tarifa conocida (no cotizados)</span>
+            {% endif %}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+          <td><strong>Sin veredicto de Meta</strong></td>
+          <td><strong>{{ mensajeria.sin_dato }}</strong></td>
+          <td>—</td><td>—</td>
+          <td>no se puede estimar</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Ningún saliente del periodo trae veredicto de cobro todavía.</p>
+  {% endif %}
+
+  <h3 style="font-size:.95rem;">Salientes por día (día UTC)</h3>
+  {% if mensajeria.salientes %}
+  <div class="chart-legend msg-legend">
+    {% for s in mensajeria.linea.series %}
+    <span>
+      <svg width="28" height="10" aria-hidden="true" focusable="false">
+        <line x1="1" y1="5" x2="27" y2="5" stroke="{{ s.color }}" stroke-width="3"
+          stroke-linecap="round" stroke-dasharray="{{ mensajeria.trazos[s.user] }}"/>
+      </svg>{{ s.user }}
+    </span>
+    {% endfor %}
+  </div>
+  <div class="line-wrap">
+    <svg viewBox="0 0 {{ mensajeria.linea.width }} {{ mensajeria.linea.height }}" role="img"
+      aria-label="Mensajes salientes por día del {{ desde }} al {{ hasta }}:
+        {{ mensajeria.salientes }} salientes, {{ mensajeria.cobrables }} cobrables y
+        {{ mensajeria.sin_dato }} sin dato de cobro. El detalle por día está en la lista que sigue,
+        y el desglose por categoría en la tabla de arriba.">
+      <title>Salientes, cobrables y sin dato de cobro por día</title>
+      {% for y, val in mensajeria.linea.y_ticks %}
+      <line x1="{{ mensajeria.linea.pad_l }}" x2="{{ mensajeria.linea.width - mensajeria.linea.pad_r }}"
+        y1="{{ y }}" y2="{{ y }}" stroke="#eef0f3" stroke-width="1"/>
+      <text x="{{ mensajeria.linea.pad_l - 8 }}" y="{{ y + 4 }}" text-anchor="end" font-size="10" fill="#6d7280">{{ val }}</text>
+      {% endfor %}
+      {% for x, lbl in mensajeria.linea.x_labels %}
+      <text x="{{ x }}" y="{{ mensajeria.linea.height - 6 }}" text-anchor="middle" font-size="10" fill="#6d7280">{{ lbl }}</text>
+      {% endfor %}
+      {% for s in mensajeria.linea.series %}
+      <path d="{{ s.path }}" fill="none" stroke="{{ s.color }}" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="{{ mensajeria.trazos[s.user] }}"/>
+      {% for p in s.points %}
+      <circle cx="{{ p.x }}" cy="{{ p.y }}" r="3" fill="{{ s.color }}"><title>{{ p.label }}</title></circle>
+      {% endfor %}
+      {% endfor %}
+    </svg>
+  </div>
+  {# El mismo dato como texto: dentro de un <svg role="img"> los <title> de cada
+     punto no llegan al lector de pantalla, y como tooltip solo responden a hover
+     (ni teclado ni táctil). Sin esta lista, quien no ve la imagen se queda con
+     tres agregados. #}
+  <details class="msg-dias">
+    <summary>Ver los números por día</summary>
+    <ul>
+      {% for d in mensajeria.dias %}
+      <li>{{ d.dia }}: {{ d.salientes }} salientes · {{ d.cobrables }} cobrables ·
+        {{ d.sin_dato }} sin dato</li>
+      {% endfor %}
+    </ul>
+  </details>
+  <p class="msg-nota">El corte diario de esta gráfica es UTC (el resto de la página corta por día
+    de CDMX): así la suma de la gráfica cuadra exactamente con las tarjetas de arriba.</p>
+  {% else %}
+  <p class="empty">Sin mensajes salientes del {{ desde }} al {{ hasta }}.</p>
+  {% endif %}
 </div>
 {% endif %}
 

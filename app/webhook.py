@@ -158,15 +158,34 @@ def _tag_sent_message(phone: str, wa_message_id: str, provider: str = PROVIDER_M
             session.commit()
 
 
-def _apply_status(wa_message_id: str, state: str, status_at: datetime) -> None:
+def _apply_status(
+    wa_message_id: str, state: str, status_at: datetime, pricing: dict | None = None
+) -> None:
     """Guarda el estado de entrega en la fila del mensaje. Común a los dos
-    proveedores: para llegar aquí, cada uno ya tradujo su vocabulario."""
+    proveedores: para llegar aquí, cada uno ya tradujo su vocabulario.
+
+    `pricing` es el veredicto de cobro de Meta y solo viaja en el status `sent`
+    y en UNO de delivered/read — nunca en los tres. Por eso se fusiona en vez de
+    asignarse: el status que llegue después sin `pricing` borraría lo ya
+    guardado y el medidor contaría ese mensaje como «sin dato».
+    """
     with get_session() as session:
         row = session.exec(select(Message).where(Message.wa_message_id == wa_message_id)).first()
         if not row:
+            # No hay a quién pegarle el estado. Pasa cuando el emparejamiento
+            # FIFO de wamid cruzó ids entre canales (ver _tag_sent_message) o
+            # cuando el saliente no dejó fila. Se registra porque el medidor
+            # cuenta estos huecos: un total que se lee completo sin estarlo es
+            # peor que un total con su «sin dato» al lado.
+            logger.info("Estado de WhatsApp sin mensaje local: %s", wa_message_id)
             return
         row.wa_status = state
         row.wa_status_at = status_at
+        if pricing:
+            row.pricing_category = pricing.get("category") or row.pricing_category
+            row.pricing_type = pricing.get("type") or row.pricing_type
+            if pricing.get("billable") is not None:
+                row.pricing_billable = bool(pricing["billable"])
         session.add(row)
         session.commit()
 
@@ -183,7 +202,9 @@ def _process_status(status: dict) -> None:
         if timestamp
         else datetime.now(timezone.utc)
     )
-    _apply_status(wa_message_id, state, status_at)
+    # `pricing`: {billable, pricing_model, type, category}. Se copia entero y sin
+    # interpretar — qué se cobra lo decide Meta, no este código.
+    _apply_status(wa_message_id, state, status_at, status.get("pricing"))
 
 
 # ---------------------------------------------------------------------------

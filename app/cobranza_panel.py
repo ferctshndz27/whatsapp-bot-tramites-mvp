@@ -30,7 +30,7 @@ from sqlalchemy import func, nulls_last, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from app import cobranza, cobranza_jobs, messaging, stripe_client
+from app import cobranza, cobranza_jobs, messaging, stripe_client, ventana
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
@@ -239,18 +239,11 @@ def generar_cobro(
 def _enviar_link(cobro_id: int, user: str, reemplazo: bool = False) -> bool:
     """True si salió el mensaje. Que falle NO afecta el estado del cobro: el
     link vive en la fila y el panel ofrece copiarlo."""
-    from app.inbox import _window_open
-
     with get_session() as session:
         cobro = session.get(Cobro, cobro_id)
         if cobro is None or not (cobro.url_pago or cobro.voucher_url):
             return False
-        ultimo_in = session.exec(
-            select(Message)
-            .where(Message.phone == cobro.phone, Message.direction == Direction.IN)
-            .order_by(Message.created_at.desc())  # type: ignore[union-attr]
-        ).first()
-        if not _window_open(ultimo_in.created_at if ultimo_in else None):
+        if not ventana.abierta_para(session, cobro.phone):
             logger.info("Sin envío del link a %s: ventana de 24h cerrada", cobro.phone)
             return False
         texto = cobranza.mensaje_link(cobro, reemplazo=reemplazo)
@@ -464,8 +457,6 @@ def avisar_pago(request: Request, cobro_id: int, volver: str = Form("")):
     """Aviso al cliente de que su pago entró. Fuera del webhook y
     reintentable: con OXXO la confirmación llega a los días, con la ventana de
     24 h ya cerrada."""
-    from app.inbox import _window_open
-
     user, ticket_id, permitido = _cargar_para_accion(request, cobro_id)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -476,12 +467,7 @@ def avisar_pago(request: Request, cobro_id: int, volver: str = Form("")):
         cobro = session.get(Cobro, cobro_id)
         if cobro.estado != "pagado":
             return _volver(ticket_id, volver=volver,err="no-pagado")
-        ultimo_in = session.exec(
-            select(Message)
-            .where(Message.phone == cobro.phone, Message.direction == Direction.IN)
-            .order_by(Message.created_at.desc())  # type: ignore[union-attr]
-        ).first()
-        if not _window_open(ultimo_in.created_at if ultimo_in else None):
+        if not ventana.abierta_para(session, cobro.phone):
             return _volver(ticket_id, volver=volver,err="ventana")
         texto = cobranza.mensaje_pagado(cobro)
         phone = cobro.phone

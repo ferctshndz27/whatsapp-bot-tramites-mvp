@@ -253,6 +253,29 @@
     .banner-warn {
       background: #fdeedd; color: #92590a; border-radius: 12px; padding: .75rem 1rem; margin: .75rem 0;
     }
+    /* Ventana cerrada: el compositor no está, así que este aviso ocupa su lugar
+       y tiene que explicarse solo. Renglones separados y no un párrafo corrido
+       — se lee de un vistazo entre chat y chat. */
+    .banner-cerrada p { margin: 0 0 .5rem; line-height: 1.5; }
+    .banner-cerrada p:last-child { margin-bottom: 0; }
+    .banner-cerrada .banner-titulo { font-weight: 700; }
+    /* Cuánto queda de ventana, junto al compositor. El color acompaña al texto:
+       «Queda poco» y el icono dicen lo mismo sin depender del tono (WCAG 1.4.1).
+       #5f6572 sobre blanco = 5.85:1; #be1e51 sobre #fde7ef ≈ 5:1, ambos por
+       encima del 4.5:1 de AA. Sin animación a propósito: un aviso que parpadea
+       toda la jornada cansa y obligaría a un `prefers-reduced-motion` que aquí
+       no hace falta. */
+    .window-note {
+      display: flex; gap: .4rem; align-items: baseline; flex-wrap: wrap;
+      color: #5f6572; font-size: .8rem; margin: 0 0 .5rem; line-height: 1.4;
+    }
+    .window-note strong { color: var(--text); font-weight: 700; }
+    .window-note.urgente {
+      background: #fde7ef; color: #be1e51; font-weight: 600;
+      border-left: 4px solid #be1e51; border-radius: 8px; padding: .4rem .7rem;
+    }
+    .window-note.urgente strong { color: #be1e51; }
+    .window-note .window-ico { flex-shrink: 0; }
     .bubble img { max-width: 220px; border-radius: 10px; display: block; margin-top: .3rem; }
 
     /* ---- Chat ---- */

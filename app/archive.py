@@ -52,6 +52,9 @@ _SCHEMA_DDL = [
         media_path    NVARCHAR(300) NULL,
         sent_by       NVARCHAR(64)  NULL,
         habilitado    BIT           NOT NULL DEFAULT 1,
+        pricing_category NVARCHAR(40) NULL,
+        pricing_type     NVARCHAR(40) NULL,
+        pricing_billable BIT          NULL,
         created_at    DATETIME2     NOT NULL,
         CONSTRAINT fk_wa_messages_client
             FOREIGN KEY (phone) REFERENCES wa_clients(phone)
@@ -559,6 +562,10 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
     "wa_messages": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "provider": "NVARCHAR(20) NOT NULL DEFAULT 'meta'",
+        # Medidor (fase 2) — nullable: NULL es «sin veredicto de Meta».
+        "pricing_category": "NVARCHAR(40) NULL",
+        "pricing_type": "NVARCHAR(40) NULL",
+        "pricing_billable": "BIT NULL",
     },
     "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "wa_clients": {
@@ -710,8 +717,10 @@ def archive_wa_message(m) -> None:
         conn.execute(
             text(
                 "INSERT INTO wa_messages (source_id, phone, direction, body, wa_message_id,"
-                " wa_status, media_path, sent_by, habilitado, provider, created_at)"
-                " VALUES (:sid, :p, :d, :b, :wid, :ws, :mp, :sb, :hab, :prov, :c)"
+                " wa_status, media_path, sent_by, habilitado, provider, pricing_category,"
+                " pricing_type, pricing_billable, created_at)"
+                " VALUES (:sid, :p, :d, :b, :wid, :ws, :mp, :sb, :hab, :prov, :pcat, :ptype,"
+                " :pbill, :c)"
             ),
             {
                 "sid": m.id,
@@ -724,21 +733,44 @@ def archive_wa_message(m) -> None:
                 "sb": m.sent_by,
                 "hab": m.habilitado,
                 "prov": m.provider,
+                "pcat": m.pricing_category,
+                "ptype": m.pricing_type,
+                "pbill": m.pricing_billable,
                 "c": _naive_utc(m.created_at),
             },
         )
 
 
 def sync_wa_message(m) -> None:
-    """Sincroniza wamid/estado de entrega/habilitado cuando el registro local se actualiza."""
+    """Sincroniza wamid/estado de entrega/precio cuando el registro local se actualiza.
+
+    Si el UPDATE no toca ninguna fila, el INSERT original nunca llegó al espejo
+    (MSSQL caído justo en ese instante, que `_safe` silencia por diseño) y se
+    inserta ahora. Sin este remate el veredicto de cobro se perdía PARA SIEMPRE:
+    el precio solo viaja por UPDATE —el status es posterior al alta— y
+    `backfill()` excluye los mensajes a propósito, así que «Sincronizar ahora»
+    tampoco lo recuperaba.
+    """
     with _get_engine().begin() as conn:
-        conn.execute(
+        resultado = conn.execute(
             text(
-                "UPDATE wa_messages SET wa_message_id = :wid, wa_status = :ws, habilitado = :hab"
+                "UPDATE wa_messages SET wa_message_id = :wid, wa_status = :ws, habilitado = :hab,"
+                " pricing_category = :pcat, pricing_type = :ptype, pricing_billable = :pbill"
                 " WHERE source_id = :sid"
             ),
-            {"wid": m.wa_message_id, "ws": m.wa_status, "hab": m.habilitado, "sid": m.id},
+            {
+                "wid": m.wa_message_id,
+                "ws": m.wa_status,
+                "hab": m.habilitado,
+                "pcat": m.pricing_category,
+                "ptype": m.pricing_type,
+                "pbill": m.pricing_billable,
+                "sid": m.id,
+            },
         )
+        if resultado.rowcount:
+            return
+    archive_wa_message(m)
 
 
 def archive_team_message(m) -> None:

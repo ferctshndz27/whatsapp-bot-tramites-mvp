@@ -9,7 +9,7 @@ completo y pueden abrir el histórico de cualquiera.
 import logging
 import math
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
@@ -17,6 +17,7 @@ from app.templating import BUSINESS_TZ, templates
 from sqlalchemy import func
 from sqlmodel import select
 
+from app import medidor
 from app.auth import is_admin
 from app.db import get_session
 from app.models import (
@@ -45,6 +46,37 @@ CHART_PALETTE = [
     "#f59e0b", "#8b5cf6", "#22d3ee", "#ec4899",
     "#10b981", "#2563eb", "#ef4444", "#64748b",
 ]
+
+# --- Mensajería y costo ------------------------------------------------------
+# Fuente primaria de Meta, consultada el 2026-08-24: desde el 1-oct-2026 se
+# cobra por mensaje el saliente de servicio, y las plantillas de UTILIDAD
+# respondidas dentro de la ventana de 24 h dejan de estar exentas. Hoy casi todo
+# el saliente de este bot es servicio gratis dentro de la ventana.
+FUENTE_COBRO_SERVICIO = (
+    "developers.facebook.com/documentation/business-messaging/whatsapp/"
+    "pricing/non-template-messages"
+)
+# La fecha vive aquí y NO se deriva de rate_card.json —que sí es la fuente única
+# de las TARIFAS— por dos razones: el rate card se lee dentro de un try y puede
+# quedar vacío, y es justo cuando falla que este aviso más se necesita; y la
+# vigencia de una tarjeta solo dice cuándo cambian los precios, no dice que la
+# utilidad pierde su exención en ventana, que es la otra mitad del hecho.
+COBRO_SERVICIO_DESDE = date(2026, 10, 1)
+# Cuándo se leyó la fuente, y hasta cuándo se comprometió Meta a publicar las
+# tarifas de octubre. Viven aquí y no escritas a mano en la plantilla: un texto
+# fechado que nadie recalcula sigue leyéndose como vigente para siempre.
+FUENTE_CONSULTADA_EL = date(2026, 8, 24)
+PLAZO_PUBLICACION_TARIFAS = date(2026, 9, 1)
+
+# Series de la gráfica de mensajería. El color NUNCA es el único indicador: cada
+# serie lleva además patrón de trazo (MENSAJERIA_TRAZOS), nombre en la leyenda y
+# número en la tabla de abajo.
+MENSAJERIA_SERIES = {
+    "Salientes": "#2563eb",
+    "Cobrables": "#d97706",
+    "Sin dato de cobro": "#6d7280",
+}
+MENSAJERIA_TRAZOS = {"Salientes": "", "Cobrables": "8 4", "Sin dato de cobro": "2 4"}
 
 ACTION_LABELS = {
     "tomado": "tomó la solicitud",
@@ -246,6 +278,150 @@ def operacion_stats(session) -> dict:
     }
 
 
+def _usd(monto: float, moneda: str = "USD") -> str:
+    """Formatea un costo ESTIMADO de mensajería.
+
+    No usa `dinero.formato_monto` a propósito: aquel es dinero de Stripe
+    —centavos enteros— y aquí la tarifa es una fracción de centavo por mensaje
+    (0.0099 USD). Redondear a centavos haría que un costo real se leyera
+    "$0.00 USD", exactamente la confusión que esta sección existe para evitar.
+    """
+    if 0 < monto < 0.01:
+        return f"${monto:,.4f} {moneda}"
+    return f"${monto:,.2f} {moneda}"
+
+
+def _rango_utc(start: date, end: date) -> tuple[datetime, datetime]:
+    """Los días de negocio [start, end] como límites UTC naive, medio abiertos.
+
+    Los timestamps se guardan en UTC sin zona (utcnow()) y el filtro de la
+    página habla en días de CDMX. `hasta` es el arranque del día SIGUIENTE
+    porque el medidor filtra `created_at < hasta`.
+    """
+    desde = datetime.combine(start, time.min, tzinfo=BUSINESS_TZ)
+    hasta = datetime.combine(end + timedelta(days=1), time.min, tzinfo=BUSINESS_TZ)
+    return (
+        desde.astimezone(timezone.utc).replace(tzinfo=None),
+        hasta.astimezone(timezone.utc).replace(tzinfo=None),
+    )
+
+
+def _aviso_cobro_servicio(hoy: date) -> dict:
+    """El aviso fechado del 1-oct-2026, con los días que faltan.
+
+    El rate card solo lo ENRIQUECE: si la tarjeta que aplicará ese día ya
+    contempla la categoría `service`, el aviso puede decir si Meta ya publicó su
+    precio. Si el rate card no se pudo leer, el aviso sale igual y completo.
+    """
+    tarjeta = medidor.tarjeta_vigente(COBRO_SERVICIO_DESDE)
+    tarifas = (tarjeta or {}).get("tarifas") or {}
+    return {
+        "desde": COBRO_SERVICIO_DESDE,
+        "dias": (COBRO_SERVICIO_DESDE - hoy).days,
+        "vigente": hoy >= COBRO_SERVICIO_DESDE,
+        "fuente": FUENTE_COBRO_SERVICIO,
+        "contempla_servicio": "service" in tarifas,
+        # None con contempla_servicio=True = Meta aún no publica el precio.
+        "tarifa_servicio": tarifas.get("service"),
+        "consultada_el": FUENTE_CONSULTADA_EL,
+        "plazo_tarifas": PLAZO_PUBLICACION_TARIFAS,
+        # El plazo ya venció y la tarifa sigue sin capturarse: deja de ser una
+        # promesa a futuro y pasa a ser un pendiente. Sin esto, el aviso seguía
+        # diciendo «se compromete a publicarlas» meses después de la fecha.
+        "plazo_vencido": hoy > PLAZO_PUBLICACION_TARIFAS,
+    }
+
+
+def mensajeria_stats(session, start: date, end: date, hoy: date | None = None) -> dict:
+    """Cuánto saliente hubo en el rango y cuánto de eso cobra Meta.
+
+    Los conteos y el costo salen enteros de `app.medidor` (que copia el veredicto
+    de Meta y nunca lo adivina); aquí solo se arma la presentación y la geometría
+    del SVG, reutilizando `build_line_chart`.
+    """
+    hoy = hoy or datetime.now(BUSINESS_TZ).date()
+    desde, hasta = _rango_utc(start, end)
+    resumen = medidor.resumen(session, desde, hasta)
+    # Del MISMO recuento, no de una segunda consulta: llamar también a
+    # serie_diaria() repetía el GROUP BY entero en cada carga de la página, y
+    # dejaba abierta la puerta a que la gráfica y las tarjetas discrepen.
+    serie = resumen["_dias"]
+
+    # El eje va por día UTC y no por día de negocio: `medidor.serie_diaria`
+    # agrupa con func.date(created_at), que en SQLite es UTC. Recorriendo los
+    # días UTC que caben entre los límites, la suma de la gráfica es EXACTAMENTE
+    # la de las tarjetas; con un eje local, el saliente de las 18:00–23:59 CDMX
+    # del último día caería en un día UTC fuera del eje y la gráfica desmentiría
+    # al total, que es la única falla que esta sección no se puede permitir.
+    # ponytail: por eso el corte diario queda en UTC (hasta 6 h corrido respecto
+    # al día de negocio del resto de la página). Se arregla pasándole un offset a
+    # medidor.serie_diaria, no maquillándolo aquí.
+    dia_ini = desde.date()
+    dia_fin = (hasta - timedelta(seconds=1)).date()
+    chart = []
+    for i in range((dia_fin - dia_ini).days + 1):
+        dia = dia_ini + timedelta(days=i)
+        v = serie.get(dia.isoformat(), {})
+        chart.append(
+            {
+                "date": dia,
+                "total": v.get("salientes", 0),
+                "by_user": {
+                    "Salientes": v.get("salientes", 0),
+                    "Cobrables": v.get("cobrables", 0),
+                    "Sin dato de cobro": v.get("sin_dato", 0),
+                },
+                # Sin clave "n" a propósito: build_line_chart le agrega
+                # "(sin datos)" al tooltip cuando n == 0, y aquí un día en cero
+                # es una medición real (no salió nada), no un hueco de medición.
+            }
+        )
+
+    return {
+        **resumen,
+        "por_categoria": [
+            {
+                "categoria": nombre,
+                "total": v["total"],
+                "cobrables": v["cobrables"],
+                "gratis": v["total"] - v["cobrables"],
+                # Una categoría cobrable SIN tarifa conocida no vale $0.00: no es
+                # cotizable. Imprimir el cero contradecía a la nota de la misma celda.
+                "costo": (
+                    "no cotizable"
+                    if v["cobrables"] and v["sin_tarifa"] >= v["cobrables"]
+                    else _usd(v["costo_usd"], resumen["moneda"])
+                ),
+                "sin_tarifa": v["sin_tarifa"],
+            }
+            for nombre, v in resumen["por_categoria"].items()
+        ],
+        # $0.00 servía para tres cosas distintas: «no salió nada», «salió y fue
+        # verificadamente gratis» y «salió y no sabemos nada». La tercera es hoy
+        # el caso normal para cualquier periodo anterior al despliegue, y era la
+        # que se leía como un cobro de cero.
+        "costo_texto": (
+            "sin salientes"
+            if not resumen["salientes"]
+            else "no estimable"
+            if not resumen["estimable"]
+            else _usd(resumen["costo_usd"], resumen["moneda"])
+        ),
+        "costo_estimable": resumen["estimable"] and bool(resumen["salientes"]),
+        # El mismo recuento que la gráfica, como texto: un <svg role="img"> poda
+        # sus <title> del árbol de accesibilidad.
+        "dias": [{"dia": d, **v} for d, v in resumen["_dias"].items()],
+        # costo_parcial, cobertura, sin_dato y rate_card_multiple ya llegan por el
+        # **resumen de arriba; aquí solo el formato de presentación.
+        "cobertura_texto": (
+            f"{resumen['cobertura']:.0%}" if resumen["cobertura"] is not None else "—"
+        ),
+        "linea": build_line_chart(chart, MENSAJERIA_SERIES),
+        "trazos": MENSAJERIA_TRAZOS,
+        "aviso": _aviso_cobro_servicio(hoy),
+    }
+
+
 def _smooth_path(pts: list[tuple[float, float]]) -> str:
     """Curva suave (Catmull-Rom → Bézier) por los puntos de la serie."""
     if len(pts) == 1:
@@ -427,6 +603,7 @@ def activity_view(
         ).all()
         team = None
         operacion = None
+        mensajeria = None
         pr_chart = None
         pr_dias_con_dato = 0
         if admin:
@@ -443,6 +620,9 @@ def activity_view(
             ]
             # Métricas de operación (fase 1) — vista de equipo, solo admin.
             operacion = operacion_stats(session)
+            # Mensajería y costo: mismo rango que la gráfica de despachos, misma
+            # puerta de admin que el resto de las métricas de equipo.
+            mensajeria = mensajeria_stats(session, chart_start, chart_end)
             pr_diaria = primera_respuesta_diaria(session, chart_start, chart_end)
             pr_dias_con_dato = sum(1 for d in pr_diaria if d["n"])
             if pr_dias_con_dato:
@@ -474,6 +654,7 @@ def activity_view(
             "desde": chart_start.isoformat(),
             "hasta": chart_end.isoformat(),
             "operacion": operacion,
+            "mensajeria": mensajeria,
             "pr_chart": pr_chart,
             "pr_dias_con_dato": pr_dias_con_dato,
         },

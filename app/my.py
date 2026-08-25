@@ -16,7 +16,8 @@ from sqlmodel import select
 
 from app.auth import is_admin
 from app.db import get_session
-from app.inbox import WINDOW_HOURS, build_conversation_items
+from app.inbox import build_conversation_items
+from app.ventana import WINDOW_HOURS, horas_restantes
 from app.models import FollowUp, Ticket, TicketStatus, User, utcnow
 
 logger = logging.getLogger(__name__)
@@ -32,10 +33,9 @@ def _current_user(request: Request) -> str | None:
 
 
 def _hours_left(last_at) -> float:
-    if last_at.tzinfo is None:
-        last_at = last_at.replace(tzinfo=timezone.utc)
-    elapsed = (utcnow() - last_at).total_seconds() / 3600
-    return max(0.0, WINDOW_HOURS - elapsed)
+    # `last_at` aquí ES el último entrante: la lista viene filtrada a los chats
+    # que esperan respuesta (last_direction == "in").
+    return horas_restantes(last_at)
 
 
 @router.get("/my")

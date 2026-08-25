@@ -11,7 +11,7 @@ from app.templating import templates
 from sqlalchemy import or_, update
 from sqlmodel import select
 
-from app import authlog, codigos, messaging
+from app import authlog, codigos, messaging, ventana
 from app.utils import ruta_interna
 from app.audit import log_admin
 from app.auth import is_admin
@@ -754,19 +754,12 @@ def finish_ticket(request: Request, ticket_id: int, confirm: str = Form("")):
 
 def _notify_finish(ticket_id: int) -> None:
     """Aviso de cierre al cliente — best-effort, solo dentro de la ventana de 24h."""
-    from app.inbox import _window_open
-
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
         if ticket is None:
             return
         phone = ticket.phone
-        last_in = session.exec(
-            select(Message)
-            .where(Message.phone == phone, Message.direction == Direction.IN)
-            .order_by(Message.created_at.desc())
-        ).first()
-        if not _window_open(last_in.created_at if last_in else None):
+        if not ventana.abierta_para(session, phone):
             logger.info("Sin aviso de cierre a %s: ventana de 24h cerrada", phone)
             return
         cobro_vivo = next(iter(_cobros_vivos_del_folio(session, ticket)), None)
@@ -818,19 +811,12 @@ def _notify_finish(ticket_id: int) -> None:
 def _notify_release(ticket_id: int) -> None:
     """Mensaje best-effort al cliente cuando su ticket escalado queda sin
     asesor, solo dentro de la ventana de 24h de WhatsApp."""
-    from app.inbox import _window_open
-
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
         if ticket is None or not ticket.escalado:
             return
         phone = ticket.phone
-        last_in = session.exec(
-            select(Message)
-            .where(Message.phone == phone, Message.direction == Direction.IN)
-            .order_by(Message.created_at.desc())
-        ).first()
-        if not _window_open(last_in.created_at if last_in else None):
+        if not ventana.abierta_para(session, phone):
             logger.info("Sin aviso de soltado a %s: ventana de 24h cerrada", phone)
             return
         if ticket.service_id == "escalado":

@@ -30,6 +30,7 @@ ARCHIVE_DDL = [
         phone TEXT REFERENCES wa_clients(phone), direction TEXT, body TEXT,
         wa_message_id TEXT, wa_status TEXT, media_path TEXT, sent_by TEXT,
         habilitado INTEGER DEFAULT 1, provider TEXT DEFAULT 'meta',
+        pricing_category TEXT, pricing_type TEXT, pricing_billable INTEGER,
         created_at TIMESTAMP)""",
     "CREATE TABLE team_users (username TEXT PRIMARY KEY)",
     """CREATE TABLE team_messages (
@@ -198,6 +199,46 @@ def test_wa_status_synced_by_source_id(mirror):
             text("SELECT wa_message_id, wa_status FROM wa_messages WHERE source_id = 7")
         ).first()
     assert tuple(row) == ("wamid.X", "read")
+
+
+def test_el_precio_llega_al_espejo_aunque_el_insert_original_nunca_haya_ocurrido(mirror):
+    """La ruta de pérdida SILENCIOSA y PERMANENTE del veredicto de cobro.
+
+    El precio solo viaja por UPDATE: el status de Meta es posterior al alta del
+    mensaje. Si MSSQL estaba caído en el instante del INSERT —modo de falla que
+    `_safe()` silencia por diseño— el UPDATE posterior no encontraba fila, y
+    `backfill()` excluye `wa_messages` a propósito, así que «Sincronizar ahora»
+    tampoco lo recuperaba: ese cobro no aparecía en la contabilidad NUNCA.
+
+    Se simula no llamando a archive_wa_message() antes del sync.
+    """
+    fila = _wa_message(
+        id=99,
+        direction=Direction.OUT,
+        wa_message_id="wamid.PERDIDO",
+        wa_status="sent",
+        pricing_category="utility",
+        pricing_type="regular",
+        pricing_billable=True,
+    )
+
+    archive.sync_wa_message(fila)
+
+    with mirror.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT pricing_category, pricing_type, wa_message_id"
+                " FROM wa_messages WHERE source_id = 99"
+            )
+        ).first()
+        # El remate pasa por _upsert_client: sin la fila del cliente, el FK del
+        # espejo rechazaría el INSERT y el precio se perdería igual.
+        cliente = conn.execute(
+            text("SELECT phone FROM wa_clients WHERE phone = '5215500004444'")
+        ).first()
+    assert row is not None, "el UPDATE no encontró fila y nadie la insertó: cobro perdido"
+    assert tuple(row) == ("utility", "regular", "wamid.PERDIDO")
+    assert cliente is not None, "el mensaje entró sin su cliente: el FK del espejo lo rechazaría"
 
 
 def test_wa_message_soft_delete_synced(mirror):
