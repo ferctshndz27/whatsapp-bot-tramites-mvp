@@ -29,7 +29,7 @@
             {% if row.ok %}
             <span class="badge cerrado">al día</span>
             {% else %}
-            <span class="badge escalado">desfasado</span>
+            <span class="badge escalado">desfasado{% if row.mssql is not none %} ({{ '+' if row.mssql > row.sqlite else '' }}{{ row.mssql - row.sqlite }}){% endif %}</span>
             {% endif %}
           </td>
         </tr>
