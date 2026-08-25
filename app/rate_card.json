@@ -1,0 +1,48 @@
+{
+  "_leeme": [
+    "Tarifas de entrega de Meta, POR MENSAJE (el modelo por conversación está deprecado",
+    "desde el 1-jul-2025). Esto es DATO, no constante: Meta puede actualizarlo el primer",
+    "día de cada trimestre, hasta 4 veces al año.",
+    "",
+    "LAS CIFRAS DE ABAJO NO ESTÁN CONFIRMADAS PARA MÉXICO. Vienen de recopilaciones de",
+    "terceros (BSPs), no del rate card oficial de la cuenta. Un proveedor consultado",
+    "publicaba tarifas de India bajo un encabezado de México, y otro seguía presentándolas",
+    "como 'por conversación'. El rate card real de esta cuenta se lee en WhatsApp Manager",
+    "(configuración de la cuenta → facturación / insights). Mientras 'confianza' diga",
+    "'referencia_sin_confirmar', el panel rotula cada peso como estimado y dice de dónde",
+    "salió.",
+    "",
+    "Cambiar una tarifa = editar este archivo y desplegar (el deploy es pull-based, así",
+    "que el cambio queda con autor y fecha en git).",
+    "ponytail: sin grid de administración. Se agrega si las tarifas empiezan a moverse",
+    "más seguido que por trimestre."
+  ],
+  "moneda": "USD",
+  "unidad": "por mensaje entregado",
+  "tarjetas": [
+    {
+      "vigencia_desde": "2025-07-01",
+      "pais": "MX",
+      "confianza": "referencia_sin_confirmar",
+      "fuente": "Recopilaciones de BSP (ominiflow, jun-2026) para México / 'Rest of Latin America'. Sin confirmar contra el rate card de la cuenta.",
+      "tarifas": {
+        "marketing": 0.0436,
+        "utility": 0.0099,
+        "authentication": 0.0235
+      }
+    },
+    {
+      "vigencia_desde": "2026-10-01",
+      "pais": "MX",
+      "confianza": "referencia_sin_confirmar",
+      "nota_confianza": "Las tarifas de marketing/utility/authentication de esta tarjeta son copia de la anterior (sin confirmar): Meta todavía no publica las de octubre. NO subir la confianza sin verificarlas en WhatsApp Manager.",
+      "fuente": "Meta, developers.facebook.com/documentation/business-messaging/whatsapp/pricing/non-template-messages — desde el 1-oct-2026 se cobran los mensajes de servicio y las plantillas de utilidad respondidas dentro de la ventana de 24 h. Meta publica las tarifas a más tardar el 1-sep-2026; 'service' no tiene tramos de volumen.",
+      "tarifas": {
+        "marketing": 0.0436,
+        "utility": 0.0099,
+        "authentication": 0.0235,
+        "service": null
+      }
+    }
+  ]
+}

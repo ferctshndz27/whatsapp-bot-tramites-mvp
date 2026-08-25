@@ -177,10 +177,10 @@ def test_feedback_for_foreign_ticket_not_recorded(monkeypatch, session):
 
 def test_finish_ticket_sends_feedback_buttons(monkeypatch, session):
     import app.dashboard as dashboard
-    import app.inbox as inbox
+    import app.ventana as ventana
 
     monkeypatch.setattr(db, "engine", session.get_bind())
-    monkeypatch.setattr(inbox, "_window_open", lambda *_: True)
+    monkeypatch.setattr(ventana, "abierta_para", lambda *_: True)
     sent: dict = {}
     monkeypatch.setattr(dashboard.messaging, "send_text", lambda p, b: "wamid-1")
     monkeypatch.setattr(

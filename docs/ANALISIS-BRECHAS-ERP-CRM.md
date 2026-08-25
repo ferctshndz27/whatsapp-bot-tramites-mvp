@@ -15,8 +15,10 @@ Verificado en este documento (segunda pasada de investigación, 2026-08-24):
 - **Benchmark contra Chatwoot** (36.1k ⭐, la referencia open source de la categoría): modelos y
   esquema de tablas leídos de su repositorio público vía API de GitHub. Reproducible.
 - **Política y tarifación de Meta**: contrastada contra la documentación oficial
-  (`developers.facebook.com`). Una afirmación de terceros que circulaba resultó **falsa** y quedó
-  refutada en §2.5 — la verificación no fue teatro.
+  (`developers.facebook.com`). Costó **tres pasadas**. La segunda dio por refutado un cambio de
+  precios que sí es real, porque leyó únicamente la página general de `pricing`; el dato vivía en la
+  página dedicada a mensajes no-plantilla. La corrección — y la trampa metodológica que la causó —
+  está en §2.5. Verificar tampoco es leer una sola página.
 - **Vendors, verticales LATAM y dolores de operadores**: fuentes secundarias (docs de producto,
   G2/Capterra/Trustpilot, Hacker News). Son contexto, no decisiones, y se marcan como tales.
 
@@ -107,36 +109,70 @@ decir, **deduplicación garantizada por la base de datos**.
 
 ## 2.5 Política de Meta y economía de mensajería (verificado 2026-08-24)
 
-Fuente primaria: `developers.facebook.com/documentation/business-messaging/whatsapp/pricing` y
-páginas hermanas (`messaging-limits`, `getting-opt-in`). Lo que viene de BSPs/terceros se marca.
+Fuentes primarias: `developers.facebook.com/documentation/business-messaging/whatsapp/pricing`,
+`developers.facebook.com/documentation/business-messaging/whatsapp/pricing/non-template-messages`
+y páginas hermanas (`messaging-limits`, `getting-opt-in`). Lo que viene de BSPs/terceros se marca.
+
+> **Trampa metodológica — léela antes de citar esta sección.** Las dos páginas de precios de Meta no
+> dicen lo mismo. La **general** (`/pricing`) seguía afirmando el 2026-08-24 que *"Utility templates
+> delivered within an open customer service window are free"* y **no menciona** el cambio del
+> 1-oct-2026. La **dedicada** (`/pricing/non-template-messages`) es la única que anuncia el cobro
+> por mensaje de los mensajes de servicio. Quien verifica solo la página principal concluye lo
+> contrario de lo que va a pasar — es exactamente lo que le pasó a la segunda pasada de este
+> documento.
 
 ### Tarifación — confirmado en doc oficial
 
 - **Por mensaje desde el 1-jul-2025** ("Effective July 1, 2025, Meta charges on a per-message
   basis"). El modelo por conversación está **deprecado**.
-- Se cobra **solo la entrega de plantillas**, por categoría (MARKETING / UTILITY / AUTHENTICATION)
-  y país del destinatario.
-- **Gratis**: todo mensaje no-plantilla (conversaciones de servicio sin límite desde nov-2024 — el
-  doc oficial NO menciona tope mensual; el "1,000 gratis/mes" que circula en blogs no está en la
-  fuente), plantillas utility dentro de una ventana de servicio abierta, y todo mensaje dentro de
-  una **ventana de punto de entrada gratuito (FEP) de 72h** (click-to-WhatsApp ads).
+- **Hasta el 30-sep-2026** se cobra **solo la entrega de plantillas**, por categoría (MARKETING /
+  UTILITY / AUTHENTICATION) y país del destinatario. Desde el 1-oct-2026 se le suman los mensajes
+  de servicio (ver más abajo), así que esta frase tiene fecha de vencimiento.
+- **Gratis hoy, con fecha de caducidad ya anunciada.** No se cobran los mensajes no-plantilla
+  dentro de la ventana de servicio (sin límite desde nov-2024 — el doc oficial NO menciona tope
+  mensual; el "1,000 gratis/mes" que circula en blogs no está en la fuente) ni las plantillas
+  **utility** respondidas dentro de una ventana abierta (*"have not been charged since July 1,
+  2025"*). La tabla de Meta rotula los dos casos como **"Free until October 1, 2026"**.
+- **1-oct-2026: se acaba lo gratis dentro de la ventana.** Literal de Meta: *"Effective October 1,
+  2026, Meta will charge on a per-message basis for service messages"*. Aplica igual a las
+  plantillas de **utilidad** respondidas dentro de la ventana de 24h abierta. Meta publica esas
+  tarifas **a más tardar el 1-sep-2026**.
+- **Los mensajes de servicio no tienen tramos de volumen** (*"Meta does not offer volume tiers for
+  service messages"*); su tarifa por mercado equivale a la de utility/authentication. Su costo
+  escala lineal: sin descuento por volumen.
+- **La ventana FEP de 72h sigue sin costo de entrega** (click-to-WhatsApp ads). Ese hueco **no** se
+  cierra el 1-oct-2026.
+- **Meta Business Agent se cobra por token desde el 1-ago-2026.** No lo usamos; queda anotado para
+  que nadie lo presupueste con la tarifa por mensaje.
 - **Tiers de volumen** para utility/auth: a nivel portfolio, reinician cada mes; webhook
   `VOLUME_BASED_PRICING_TIER_UPDATE` disponible desde oct-2025.
 - Los rate cards se actualizan **por trimestre** (hasta 4 veces/año). Referencias de terceros
   (abr-2026): utility/auth desde ~$0.0008 (Colombia) hasta ~$0.055 (Alemania); marketing ~$0.0109
   (Turquía) a ~$0.1597 (Países Bajos). Consultar el rate card vigente de México antes de
   presupuestar — es dato, no constante.
-- **Afirmación refutada**: circulaba que la ventana de servicio gratuita "termina el 1-oct-2026 y
-  pasa a cobrarse por mensaje". **Falso** — la doc oficial solo anuncia para esa fecha la
+- **Corrección de lo que este documento había dado por refutado (revisado el 2026-08-24).** La
+  segunda pasada leyó que "la ventana de servicio gratuita termina el 1-oct-2026 y pasa a cobrarse
+  por mensaje" y la marcó **falsa**. **Ese veredicto estaba mal.** Se revisó contra la página
+  dedicada (`.../whatsapp/pricing/non-template-messages`) y ahí está, textual: *"Effective October
+  1, 2026, Meta will charge on a per-message basis for service messages"*, más las plantillas de
+  utilidad respondidas dentro de la ventana abierta. La refutación salió de haber leído solo la
+  página general de `pricing`, que a esta fecha sigue sin mencionar el cambio (ver la trampa
+  metodológica arriba). No fue un dato de terceros equivocado: fue una verificación incompleta.
+  Lo que **sí** era correcto de aquella nota y se conserva: el 1-oct-2026 entra **además** una
   reclasificación tarifaria de países (Bangladesh, Iraq, Nepal, Sri Lanka, Kazajistán, Kuwait,
-  Marruecos, Omán, Ucrania; tarifas finales a más tardar el 1-sep-2026). Ningún cobro de la ventana
-  ni de los mensajes de servicio.
+  Marruecos, Omán, Ucrania), con tarifas finales publicadas a más tardar el 1-sep-2026. Son dos
+  cambios distintos que caen el mismo día; el segundo no cancela al primero.
 
 ### Ventana de servicio de 24h (consistente en múltiples fuentes)
 
-Cada mensaje entrante del cliente **abre o reinicia** una ventana de 24h. Dentro: mensajes libres,
-gratis. Fuera: solo plantillas, cobradas según categoría. Un tap en un anuncio click-to-WhatsApp
-abre además la FEP de 72h, toda gratis.
+Cada mensaje entrante del cliente **abre o reinicia** una ventana de 24h. Dentro: mensajes libres
+—hoy sin costo, **cobrados uno por uno a partir del 1-oct-2026**—. Fuera: solo plantillas, cobradas
+según categoría. Un tap en un anuncio click-to-WhatsApp abre además la FEP de 72h, cuya entrega
+sigue sin costo después de esa fecha.
+
+El 1-oct-2026 cambia la **economía**, no la **mecánica**: la ventana seguirá diciendo qué se
+*puede* mandar; lo que dejará de decir es que sea gratis. La implementación de esa distinción está
+en §6.1 y §6.4.
 
 ### Plantillas: rechazo y pausado (fuentes de BSPs, consistentes entre sí)
 
@@ -260,21 +296,25 @@ dato que lo respalde. **Medir antes de construir.**
 
 ## 4. Roadmap
 
-| Fase | Tema | Contenido | Responsable propuesto |
-|---|---|---|---|
-| **1** | Medir y clasificar | Tiempos en `Ticket`, etiquetas, `Client` enriquecido | DBA Sr + FullStack Sr |
-| **2** | Economía de la mensajería | Ventana de 24h y costo | LLMOps + Backend |
-| **3** | Distribución del trabajo | Asignación automática + horario de atención | Backend + FullStack |
-| **4** | Integración y automatización | Webhooks salientes + motor de reglas | Backend + DevOps |
-| **5** | Crecimiento y analítica | Campañas + reportes/embudo | AI PM + FullStack |
-| **6** | Pulido | Importación, búsqueda global, Flows, vistas, equipos | FullStack + QA |
+| Fase | Tema | Contenido | Responsable propuesto | Estado |
+|---|---|---|---|---|
+| **1** | Medir y clasificar | Tiempos en `Ticket`, etiquetas, `Client` enriquecido | DBA Sr + FullStack Sr | **Implementada** (`cd738cf`) — spec en §5 |
+| **2** | Economía de la mensajería | Ventana de 24h y medidor de costo | LLMOps + Backend | **Implementada** — spec en §6 |
+| **3** | Distribución del trabajo | Asignación automática + horario de atención | Backend + FullStack | Pendiente |
+| **4** | Integración y automatización | Webhooks salientes + motor de reglas | Backend + DevOps | Pendiente |
+| **5** | Crecimiento y analítica | Campañas + reportes/embudo | AI PM + FullStack | Pendiente |
+| **6** | Pulido | Importación, búsqueda global, Flows, vistas, equipos | FullStack + QA | Pendiente |
 
 **La fase 1 va primero porque sin ella no se puede priorizar el resto con datos.** Hoy no sabemos
 cuánto tarda una primera respuesta ni qué categoría de trámite se atasca. Construir asignación
 automática antes de poder medirla es optimizar a ciegas.
 
 **La fase 2 antes de la 5** porque el envío saliente cuesta dinero y arriesga la calidad del número;
-abrir ese grifo sin medidor es imprudente.
+abrir ese grifo sin medidor es imprudente. Ya está implementada (§6) y conviene subrayar qué hizo:
+**puso el medidor, no abrió el grifo.** Enviar plantillas fuera de la ventana sigue sin existir en
+el código. El calendario le añadió urgencia: el 1-oct-2026 el saliente que hoy es gratis dentro de
+la ventana pasa a costar uno por uno (§2.5), y sin la fase 2 ese cambio habría llegado sin ninguna
+cifra con qué compararlo.
 
 ---
 
@@ -388,16 +428,264 @@ Al terminar, `/system` → "Sincronizar ahora" y comparar conteos SQLite vs MSSQ
 
 ---
 
-## 6. Fases 2-6: notas de encuadre (sin especificar todavía)
+## 6. Especificación de la Fase 2 — economía de la mensajería
 
-- **Fase 2 — ventana de 24h y costo. [DESBLOQUEADA — política verificada en §2.5.]** El modelo
-  cuenta **plantillas entregadas** por categoría y país; los mensajes libres son gratis dentro de la
-  ventana. Diseño: `last_inbound_at` en `Conversation` deriva la ventana (24h desde el último
-  entrante); un registro de plantillas enviadas con su categoría y costo estimado según el rate
-  card vigente (que cambia por trimestre — es dato, no constante). El dashboard le muestra al
-  agente si el chat está dentro de la ventana **antes** de escribir, porque de eso depende si el
-  mensaje necesita plantilla. Suscribirse a `message_template_status_update` (pausados/rechazos)
-  entra aquí o en la fase 5.
+> **Estado: implementada.** Esta sección documenta código que ya existe, no una propuesta. Objetivo
+> de la fase: saber **cuándo se puede escribir** y **cuánto costó lo escrito**, sin cambiar una sola
+> decisión de la máquina conversacional. El bot sigue sin fijar precios, validar documentos ni
+> cerrar trámites.
+
+### 6.1 `app/ventana.py` — una sola definición de la ventana de 24h
+
+Módulo nuevo, única fuente de verdad de "¿puedo escribirle a este número?":
+
+| Símbolo | Qué contesta |
+|---|---|
+| `WINDOW_HOURS` | 24. La constante deja de estar copiada en cada módulo |
+| `as_utc(dt)` | Normaliza `datetime` naive a UTC antes de restar |
+| `abierta(last_in_at)` | `bool` a partir de un instante ya conocido |
+| `horas_restantes(last_in_at)` | `float`, 0.0 si cerró o nunca existió |
+| `restante_texto(last_in_at)` | `«3 h 12 min»` / `«41 min»` / `«cerrada»`, para la UI |
+| `ultimo_entrante(session, phone)` | El último `Message` entrante de ese teléfono |
+| `abierta_para(session, phone)` | Atajo para quien solo quiere saber si puede escribir |
+
+**Por qué se DERIVA de `Message` y no hay columna `last_inbound_at`.** El encuadre original de esta
+fase (§7) proponía guardar `last_inbound_at` en `Conversation` y leer la ventana de ahí. Se
+descartó: es una copia desnormalizada de algo que la tabla `Message` ya contesta, y **una copia que
+se puede desincronizar es exactamente el bug que costó el arreglo del espejo en `61ea7c2`** — ahí
+los teléfonos crudos que la normalización local nunca le contó al espejo produjeron un conteo
+inflado que `/system` seguía llamando "al día". Una columna que se llena en un solo camino de
+escritura falla en silencio el día que aparece un segundo camino (un backfill, una importación, un
+canal nuevo). El `SELECT` al último entrante no puede mentir: si el mensaje existe, la ventana
+existe.
+
+El costo de derivarla es un `SELECT` indexado por pregunta. A este volumen no duele; si algún día
+duele, la salida es un índice o una caché de lectura, **no** una columna desnormalizada.
+
+**La ventana es del número, no del folio.** Dos folios del mismo cliente comparten una sola ventana.
+Y no cruza canales: cada cuenta —Meta y Twilio— tiene su propio número (`app/messaging.py`), así
+que contestar por el otro canal no la reabre.
+
+**Por qué el módulo existe.** La misma pregunta se hacía en cinco lugares con su propio `SELECT`
+copiado: bandeja, envío manual, aviso de cierre, aviso de soltado y los dos envíos de cobranza. Un
+cambio de criterio tenía que acertarle a los cinco. Ya migrados a este módulo: `app/inbox.py`,
+`app/my.py`, `app/dashboard.py` y `app/cobranza_panel.py`.
+
+### 6.2 Las tres columnas de `Message` y la regla de fusión del webhook
+
+| Columna | Tipo | Qué guarda |
+|---|---|---|
+| `pricing_category` | `str \| None` | `utility`, `marketing`, `authentication`, `authentication-international`, `marketing_lite`, `referral_conversion`, `service` |
+| `pricing_type` | `str \| None` | `regular` (**se cobra**), `free_customer_service`, `free_entry_point` |
+| `pricing_billable` | `bool \| None` | Bandera que Meta va a deprecar. El veredicto vive en `pricing_type`; esta se guarda mientras la manden, para poder contrastar |
+
+Migración a mano, como manda la casa: las tres entran en
+`_MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH` de `app/db.py`, que aplica `_add_missing_columns()` dentro de
+`init_db()`. **Nullable y sin `DEFAULT` a propósito** — ver §6.6.
+
+**Quién las llena:** `app/webhook.py::_apply_status`, que copia el objeto `pricing` del webhook de
+estado de Meta. `_process_status` se lo pasa entero y sin interpretar: qué se cobra lo decide Meta,
+no este código.
+
+**La regla de fusión, que es lo delicado.** `pricing` **no viene en todos los estados**: viaja en el
+status `sent` y en **uno** de `delivered`/`read`, nunca en los tres. Por eso `_apply_status` **fusiona
+en vez de asignar**:
+
+```python
+if pricing:
+    row.pricing_category = pricing.get("category") or row.pricing_category
+    row.pricing_type = pricing.get("type") or row.pricing_type
+    if pricing.get("billable") is not None:
+        row.pricing_billable = bool(pricing["billable"])
+```
+
+Si asignara directo, el status que llegue después **sin** `pricing` pisaría con `NULL` lo que ya
+había guardado el `sent`, y el medidor contaría como "sin dato" un mensaje que Meta sí cobró. El
+reporte saldría más barato que la factura, que es la peor dirección posible del error.
+
+Cuando llega un estado cuyo `wa_message_id` no empareja con ninguna fila local, ya no se sale en
+silencio: se registra en log. Ese hueco es real y se cuenta (§6.7).
+
+### 6.3 El espejo MSSQL: qué se tocó, y por qué `sync_wa_message` es la línea crítica
+
+Aquí **no aplica** la regla de las cinco places del `CLAUDE.md`: esa es para tablas nuevas.
+`wa_messages` ya existía y ya estaba en `MIRROR_TABLES`, así que `app/system.py` no se tocó. Lo que
+hubo fue un cambio de **columnas**, en cinco puntos:
+
+1. `_MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH` en `app/db.py` — SQLite.
+2. `_SCHEMA_DDL` en `app/archive.py` — el `CREATE TABLE` para instalaciones nuevas.
+3. `_COLUMNS_ADDED_AFTER_LAUNCH["wa_messages"]` en `app/archive.py` — el `ALTER TABLE` para la
+   instalación ya desplegada. Sin este paso, el punto 2 solo sirve en una base vacía.
+4. `archive_wa_message()` — las tres columnas en el `INSERT`.
+5. `sync_wa_message()` — las tres columnas en el `UPDATE`. **Esta es la que carga el peso.**
+
+**Por qué el punto 5 no es simetría cosmética.** El precio **nunca** llega en el `INSERT`: cuando la
+fila se crea, el mensaje todavía ni se ha enviado (aún no tiene `wa_message_id`). El veredicto de
+cobro llega después, en un webhook de estado, es decir **siempre por `UPDATE`**. Sin esa línea el
+espejo mostraría `NULL` para siempre mientras SQLite tiene la cifra — y los conteos por tabla de
+`/system` seguirían diciendo "al día", porque cuentan **filas**, no columnas. Divergencia invisible:
+el modo de falla de `61ea7c2` otra vez, en otra tabla.
+
+### 6.4 `app/medidor.py` — contar lo que Meta dijo, no deducirlo
+
+| Símbolo | Qué hace |
+|---|---|
+| `RATE_CARD` | El JSON crudo de `app/rate_card.json` |
+| `TIPO_COBRABLE` | `"regular"` — el único `pricing_type` que se cobra |
+| `tarjeta_vigente(cuando)` | La tarjeta que aplicaba **ese día** |
+| `tarifa(categoria, cuando)` | USD por mensaje. `None` = **sin dato**, que no es gratis |
+| `resumen(session, desde, hasta)` | Totales del periodo: `salientes`, `con_veredicto`, `sin_dato`, `cobrables`, `gratis`, `por_categoria`, `costo_usd`, `costo_incompleto`, `categorias_sin_tarifa`, `costo_parcial`, `cobertura`, `estimable`, `rate_card`, `rate_cards`, `rate_card_multiple`, `moneda` |
+| `serie_diaria(session, desde, hasta)` | Un punto por día: `salientes`, `cobrables`, `sin_dato`. Sale del MISMO recuento que `resumen()` |
+| `_sin_veredicto(pricing_type)` | La única definición de «Meta no ha dicho nada»: `pricing_type is None` |
+
+Dos principios sostienen el módulo:
+
+1. **No se adivina lo que Meta ya dijo.** El veredicto se copia y aquí solo se cuenta.
+2. **Un total que se lee completo sin estarlo es peor que no tenerlo.** Por eso todo resumen trae
+   `sin_dato` al lado, y **dos banderas distintas** para los dos motivos por los que el total puede
+   quedarse corto, que no se pueden confundir:
+   - `costo_incompleto` — salió algo cobrable de una categoría **sin tarifa** en el rate card. Suma
+     a `sin_tarifa` en vez de sumar `0`: sumar cero hace que el total parezca barato justo cuando
+     aparece una categoría nueva.
+   - `costo_parcial` — hay salientes **sin veredicto** de Meta. Este es hoy el caso normal (todo lo
+     anterior al despliegue tiene `pricing` en `NULL`), y antes no encendía ninguna bandera: el
+     panel enseñaba un total corto sin una sola advertencia. Va con `cobertura` (qué fracción de
+     los salientes trae veredicto) y con `estimable`, que separa «costó cero» de «no se sabe».
+
+   El veredicto es el **tipo**, no la categoría: `_sin_veredicto()` es una sola función compartida
+   por `resumen()` y `serie_diaria()`. Cuando la definición vivía duplicada, una fila con categoría
+   pero sin tipo caía de lados opuestos —la tabla la contaba como «gratis», la gráfica como «sin
+   dato»— y el panel se desmentía a sí mismo.
+
+Detalles de diseño que se sostienen solos: `_conteos()` hace un `GROUP BY` en un round-trip en vez
+de traerse decenas de miles de filas; `tarjeta_vigente()` elige **por fecha de entrega** y no "la
+última", porque corregir una tarifa de hoy no debe reescribir lo que costó el trimestre pasado.
+
+**Por qué el 1-oct-2026 no exige tocar CÓDIGO — y sí tocar DATO.** El medidor no codifica en ninguna
+parte "libre = gratis": pregunta `pricing_type == 'regular'`. Ese día Meta empezará a mandar
+`type='regular'` donde hoy manda `free_customer_service`, y el conteo de cobrables sube solo. Eso es
+todo lo que el código necesita.
+
+Lo que sí hay que actualizar es el **dato**: la tarjeta con `vigencia_desde: 2026-10-01` de
+`app/rate_card.json` trae hoy `"service": null` y `confianza: "pendiente_de_publicacion"`. Mientras
+siga así, a partir de esa fecha los mensajes de servicio se contarán **como cobrables sin tarifa**:
+entran en `sin_tarifa`, `costo_incompleto` queda en `true` y el reporte lo declara en vez de dar un
+total falsamente bajo. Es el comportamiento correcto, pero no es "no hay que hacer nada" — ver §6.5.
+
+### 6.5 El rate card como dato, y lo que el operador tiene que confirmar
+
+Las tarifas viven en `app/rate_card.json`, no en constantes de Python: Meta puede actualizarlas el
+primer día de cada trimestre, hasta cuatro veces al año. Cada tarjeta declara `vigencia_desde`,
+`pais`, `fuente` y **`confianza`**.
+
+**Hoy `confianza` vale `referencia_sin_confirmar`, y eso hay que leerlo literal: las cifras de
+México NO están confirmadas.** Vienen de recopilaciones de BSPs, no del rate card de esta cuenta —
+un proveedor consultado publicaba tarifas de India bajo un encabezado de México, y otro seguía
+presentándolas "por conversación", un modelo deprecado desde jul-2025. El rate card real se lee en
+**WhatsApp Manager** (configuración de la cuenta → facturación / insights). Mientras `confianza` no
+diga lo contrario, todo peso se rotula estimado y se dice de dónde salió: igual que el bot nunca le
+fija un precio final al cliente, el panel no presenta un costo estimado como si fuera factura.
+
+**Acciones del operador, con fecha:**
+
+1. **Antes de usar cualquier cifra de costo como presupuesto (sin fecha límite, pero es
+   prerrequisito):** abrir WhatsApp Manager, copiar el rate card real de MX para `marketing`,
+   `utility` y `authentication` a la tarjeta `vigencia_desde: 2025-07-01`, y cambiar `confianza` a
+   `confirmado_whatsapp_manager` anotando en `fuente` la fecha de lectura.
+2. **1-sep-2026 — fecha límite que Meta se puso a sí misma para publicar las tarifas de octubre:**
+   revisar qué publicó, incluida la de `service`, y llenar la tarjeta `vigencia_desde: 2026-10-01`.
+   Hasta ese día `service` se queda en `null` a propósito. Recordar que **`service` no tiene tramos
+   de volumen** (§2.5): el costo escala lineal con el saliente.
+3. **Cada inicio de trimestre:** revisar si Meta movió el rate card. Cambiar una tarifa es editar el
+   JSON y desplegar; como el deploy es pull-based, el cambio queda con autor y fecha en git.
+
+`# ponytail:` anotado en el propio archivo: no hay grid de administración para las tarifas. Se
+agrega si empiezan a moverse más seguido que por trimestre.
+
+### 6.6 Retroactividad: `NULL` es un dato, no un hueco que rellenar
+
+Los mensajes anteriores al despliegue quedan en `NULL` en las tres columnas. **No se inventan
+valores** — ni desde el estado de entrega, ni desde "estaba dentro de la ventana, luego fue gratis".
+Es el mismo criterio que la fase 1 aplicó a `first_response_at` (§5.1): un `NULL` honesto vale más
+que una métrica falsa.
+
+De ahí que las columnas sean nullable **sin `DEFAULT`**: un `DEFAULT 'free_customer_service'` habría
+afirmado, sobre todo el histórico, algo que nadie verificó.
+
+Los reportes excluyen los `NULL` del cálculo **y los declaran**: `sin_dato` viaja al lado del total
+en `resumen()` y en cada punto de `serie_diaria()`. Sin ese denominador el reporte no se puede
+desmentir, que es exactamente la falla que tenía `/system` cuando llamaba "al día" a un espejo
+inflado.
+
+### 6.7 Límites conocidos
+
+Sin maquillar, porque cada uno cambia cómo se lee el número:
+
+- **Twilio no reporta precio.** Ese canal no manda nada equivalente a `pricing`, así que **todo** su
+  saliente queda en `sin_dato` para siempre. El costo de Twilio se lee en la consola de Twilio, no
+  aquí. Si el reparto entre canales cambia, `sin_dato` crece sin que nada esté roto.
+- **No existe `send_template`.** Fuera de la ventana hoy no se puede escribir **en absoluto**: ni
+  plantilla ni nada. Lo que el código hace al detectar la ventana cerrada es **no enviar** y
+  registrarlo (bandeja, avisos de cierre y de soltado, los dos envíos de cobranza).
+- **El emparejamiento de `wamid` es FIFO** (`app/webhook.py::_tag_sent_message`, marcado con
+  `# ponytail:`): el estado se pega a la fila saliente sin taggear más vieja de ese teléfono y ese
+  proveedor. Con envíos concurrentes al mismo número puede cruzar ids, y un status que no encuentra
+  fila se registra y se descarta. Esos mensajes quedan **sin veredicto** y engordan `sin_dato` — que
+  es justamente la razón de que ese contador exista.
+- **El lector del medidor es la sección «Mensajería y costo» de `/activity`** (`app/activity.py` +
+  `templates/activity.html`). La gráfica es **SVG generado en el servidor**, sin librerías JS, como
+  el resto del panel. Muestra salientes, cobrables, gratis y `sin dato de cobro` con el mismo peso;
+  el costo solo aparece como cifra cuando hay al menos un veredicto —si no, dice «no estimable» en
+  vez de un `$0.00` que afirmaría que costó cero—, y va acompañado de la vigencia, el país y la
+  confianza declarada del rate card.
+- **Cobertura de pruebas:** `tests/test_fase2_medidor.py` cubre la fase; `tests/test_archive.py`
+  lleva las tres columnas en el esquema falso de MSSQL. Entre lo cubierto:
+  - `abierta()` en el borde exacto de las 24 h, y con `datetime` naive frente a uno con zona.
+  - `restante_texto()` en sus cuatro formas (`h + min`, solo `h`, solo `min`, `cerrada`).
+  - La fusión de `pricing` en sus tres variantes: un `read` **sin** la llave, un `pricing` **vacío**
+    y un `pricing` **parcial** (con `billable` pero sin `category` ni `type`). La tercera es la que
+    de verdad ejercita la fusión campo por campo: sin ella, quitar los `or row.pricing_*` dejaba la
+    suite entera en verde.
+  - `resumen()`: un cobrable sin tarifa suma a `sin_tarifa` y prende `costo_incompleto`, no suma 0.
+  - `tarjeta_vigente()` elige por fecha de entrega y no por «la última cargada».
+  - Un saliente sin veredicto cae en `sin_dato`, y `sin_dato` cuadra entre el resumen y la gráfica.
+  - Un `service` con tipo `regular` —lo que Meta mandará desde el 1-oct-2026— sale cobrable sin
+    tocar código.
+
+### 6.8 Qué desbloquea y qué NO
+
+**Desbloquea:**
+
+- Saber, **antes** de escribir, si el chat admite un mensaje libre. Ya está en uso en bandeja, `/my`,
+  dashboard y panel de cobranza, con una sola definición detrás.
+- Contar el saliente cobrable por categoría y periodo, con su hueco declarado al lado.
+- Llegar al 1-oct-2026 con **línea base**: cuánto saliente de servicio hay hoy por día es justamente
+  lo que ese día empieza a costar. `serie_diaria()` da esa curva desde el momento en que se desplegó.
+- La fase 5 (campañas), cuyo prerrequisito de costo era esta fase.
+
+**NO desbloquea:**
+
+- **Escribir fuera de la ventana.** Sigue faltando `send_template`: catálogo de plantillas aprobadas,
+  envío con parámetros, registro de qué plantilla se usó en cada mensaje, y suscripción a
+  `message_template_status_update` para enterarse de pausados y rechazos (§2.5).
+- **Presupuestar.** Mientras `confianza` diga `referencia_sin_confirmar`, la cifra en dólares es una
+  referencia, no un número para meter en un presupuesto (§6.5).
+- **Leer nada en pantalla.** No hay panel todavía (§6.7).
+
+**La fase 2 puso el medidor; no abrió el grifo.** Es deliberado: medir primero es lo que permite
+decidir con datos si el grifo se abre.
+
+---
+
+## 7. Fases 3-6: notas de encuadre (sin especificar todavía)
+
+> **Fase 2 — ventana de 24h y costo: IMPLEMENTADA. La especificación está en §6.** Del encuadre
+> original de esta fase se descartaron dos cosas y conviene que quede escrito por qué: (a) la
+> columna `last_inbound_at` en `Conversation` — la ventana se deriva de `Message` (§6.1); (b) el
+> supuesto de que "los mensajes libres son gratis dentro de la ventana", que dejará de ser cierto el
+> 1-oct-2026 (§2.5). Lo que queda pendiente de aquel encuadre es el envío de plantillas fuera de la
+> ventana y la suscripción a `message_template_status_update`, que se mueven a la fase 5.
+
 - **Fase 3 — asignación y horario.** `assignment_policy` mínima: round-robin entre agentes activos
   con tope de carga. `working_hour` por día de la semana. Fuera de horario el bot debe decirlo, no
   callar. **Asignación pegajosa**: un cliente que regresa cae con su último agente — su ausencia es
@@ -414,18 +702,32 @@ Al terminar, `/system` → "Sincronizar ahora" y comparar conteos SQLite vs MSSQ
   solos usando ≥50% del límite con calidad alta, y un blast frío dispara bloqueos que degradan el
   número (el quality rating gatea todo). Hoy solo dos plantillas UTILITY en uso (`cobro_exitoso`,
   `cobro_rechazado`).
+  **Ojo con la aritmética de costo a partir del 1-oct-2026 (§2.5):** una campaña ya no cuesta solo
+  la plantilla MARKETING. Cada persona que responde abre una ventana de servicio, y desde esa fecha
+  **cada mensaje de servicio dentro de la ventana se cobra**, sin tramos de volumen. El costo real
+  de una campaña es la plantilla **más la conversación que provoca** — y esa conversación la
+  atiende un humano, así que escala con la tasa de respuesta, no con el presupuesto. Antes de
+  planear la primera campaña, medir con `medidor.resumen()` cuántos mensajes de servicio consume
+  hoy una conversación promedio (§6). Además, esta fase absorbe lo que quedó pendiente de la fase 2:
+  `send_template` y la suscripción a `message_template_status_update`.
 - **Fase 6 — pulido.** Nada aquí bloquea a nadie; entra cuando haya hueco.
 
 ---
 
-## 7. Cómo seguir
+## 8. Cómo seguir
 
 1. ~~Completar la investigación pendiente~~ **Hecho (2026-08-24, §2.5-2.6).** Único hueco
    restante: Reddit, bloqueado a nivel de plataforma de forma permanente; se sustituyó con Hacker
    News y reseñas verificadas.
-2. **Revisar la fase 1 con los agentes responsables**: `DBA Sr` (columnas y las 5 places),
-   `FullStack Developer Sr` (rutas, templates, SVG), `QA Engineer Sr` (batería de pruebas),
-   `AI Product Manager` (validar la priorización contra el negocio).
-3. **Decidir el alcance de la fase 1**: las tres piezas (tiempos, etiquetas, cliente) son
-   independientes y se pueden partir en tres PRs. Los tiempos son el de mayor retorno por línea
-   escrita.
+2. ~~Revisar y decidir el alcance de la fase 1~~ **Hecho — fase 1 implementada (`cd738cf`), spec en
+   §5.**
+3. ~~Fase 2~~ **Implementada, spec en §6.** Lo que queda de ella no es código sino dato y cobertura:
+   - **Confirmar el rate card real** de MX en WhatsApp Manager y subir `confianza` (§6.5, acción 1).
+     Hasta entonces ninguna cifra en dólares sirve para presupuestar.
+   - **Anotar el 1-sep-2026 en el calendario**: es la fecha límite que Meta se puso para publicar las
+     tarifas que entran el 1-oct-2026, incluida la de `service` (§6.5, acción 2).
+   - **Vigilar la cobertura del medidor**: hoy los salientes de Twilio y los que pierden el
+     emparejamiento de `wamid` quedan sin veredicto y engordan `sin dato de cobro`. Si esa fracción
+     no baja, el total estimado seguirá siendo parcial y el panel lo dirá (§6.7).
+4. **Siguiente fase a especificar: la 3** (asignación y horario). Es la que la fase 1 ya dejó
+   medible.

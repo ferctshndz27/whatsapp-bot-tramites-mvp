@@ -113,6 +113,25 @@ class Message(SQLModel, table=True):
         default=PROVIDER_META,
         sa_column_kwargs={"server_default": text(f"'{PROVIDER_META}'")},
     )
+    # Lo que Meta dice que cobró por este mensaje. NO se calcula aquí: se copia
+    # tal cual del webhook de estado (`pricing` viene en el status `sent` y en
+    # UNO de delivered/read, nunca en los dos). NULL = todavía no llegó, o el
+    # canal no lo reporta —Twilio no manda nada de esto—, y ese NULL es el
+    # denominador honesto del medidor: sin él, «no cobrado» y «no sabemos» se
+    # confunden y el reporte sale bajo.
+    #
+    # Copiar en vez de deducir es lo que hace que el 1-oct-2026 no requiera
+    # tocar código: ese día los mensajes de servicio y las plantillas de
+    # utilidad dentro de la ventana dejan de ser gratis, y Meta empezará a
+    # mandar type='regular' donde hoy manda 'free_customer_service'.
+    # utility | marketing | authentication | authentication-international
+    # | marketing_lite | referral_conversion | service
+    pricing_category: str | None = None
+    # regular (se cobra) | free_customer_service | free_entry_point
+    pricing_type: str | None = None
+    # Meta lo va a deprecar; el veredicto vive en pricing_type. Se guarda
+    # mientras lo mande para poder contrastar.
+    pricing_billable: bool | None = None
 
 
 class Ticket(SQLModel, table=True):

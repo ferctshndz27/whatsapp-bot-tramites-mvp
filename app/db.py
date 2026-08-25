@@ -39,6 +39,12 @@ _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     # que es la única que hubo hasta ahora. Ponerlo NULL dejaría el histórico sin
     # canal y los reportes por cuenta saldrían mal para siempre.
     "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
+    # Medidor de mensajería (fase 2). Nullable SIN default a propósito: el
+    # histórico previo no tiene veredicto de cobro de Meta y NULL lo dice; un
+    # DEFAULT inventaría que esos mensajes fueron gratis.
+    "pricing_category": "VARCHAR",
+    "pricing_type": "VARCHAR",
+    "pricing_billable": "BOOLEAN",
 }
 _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH = {
     "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
