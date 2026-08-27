@@ -1,0 +1,83 @@
+{
+  "_leeme": [
+    "Horario de atención HUMANA. El bot sigue triando fuera de horario: esto solo",
+    "cambia lo que se le PROMETE al cliente sobre cuándo lo ve una persona.",
+    "",
+    "FUENTE: el párrafo del corpus del RAG que el operador mantiene en /agente —",
+    "«lunes a viernes de 08:00 am a 07:50 pm y sábados de 09:00am a 06:pm. Los",
+    "domingos y días festivos no hay atención». Los dos tienen que decir lo mismo:",
+    "si editas uno, edita el otro (ver docs/ANALISIS-BRECHAS-ERP-CRM.md §7.1).",
+    "",
+    "Los rangos son [abre, cierra) en hora de CDMX, 24 h. Varios por día si se",
+    "cierra a comer: [[\"09:00\",\"14:00\"],[\"15:00\",\"18:00\"]]. Lista vacía = cerrado.",
+    "Las llaves de semana son 0=lunes … 6=domingo (datetime.weekday()).",
+    "",
+    "`excepciones`: fecha ISO -> rangos de ESE día; lista vacía = cerrado. Manda",
+    "sobre `semana`. Los cargados son los días de descanso obligatorio de la LFT",
+    "(art. 74) — el corpus dice «días festivos» sin enumerarlos, así que ESTA lista",
+    "es la que manda para el bot. REVÍSALA: quita los que sí trabajen y agrega los",
+    "suyos propios (puentes, vacaciones, inventario).",
+    "",
+    "Cambiar esto = editar el archivo y desplegar; el cambio queda con autor y",
+    "fecha en git. ponytail: sin pantalla de administración. Sube a tabla de",
+    "SQLite con grid el día que haya que cambiarlo sin desplegar."
+  ],
+  "semana": {
+    "0": [
+      [
+        "08:00",
+        "19:50"
+      ]
+    ],
+    "1": [
+      [
+        "08:00",
+        "19:50"
+      ]
+    ],
+    "2": [
+      [
+        "08:00",
+        "19:50"
+      ]
+    ],
+    "3": [
+      [
+        "08:00",
+        "19:50"
+      ]
+    ],
+    "4": [
+      [
+        "08:00",
+        "19:50"
+      ]
+    ],
+    "5": [
+      [
+        "09:00",
+        "18:00"
+      ]
+    ],
+    "6": []
+  },
+  "excepciones": {
+    "2026-09-16": [],
+    "2026-11-16": [],
+    "2026-12-25": [],
+    "2027-01-01": [],
+    "2027-02-01": [],
+    "2027-03-15": [],
+    "2027-05-01": [],
+    "2027-09-16": [],
+    "2027-11-15": [],
+    "2027-12-25": [],
+    "2028-01-01": [],
+    "2028-02-07": [],
+    "2028-03-20": [],
+    "2028-05-01": [],
+    "2028-09-16": [],
+    "2028-11-20": [],
+    "2028-12-25": []
+  }
+}

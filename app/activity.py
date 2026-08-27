@@ -306,6 +306,32 @@ def _rango_utc(start: date, end: date) -> tuple[datetime, datetime]:
     )
 
 
+def carga_abierta(session) -> dict[str | None, int]:
+    """Folios VIVOS por asesor. La clave `None` es el trabajo sin dueño.
+
+    «Vivo» = no cerrado y no oculto. No mide esfuerzo ni antigüedad: cuenta
+    cabezas de folio, que es lo que un tope de carga puede limitar.
+
+    Existe porque hoy nadie puede ver dónde está parado el trabajo: el panel
+    solo sabe contar los folios SIN asignar (dashboard.py), y en cuanto la
+    fase 3b empiece a repartir automáticamente, «sin asignar» deja de ser el
+    pendiente y pasa a ser solo el desbordamiento. Repartir sin poder ver el
+    reparto es exactamente el punto ciego que esta función tapa.
+
+    Un asesor sin folios vivos NO aparece en el resultado: quien la use para
+    pintar una tabla debe partir de la lista de usuarios, no de estas llaves.
+    """
+    filas = session.exec(
+        select(Ticket.assigned_to, func.count(Ticket.id))
+        .where(
+            Ticket.status != TicketStatus.CERRADO,
+            Ticket.habilitado == True,  # noqa: E712
+        )
+        .group_by(Ticket.assigned_to)
+    ).all()
+    return {asesor: n for asesor, n in filas}
+
+
 def _aviso_cobro_servicio(hoy: date) -> dict:
     """El aviso fechado del 1-oct-2026, con los días que faltan.
 
@@ -606,18 +632,37 @@ def activity_view(
         mensajeria = None
         pr_chart = None
         pr_dias_con_dato = 0
+        # La carga del equipo es admin-only, igual que el resto de las métricas
+        # de equipo; un asesor no ve la bandeja de los demás.
+        sin_asignar = 0
+        sin_quien = 0
         if admin:
             usernames = [u.username for u in session.exec(select(User)).all()]
             fb = feedback_counts(session)
+            carga = carga_abierta(session)
+            # Un asesor deshabilitado no puede entrar (dashboard rechaza su
+            # login), así que sus folios vivos no los va a mover nadie. Contarlos
+            # como «cubiertos» es exactamente el bug del espejo que se declaraba
+            # al día: trabajo huérfano presentado como atendido.
+            inhabilitados = {
+                u.username for u in session.exec(select(User)).all() if not u.habilitado
+            }
+            sin_quien = sum(n for a, n in carga.items() if a in inhabilitados)
             team = [
                 {
                     "username": name,
                     **counts.get(name, {"day": 0, "week": 0, "month": 0, "total": 0}),
                     "fb_up": fb.get(name, {}).get("up", 0),
                     "fb_down": fb.get(name, {}).get("down", 0),
+                    # Lo único de esta tabla que mira el PRESENTE: las demás
+                    # columnas cuentan cierres pasados. Sin esto no se puede ver
+                    # quién está saturado ahora, que es lo que un tope limita.
+                    "abiertos": carga.get(name, 0),
+                    "inhabilitado": name in inhabilitados,
                 }
                 for name in sorted(usernames)
             ]
+            sin_asignar = carga.get(None, 0)
             # Métricas de operación (fase 1) — vista de equipo, solo admin.
             operacion = operacion_stats(session)
             # Mensajería y costo: mismo rango que la gráfica de despachos, misma
@@ -645,6 +690,8 @@ def activity_view(
                 for a in recent
             ],
             "team": team,
+            "sin_asignar": sin_asignar,
+            "sin_quien": sin_quien,
             "chart": chart,
             "chart_max": max((d["total"] for d in chart), default=0) or 1,
             "chart_total": sum(d["total"] for d in chart),

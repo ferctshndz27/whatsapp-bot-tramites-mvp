@@ -5,7 +5,7 @@ from datetime import timedelta, timezone
 
 from sqlmodel import Session, select
 
-from app import agent_tools, codigos, nlu, rag
+from app import agent_tools, codigos, horario, nlu, rag
 from app.catalog import (
     PAGE_SIZE,
     catalog,
@@ -181,6 +181,31 @@ REQ_PREGUNTA = (
     "¿Me lo compartes? Si no lo tienes a la mano, escribe *omitir*."
 )
 REQ_CIERRE = "¡Gracias! 🙌 Ya guardé tus datos. " + TICKET_ALTA_CIERRE
+
+
+def _cierre_atencion(dentro: str) -> str:
+    """El cierre que corresponde a la hora, para un texto que PROMETE tiempo.
+
+    Los textos de arriba prometen «en breve», que a las 2 de la mañana de un
+    domingo es falso. Fuera de horario el aviso **sustituye** esa promesa en vez
+    de acompañarla: «en breve le resolvemos. Ahorita estamos fuera de horario»
+    se contradice a sí mismo dentro de la misma línea.
+
+    El bot NO deja de trabajar fuera de horario —el folio se abre igual—; lo que
+    cambia es lo que se promete. La queja real nunca fue que nadie contestara de
+    madrugada, sino que nadie lo dijera.
+    """
+    return horario.aviso() or dentro
+
+
+def _con_horario(texto: str) -> str:
+    """Agrega el aviso a un texto que NO promete tiempo (uno propio del flujo).
+
+    Aquí sí se acompaña en vez de sustituir: el texto trae información que se
+    perdería. Dentro de horario no agrega nada.
+    """
+    aviso = horario.aviso()
+    return f"{texto} {aviso}" if aviso else texto
 # Cuando el cliente mandó los códigos en el mismo mensaje del trámite, el
 # agente NO se los vuelve a pedir — pero sí avisa que los tomó.
 REQ_YA_CAPTURADO = "📎 Ya tomé los datos que me compartiste."
@@ -289,7 +314,11 @@ def handle_incoming(
                     # se re-crea la solicitud para que el panel la muestre.
                     replies = _escalate(session, client, conv, text, reply=ESCALATED_WAIT_REPLY)
                 else:
-                    replies = [ESCALATED_WAIT_REPLY]
+                    # Ruta de MAYOR frecuencia de todo el flujo: cada mensaje de
+                    # seguimiento de un cliente ya escalado cae aquí. Sin el
+                    # aviso, es donde más veces se prometería atención inmediata
+                    # a las 3 de la mañana.
+                    replies = [_con_horario(ESCALATED_WAIT_REPLY)]
     else:
         normalized = text.strip().lower()
         # Captura caducada (CAPTURE_TTL_HOURS sin respuesta): este mensaje ya
@@ -729,13 +758,12 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         if len(tickets) == 1:
             alta = (
                 f"¡Listo! ✅ Registré tu solicitud de '{tickets[0].service_name}' "
-                f"(folio #{tickets[0].id}). {TICKET_ALTA_CIERRE}"
+                f"(folio #{tickets[0].id}). {_cierre_atencion(TICKET_ALTA_CIERRE)}"
             )
         else:
             lines = "\n".join(f"• '{t.service_name}' — folio #{t.id}" for t in tickets)
-            cierre = TICKET_ALTA_CIERRE_MULTI if cola else (
-                TICKET_ALTA_CIERRE_MULTI + " ¿Otro trámite? Escribe *menu*."
-            )
+            multi = _cierre_atencion(TICKET_ALTA_CIERRE_MULTI)
+            cierre = multi if cola else (multi + " ¿Otro trámite? Escribe *menu*.")
             alta = f"¡Listo! ✅ Registré tus {len(tickets)} solicitudes:\n{lines}\n{cierre}"
 
         if prellenado:
@@ -869,7 +897,7 @@ def _handle_requisitos(session: Session, client: Client, conv: Conversation, tex
     pregunta_vigente, cola = _siguiente_pregunta(session, cola_original)
     if pregunta_vigente is None:
         _set_state(session, conv, "menu_categoria")
-        return [REQ_CIERRE]
+        return ["¡Gracias! 🙌 Ya guardé tus datos. " + _cierre_atencion(TICKET_ALTA_CIERRE)]
     if cola != cola_original:
         # La pregunta que el cliente contestó ya no existe (el asesor eliminó o
         # cerró ese folio a media captura): su respuesta no es de nadie, así
@@ -894,7 +922,7 @@ def _handle_requisitos(session: Session, client: Client, conv: Conversation, tex
     pregunta, resto = _siguiente_pregunta(session, cola[1:])
     if pregunta is None:
         _set_state(session, conv, "menu_categoria")
-        return [REQ_CIERRE]
+        return ["¡Gracias! 🙌 Ya guardé tus datos. " + _cierre_atencion(TICKET_ALTA_CIERRE)]
     _marcar_pedido(session, resto)
     _set_state(session, conv, "pidiendo_requisitos", {"cola": resto})
     return [pregunta]
@@ -1391,7 +1419,10 @@ def _escalate(
         session.add(ticket)
 
     _set_state(session, conv, "escalado")
-    return [reply or "Un asesor te contactará en breve."]
+    if reply:
+        # Un `reply` propio trae información que se perdería al sustituirlo.
+        return [_con_horario(reply)]
+    return [_cierre_atencion("Un asesor te contactará en breve.")]
 
 
 def _bump_or_escalate(session: Session, client: Client, conv: Conversation, original_text: str, reprompt: str) -> list[str]:

@@ -504,9 +504,14 @@ def test_la_tabla_cubre_toda_ruta_con_guard_de_admin():
     is_admin/_admin_or_redirect y nadie le escribe su fila, esta prueba lo
     canta. Sin esto la tabla se queda congelada en las rutas de hoy.
     """
-    # Única ruta con guard propio deliberadamente fuera de la tabla: ahí
-    # is_admin filtra datos en vez de cerrar la puerta (tiene su prueba arriba).
-    fuera_de_tabla = {("GET", "/activity")}
+    # Rutas con guard propio deliberadamente fuera de la tabla: ahí is_admin
+    # AMPLÍA lo que se puede hacer en vez de cerrar la puerta, así que no son
+    # admin-only y no les toca fila.
+    #   - GET /activity: filtra datos (tiene su prueba arriba).
+    #   - POST /tickets/{id}/release: cualquiera suelta SU folio; un admin puede
+    #     además soltar el de otro, que es la única salida para los folios de un
+    #     colaborador deshabilitado (tiene su prueba en test_fase3_horario.py).
+    fuera_de_tabla = {("GET", "/activity"), ("POST", "/tickets/{ticket_id}/release")}
 
     cubiertas = {(r.metodo, _plantilla_de(r.metodo, r.path)) for r in RUTAS}
     assert None not in {p for _, p in cubiertas}, "hay filas cuyo path no existe en el router"

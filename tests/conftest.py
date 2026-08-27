@@ -45,6 +45,26 @@ def _nlu_sin_red(monkeypatch):
     monkeypatch.setattr(settings, "ollama_token", "")
 
 
+@pytest.fixture(autouse=True)
+def _horario_de_oficina(monkeypatch):
+    """Fija el reloj del negocio en lunes 10:00 (dentro de horario).
+
+    Desde la fase 3 el bot agrega un aviso a sus promesas de atención cuando
+    está cerrado (app/horario.py), así que sin fijar la hora el texto esperado
+    dependería del momento en que corra la suite — un test verde a mediodía y
+    rojo de madrugada, sin que nadie entienda por qué. Los tests del horario
+    sobrescriben esto con la hora que quieran probar.
+    """
+    from datetime import datetime
+
+    from app import horario
+    from app.templating import BUSINESS_TZ
+
+    monkeypatch.setattr(
+        horario, "ahora", lambda: datetime(2026, 8, 24, 10, 0, tzinfo=BUSINESS_TZ)
+    )
+
+
 @pytest.fixture()
 def session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})

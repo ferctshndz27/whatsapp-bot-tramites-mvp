@@ -426,18 +426,41 @@
 
 {% if team %}
 <div class="card">
-  <h2>Equipo — solicitudes despachadas</h2>
-  <div class="table-wrap">
+  <h2>Equipo — carga y solicitudes despachadas</h2>
+  {# «Abiertos» es la única columna del PRESENTE: las demás cuentan cierres ya
+     ocurridos. Es la que dice dónde está parado el trabajo ahora mismo. #}
+  <p class="msg-nota" id="nota-equipo">«Abiertos» son los folios vivos que cada quien trae
+    ahora mismo, sin importar cuándo se abrieron — ni cerrados ni ocultos. Es la única columna
+    del presente: «Hoy», «Semana», «Mes» y «Total» cuentan cierres ya ocurridos, incluidos los
+    de folios que después se eliminaron.
+    {% if sin_asignar %}Hay <strong>{{ sin_asignar }}</strong> folio{{ 's' if sin_asignar != 1 }}
+    vivo{{ 's' if sin_asignar != 1 }} <strong>sin asesor</strong>.{% else %}Ningún folio vivo
+    está sin asesor.{% endif %}
+    {% if sin_quien %}Además hay <strong>{{ sin_quien }}</strong> folio{{ 's' if sin_quien != 1 }}
+    vivo{{ 's' if sin_quien != 1 }} de <strong>colaboradores deshabilitados</strong>: no los puede
+    mover nadie, porque quien los tiene ya no puede entrar. Suéltalos desde el detalle del folio
+    para que vuelvan a la bandeja.{% endif %}</p>
+  <div class="table-wrap" tabindex="0" role="region"
+       aria-label="Carga y solicitudes despachadas por colaborador"
+       aria-describedby="nota-equipo">
     <table>
       <thead>
-        <tr><th>Colaborador</th><th>Hoy</th><th>Semana</th><th>Mes</th><th>Total</th>
-          <th title="Opiniones positivas de clientes">👍</th>
-          <th title="Opiniones negativas de clientes">👎</th><th></th></tr>
+        <tr><th scope="col">Colaborador</th>
+          <th scope="col">Abiertos</th>
+          <th scope="col">Hoy</th><th scope="col">Semana</th><th scope="col">Mes</th>
+          <th scope="col">Total</th>
+          <th scope="col"><span class="sr-only">Opiniones positivas de clientes</span>
+            <span aria-hidden="true">👍</span></th>
+          <th scope="col"><span class="sr-only">Opiniones negativas de clientes</span>
+            <span aria-hidden="true">👎</span></th>
+          <th scope="col"><span class="sr-only">Acciones</span></th></tr>
       </thead>
       <tbody>
         {% for m in team %}
         <tr {% if m.username == viewing %}style="background:#f0f7ff;"{% endif %}>
-          <td><strong>{{ m.username }}</strong></td>
+          <th scope="row">{{ m.username }}{% if m.inhabilitado %}
+            <span class="badge">deshabilitado</span>{% endif %}</th>
+          <td><strong>{{ m.abiertos }}</strong></td>
           <td>{{ m.day }}</td>
           <td>{{ m.week }}</td>
           <td>{{ m.month }}</td>
