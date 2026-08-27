@@ -13,6 +13,7 @@ from app.audit import log_admin
 from app.utils import ruta_interna
 from app.auth import is_admin
 from app.config import settings
+from app import asignacion
 from app.conversation import _latest_open_ticket, _log_message
 from app.db import get_session
 from app.media_store import MEDIA_NAME_RE, save_upload, verify_media_token
@@ -309,18 +310,32 @@ def _pause_bot(session, phone: str, user: str) -> None:
     agente IA se apaga solo — sin que el asesor tenga que ir al detalle del
     ticket. Regla: quien responde se queda el chat; si el ticket no tenía
     dueño se le asigna, para que nunca exista un chat con el agente apagado
-    y sin asesor responsable. Cada cambio queda en TicketActivity."""
+    y sin asesor responsable. Cada cambio queda en TicketActivity.
+
+    Desde la fase 3b el folio puede llegar aquí YA con dueño de reparto, y esa
+    regla habría muerto en silencio: la guarda `assigned_to is None` no se
+    cumpliría nunca, así que el trabajo de quien contesta se le acreditaría al
+    dueño de reparto en la tabla de equipo. Por eso el dueño cuenta como
+    provisional mientras el folio siga en NUEVO (`asignacion.provisional`):
+    contestar sigue siendo la forma de quedarse un chat, y en cuanto alguien
+    lo trabajó —NUEVO deja de serlo— el dueño ya no se mueve solo.
+    """
     conv = session.get(Conversation, phone)
     if conv and conv.state != "escalado":
         conv.state = "escalado"
         session.add(conv)
     ticket = _latest_open_ticket(session, phone)
     if ticket is not None:
-        if ticket.assigned_to is None:
+        if ticket.assigned_to is None or asignacion.provisional(ticket):
+            anterior = ticket.assigned_to
             ticket.assigned_to = user
             ticket.status = TicketStatus.TOMADO
             ticket.status_changed_at = utcnow()
-            session.add(TicketActivity(ticket_id=ticket.id, username=user, action="tomado"))
+            # Si le quitó el folio a un dueño de reparto, el histórico lo dice:
+            # un cambio de dueño sin nadie apareciendo haciéndolo es justo lo
+            # que vuelve inauditable la tabla de equipo.
+            accion = "tomado" if anterior in (None, user) else f"tomado-de:{anterior}"
+            session.add(TicketActivity(ticket_id=ticket.id, username=user, action=accion))
         if ticket.agent_active:
             ticket.agent_active = False
             session.add(

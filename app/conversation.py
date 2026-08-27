@@ -5,7 +5,7 @@ from datetime import timedelta, timezone
 
 from sqlmodel import Session, select
 
-from app import agent_tools, codigos, horario, nlu, rag
+from app import agent_tools, asignacion, codigos, horario, nlu, rag
 from app.catalog import (
     PAGE_SIZE,
     catalog,
@@ -155,11 +155,22 @@ ESCALATED_WAIT_REPLY = (
 )
 NO_TICKETS_REPLY = "Aún no tienes ninguna solicitud registrada. Escribe *servicios* para ver la lista."
 STATUS_LABELS = {
+    # Desde la fase 3b un folio puede nacer YA con asesor, así que «en espera
+    # de asignación» sería mentirle al cliente. El texto de NUEVO se elige
+    # según haya dueño o no (ver _etiqueta_estado); nunca se le dice al
+    # cliente QUIÉN lo lleva: eso es organización interna.
     TicketStatus.NUEVO: "recibido, en espera de asignación",
     TicketStatus.TOMADO: "en atención",
     TicketStatus.EN_PROCESO: "en proceso",
     TicketStatus.CERRADO: "completado ✅",
 }
+STATUS_NUEVO_ASIGNADO = "recibido, con asesor asignado"
+
+
+def _etiqueta_estado(ticket: Ticket) -> str:
+    if ticket.status == TicketStatus.NUEVO and ticket.assigned_to:
+        return STATUS_NUEVO_ASIGNADO
+    return STATUS_LABELS[ticket.status]
 STATUS_LIST_LIMIT = 5
 # Selección múltiple pura en un menú: "1 y 2", "1,3", "2 4", "1y2".
 _MULTI_PICK_RE = re.compile(r"\d+(?:(?:\s*(?:[,;+&]|y|e)\s*|\s+)\d+)+")
@@ -399,7 +410,7 @@ def _status_reply(session: Session, phone: str) -> str:
     ).all()
     if not tickets:
         return NO_TICKETS_REPLY
-    lines = "\n".join(f"• {t.service_name} (folio #{t.id}): {STATUS_LABELS[t.status]}" for t in tickets)
+    lines = "\n".join(f"• {t.service_name} (folio #{t.id}): {_etiqueta_estado(t)}" for t in tickets)
     return f"Estatus de tus solicitudes:\n{lines}"
 
 
@@ -721,6 +732,12 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         detectados = context.get("codigos") or {}
         tickets = []
         prellenado = False
+        # A quién le tocan (fase 3b). Se decide UNA vez para todo el mensaje:
+        # un cliente que pide tres trámites de un jalón es un cliente, no tres,
+        # y partirlo entre asesores es justo lo que la asignación pegajosa
+        # existe para evitar. Efecto secundario asumido: el tope de carga se
+        # sobrepasa por los folios extra de este mismo mensaje.
+        asesor, motivo_asignacion = asignacion.elegir(session, client.phone)
         for service in services:
             requisitos_json = requisitos_iniciales(service.requirements)
             con_codigos = _requisitos_con_codigos(requisitos_json, detectados)
@@ -733,6 +750,10 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
                 service_name=service.name,
                 price_info=service.price_info,
                 status=TicketStatus.NUEVO,
+                # Nace en NUEVO CON dueño: TOMADO significaría «alguien lo
+                # tiene», falso para un folio que nadie ha mirado, y
+                # corrompería el embudo de operacion_stats.
+                assigned_to=asesor,
                 # Los requisitos se congelan aquí: editar el catálogo después no
                 # reescribe lo que se le pidió a este cliente.
                 requirements_json=con_codigos,
@@ -744,6 +765,10 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         session.commit()
         for ticket in tickets:
             session.refresh(ticket)
+        # La bitácora va después del commit porque necesita el id del folio.
+        for ticket in tickets:
+            asignacion.bitacora(session, ticket, motivo_asignacion)
+        session.commit()
 
         # Cola plana de preguntas: [[folio, índice del requisito], …] en orden
         # de folio. Vacía = ningún servicio tiene requisitos pendientes → flujo
@@ -1400,10 +1425,12 @@ def _escalate(
 ) -> list[str]:
     open_ticket = _latest_open_ticket(session, client.phone)
 
+    ticket = None
     if open_ticket is not None:
         open_ticket.escalado = True
         session.add(open_ticket)
     else:
+        asesor, motivo_asignacion = asignacion.elegir(session, client.phone)
         ticket = Ticket(
             phone=client.phone,
             client_name=client.name,
@@ -1412,6 +1439,7 @@ def _escalate(
             service_name="Escalado a asesor",
             price_info="N/A",
             status=TicketStatus.NUEVO,
+            assigned_to=asesor,
             escalado=True,
             notes=f"Cliente pidió hablar con un asesor. Último mensaje: {original_text[:MAX_NOTE_TEXT]}",
             provider=conv.provider,
@@ -1419,6 +1447,11 @@ def _escalate(
         session.add(ticket)
 
     _set_state(session, conv, "escalado")
+    if ticket is not None:
+        # _set_state ya commiteó, así que el folio tiene id.
+        session.refresh(ticket)
+        asignacion.bitacora(session, ticket, motivo_asignacion)
+        session.commit()
     if reply:
         # Un `reply` propio trae información que se perdería al sustituirlo.
         return [_con_horario(reply)]

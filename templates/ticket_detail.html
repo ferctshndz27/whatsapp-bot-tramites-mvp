@@ -266,9 +266,16 @@
 {% endif %}
 {% else %}
 <div class="card">
+  {% if asignacion_provisional %}
+  <p class="empty" style="text-align:left; padding:.5rem 0; margin:0;">
+    Repartida a <strong>{{ ticket.assigned_to }}</strong>, que todavía no la abre.
+    Si le contestas al cliente desde la Bandeja, la solicitud pasa a ti.
+  </p>
+  {% else %}
   <p class="empty" style="text-align:left; padding:.5rem 0; margin:0;">
     La está atendiendo <strong>{{ ticket.assigned_to }}</strong> — solo esa persona puede cambiar el estado.
   </p>
+  {% endif %}
 </div>
 {% endif %}
 {% endblock %}
