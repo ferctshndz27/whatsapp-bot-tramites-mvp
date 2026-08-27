@@ -644,10 +644,22 @@ def release_ticket(request: Request, ticket_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    # Un admin puede soltar el folio de cualquiera. Sin esto, los folios vivos
+    # de un colaborador deshabilitado quedan congelados PARA SIEMPRE: él ya no
+    # puede entrar a soltarlos, y `claim` solo toma folios sin dueño. La única
+    # salida era editar SQLite a mano. La fase 3a hace visible ese trabajo
+    # huérfano en /activity, así que tiene que existir la forma de rescatarlo.
+    admin = is_admin(user)
+    condicion = [Ticket.id == ticket_id]
+    if not admin:
+        condicion.append(Ticket.assigned_to == user)
+
     with get_session() as session:
+        anterior = session.get(Ticket, ticket_id)
+        dueno_anterior = anterior.assigned_to if anterior else None
         result = session.exec(
             update(Ticket)
-            .where(Ticket.id == ticket_id, Ticket.assigned_to == user)
+            .where(*condicion, Ticket.assigned_to.is_not(None))
             # agent_active=True: al soltar, el bot vuelve a cubrir al cliente —
             # nunca debe quedar un chat sin asesor Y con el agente apagado.
             .values(
@@ -661,7 +673,14 @@ def release_ticket(request: Request, ticket_id: int):
 
     if result.rowcount:
         with get_session() as session:
-            _log_activity(session, ticket_id, user, "soltado")
+            # Quién soltó a quién: sin esto el histórico mostraría un folio que
+            # cambió de dueño sin que nadie apareciera haciéndolo.
+            accion = (
+                "soltado"
+                if dueno_anterior == user
+                else f"soltado-por-admin:{dueno_anterior or '—'}"
+            )
+            _log_activity(session, ticket_id, user, accion)
         logger.info("Ticket #%s soltado por %s", ticket_id, user)
         _notify_release(ticket_id)
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)

@@ -300,7 +300,8 @@ dato que lo respalde. **Medir antes de construir.**
 |---|---|---|---|---|
 | **1** | Medir y clasificar | Tiempos en `Ticket`, etiquetas, `Client` enriquecido | DBA Sr + FullStack Sr | **Implementada** (`cd738cf`) — spec en §5 |
 | **2** | Economía de la mensajería | Ventana de 24h y medidor de costo | LLMOps + Backend | **Implementada** — spec en §6 |
-| **3** | Distribución del trabajo | Asignación automática + horario de atención | Backend + FullStack | Pendiente |
+| **3a** | Horario y visibilidad | Horario de atención, aviso fuera de horario, carga por asesor — **implementada, §7** | Backend + FullStack | **Implementada** |
+| **3b** | Reparto del trabajo | Asignación pegajosa + reparto con tope de carga | Backend + FullStack | Pendiente |
 | **4** | Integración y automatización | Webhooks salientes + motor de reglas | Backend + DevOps | Pendiente |
 | **5** | Crecimiento y analítica | Campañas + reportes/embudo | AI PM + FullStack | Pendiente |
 | **6** | Pulido | Importación, búsqueda global, Flows, vistas, equipos | FullStack + QA | Pendiente |
@@ -450,7 +451,7 @@ Módulo nuevo, única fuente de verdad de "¿puedo escribirle a este número?":
 | `abierta_para(session, phone)` | Atajo para quien solo quiere saber si puede escribir |
 
 **Por qué se DERIVA de `Message` y no hay columna `last_inbound_at`.** El encuadre original de esta
-fase (§7) proponía guardar `last_inbound_at` en `Conversation` y leer la ventana de ahí. Se
+fase (§8) proponía guardar `last_inbound_at` en `Conversation` y leer la ventana de ahí. Se
 descartó: es una copia desnormalizada de algo que la tabla `Message` ya contesta, y **una copia que
 se puede desincronizar es exactamente el bug que costó el arreglo del espejo en `61ea7c2`** — ahí
 los teléfonos crudos que la normalización local nunca le contó al espejo produjeron un conteo
@@ -677,7 +678,132 @@ decidir con datos si el grifo se abre.
 
 ---
 
-## 7. Fases 3-6: notas de encuadre (sin especificar todavía)
+## 7. Especificación de la Fase 3a — horario y visibilidad de la carga
+
+La fase 3 se partió en dos entregas porque la mitad de asignación tiene una colisión que hay que
+resolver a propósito (§7.5), y la otra mitad no depende de ella ni de tener datos acumulados. Esto
+es la **3a**: no toca `Ticket.assigned_to` en absoluto.
+
+### 7.1 El horario vive como dato (`app/horario.json`)
+
+Mismo patrón que `rate_card.json`: es política de negocio, cambia por temporada, y cada cambio debe
+quedar con autor y fecha en git. Estructura:
+
+| Llave | Qué es |
+|---|---|
+| `semana` | `"0"`–`"6"` (0 = lunes, `datetime.weekday()`) → lista de rangos `["HH:MM", "HH:MM"]` |
+| `excepciones` | fecha ISO → rangos de ESE día. Lista vacía = cerrado. Manda sobre `semana` |
+
+Varios rangos por día porque la comida es real: `[["09:00","14:00"],["15:00","18:00"]]`. Los rangos
+son `[abre, cierra)` — a las 18:00 en punto ya cerró.
+
+Las `excepciones` cargadas son los días de descanso obligatorio de la LFT (art. 74) de lo que resta
+de 2026 y de 2027. **No son una afirmación de que el negocio cierre esos días**: hay que revisarlos,
+y agregar los propios (puentes, vacaciones, inventario). Un festivo sin cargar hace que el bot
+prometa «abrimos a las 9» un 16 de septiembre.
+
+> **ponytail**: sin pantalla de administración. Sube a tabla de SQLite con grid el día que haya que
+> cambiar el horario sin desplegar. Hoy el operador ya despliega él mismo y el cron tarda 2 minutos.
+
+### 7.2 `app/horario.py` — una sola definición de «¿hay alguien?»
+
+| Función | Qué contesta |
+|---|---|
+| `ahora()` | La hora del NEGOCIO. Un solo lugar donde preguntarla |
+| `abierto(cuando=None)` | ¿Hay atención humana en ese momento? |
+| `proxima_apertura(cuando=None)` | Cuándo vuelve a haber alguien; `None` si no se pudo calcular |
+| `aviso(cuando=None)` | Qué decirle al cliente; `None` si está abierto |
+
+La zona horaria se toma de `templating.BUSINESS_TZ`, que ya era la definición única del negocio — no
+se declaró una segunda.
+
+**Sin archivo legible, `abierto()` devuelve `True`.** La degradación se eligió a propósito hacia ese
+lado: prometer atención que llega tarde molesta; decirle a un cliente que estamos cerrados cuando sí
+hay quien lo atienda le hace perder el trámite. Un rango mal escrito se descarta con log y los demás
+del día siguen valiendo.
+
+### 7.3 El bot no deja de trabajar fuera de horario — deja de mentir
+
+Fuera de horario el bot sigue recibiendo, deduciendo el trámite y **abriendo el folio igual**. Lo
+único que cambia es lo que se promete. Los textos que prometían atención humana lo hacían con la palabra «en breve»:
+
+- `TICKET_ALTA_CIERRE` y `TICKET_ALTA_CIERRE_MULTI` (`app/conversation.py`) — el alta del folio.
+- `REQ_CIERRE` — el cierre de la captura de requisitos.
+- El `return` de `_escalate()` — «un asesor te contactará en breve», la promesa más explícita.
+- `ESCALATED_WAIT_REPLY` — el seguimiento de un cliente ya escalado. **Se me pasó en la primera
+  pasada y lo encontró la revisión**: es el punto que más veces se emite de los cinco.
+
+Los cuatro puntos de emisión pasan ahora por `conversation._con_horario()`, que agrega el aviso solo
+si está cerrado. Dentro de horario el mensaje queda **byte por byte igual** que antes.
+
+La queja que esto resuelve no es de disponibilidad sino de expectativas: nadie espera que le
+contesten a las 3 de la mañana, pero sí espera saber cuándo. Por eso el aviso dice **cuándo** —
+«hoy a las 09:00», «el lunes a las 09:00»— y no solo que está cerrado.
+
+### 7.4 Visibilidad de la carga (`activity.carga_abierta`)
+
+Folios vivos (no cerrados, no ocultos) por asesor, en un `GROUP BY`. La llave `None` es el trabajo
+sin dueño. Se muestra como columna **«Abiertos»** en la tabla de equipo de `/activity`, con el
+conteo de folios sin asesor arriba.
+
+Es la única columna de esa tabla que mira el **presente**: las demás cuentan cierres ya ocurridos.
+Y entra en la 3a, no en la 3b, por una razón concreta: hoy «sin asignar» **es** el pendiente y el
+equipo lo encuentra con el filtro `?assigned=none` de la lista de folios (`GET /`, no `/tickets`: ahí solo vive el detalle). En cuanto la 3b empiece a repartir
+automáticamente, «sin asignar» dejará de ser el pendiente y pasará a ser el desbordamiento del tope
+— y el pendiente real será «asignado pero sin tocar», que hoy no tiene vista. Empezar a repartir sin
+poder ver el reparto es el punto ciego que esta columna tapa **antes** de abrirlo.
+
+### 7.5 Lo que la 3a NO hace, y la colisión que la 3b tiene que resolver
+
+No se tocó `Ticket.assigned_to`. La asignación sigue 100 % manual: `claim` (atómico), `release`,
+`reassign` y `_pause_bot`.
+
+La 3b tiene que decidir **explícitamente** algo que de otro modo rompe en silencio: `_pause_bot`
+asigna el folio a quien contesta **solo si `assigned_to is None`** — esa guarda es lo que hace
+funcionar la regla «quien responde se queda el chat». Con asignación pegajosa, un cliente que regresa
+trae folio con dueño desde el minuto cero, así que la guarda nunca se cumple: si el dueño es A y
+contesta B, **todos los reportes le atribuyen el trabajo a A**, incluidos la tabla de equipo y
+`first_response_by`. Hay que elegir cuál regla gana y escribirlo en el código, y el folio
+auto-asignado necesita su fila en `TicketActivity` diciendo que se asignó solo y por qué — si no, el
+histórico muestra un dueño que apareció de la nada.
+
+Segunda decisión de la 3b: un folio auto-asignado nace en `NUEVO` **con dueño**, no en `TOMADO`.
+`TOMADO` significa «alguien lo tiene», que sería falso para un folio que nadie ha mirado, y
+corrompería el embudo de `operacion_stats`.
+
+### 7.6 Sobre calibrar el tope de carga
+
+El roadmap pide «round-robin con tope de carga». Con ~1 día de datos de la Fase 1, cualquier tope
+calibrado sobre esas medianas es ruido: hay que mirar primero la **N** de las tarjetas «Folios con 1ª
+respuesta» y «Folios resueltos (con dato)». Lo que sí tiene historial largo es `TicketActivity`.
+
+Cuando se calibre, dos sesgos conocidos de la métrica actual:
+
+1. `primera_respuesta_diaria` agrupa por el día en que **entró** el folio, no en el que se respondió.
+   Un folio que llega viernes 23:00 y se atiende lunes 09:00 suma ~4 300 minutos **al viernes**. Eso
+   no es un error que haya que tapar: es justamente la señal que dimensiona el horario.
+2. `first_response_by` se escribe pero **no lo lee nadie**: la mediana por asesor está a un `GROUP BY`
+   de distancia. Igual que `status_changed_at`, que se escribe en tres puntos y cuyo cálculo de
+   «tiempo en etapa» todavía no existe.
+
+### 7.7 Pruebas (`tests/test_fase3_horario.py`)
+
+Fija el reloj del negocio con la fixture **autouse** `_horario_de_oficina` del `conftest`: sin ella
+el texto esperado del bot dependería de la hora a la que corra la suite —verde a mediodía y rojo de
+madrugada— y nadie entendería por qué.
+
+- Bordes: el minuto de apertura cuenta, el de cierre no (`[abre, cierra)`).
+- Una `excepción` manda sobre el horario semanal aunque el festivo caiga entre semana.
+- `proxima_apertura` salta el fin de semana completo, y salta un festivo.
+- Sin archivo legible se asume abierto y no se agrega aviso.
+- Un rango corrupto no tumba el resto del día.
+- El aviso dice **cuándo**, no solo que está cerrado; y dentro de horario el mensaje no cambia.
+- La carga cuenta folios vivos, ignora cerrados y ocultos, y reporta el trabajo sin dueño aparte.
+- El panel muestra la columna y los folios sin asesor.
+
+---
+
+## 8. Fases 3b-6: notas de encuadre (sin especificar todavía)
 
 > **Fase 2 — ventana de 24h y costo: IMPLEMENTADA. La especificación está en §6.** Del encuadre
 > original de esta fase se descartaron dos cosas y conviene que quede escrito por qué: (a) la
@@ -686,7 +812,7 @@ decidir con datos si el grifo se abre.
 > 1-oct-2026 (§2.5). Lo que queda pendiente de aquel encuadre es el envío de plantillas fuera de la
 > ventana y la suscripción a `message_template_status_update`, que se mueven a la fase 5.
 
-- **Fase 3 — asignación y horario.** `assignment_policy` mínima: round-robin entre agentes activos
+- **Fase 3b — asignación (la 3a ya está: horario y carga, §7).** `assignment_policy` mínima: round-robin entre agentes activos
   con tope de carga. `working_hour` por día de la semana. Fuera de horario el bot debe decirlo, no
   callar. **Asignación pegajosa**: un cliente que regresa cae con su último agente — su ausencia es
   queja literal de usuarios de Respond.io (§2.6) y aquí sale casi gratis (`Ticket.assigned_to` ya
@@ -714,7 +840,7 @@ decidir con datos si el grifo se abre.
 
 ---
 
-## 8. Cómo seguir
+## 9. Cómo seguir
 
 1. ~~Completar la investigación pendiente~~ **Hecho (2026-08-24, §2.5-2.6).** Único hueco
    restante: Reddit, bloqueado a nivel de plataforma de forma permanente; se sustituyó con Hacker
