@@ -86,6 +86,35 @@ def _metricas_por_capa(session: Session) -> dict[str, int]:
     return {capa: n for capa, n in filas}
 
 
+def _folios_repartidos(session: Session) -> int:
+    """Folios que el reparto asignó solo (14 días), para pintar actividad en su
+    nodo. No sale de NluEvent como el resto: el reparto no es una capa de la
+    cascada —ocurre cuando NACE el folio, no cuando se entiende el mensaje— y su
+    huella es la fila de bitácora que deja `asignacion.bitacora`."""
+    from datetime import timedelta
+
+    from app.models import TicketActivity
+
+    cutoff = utcnow() - timedelta(days=METRICAS_DIAS)
+    return int(
+        session.exec(
+            select(func.count())
+            .select_from(TicketActivity)
+            .where(TicketActivity.created_at >= cutoff)
+            .where(TicketActivity.action.like("asignado-auto:%"))  # type: ignore[union-attr]
+            .where(TicketActivity.habilitado == True)  # noqa: E712
+        ).one()
+    )
+
+
+def _asesores_disponibles(session: Session) -> int:
+    """A cuántos se les puede repartir. Se pregunta al módulo que reparte, no a
+    una segunda consulta que podría opinar distinto."""
+    from app import asignacion
+
+    return len(asignacion._elegibles(session))
+
+
 def _herramientas(session: Session) -> list[dict]:
     """Uso por herramienta del nodo agéntico (14 días).
 
@@ -151,7 +180,11 @@ def _fallos_recientes(session: Session, horas: int = HORAS_FALLA) -> int:
 
 
 def _avisos(
-    m: dict[str, int], parrafos: list[dict], herramientas: list[dict], fallos: int
+    m: dict[str, int],
+    parrafos: list[dict],
+    herramientas: list[dict],
+    fallos: int,
+    asesores: int = 0,
 ) -> dict[str, list[str]]:
     """Nodos que están encendidos pero NO pueden hacer su trabajo.
 
@@ -201,6 +234,10 @@ def _avisos(
             if h["errores"] >= max(MINIMO_PARA_CONCLUIR, h["usos"]):
                 anotar("tools", f"«{h['nombre']}» falló {h['errores']} veces y "
                                 f"funcionó {h['usos']}.")
+
+    if settings.reparto_automatico and not asesores:
+        anotar("reparto", "Nodo encendido sin un solo usuario dado de alta: no hay "
+                          "a quién repartirle, los folios seguirán sin dueño.")
     return avisos
 
 
@@ -214,6 +251,8 @@ def _estado(session: Session) -> dict:
     # el lienzo la pinta sobre la flecha: así el dibujo es documentación y no
     # una segunda versión de la verdad escrita en JavaScript.
     literal = m.get("nombre", 0) + m.get("sinonimo", 0) + m.get("keyword", 0)
+    repartidos = _folios_repartidos(session)
+    asesores = _asesores_disponibles(session)
     nodos = [
         {"id": "literal", "nombre": "Match literal", "activo": True, "fijo": True,
          "detalle": "nombre / sinónimo / keyword — gratis e instantáneo",
@@ -229,19 +268,28 @@ def _estado(session: Session) -> dict:
          "fijo": True, "detalle": "tolera faltas de ortografía", "mensajes": m.get("fuzzy", 0),
          "entra_si": "el modelo no eligió servicio"},
         {"id": "rag", "nombre": "Capa informativa (RAG)", "activo": settings.rag_enabled,
-         "fijo": False, "detalle": "responde dudas con el corpus público",
+         "fijo": False, "flag": "rag_enabled", "detalle": "responde dudas con el corpus público",
          "mensajes": m.get("rag", 0), "descartes": m.get("rag_descartado", 0),
          "entra_si": "sin servicio y suena a pregunta"},
         {"id": "tools", "nombre": "Nodo agéntico (tools)", "activo": settings.agent_tools_enabled,
-         "fijo": False, "detalle": "cotiza y consulta folios con herramientas",
+         "fijo": False, "flag": "agent_tools_enabled",
+         "detalle": "cotiza y consulta folios con herramientas",
          "mensajes": m.get("tools", 0), "entra_si": "el corpus no respondió"},
         {"id": "escalada", "nombre": "Asesor humano", "activo": True, "fijo": True,
          "detalle": "el último recurso de siempre", "mensajes": m.get("ninguna", 0),
          "entra_si": "nada de lo anterior resolvió"},
+        # No es una capa de la cascada: es lo que pasa DESPUÉS, cuando ya hay
+        # folio. Se dibuja al final porque ahí ocurre, y su interruptor vive
+        # aquí para que encenderlo sea una decisión visible de un admin y no un
+        # efecto lateral de un despliegue.
+        {"id": "reparto", "nombre": "Reparto de folios", "activo": settings.reparto_automatico,
+         "fijo": False, "flag": "reparto_automatico",
+         "detalle": "asigna el folio nuevo: pegajoso al asesor de siempre, o al menos cargado",
+         "mensajes": repartidos, "entra_si": "al abrir un folio"},
     ]
     parrafos = _parrafos(session)
     herramientas = _herramientas(session)
-    avisos = _avisos(m, parrafos, herramientas, _fallos_recientes(session))
+    avisos = _avisos(m, parrafos, herramientas, _fallos_recientes(session), asesores)
     for nodo in nodos:
         nodo["avisos"] = avisos.get(nodo["id"], [])
     return {"nodos": nodos, "config": config, "parrafos": parrafos,

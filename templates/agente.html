@@ -272,7 +272,7 @@ const POS_KEY = "agente-pos-v2";
 const pos = JSON.parse(localStorage.getItem(POS_KEY) || "{}");
 // Sin el nodo Claude: la cascada se recorre y cierra el hueco que dejó.
 const BASE = { literal:[70,40], ollama:[70,155], fuzzy:[70,270], rag:[70,385],
-  tools:[70,500], escalada:[380,500], corpus:[380,325] };
+  tools:[70,500], escalada:[380,500], corpus:[380,325], reparto:[380,155] };
 
 // Tokens del demo ai-workflow-builder (tema oscuro), convertidos de oklch a
 // hex: card / card-foreground / border / muted-foreground. El header del demo
@@ -283,7 +283,7 @@ const T = { card: "#1e2123", texto: "#f0f2f4", borde: "#2b2e32", tenue: "#b3b8be
             // Ámbar del ícono warning.svg del demo, con contraste suficiente
             // sobre la superficie oscura de la tarjeta.
             aviso: "#f0b429" };
-const ICONO = { literal:"🔤", ollama:"🤖", fuzzy:"≈", rag:"📚", tools:"🔧", escalada:"🙋" };
+const ICONO = { literal:"🔤", ollama:"🤖", fuzzy:"≈", rag:"📚", tools:"🔧", escalada:"🙋", reparto:"🎯" };
 
 function nodoRico(n) {
   // Chrome del demo: rounded-lg (--radius .5rem = 8px), borde de 1px,
@@ -292,8 +292,12 @@ function nodoRico(n) {
   const puerto = activo => ({ r: 4.5, fill: activo ? "#2ea043" : "#484f58",
     stroke: T.card, strokeWidth: 1.5, magnet: false });
   const conAviso = (n.avisos || []).length > 0;
+  // Un nodo sin coordenada cae en el rincón, pero NO tumba el lienzo: sin este
+  // respaldo el TypeError abortaba el script entero —nodos, flechas, panel y
+  // los interruptores de las otras capas— y /agente quedaba en blanco.
+  const base = BASE[n.id] || [380, 40];
   const el = new shapes.standard.Rectangle({ id: n.id,
-    position: pos[n.id] ? pos[n.id] : { x: BASE[n.id][0], y: BASE[n.id][1] },
+    position: pos[n.id] ? pos[n.id] : { x: base[0], y: base[1] },
     size: { width: 256, height: 86 },
     markup: [
       { tagName: "rect", selector: "body" },
@@ -743,9 +747,12 @@ function panelNodo(n) {
   // primero que hay que leer, no la configuración.
   if ((n.avisos || []).length) h += `<ul class="avisos" role="alert">` +
     n.avisos.map(a => `<li>⚠ ${esc(a)}</li>`).join("") + `</ul>`;
-  if (n.id === "rag" || n.id === "tools") {
-    const key = n.id === "rag" ? "rag_enabled" : "agent_tools_enabled";
-    h += `<p><button class="btn-mini primario" id="btn-toggle">${n.activo ? "Apagar" : "Encender"} capa</button></p>`;
+  if (n.flag) {
+    // La clave de configuración la manda el servidor junto con el nodo
+    // (`flag`): tenerla también aquí era un segundo catálogo que se
+    // desincroniza el día que se agrega un nodo con interruptor.
+    const key = n.flag, que = n.id === "reparto" ? "reparto" : "capa";
+    h += `<p><button class="btn-mini primario" id="btn-toggle">${n.activo ? "Apagar" : "Encender"} ${que}</button></p>`;
     setTimeout(() => document.getElementById("btn-toggle").onclick =
       () => guardar(key, n.activo ? 0 : 1), 0);
   }

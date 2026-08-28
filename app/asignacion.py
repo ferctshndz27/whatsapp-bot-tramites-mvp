@@ -115,6 +115,12 @@ def elegir(session: Session, phone: str) -> tuple[str | None, str]:
     asesor de siempre es correcto a cualquier hora, y el aviso de horario que
     la fase 3a agregó ya le dijo al cliente cuándo hay alguien.
     """
+    if not settings.reparto_automatico:
+        # Interruptor del Estudio (/agente), apagado por default. Sin él el
+        # alta deja el folio sin dueño y todo el panel se comporta como antes
+        # de la fase 3b: nadie se entera de que este módulo existe.
+        return None, "apagado"
+
     elegibles = _elegibles(session)
     if not elegibles:
         return None, "sin-asesores"

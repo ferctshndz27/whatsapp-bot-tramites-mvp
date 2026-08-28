@@ -164,5 +164,12 @@ class Settings:
             1, min(200, int(os.environ.get("CARGA_MAXIMA_ASESOR", "15")))
         )
 
+        # Interruptor del reparto (fase 3b). APAGADO por default, aquí y en el
+        # panel: repartir folios solos cambia a quién le aparece el trabajo en
+        # /my, y eso lo enciende un admin desde el Estudio cuando el equipo
+        # está listo — no un despliegue. Con esto en False el alta sigue
+        # dejando los folios sin dueño, exactamente como antes de la fase.
+        self.reparto_automatico = os.environ.get("REPARTO_AUTOMATICO", "0") == "1"
+
 
 settings = Settings()

@@ -11,6 +11,7 @@ flujo real solo miraban el `status`. Por eso varias de estas pruebas pasan por
 `handle_incoming` aunque sea más lento: es el único camino que no miente.
 """
 
+import pathlib
 from datetime import datetime
 
 import pytest
@@ -35,6 +36,14 @@ from app.models import (
 from app.templating import BUSINESS_TZ
 
 PHONE = "5215511112222"
+
+
+@pytest.fixture(autouse=True)
+def _reparto_encendido(monkeypatch):
+    """El reparto nace APAGADO (lo enciende un admin desde el Estudio), así que
+    sin esto todo este archivo mediría el interruptor en vez de la regla. Los
+    tres casos que sí miran el apagador lo vuelven a poner en False."""
+    monkeypatch.setattr(settings, "reparto_automatico", True)
 
 
 def _usuarios(session, *nombres: str, habilitado: bool = True) -> None:
@@ -554,3 +563,148 @@ def test_un_folio_ya_trabajado_sigue_diciendo_que_lo_atiende_su_dueno(panel):
 
     assert "La está atendiendo" in html
     assert "todavía no la abre" not in html
+
+
+# --- El interruptor del Estudio --------------------------------------------
+
+
+def test_el_reparto_nace_apagado():
+    """Repartir cambia a quién le aparece el trabajo en /my. Esa decisión la
+    toma un admin cuando el equipo está listo, no un despliegue."""
+    from app.config import Settings
+
+    # Settings() releído desde el entorno, sin los overrides que el panel haya
+    # guardado: esto es el default con el que arranca un contenedor nuevo.
+    assert Settings().reparto_automatico is False
+
+
+def test_apagado_el_alta_deja_el_folio_sin_dueno(session, monkeypatch):
+    """Con el interruptor abajo, el alta se comporta EXACTAMENTE como antes de
+    la fase 3b: nadie se entera de que este módulo existe."""
+    monkeypatch.setattr(settings, "reparto_automatico", False)
+    _usuarios(session, "ana")
+
+    tickets = _alta_real(session)
+
+    assert tickets[0].assigned_to is None
+    assert asignacion.elegir(session, PHONE) == (None, "apagado")
+
+
+def test_apagado_no_se_escribe_bitacora_de_reparto(session, monkeypatch):
+    monkeypatch.setattr(settings, "reparto_automatico", False)
+    _usuarios(session, "ana")
+
+    tickets = _alta_real(session)
+
+    acciones = [
+        a.action
+        for a in session.exec(
+            select(TicketActivity).where(TicketActivity.ticket_id == tickets[0].id)
+        ).all()
+    ]
+    assert not any(a.startswith("asignado-auto:") for a in acciones)
+
+
+def test_el_interruptor_es_una_perilla_del_estudio():
+    """Si no está en CONFIG_EDITABLE, el panel no lo pinta y `guardar` lo
+    rechaza: el nodo tendría un botón que no puede guardar nada."""
+    from app.agent_settings import CONFIG_EDITABLE
+
+    assert CONFIG_EDITABLE["reparto_automatico"].tipo == "bool"
+
+
+def test_solo_un_admin_puede_encender_el_reparto(panel, monkeypatch):
+    """El endpoint de configuración del Estudio es admin-only; un colaborador
+    no puede repartirse el trabajo del equipo."""
+    import bcrypt
+    from fastapi.testclient import TestClient
+
+    from app.db import get_session
+    from app.main import app
+
+    monkeypatch.setattr(settings, "reparto_automatico", False)
+    with get_session() as s:
+        usuario = s.exec(select(User).where(User.username == "ana")).one()
+        usuario.password_hash = bcrypt.hashpw(b"clave-de-prueba", bcrypt.gensalt()).decode()
+        s.add(usuario)
+        s.commit()
+
+    cliente = TestClient(app, base_url="https://testserver")
+    cliente.post(
+        "/login", data={"username": "ana", "password": "clave-de-prueba"}, follow_redirects=False
+    )
+    r = cliente.post("/agente/config", json={"key": "reparto_automatico", "value": "1"})
+
+    assert r.status_code in (401, 403)
+    assert settings.reparto_automatico is False, "un no-admin encendió el reparto"
+
+
+def test_el_nodo_del_reparto_aparece_en_el_estudio(session):
+    """El nodo tiene que existir en el lienzo con su clave de configuración: sin
+    `flag` el botón de encender no se dibuja."""
+    from app.agente_studio import _estado
+
+    estado = _estado(session)
+    nodo = next(n for n in estado["nodos"] if n["id"] == "reparto")
+
+    assert nodo["flag"] == "reparto_automatico"
+    assert nodo["fijo"] is False
+    assert nodo["activo"] is True  # la fixture lo encendió
+
+
+def test_el_nodo_cuenta_los_folios_que_repartio(session):
+    from app.agente_studio import _estado
+
+    _usuarios(session, "ana")
+    _alta_real(session)
+
+    nodo = next(n for n in _estado(session)["nodos"] if n["id"] == "reparto")
+    assert nodo["mensajes"] == 1
+
+
+def test_el_nodo_encendido_sin_asesores_avisa(session):
+    """Un nodo encendido que no puede trabajar es invisible sin esto: el reparto
+    se vería sano mientras deja todos los folios sin dueño."""
+    from app.agente_studio import _estado
+
+    nodo = next(n for n in _estado(session)["nodos"] if n["id"] == "reparto")
+
+    assert any("no hay" in a for a in nodo["avisos"])
+
+
+def test_apagado_el_nodo_no_regana(session, monkeypatch):
+    monkeypatch.setattr(settings, "reparto_automatico", False)
+    from app.agente_studio import _estado
+
+    nodo = next(n for n in _estado(session)["nodos"] if n["id"] == "reparto")
+
+    assert nodo["activo"] is False
+    assert nodo["avisos"] == []
+
+
+# --- El lienzo tiene que saber dibujar el nodo nuevo ------------------------
+
+
+def _claves_del_mapa(nombre: str) -> set[str]:
+    """Claves del literal `BASE`/`ICONO` del lienzo, leídas de la plantilla."""
+    import re
+
+    html = pathlib.Path("templates/agente.html").read_text()
+    bloque = re.search(rf"const {nombre} = \{{(.*?)\}};", html, re.S)
+    assert bloque, f"no se encontró el literal {nombre} en agente.html"
+    return set(re.findall(r"(\w+)\s*:", bloque.group(1)))
+
+
+@pytest.mark.parametrize("mapa", ["BASE", "ICONO"])
+def test_todo_nodo_del_servidor_tiene_su_lugar_en_el_lienzo(session, mapa):
+    """Agregar un nodo en Python y olvidar su coordenada en el JavaScript dejaba
+    `/agente` EN BLANCO: el `TypeError` abortaba el script de nivel superior y se
+    llevaba por delante los interruptores de las otras capas, que sí servían.
+    Respondía 200, así que ninguna prueba de ruta lo notaba."""
+    from app.agente_studio import _estado
+
+    ids = {n["id"] for n in _estado(session)["nodos"]}
+
+    assert ids <= _claves_del_mapa(mapa), (
+        f"nodos sin entrada en {mapa}: {sorted(ids - _claves_del_mapa(mapa))}"
+    )
