@@ -437,6 +437,9 @@ def probar(request: Request, data: PruebaIn):
             # llamada falló (timeout/red). Antes esto era indistinguible de
             # "la capa está apagada" y el admin no sabía qué revisar.
             resultado["rag_sin_respuesta"] = respuesta is None and motivo is None
+            # Desglose de la recuperación (docs, vía, coseno): sin esto el
+            # umbral semántico del híbrido se calibraría a ciegas.
+            resultado["retrieval"] = rag.explicar_retrieval(texto)
         if resultado["respuesta_rag"] is None and not sugerencias:
             resultado["le_tocaria_tools"] = settings.agent_tools_enabled
     # Un timeout de Ollama y un "no sé" del modelo daban EXACTAMENTE el mismo

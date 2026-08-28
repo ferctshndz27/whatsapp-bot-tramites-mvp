@@ -208,21 +208,32 @@ class TopKLexical:
 
     MAX_CHARS = 4000  # ≈1k tokens: prefill de segundos en la CPU de labs
 
-    def contexto(self, pregunta: str) -> str:
+    def candidatos(self, pregunta: str) -> list[str]:
+        """Documentos con traslape > 0, mejor primero. Sin tope de tamaño:
+        el tope (top-k y caracteres) lo aplica quien arma el contexto."""
         terminos = _terminos(pregunta)
         puntuados = sorted(
             ((len(terminos & _terminos(d)), d) for d in _docs()),
             key=lambda par: par[0],
             reverse=True,
         )
-        elegidos: list[str] = []
-        total = 0
-        for puntos, doc in puntuados[: settings.rag_top_k]:
-            if puntos == 0 or total + len(doc) > self.MAX_CHARS:
-                break
-            elegidos.append(doc)
-            total += len(doc)
-        return "\n".join(elegidos)
+        return [d for puntos, d in puntuados if puntos > 0]
+
+    def contexto(self, pregunta: str) -> str:
+        return _acotar(self.candidatos(pregunta))
+
+
+def _acotar(docs: list[str]) -> str:
+    """Top-k + tope de caracteres, compartido por léxico e híbrido: la CPU
+    de labs paga cada token de prefill, gane quien gane el ranking."""
+    elegidos: list[str] = []
+    total = 0
+    for doc in docs[: settings.rag_top_k]:
+        if total + len(doc) > TopKLexical.MAX_CHARS:
+            break
+        elegidos.append(doc)
+        total += len(doc)
+    return "\n".join(elegidos)
 
 
 def _terminos(texto: str) -> set[str]:
@@ -230,30 +241,49 @@ def _terminos(texto: str) -> set[str]:
     return {p[:5] for p in re.findall(r"[a-z]+", nlu._norm(texto)) if len(p) > 3}
 
 
+# Prefijos de tarea de nomic-embed-text (los documenta Nomic): el modelo rinde
+# mejor sabiendo si embebe una pregunta o un documento. La clave del caché es
+# el documento SIN prefijo: cambiar el prefijo no invalida lo ya embebido.
+_PREFIJO_PREGUNTA = "search_query: "
+_PREFIJO_DOC = "search_document: "
+
+
 class TopKVectorial:
-    """Top-k por similitud coseno con embeddings remotos (EMBEDDINGS_URL).
+    """Top-k por similitud coseno con embeddings remotos (EMBEDDINGS_URL),
+    con umbral (settings.rag_min_coseno): un documento con coseno bajo NO
+    viaja aunque sea el top-1. Sin umbral este retriever mandaba SIEMPRE
+    top-k, relevante o no, y el modelo opinaba con basura "parecida".
 
     ponytail: caché de vectores en memoria por documento — se re-embebe al
     reiniciar el proceso o al editar el catálogo. Persistir en SQLite cuando
-    el corpus pase de unos cientos de documentos.
+    el corpus pase de cientos de documentos.
     """
 
     def __init__(self) -> None:
         self._cache: dict[str, list[float]] = {}
 
-    def contexto(self, pregunta: str) -> str:
+    def puntuados(self, pregunta: str) -> list[tuple[float, str]]:
+        """[(coseno, doc)] de todo el corpus, mejor primero. Embebe solo lo
+        que el caché no tiene, en UNA llamada batch."""
         docs = _docs()
         faltantes = [d for d in docs if d not in self._cache]
         if faltantes:
-            for doc, vec in zip(faltantes, _embed(faltantes)):
+            vectores = _embed([_PREFIJO_DOC + d for d in faltantes])
+            for doc, vec in zip(faltantes, vectores):
                 self._cache[doc] = vec
-        [vec_pregunta] = _embed([pregunta])
-        puntuados = sorted(
+        [vec_pregunta] = _embed([_PREFIJO_PREGUNTA + pregunta])
+        return sorted(
             ((_coseno(vec_pregunta, self._cache[d]), d) for d in docs),
             key=lambda par: par[0],
             reverse=True,
         )
-        return "\n".join(d for _, d in puntuados[: settings.rag_top_k])
+
+    def relevantes(self, pregunta: str) -> list[str]:
+        """Solo los documentos que superan el umbral semántico."""
+        return [d for c, d in self.puntuados(pregunta) if c >= settings.rag_min_coseno]
+
+    def contexto(self, pregunta: str) -> str:
+        return "\n".join(self.relevantes(pregunta)[: settings.rag_top_k])
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
@@ -282,18 +312,112 @@ def _coseno(a: list[float], b: list[float]) -> float:
     return punto / norma if norma else 0.0
 
 
+class Hibrido:
+    """Léxico ∪ vectorial fusionados con Reciprocal Rank Fusion.
+
+    El léxico aporta lo literal ("acta", "curp"); el vectorial, los sinónimos
+    puros que el prefijo de 5 letras jamás ve ("¿atienden en Guadalajara?" no
+    traslapa con "atendemos en línea a todo México"). RRF suma 1/(K + rango)
+    por cada lista donde el documento aparece: salir en ambas pesa más que ser
+    top-1 de una sola, sin pesos que calibrar. Unión vacía = corpus vacío =
+    NO_SE, la misma semántica del léxico.
+
+    Si el endpoint de embeddings falla (labs caído, timeout), el turno lo
+    resuelve el léxico solo: la capa se degrada, no se muere.
+    """
+
+    RRF_K = 60  # el estándar del paper; con ~70 documentos no hay qué afinar
+
+    def __init__(self, lexico: TopKLexical, vectorial: TopKVectorial) -> None:
+        self._lexico = lexico
+        self._vectorial = vectorial
+
+    def fusion(self, pregunta: str) -> list[str]:
+        try:
+            vectoriales = self._vectorial.relevantes(pregunta)
+        except Exception as exc:
+            logger.warning(
+                "Embeddings fallaron; este turno recupera solo el léxico: %s", exc
+            )
+            return self._lexico.candidatos(pregunta)
+        puntajes: dict[str, float] = {}
+        for lista in (self._lexico.candidatos(pregunta), vectoriales):
+            for rango, doc in enumerate(lista):
+                puntajes[doc] = puntajes.get(doc, 0.0) + 1.0 / (self.RRF_K + rango + 1)
+        return sorted(puntajes, key=lambda d: puntajes[d], reverse=True)
+
+    def contexto(self, pregunta: str) -> str:
+        return _acotar(self.fusion(pregunta))
+
+
 _retriever_vectorial = TopKVectorial()
+# El híbrido comparte la instancia vectorial: UN caché de vectores, no dos.
+_retriever_hibrido = Hibrido(TopKLexical(), _retriever_vectorial)
 
 
 def _retriever() -> Retriever:
-    """Vectorial con EMBEDDINGS_URL; léxico acotado para el Ollama de labs
+    """Híbrido cuando hay léxico Y embeddings (el caso de producción);
+    vectorial solo con EMBEDDINGS_URL; léxico acotado para el Ollama de labs
     (su CPU no aguanta el corpus completo); corpus entero solo con Claude,
     donde el prompt largo es barato (caché de prompts) y no hay prefill."""
+    if settings.embeddings_url and settings.ollama_url:
+        return _retriever_hibrido
     if settings.embeddings_url:
         return _retriever_vectorial
     if settings.ollama_url:
         return TopKLexical()
     return CorpusCompleto()
+
+
+def explicar_retrieval(text: str) -> dict:
+    """Desglose de la recuperación para el probador del Estudio: qué
+    documentos viajarían y por qué vía (léxico, vectorial o ambas), con su
+    coseno. Solo diagnóstico — el camino caliente no pasa por aquí — y nunca
+    revienta: el probador también debe poder explicar un labs caído."""
+    pregunta = text.strip()[:MAX_INPUT_CHARS]
+    r = _retriever()
+    info: dict = {"retriever": type(r).__name__, "docs": [], "error": None}
+    try:
+        if isinstance(r, Hibrido):
+            info["umbral"] = settings.rag_min_coseno
+            en_lexico = r._lexico.candidatos(pregunta)
+            try:
+                cosenos = {d: c for c, d in r._vectorial.puntuados(pregunta)}
+            except Exception as exc:  # labs caído: se explica el modo degradado
+                info["error"] = f"embeddings: {exc}"
+                info["docs"] = [
+                    {"texto": d[:90], "vias": ["léxico"], "coseno": None}
+                    for d in en_lexico[: settings.rag_top_k]
+                ]
+                return info
+            for doc in r.fusion(pregunta)[: settings.rag_top_k]:
+                vias = ["léxico"] if doc in en_lexico else []
+                if cosenos.get(doc, 0.0) >= settings.rag_min_coseno:
+                    vias.append("vectorial")
+                info["docs"].append(
+                    {"texto": doc[:90], "vias": vias,
+                     "coseno": round(cosenos.get(doc, 0.0), 3)}
+                )
+        elif isinstance(r, TopKVectorial):
+            info["umbral"] = settings.rag_min_coseno
+            info["docs"] = [
+                {"texto": d[:90], "vias": ["vectorial"], "coseno": round(c, 3)}
+                for c, d in r.puntuados(pregunta)[: settings.rag_top_k]
+                if c >= settings.rag_min_coseno
+            ]
+        elif isinstance(r, TopKLexical):
+            info["docs"] = [
+                {"texto": d[:90], "vias": ["léxico"], "coseno": None}
+                for d in r.candidatos(pregunta)[: settings.rag_top_k]
+            ]
+        else:  # CorpusCompleto: no hay ranking que explicar
+            info["docs"] = [
+                {"texto": "(corpus completo: viajan todos los documentos)",
+                 "vias": ["completo"], "coseno": None}
+            ]
+    except Exception as exc:
+        info["error"] = str(exc)
+    return info
 
 
 # ---------------------------------------------------------------------------

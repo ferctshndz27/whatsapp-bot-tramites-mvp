@@ -946,6 +946,20 @@ document.getElementById("btn-probar").onclick = () => {
     if (r.respuesta_rag) msg += `<br>RAG respondería: “${esc(r.respuesta_rag)}”`;
     if (r.rag_descartada) msg += ` · guardrail descartó la respuesta (${r.rag_descartada})`;
     if (r.rag_sin_respuesta) msg += `<br><em>La capa RAG corrió pero no dio respuesta (NO_SE del modelo, timeout o red — revisar logs del bot).</em>`;
+    // Desglose de la recuperación: qué párrafos viajaron y por qué vía
+    // (léxico/vectorial + coseno). Sin esto el umbral se calibra a ciegas.
+    if (r.retrieval) {
+      if (r.retrieval.docs && r.retrieval.docs.length) {
+        const filas = r.retrieval.docs.map(d => {
+          const cos = d.coseno === null ? "" : ` cos ${d.coseno}`;
+          return `· ${esc(d.texto)}… <em>[${d.vias.join("+") || "fusión"}${cos}]</em>`;
+        });
+        msg += `<br><small>Recuperación ${esc(r.retrieval.retriever)}` +
+               (r.retrieval.umbral !== undefined ? ` (umbral ${r.retrieval.umbral})` : "") +
+               `:<br>${filas.join("<br>")}</small>`;
+      }
+      if (r.retrieval.error) msg += `<br><small>⚠ retrieval: ${esc(r.retrieval.error)}</small>`;
+    }
     // El motivo exacto cuando el servidor no contestó: antes un timeout y un
     // "no sé" del modelo se veían idénticos desde aquí.
     if (r.ollama_error) msg += `<br>⚠ <strong>Ollama falló</strong> (${esc(r.ollama_error)}): la respuesta salió de una capa de abajo.`;

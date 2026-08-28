@@ -82,6 +82,14 @@ class Settings:
         self.embeddings_model = os.environ.get("EMBEDDINGS_MODEL", "nomic-embed-text")
         self.embeddings_token = os.environ.get("EMBEDDINGS_TOKEN", "")
         self.rag_top_k = max(1, int(os.environ.get("RAG_TOP_K", "8")))
+        # Umbral semántico del retriever vectorial/híbrido: un documento con
+        # coseno menor NO viaja aunque sea el top-1 — el guardián que evita
+        # mandar basura "parecida" cuando el corpus no cubre la pregunta.
+        # 0 lo apaga (todo pasa); el techo 0.9 evita enmudecer la capa por
+        # un dedazo. Calibrable en caliente desde /agente.
+        self.rag_min_coseno = max(
+            0.0, min(0.9, float(os.environ.get("RAG_MIN_COSENO", "0.35")))
+        )
         # Clasificador local (Ollama, p.ej. detrás de nginx en la instancia
         # labs). Sin OLLAMA_URL la capa no existe. Corre después del atajo
         # literal y antes de Claude: hace el mismo trabajo gratis, y si falla

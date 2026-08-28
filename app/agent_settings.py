@@ -104,6 +104,12 @@ CONFIG_EDITABLE = {
         ayuda="Acota la generación; conectar a un servidor caído siempre corta "
               "a los 2 s.",
     ),
+    "rag_min_coseno": Perilla(
+        "Umbral semántico (RAG)", "decimal", 0.1, 0.9, 0.05,
+        ayuda="Solo con embeddings configurados: documentos con coseno menor "
+              "no viajan al modelo. Bajo deja pasar poco relacionado; alto "
+              "enmudece el vectorial y responde el léxico solo.",
+    ),
     # Perillas del nodo agéntico. Apagan herramientas PERMITIDAS; no existe
     # clave alguna que encienda una en deny —"cobrar" no tiene flag— porque
     # esa frontera es de código revisado, no de un clic en el panel.
