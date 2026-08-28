@@ -151,5 +151,25 @@ class Settings:
             1, min(3, int(os.environ.get("OXXO_DIAS_VENCIMIENTO", "3")))
         )
 
+        # Tope de folios vivos por asesor para el reparto automático (fase 3b,
+        # app/asignacion.py). Con un tope alcanzado el folio se queda SIN
+        # asignar, que es la cola que el equipo ya sabe mirar.
+        # ponytail: 15 es un número elegido, no medido: con ~1 día de datos de
+        # tiempos cualquier calibración sería ruido. Lo que sí tiene historial
+        # largo es TicketActivity — cuando haya semanas de folios cerrados,
+        # calibrar contra la mediana de folios vivos por asesor. Barandal
+        # 1-200: un 0 apagaría el reparto en silencio y un tope enorme lo
+        # volvería un round-robin sin freno.
+        self.carga_maxima_asesor = max(
+            1, min(200, int(os.environ.get("CARGA_MAXIMA_ASESOR", "15")))
+        )
+
+        # Interruptor del reparto (fase 3b). APAGADO por default, aquí y en el
+        # panel: repartir folios solos cambia a quién le aparece el trabajo en
+        # /my, y eso lo enciende un admin desde el Estudio cuando el equipo
+        # está listo — no un despliegue. Con esto en False el alta sigue
+        # dejando los folios sin dueño, exactamente como antes de la fase.
+        self.reparto_automatico = os.environ.get("REPARTO_AUTOMATICO", "0") == "1"
+
 
 settings = Settings()

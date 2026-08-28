@@ -301,7 +301,7 @@ dato que lo respalde. **Medir antes de construir.**
 | **1** | Medir y clasificar | Tiempos en `Ticket`, etiquetas, `Client` enriquecido | DBA Sr + FullStack Sr | **Implementada** (`cd738cf`) — spec en §5 |
 | **2** | Economía de la mensajería | Ventana de 24h y medidor de costo | LLMOps + Backend | **Implementada** — spec en §6 |
 | **3a** | Horario y visibilidad | Horario de atención, aviso fuera de horario, carga por asesor — **implementada, §7** | Backend + FullStack | **Implementada** |
-| **3b** | Reparto del trabajo | Asignación pegajosa + reparto con tope de carga | Backend + FullStack | Pendiente |
+| **3b** | Reparto del trabajo | Asignación pegajosa + reparto con tope de carga — **implementada, §7bis** | Backend + FullStack | **Implementada** |
 | **4** | Integración y automatización | Webhooks salientes + motor de reglas | Backend + DevOps | Pendiente |
 | **5** | Crecimiento y analítica | Campañas + reportes/embudo | AI PM + FullStack | Pendiente |
 | **6** | Pulido | Importación, búsqueda global, Flows, vistas, equipos | FullStack + QA | Pendiente |
@@ -753,7 +753,9 @@ automáticamente, «sin asignar» dejará de ser el pendiente y pasará a ser el
 — y el pendiente real será «asignado pero sin tocar», que hoy no tiene vista. Empezar a repartir sin
 poder ver el reparto es el punto ciego que esta columna tapa **antes** de abrirlo.
 
-### 7.5 Lo que la 3a NO hace, y la colisión que la 3b tiene que resolver
+### 7.5 Lo que la 3a NO hace, y la colisión que la 3b tuvo que resolver
+
+> **Resuelta en la 3b (§7bis.7): el dueño es provisional mientras el folio siga en `NUEVO`.**
 
 No se tocó `Ticket.assigned_to`. La asignación sigue 100 % manual: `claim` (atómico), `release`,
 `reassign` y `_pause_bot`.
@@ -803,7 +805,239 @@ madrugada— y nadie entendería por qué.
 
 ---
 
-## 8. Fases 3b-6: notas de encuadre (sin especificar todavía)
+## 7bis. Especificación de la Fase 3b — reparto del trabajo
+
+> **Estado: implementada.** Cierra la mitad que la 3a dejó abierta: quién se queda un folio nuevo.
+> Sigue sin cruzarse la línea del producto — el bot reparte trabajo entre humanos, no decide
+> trámites: no fija precios, no valida documentos ni cierra nada.
+
+Dos reglas y un módulo nuevo, `app/asignacion.py`:
+
+| Símbolo | Qué contesta |
+|---|---|
+| `elegir(session, phone)` | `(asesor, motivo)` — a quién le toca este folio, o `None` si a nadie |
+| `bitacora(session, ticket, motivo)` | Deja la fila de `TicketActivity` que dice que se asignó solo |
+| `provisional(ticket)` | ¿El dueño es de reparto y todavía no está ganado? |
+
+Los motivos que devuelve `elegir` —`pegajosa`, `reparto`, `tope`, `fuera-de-horario`,
+`sin-asesores`— van al log; no se guardan en columna.
+
+### 7bis.1 Nace apagado, y lo enciende un admin desde el Estudio
+
+`reparto_automatico` es **False por default** y se enciende en el nodo **«Reparto de folios»** del
+Estudio del Agente (`/agente`), como ya se encienden la capa RAG y el nodo agéntico. Con el
+interruptor abajo, `elegir()` devuelve `(None, "apagado")` antes de consultar nada y **el alta se
+comporta exactamente como antes de esta fase**: el folio nace sin dueño y ningún panel cambia.
+
+Por qué un interruptor y no un despliegue: repartir cambia a quién le aparece el trabajo en `/my` y
+qué ve el equipo en la Bandeja. Eso es una decisión de operación, y quien la toma debe poder
+revertirla en un clic sin esperar dos minutos al cron. Se apoya en lo que ya existía —
+`agent_settings.CONFIG_EDITABLE` es la fuente única de qué es editable en caliente, y agregar una
+perilla es una línea— así que el control no se dibujó a mano: el panel lo pinta desde el descriptor.
+
+Solo administradores: `/agente` y su endpoint de configuración ya son admin-only, y cada cambio
+queda en `AdminAudit` como el resto de las mutaciones del Estudio.
+
+El nodo **avisa cuando está encendido y no puede trabajar** —sin un solo usuario dado de alta no hay
+a quién repartirle—, que es la regla que la fase anterior del Estudio fijó: un nodo encendido y roto
+no puede verse igual que uno sano. Y cuenta los folios que repartió de verdad (14 días), leyendo las
+filas `asignado-auto:` de la bitácora; no sale de `NluEvent` porque el reparto **no es una capa de la
+cascada**: ocurre cuando nace el folio, no cuando se entiende el mensaje. Por eso se dibuja al final
+del lienzo, después del asesor humano.
+
+De paso, la clave de configuración de cada nodo ahora viaja **desde el servidor** (`flag`) en vez de
+estar repetida en el JavaScript del lienzo: era un segundo catálogo que se desincroniza justo el día
+que se agrega un nodo con interruptor — que es hoy.
+
+Y quedaba **otro** catálogo repetido que sí mordió: el mapa de coordenadas `BASE` del lienzo. Agregar
+el nodo en Python sin su coordenada en el JavaScript hacía que `/agente` respondiera 200 y se pintara
+**en blanco** — el `TypeError` abortaba el script de nivel superior y se llevaba por delante los
+nodos, las flechas, el panel y los interruptores de RAG y del nodo agéntico, que sí funcionaban. La
+revisión lo encontró; ninguna prueba de ruta podía verlo porque el estatus era 200 y nadie ejecuta el
+lienzo. Ahora hay dos defensas: un respaldo de coordenada (un nodo sin lugar queda mal acomodado, no
+tumba la vista) y una prueba que lee la plantilla y exige que **todo `id` que emite el servidor tenga
+entrada en `BASE` y en `ICONO`**.
+
+### 7bis.2 Sin esquema nuevo: por qué esta fase no toca el espejo
+
+Ni columna ni tabla. `assignment_policy` sonaba a tabla y es **un número**: una política de una
+fila es configuración, no modelo. Y las dos entradas del reparto ya existían:
+
+- **La carga** la cuenta `activity.carga_abierta`, que la 3a construyó exactamente para esto. Un
+  segundo contador con su propio criterio de «vivo» es la copia que se desincroniza — el mismo
+  argumento que descartó `last_inbound_at` en la fase 2 (§6.1).
+- **La pegajosa** se deriva del folio anterior de ese teléfono. «Último asesor del cliente» no
+  necesita almacenarse: es un `SELECT ... ORDER BY created_at DESC LIMIT 1`.
+
+Consecuencia directa: cero de los cinco sitios del espejo (§«El MSSQL mirror»). La columna
+`assigned_to` ya estaba en el DDL y en el upsert, y como la asignación viaja en el **mismo objeto
+ORM** que se commitea al crear el folio, el listener `after_insert` la arrastra sin más. Esto es una
+restricción, no una casualidad: si algún día la asignación se hiciera con un `update(Ticket)` de
+Core —como ya lo hacen `claim` y `release`— no dispararía el mapper, y `/system` compara **conteos
+de filas**, no campos, así que la divergencia sería invisible.
+
+### 7bis.3 La pegajosa manda, y manda incluso saturado
+
+Un cliente que regresa cae con el último asesor que ya lo atendió, mire lo que mire el tope. La
+asimetría es deliberada: la queja de los usuarios de la competencia (§2.6) no es esperar, es tener
+que volver a contar el caso desde cero. El único filtro es que esa persona siga dada de alta; si ya
+no lo está, el cliente cae al reparto normal — no se busca al penúltimo asesor.
+
+Se mira el folio anterior **aunque esté cerrado**: que el trámite pasado haya terminado no borra a
+quien lo llevó.
+
+### 7bis.4 El pool de asesores es el que ya existía
+
+`User.habilitado == True`, la misma pregunta que ya contestaba la lista de transferencia del panel.
+No se filtra `is_admin` porque **el código no distingue hoy asesor de usuario dado de alta** y
+fabricar esa distinción dentro de un módulo de reparto sería una regla nueva escondida. Tampoco se
+mira `User.estado`: es autorreportado, tiene un solo escritor y no caduca, así que un «ausente» que
+nadie limpia desaparecería del reparto para siempre.
+
+> **ponytail**: si algún día hace falta repartir solo entre quien está de verdad conectado, la señal
+> ya existe y es `authlog.active_sessions()` (ventana de 5 minutos, y ya espejada).
+
+### 7bis.5 El reparto solo corre en horario; la pegajosa, siempre
+
+Repartir de madrugada le llena el panel a cada asesor con folios que nadie va a mirar hasta la
+mañana y consume el tope con trabajo dormido — y «asignado pero sin tocar» es precisamente el
+pendiente que todavía no tiene vista (§7.4). Fuera de horario un cliente sin historial deja su folio
+**sin asignar**, que es la cola que el equipo ya sabe mirar con `?assigned=none`.
+
+La pegajosa no tiene ese problema: mandarle a un cliente que regresa el mismo asesor de siempre es
+correcto a cualquier hora, y el aviso que la 3a agregó ya le dijo cuándo hay alguien.
+
+Se pregunta `horario.abierto()` en presente —el momento en que entra el folio—, no sobre
+`Ticket.created_at`.
+
+### 7bis.6 El tope (`CARGA_MAXIMA_ASESOR`, default 15)
+
+Menos folios vivos gana. Empate: gana quien lleva más tiempo sin recibir trabajo, medido por el
+folio más alto que tiene asignado — sin ese desempate el orden sería alfabético y la primera de la
+lista cargaría con todo para siempre. Todos al tope ⇒ el folio se queda sin dueño.
+
+> **ponytail**: 15 es un número **elegido, no medido**. §7.6 ya lo advertía: con ~1 día de datos de
+> la fase 1 cualquier calibración es ruido. Lo que sí tiene historial largo es `TicketActivity`.
+> Barandal 1-200 en `config.py`: un 0 apagaría el reparto en silencio.
+
+Un folio de un mensaje con varios trámites no se reparte por folio: `elegir` se llama **una vez**
+antes del bucle y los N folios van al mismo asesor. Eso sobrepasa el tope por N-1 a propósito — un
+cliente que pide tres trámites de un jalón es un cliente, no tres.
+
+### 7bis.7 La colisión de §7.5, resuelta: el `status` ya decía quién es provisional
+
+El problema que la 3a dejó anotado: `_pause_bot` asigna el folio a quien contesta **solo si
+`assigned_to is None`**, y con folios pre-asignados esa guarda no se cumple nunca. La regla «quien
+responde se queda el chat» habría muerto en silencio, acreditándole a un dueño de reparto el trabajo
+de quien de verdad contestó — en la tabla de equipo y en `first_response_by`.
+
+La decisión: **el dueño es provisional mientras el folio siga en `NUEVO`.** No hizo falta ninguna
+marca nueva porque el `status` ya lo codificaba:
+
+- El folio auto-asignado nace en `NUEVO` **con dueño** (§7.5 lo exigía: `TOMADO` significaría
+  «alguien lo tiene», falso para un folio que nadie ha mirado, y corrompería el embudo).
+- `claim` y la primera respuesta humana lo pasan a `TOMADO`. A partir de ahí el dueño está **ganado**
+  y no se mueve solo.
+
+Así que `_pause_bot` asigna si `assigned_to is None` **o** el folio sigue provisional. Contestar
+sigue siendo la forma de quedarse un chat — que además es la única que quedaba: `reassign` exige ser
+el dueño y `release` manda un mensaje de cortesía al cliente, así que sin esto un folio pre-asignado
+a otra persona no tenía ruta de auto-servicio.
+
+La alternativa que se descartó era «quien responde gana, siempre»: con ella dos asesores que
+contestan el mismo chat se lo quitan uno al otro en cada mensaje. Y el despojo de un folio
+provisional queda escrito: `tomado-de:{dueño anterior}`.
+
+### 7bis.8 Lo que el cliente ve — y lo que ve el equipo
+
+`STATUS_LABELS[NUEVO]` decía **«recibido, en espera de asignación»**. Con folios que nacen ya con
+asesor, eso pasa a ser un enunciado falso enviado por WhatsApp — el bot le miente al cliente sobre
+su propio folio. `_status_reply` ahora elige el texto según haya dueño (`recibido, con asesor
+asignado`). **Nunca se dice quién**: el nombre del asesor es organización interna.
+
+Del lado del panel, dos textos más estaban a punto de mentirle al equipo:
+
+- El folio ajeno decía **«La está atendiendo ana — solo esa persona puede cambiar el estado»** sobre
+  un folio que nadie ha abierto. Ahora, mientras el dueño sea provisional, dice que está repartido,
+  que todavía no lo abren y que contestarle al cliente basta para quedárselo — que es justamente la
+  ruta de auto-servicio que la fase conserva.
+- El histórico de `/activity` imprimía crudos los dos slugs nuevos (`tomado-de:ana` en medio de
+  frases en español). `activity._label` los traduce.
+
+### 7bis.9 Lo que la 3b NO hace
+
+- **No arregla `build_conversation_items`** (`app/inbox.py`), cuyo `SELECT` de tickets no filtra
+  `habilitado` ni `!= CERRADO` y se queda con el folio más reciente del teléfono. Es un bug
+  preexistente que esta fase **amplifica**: de ahí sale el dueño que pinta la insignia de las
+  tarjetas y el que llena `/my`, así que con reparto automático empieza a publicar el dueño de
+  folios cerrados o borrados. Se deja fuera a propósito para no mezclar, en el mismo entregable, un
+  cambio de qué significa la propiedad de un folio con un cambio de qué folios se miran: si algo se
+  descompone, no habría forma de saber cuál mitad fue. **Es lo siguiente que hay que tocar.**
+- **No reasigna por inactividad** (la brecha #5 lo mencionaba). Sin dato de cuánto tarda hoy una
+  primera respuesta por asesor, el umbral sería inventado.
+- **No cambia las insignias de dueño** de las cuatro plantillas que lo imprimen. Hoy «sin insignia»
+  significaba «nadie lo ha tomado» y ahora significa «no se pudo repartir»; ninguna copy lo dice
+  todavía.
+- **No toca `claim` ni `release`.** Siguen exactamente igual, con su `UPDATE` atómico.
+
+De `reassign` sí hubo que tocar una línea, y la revisión lo encontró: transferir un folio cambiaba
+`assigned_to` **sin tocar el `status`**, así que un folio recién repartido y transferido a propósito
+seguía pareciendo provisional y se lo quedaba el primer compañero que le contestara al cliente — el
+traspaso deliberado se deshacía con un solo mensaje. Ahora una transferencia saca el folio de
+`NUEVO`: transferir **es** trabajo humano, y `TOMADO` ya significa «alguien lo tiene». Queda una
+puerta abierta que se deja anotada: `update_ticket_status` acepta regresar un folio a `nuevo`
+conservando dueño, y eso lo vuelve provisional otra vez. Para devolver trabajo a la cola la ruta real
+es «soltar», que sí limpia `assigned_to`; cerrar el `<select>` es un cambio de flujo que no
+corresponde a esta fase.
+
+### 7bis.10 Pruebas (`tests/test_fase3b_asignacion.py`)
+
+El punto de partida fue un hallazgo incómodo: **ninguna prueba del repo verificaba a quién le queda
+un folio recién creado.** Las doce afirmaciones sobre `assigned_to` sembraban el folio a mano, y las
+dos únicas que lo crean por el flujo real solo miran el `status` — que no cambia. La suite entera
+podía quedarse verde mientras producción cambiaba de comportamiento.
+
+- El alta **por `handle_incoming`** deja dueño, nace en `NUEVO`, y deja la fila
+  `sistema / asignado-auto:{asesor}`.
+- Sin asesores dados de alta, el folio nace sin dueño (degradación segura).
+- Dos trámites en un mensaje ⇒ un solo asesor.
+- La pegajosa gana aunque el asesor esté saturado; un asesor dado de baja no se queda al cliente.
+- El reparto elige al menos cargado; con empate, al que lleva más tiempo sin recibir.
+- Todos al tope ⇒ sin asignar, y el desbordamiento sigue contándose bajo la llave `None` de
+  `carga_abierta`. Un folio cerrado deja de ocupar lugar.
+- Fuera de horario no se reparte, pero la pegajosa sí.
+- Quien contesta se queda el folio provisional (`assigned_to`, `first_response_by` y `status`), el
+  despojo queda como `tomado-de:ana`, un folio ya trabajado **no** cambia de dueño, y contestar el
+  folio propio registra `tomado` sin ensuciar el histórico.
+- El bot no dice «en espera de asignación» si ya hay asesor, y no revela su nombre.
+- **El interruptor**: nace apagado; apagado el alta no asigna ni escribe bitácora; está en
+  `CONFIG_EDITABLE`; un colaborador no-admin recibe 403 al intentar encenderlo; el nodo aparece en el
+  lienzo con su `flag`, cuenta lo que repartió y avisa si está encendido sin asesores.
+- El folio de **escalación** también nace con dueño y con su fila de bitácora.
+- Transferir un folio repartido lo saca de la ventana provisional.
+- El panel no dice «la está atendiendo» de un folio que nadie ha abierto, y sí lo dice del que ya se
+  trabajó.
+- Las dos acciones nuevas se leen en español en el histórico.
+
+Ocho mutaciones probadas ponen la suite en rojo: quitar la asignación del alta, devolver
+`_pause_bot` a la guarda vieja, ignorar el horario en el reparto, invertir el orden de la pegajosa,
+quitar el término de rotación del desempate, dejar que `reassign` no saque de `NUEVO`, quitar la
+traducción del histórico y devolver el copy viejo a la vista del folio. Sin esa comprobación, un
+archivo de pruebas nuevo no demuestra nada — y de hecho **cuatro de esas ocho mutaciones sobrevivían
+a la primera versión de estas pruebas**: la pegajosa se probaba con un solo asesor previo, el
+desempate esperaba al ganador que también salía por orden alfabético, y la escalación no se tocaba.
+
+### 7bis.11 Al desplegar
+
+`backfill_closed_tickets` (`app/activity.py`) tiene una salida temprana: **si existe una sola fila
+de `TicketActivity`, no vuelve a correr nunca.** Corre al arranque (`app/main.py`), así que en
+producción ya se ejecutó hace fases y esto no afecta. Pero en una base nueva, si el primer evento de
+la historia fuera un `asignado-auto`, el histórico sintético de cierres previos no se poblaría jamás
+y las columnas Hoy/Semana/Mes de la tabla de equipo quedarían mudas para todo lo anterior.
+
+---
+
+## 8. Fases 4-6: notas de encuadre (sin especificar todavía)
 
 > **Fase 2 — ventana de 24h y costo: IMPLEMENTADA. La especificación está en §6.** Del encuadre
 > original de esta fase se descartaron dos cosas y conviene que quede escrito por qué: (a) la
@@ -812,11 +1046,12 @@ madrugada— y nadie entendería por qué.
 > 1-oct-2026 (§2.5). Lo que queda pendiente de aquel encuadre es el envío de plantillas fuera de la
 > ventana y la suscripción a `message_template_status_update`, que se mueven a la fase 5.
 
-- **Fase 3b — asignación (la 3a ya está: horario y carga, §7).** `assignment_policy` mínima: round-robin entre agentes activos
-  con tope de carga. `working_hour` por día de la semana. Fuera de horario el bot debe decirlo, no
-  callar. **Asignación pegajosa**: un cliente que regresa cae con su último agente — su ausencia es
-  queja literal de usuarios de Respond.io (§2.6) y aquí sale casi gratis (`Ticket.assigned_to` ya
-  existe).
+> **Fase 3b — reparto: IMPLEMENTADA. La especificación está en §7bis.** De este encuadre se
+> descartó una cosa y conviene que quede escrito por qué: `assignment_policy` como **tabla**. Una
+> política de una fila es configuración (`CARGA_MAXIMA_ASESOR`), no modelo, y una tabla espejada
+> cuesta cinco sitios. Lo que queda pendiente de aquel encuadre es la **reasignación por
+> inactividad**, que necesita saber primero cuánto tarda hoy una primera respuesta por asesor —
+> `first_response_by` se escribe desde la fase 1 y sigue sin que nadie lo lea (§7.6).
 - **Fase 4 — webhooks + reglas.** Los webhooks salientes son **el puerto de integración con un ERP
   externo**: entrega firmada, con reintento y backoff, y **nunca** en el camino de la petición (el
   patrón `_safe()` de `app/archive.py` es la referencia). El motor de reglas empieza como
@@ -855,5 +1090,19 @@ madrugada— y nadie entendería por qué.
    - **Vigilar la cobertura del medidor**: hoy los salientes de Twilio y los que pierden el
      emparejamiento de `wamid` quedan sin veredicto y engordan `sin dato de cobro`. Si esa fracción
      no baja, el total estimado seguirá siendo parcial y el panel lo dirá (§6.7).
-4. **Siguiente fase a especificar: la 3** (asignación y horario). Es la que la fase 1 ya dejó
-   medible.
+4. ~~Fase 3~~ **Implementada completa: 3a en §7 (`b0fc583`), 3b en §7bis.** Lo que dejó pendiente,
+   en orden de urgencia:
+   - **Arreglar `build_conversation_items`** (`app/inbox.py`): su `SELECT` de tickets no filtra
+     `habilitado` ni `!= CERRADO`, y ahora que casi todo folio tiene dueño eso publica el dueño de
+     folios cerrados en las insignias y en `/my` (§7bis.10). Es un cambio de dos líneas que se dejó
+     fuera a propósito para no mezclarlo con esta fase.
+   - **Calibrar `CARGA_MAXIMA_ASESOR`** contra `TicketActivity` cuando haya semanas de historial;
+     hoy el 15 es un número elegido (§7bis.6).
+   - **Vigilar el reparto la primera semana**: la columna «Abiertos» de `/activity` es exactamente
+     la vista que se construyó para esto (§7.4). Si el trabajo se amontona en una persona, el
+     sospechoso es la pegajosa, que ignora el tope a propósito (§7bis.3).
+   - **Poner copy a la ausencia de dueño**: «sin insignia» ya no significa «nadie lo ha tomado»
+     sino «no se pudo repartir», y ninguna plantilla lo dice.
+5. **Siguiente fase a especificar: la 4** (webhooks salientes + motor de reglas). El puerto de
+   integración con un ERP externo es lo que desbloquea, y el patrón de entrega ya existe en el
+   repo: `_safe()` de `app/archive.py`.

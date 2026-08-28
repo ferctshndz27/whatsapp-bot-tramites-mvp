@@ -85,6 +85,11 @@ def _convertir(perilla: Perilla, raw: str):
 CONFIG_EDITABLE = {
     "rag_enabled": Perilla("Capa informativa (RAG)", "bool"),
     "agent_tools_enabled": Perilla("Nodo agéntico (tools)", "bool"),
+    "reparto_automatico": Perilla(
+        "Reparto de folios",
+        "bool",
+        ayuda="Apagado, los folios nuevos nacen sin dueño y se toman a mano.",
+    ),
     "fuzzy_threshold": Perilla(
         "Umbral difuso", "entero", 70, 95, 1,
         ayuda="Abajo de 70 el difuso inventa coincidencias; arriba de 95 casi "

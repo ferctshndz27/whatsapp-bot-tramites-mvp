@@ -16,6 +16,7 @@ from app.utils import ruta_interna
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
+from app import asignacion
 from app.db import get_session
 from app.dinero import formato_monto, parse_monto
 from app.models import (
@@ -524,6 +525,9 @@ def ticket_detail(
             "user": user,
             "ticket": ticket,
             "statuses": [s.value for s in TicketStatus],
+            # Dueño de reparto que nadie ha tocado todavía: la vista lo dice de
+            # otra forma, porque «la está atendiendo X» sería falso.
+            "asignacion_provisional": asignacion.provisional(ticket),
             "teammates": teammates,
             "followups": followups,
             "requirements": service.requirements if service else "",
@@ -920,6 +924,14 @@ def reassign_ticket(
         target = session.exec(select(User).where(User.username == to_user)).first()
         if ticket is not None and target is not None and ticket.assigned_to == user:
             ticket.assigned_to = to_user
+            # Transferir ES trabajo humano: saca el folio de NUEVO para que
+            # deje de contar como «dueño provisional» (asignacion.provisional).
+            # Sin esto un folio recién repartido y transferido a propósito se lo
+            # quedaba el primer compañero que le contestara al cliente, y el
+            # traspaso deliberado se deshacía con un solo mensaje.
+            if ticket.status == TicketStatus.NUEVO:
+                ticket.status = TicketStatus.TOMADO
+                ticket.status_changed_at = utcnow()
             if note.strip():
                 _append_note(ticket, user, note)
             ticket.updated_at = utcnow()

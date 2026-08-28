@@ -107,6 +107,10 @@ def _label(action: str) -> str:
         return f"cambió el estado a {action.removeprefix('estado:').replace('_', ' ')}"
     if action.startswith("reasignado:"):
         return f"transfirió la solicitud a {action.removeprefix('reasignado:')}"
+    if action.startswith("tomado-de:"):
+        return f"le tomó la solicitud a {action.removeprefix('tomado-de:')}"
+    if action.startswith("asignado-auto:"):
+        return f"el sistema le asignó la solicitud a {action.removeprefix('asignado-auto:')}"
     return action
 
 
