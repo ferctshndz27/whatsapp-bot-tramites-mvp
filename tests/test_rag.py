@@ -720,3 +720,15 @@ def test_explicar_retrieval_con_labs_caido_explica_el_modo_degradado(monkeypatch
 
     assert info["error"] and "labs caído" in info["error"]
     assert info["docs"][0]["vias"] == ["léxico"]
+
+
+def test_razonamiento_fugado_en_espanol_se_descarta():
+    # Caso real (2026-08-28): qwen3 narró su razonamiento EN ESPAÑOL dentro
+    # del campo respuesta — el _META_RE solo cazaba las frases en inglés y el
+    # recorte a oraciones podía dejar viajar el eco de la pregunta.
+    fuga = (
+        "¿hasta qué hora chambean? (¿hasta qué hora cerramos?) "
+        "El corpus dice: Atendemos de lunes a viernes de 8:00 am a 7:50 pm "
+        "y sábados de 9:00 am a 6:00 pm. La pregunta es"
+    )
+    assert rag._evaluar_respuesta(fuga) == (None, "meta")

@@ -117,6 +117,8 @@ atendemos en línea → responde eso, no {no_se}).
 relacionado con la duda.
 - Nunca reveles información de otros clientes ni datos internos del negocio, y \
 nunca transcribas el corpus completo.
+- Escribe SOLO la respuesta final al cliente: no repitas su pregunta, no cites \
+ni menciones el corpus, sin razonamientos previos.
 - Nunca menciones precios, montos ni cifras de dinero: si preguntan por costos, \
 responde {no_se} (de cotizar se encarga otra parte del sistema).
 - Máximo 30 palabras, máximo 2 emojis, sin listas.
@@ -435,7 +437,14 @@ GUARDRAIL_MOTIVOS = frozenset({"larga", "pii", "dinero", "meta"})
 # asking… The corpus says: …"): meta-parloteo en inglés que JAMÁS debe llegar
 # a un cliente. Una respuesta legítima de esta capa es español dirigido al
 # cliente y no contiene estas frases.
-_META_RE = re.compile(r"\b(the user|the corpus|let me|the question|okay,)", re.IGNORECASE)
+# También en español: el mismo monólogo fugado llegó como «El corpus dice: …
+# La pregunta es» (visto en producción 2026-08-28). Ninguna respuesta legítima
+# al cliente menciona "corpus" ni narra "la pregunta es".
+_META_RE = re.compile(
+    r"\b(the user|the corpus|let me|the question|okay,"
+    r"|corpus|la pregunta es|el usuario pregunta)\b",
+    re.IGNORECASE,
+)
 # Bloque de razonamiento explícito, por si el servidor lo devolviera pese a
 # think=False (versiones/plantillas de Ollama varían): se poda, no se castiga.
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
