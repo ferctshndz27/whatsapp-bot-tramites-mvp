@@ -207,8 +207,8 @@ def test_el_precio_llega_al_espejo_aunque_el_insert_original_nunca_haya_ocurrido
     El precio solo viaja por UPDATE: el status de Meta es posterior al alta del
     mensaje. Si MSSQL estaba caído en el instante del INSERT —modo de falla que
     `_safe()` silencia por diseño— el UPDATE posterior no encontraba fila, y
-    `backfill()` excluye `wa_messages` a propósito, así que «Sincronizar ahora»
-    tampoco lo recuperaba: ese cobro no aparecía en la contabilidad NUNCA.
+    `backfill()` excluía `wa_messages` en aquel entonces, así que «Sincronizar
+    ahora» tampoco lo recuperaba: ese cobro no aparecía en la contabilidad NUNCA.
 
     Se simula no llamando a archive_wa_message() antes del sync.
     """
@@ -594,3 +594,31 @@ def test_mirror_status_marca_desfase_cuando_el_espejo_tiene_de_mas(mirror):
     assert filas["wa_clients"]["sqlite"] == 0
     assert filas["wa_clients"]["mssql"] == 1
     assert not filas["wa_clients"]["ok"], "más filas en el espejo también es desfase"
+
+
+def test_backfill_repara_los_mensajes_que_la_caida_de_mssql_se_trago(mirror, session):
+    """BUG B3: los mensajes solo viajaban por listener. Si MSSQL estaba caído
+    en el instante del INSERT, el hueco era permanente: /system marcaba
+    wa_messages ok=False para siempre y «Sincronizar ahora» no podía
+    repararlo. Ahora backfill() los upsertea por source_id."""
+    session.add(_wa_message(id=41, phone="525500004444", body="perdido en la caída"))
+    session.add(
+        TeamMessage(
+            id=42, author="ana", body="también perdido",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    session.commit()
+
+    archive.backfill()
+    archive.backfill()  # idempotente: reprocesar no duplica ni revienta el UNIQUE
+
+    with mirror.connect() as conn:
+        wa = conn.execute(
+            text("SELECT COUNT(*), MAX(body) FROM wa_messages WHERE source_id = 41")
+        ).first()
+        equipo = conn.execute(
+            text("SELECT COUNT(*), MAX(body) FROM team_messages WHERE source_id = 42")
+        ).first()
+    assert tuple(wa) == (1, "perdido en la caída"), "backfill no reparó wa_messages"
+    assert tuple(equipo) == (1, "también perdido"), "backfill no reparó team_messages"

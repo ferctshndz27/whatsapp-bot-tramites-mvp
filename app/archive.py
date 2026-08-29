@@ -747,9 +747,9 @@ def sync_wa_message(m) -> None:
     Si el UPDATE no toca ninguna fila, el INSERT original nunca llegó al espejo
     (MSSQL caído justo en ese instante, que `_safe` silencia por diseño) y se
     inserta ahora. Sin este remate el veredicto de cobro se perdía PARA SIEMPRE:
-    el precio solo viaja por UPDATE —el status es posterior al alta— y
-    `backfill()` excluye los mensajes a propósito, así que «Sincronizar ahora»
-    tampoco lo recuperaba.
+    el precio solo viaja por UPDATE —el status es posterior al alta. Este mismo
+    upsert por source_id es el que `backfill()` reutiliza para reparar
+    wa_messages tras una caída de MSSQL.
     """
     with _get_engine().begin() as conn:
         resultado = conn.execute(
@@ -797,12 +797,19 @@ def archive_team_message(m) -> None:
 
 
 def sync_team_message(m) -> None:
-    """Sincroniza el campo habilitado (soft-delete) de un mensaje de equipo."""
+    """Sincroniza el campo habilitado (soft-delete) de un mensaje de equipo.
+
+    Mismo remate que sync_wa_message: si el UPDATE no tocó fila, el INSERT
+    original nunca llegó al espejo (MSSQL caído en ese instante) y se inserta
+    ahora. Upsert por source_id — idempotente, apto para backfill()."""
     with _get_engine().begin() as conn:
-        conn.execute(
+        resultado = conn.execute(
             text("UPDATE team_messages SET habilitado = :hab WHERE source_id = :sid"),
             {"hab": m.habilitado, "sid": m.id},
         )
+        if resultado.rowcount:
+            return
+    archive_team_message(m)
 
 
 def sync_client_name(c) -> None:
@@ -1559,6 +1566,8 @@ def backfill() -> None:
         IntentoCobro,
         Invitation,
         LoginEvent,
+        Message,
+        TeamMessage,
         AgentConfig,
         InfoDoc,
         NluEvent,
@@ -1576,9 +1585,10 @@ def backfill() -> None:
     )
     from sqlmodel import select
 
-    # Los mensajes (WhatsApp y chat de equipo) no se backfillean aquí: sus
-    # tablas usan UNIQUE(source_id) e INSERT directo, así que reinsertarlos
-    # rompería la constraint. Se espejan por listener en cada escritura nueva.
+    # Los mensajes (WhatsApp y chat de equipo) se reparan con sus sync_*, que
+    # son upserts por source_id (UPDATE y, si no hay fila, INSERT): reprocesar
+    # lo ya espejado no duplica ni rompe el UNIQUE(source_id). Antes se
+    # excluían y una caída de MSSQL dejaba huecos permanentes (bug B3).
     try:
         if not _ready:
             init()
@@ -1641,6 +1651,10 @@ def backfill() -> None:
                 archive_label(lb)
             for tl in session.exec(select(TicketLabel)).all():
                 archive_ticket_label(tl)
+            for m in session.exec(select(Message)).all():
+                sync_wa_message(m)
+            for tm in session.exec(select(TeamMessage)).all():
+                sync_team_message(tm)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         logger.warning("Backfill de MSSQL incompleto: %s", exc)
