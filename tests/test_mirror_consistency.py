@@ -184,11 +184,10 @@ TABLA_POR_MODELO_EN_SYSTEM = {
 # llena sola cada vez que se espeja un mensaje de equipo.
 SIN_ENTRADA_EN_SYSTEM = frozenset({"team_users"})
 
-# backfill() excluye a propósito wa_messages y team_messages: esas tablas usan
-# UNIQUE(source_id) + INSERT directo, así que reinsertar rompería la constraint
-# (comentario en app/archive.py, dentro de backfill()). team_users va en el mismo
-# paquete porque solo se escribe junto con team_messages.
-SIN_BACKFILL = frozenset({"wa_messages", "team_messages", "team_users"})
+# Desde el fix de B3, backfill() también repara wa_messages y team_messages:
+# sus sync_* son upserts por source_id, y team_users se llena como efecto
+# colateral de archive_team_message. No queda tabla fuera del reparador.
+SIN_BACKFILL = frozenset()
 
 _LUGARES = (
     "los CINCO lugares del espejo (CLAUDE.md): 1) _SCHEMA_DDL, 2) archive_<algo>(), "
@@ -307,17 +306,6 @@ def test_mirror_tables_empareja_cada_modelo_con_la_tabla_que_su_listener_escribe
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG B3 (deuda conocida, NO se arregla aquí): wa_messages y team_messages "
-        "están en MIRROR_TABLES pero backfill() los excluye a propósito por la "
-        "constraint UNIQUE(source_id). Consecuencia: tras una caída de MSSQL "
-        "/system los marca ok=False para siempre y 'Sincronizar ahora' no puede "
-        "repararlos. Al arreglarlo (p.ej. upsert por source_id) esta prueba pasará "
-        "en XPASS y hay que quitar el marcador."
-    ),
-)
 def test_lo_que_system_reporta_lo_puede_reparar_sincronizar_ahora():
     """REGLA: si /system muestra una tabla como desincronizada, el botón
     'Sincronizar ahora' (que corre backfill()) debería poder repararla."""
