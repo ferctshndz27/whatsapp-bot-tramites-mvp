@@ -732,3 +732,23 @@ def test_razonamiento_fugado_en_espanol_se_descarta():
         "y sábados de 9:00 am a 6:00 pm. La pregunta es"
     )
     assert rag._evaluar_respuesta(fuga) == (None, "meta")
+
+
+def test_guardrail_loguea_el_crudo_descartado(monkeypatch, caplog):
+    # Sin este log, calibrar un guardrail es adivinar: el probador y los
+    # logs solo decían el motivo, nunca qué dijo el modelo.
+    monkeypatch.setattr(settings, "rag_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    monkeypatch.setattr(
+        nlu, "ollama_chat",
+        lambda messages, **kw: {"content": '{"respuesta": "El corpus dice: abrimos a las 8"}'},
+    )
+
+    with caplog.at_level("INFO", logger="app.rag"):
+        assert rag.answer_explained("¿a qué hora abren?") == (None, "meta")
+
+    assert any(
+        "meta" in r.message and "El corpus dice" in r.message
+        for r in caplog.records
+    )

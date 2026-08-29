@@ -519,6 +519,11 @@ def answer_explained(text: str) -> tuple[str | None, str | None]:
                 (b.text for b in response.content if b.type == "text"), ""
             ).strip()
         segura, motivo = _evaluar_respuesta(respuesta)
+        if motivo in GUARDRAIL_MOTIVOS:
+            # Sin esto, calibrar un guardrail es adivinar: el motivo solo
+            # dice QUE disparó, no QUÉ dijo el modelo. Corpus público y tope
+            # de 300 chars: no hay dato de cliente que fugar al log.
+            logger.info("Guardrail %s descartó: %r", motivo, respuesta[:300])
         return segura, motivo if motivo in GUARDRAIL_MOTIVOS else None
     except Exception as exc:
         logger.warning("Capa informativa falló, sigue el flujo normal: %s", exc)
