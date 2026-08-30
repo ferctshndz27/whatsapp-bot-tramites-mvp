@@ -24,6 +24,8 @@ The user never has to say "act as a DBA". Infer it from the task and invoke the 
 | Something is slow or heavy — **only with a measurement in hand** | `performance-senior` |
 | Meta Cloud API, Twilio, Stripe, Ollama, retries, idempotency, WhatsApp interactive limits | `integration-senior` |
 | The NLU cascade, RAG, agent tools, synonym mining, prompts, evals, token cost | `ai-ml-senior` |
+| Scope of a bot behaviour, what stays with the human advisor, the KPI behind a claim | `product-owner` |
+| The routing table itself, a new skill, the permission policy, `tests/test_harness.py` | `harness-engineer` |
 
 **Combine them when the task spans domains** — that is the normal case, not the exception:
 
@@ -43,6 +45,19 @@ understand. Both failures cost the same.
 Skills load on demand and cost nothing until invoked — that is the whole point of keeping this file
 short. Don't paste framework documentation, don't restate these global rules inside a skill, and
 don't open files the task doesn't touch.
+
+### The harness is tested, not just described
+
+This routing table is a contract, not documentation: `tests/test_harness.py` asserts —in both
+directions— that every skill on disk has a row and every row points at a skill that exists, that
+each `name:` matches its folder, and that every repo path a skill cites still resolves. Adding a
+skill is three places: the file, the row, and a green harness test **in the same commit**.
+
+`.claude/settings.json` carries the permission policy the agent works under: the operator runs every
+`git push`, `ssh` and deploy, and `deny` now enforces that instead of trusting memory. The agent
+cannot edit that file — the platform refuses — so changes to it are handed over as a copy-paste
+block. Why the harness looks like this, and how it measures up against a reference harness, is in
+`docs/HARNESS.md`.
 
 ## What this is
 
