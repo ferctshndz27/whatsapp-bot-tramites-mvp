@@ -281,6 +281,7 @@ Esfuerzo = t-shirt, considerando que **no hay Alembic** y que una tabla espejada
 | 13 | Sin WhatsApp Flows (formularios nativos) | Bajo* | L | 6 |
 | 14 | Sin vistas guardadas (`custom_filter`) ni macros multi-paso | Bajo | M | 6 |
 | 15 | Sin equipos (`team`) — hoy la asignación es plana por usuario | Bajo | M | 6 |
+| 16 | Sin multi-oficina — una sola instancia, un solo juego de llaves, un solo catálogo | Alto | L | 7 |
 
 \* Flows sube a impacto Alto si el intake de requisitos resulta ser el punto de abandono; hoy no hay
 dato que lo respalde. **Medir antes de construir.**
@@ -305,6 +306,7 @@ dato que lo respalde. **Medir antes de construir.**
 | **4** | Integración y automatización | Webhooks salientes + motor de reglas | Backend + DevOps | Pendiente |
 | **5** | Crecimiento y analítica | Campañas + reportes/embudo | AI PM + FullStack | Pendiente |
 | **6** | Pulido | Importación, búsqueda global, Flows, vistas, equipos | FullStack + QA | Pendiente |
+| **7** | Multi-oficina | Oficinas, llaves por oficina, catálogo/corpus/sinónimos por oficina — spec en `docs/SPEC-MULTI-OFICINA.md` | Arquitecto + Backend + Seguridad | Pendiente |
 
 **La fase 1 va primero porque sin ella no se puede priorizar el resto con datos.** Hoy no sabemos
 cuánto tarda una primera respuesta ni qué categoría de trámite se atasca. Construir asignación
