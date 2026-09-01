@@ -1,5 +1,44 @@
 {
   "enabledPlugins": {
     "stripe@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(scripts/ship.sh:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(rm -rf:*)",
+      "Read(./.env)",
+      "Read(./.env.old)",
+      "Edit(./.env)",
+      "Write(./.env)",
+      "Edit(./tramites.db)",
+      "Write(./tramites.db)",
+      "Edit(./data/**)",
+      "Write(./data/**)",
+      "Edit(./.agents/**)",
+      "Write(./.agents/**)",
+      "Edit(./marketing/**)",
+      "Write(./marketing/**)",
+      "Edit(./HTTP)",
+      "Write(./HTTP)"
+    ]
   }
 }
