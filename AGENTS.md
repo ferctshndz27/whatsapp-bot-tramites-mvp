@@ -26,6 +26,7 @@ The user never has to say "act as a DBA". Infer it from the task and invoke the 
 | The NLU cascade, RAG, agent tools, synonym mining, prompts, evals, token cost | `ai-ml-senior` |
 | Scope of a bot behaviour, what stays with the human advisor, the KPI behind a claim | `product-owner` |
 | The routing table itself, a new skill, the permission policy, `tests/test_harness.py` | `harness-engineer` |
+| Official trámite requirements headed for the catalog, or a vendor API detail you'd otherwise state from memory | `external-research` |
 
 **Combine them when the task spans domains** — that is the normal case, not the exception:
 
