@@ -11,3 +11,5 @@ graphify-out/
 .env.old
 .env.old
 .env.old
+*.db-shm
+*.db-wal

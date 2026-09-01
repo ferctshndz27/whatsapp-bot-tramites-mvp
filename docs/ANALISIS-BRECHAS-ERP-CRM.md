@@ -280,7 +280,8 @@ Esfuerzo = t-shirt, considerando que **no hay Alembic** y que una tabla espejada
 | 12 | Sin búsqueda global en el dashboard | Bajo | S | 6 |
 | 13 | Sin WhatsApp Flows (formularios nativos) | Bajo* | L | 6 |
 | 14 | Sin vistas guardadas (`custom_filter`) ni macros multi-paso | Bajo | M | 6 |
-| 15 | Sin equipos (`team`) — hoy la asignación es plana por usuario | Bajo | M | 6 |
+| 15 | Sin equipos (`team`) — hoy la asignación es plana por usuario | Bajo | M | ~~6~~ → absorbida por 7 |
+| 16 | Una sola operación: un número, un catálogo, un corpus, un equipo. No hay forma de abrir una oficina en otra ciudad sin que vea los datos de las demás | **Alto** | XL | 7 |
 
 \* Flows sube a impacto Alto si el intake de requisitos resulta ser el punto de abandono; hoy no hay
 dato que lo respalde. **Medir antes de construir.**
@@ -305,6 +306,7 @@ dato que lo respalde. **Medir antes de construir.**
 | **4** | Integración y automatización | Webhooks salientes + motor de reglas | Backend + DevOps | Pendiente |
 | **5** | Crecimiento y analítica | Campañas + reportes/embudo | AI PM + FullStack | Pendiente |
 | **6** | Pulido | Importación, búsqueda global, Flows, vistas, equipos | FullStack + QA | Pendiente |
+| **7** | Multi-oficina | Oficinas, credenciales por oficina, catálogo/corpus/sinónimos propios, aislamiento de datos — **supersede la brecha #15** | Architect + DBA + Backend + Security | Pendiente — spec en §8bis |
 
 **La fase 1 va primero porque sin ella no se puede priorizar el resto con datos.** Hoy no sabemos
 cuánto tarda una primera respuesta ni qué categoría de trámite se atasca. Construir asignación
@@ -1072,6 +1074,271 @@ y las columnas Hoy/Semana/Mes de la tabla de equipo quedarían mudas para todo l
   hoy una conversación promedio (§6). Además, esta fase absorbe lo que quedó pendiente de la fase 2:
   `send_template` y la suscripción a `message_template_status_update`.
 - **Fase 6 — pulido.** Nada aquí bloquea a nadie; entra cuando haya hueco.
+
+---
+
+## 8bis. Especificación de la Fase 7 — multi-oficina
+
+> Numerada `8bis` por el mismo motivo que `7bis`: se inserta antes de «Cómo seguir» sin renumerar
+> las secciones existentes, que ya están citadas desde `AGENTS.md` y desde las skills.
+
+Objetivo: **operar el ERP en varias oficinas de distintas ciudades** —cada una con su número de
+WhatsApp, su catálogo, su corpus y su equipo— sin que una vea los datos de otra.
+
+**Supersede la brecha #15** («Sin equipos — hoy la asignación es plana por usuario»). Aquella la
+dimensionaba *Bajo / M* porque suponía equipos dentro de una sola operación. Con oficinas reales
+—credenciales propias, catálogo propio, aislamiento de datos— el tamaño honesto es **Alto / XL**, y
+la asignación por equipo cae dentro de esta fase en vez de ser su propia brecha.
+
+### 8bis.1 Las cuatro decisiones de producto
+
+| Decisión | Elección | Alternativa descartada, y por qué |
+|---|---|---|
+| Aislamiento | **Total**: cada oficina ve solo sus folios, conversaciones y clientes | «Oficina como etiqueta» (todos ven todo): más barata, pero deja la PII del cliente —correo, notas, documentos— visible entre ciudades, que es justo lo que la separación pretende evitar |
+| Secretos | El panel **mapea nombres de variables**; el valor sigue en el `.env` del VPS | Cifrar tokens en SQLite: el espejo MSSQL replica toda tabla, y `agent_settings.py:8-9` ya prohíbe por escrito que un secreto sea editable desde el panel. Guardarlos cifrados obligaría a excluir la tabla del espejo y a custodiar una clave maestra: más superficie por cero beneficio operativo real |
+| Roles | Admin global + **admin de oficina** | Solo admin global: más barato, pero obliga al dueño a dar de alta cada colaborador de cada ciudad |
+| Números | **Uno por oficina**, cliente compartido | Cliente por oficina: rompería la PK `Client.phone` y arrastraría el espejo, `_normalize_phones` y su gemelo, y todo join por teléfono. Coste alto, beneficio nulo: una persona es una persona |
+
+### 8bis.2 Oficina de registro ≠ canal de respuesta
+
+`Conversation.phone` es PK y lleva una decisión escrita encima (`models.py:66`): *«Una persona = una
+conversación, sin importar a cuál de los dos números escribió: nadie quiere dos trámites en
+paralelo.»* Con oficinas, honrarla obliga a separar dos conceptos que hoy son uno:
+
+- **Oficina de registro** — la del folio abierto si existe; si no, la de la oficina cuyo número
+  recibió el mensaje. Pegajosa, mismo espíritu que `asignacion._pegajoso`.
+- **Canal de respuesta** — *siempre* el número que recibió, por la ventana de 24 h (`messaging.py`).
+
+Ambos viven en **una sola función**, `oficinas.oficina_de(session, phone, oficina_entrada)`.
+
+**Descartado: «oficina = último entrante»**, el espejo puro de `provider`. Haría desaparecer una
+conversación viva de la bandeja de su asesor a media plática, solo porque el cliente marcó el otro
+número. Y si el folio abierto no mandara, un cliente con trámite en Monterrey que escribe a
+Guadalajara generaría un **segundo folio del mismo trámite**.
+
+**Hueco aceptado por escrito:** `Message` no lleva oficina. El historial anterior a que una
+conversación cambie de oficina queda visible para quien la tenga ahora. Acotar los mensajes por la
+oficina vigente crearía el hueco inverso —mensajes huérfanos, hilo partido a media lectura—, que es
+peor para quien atiende.
+
+### 8bis.3 Los secretos no entran a la base
+
+```
+office_credential
+  id, office_id, provider,      -- meta | twilio
+  clave,                        -- WHATSAPP_TOKEN, TWILIO_AUTH_TOKEN, ...
+  env_var_name,                 -- 'OFICINA_MTY_WHATSAPP_TOKEN'
+  updated_by, updated_at
+```
+
+La tabla guarda **nombres de variables, jamás valores**. La resolución lee del entorno *en cada
+envío*:
+
+```python
+def credencial(session, office_id: int, provider: str, clave: str) -> str:
+    fila = ...  # office_credential
+    return os.environ.get(fila.env_var_name, "") if fila else ""
+```
+
+Leer en el momento del envío —y no un atributo cacheado de `settings`— es lo que hace que **editar
+el `.env` y correr `docker compose up -d` surta efecto sin tocar código**. `/oficinas` muestra por
+credencial **presente / ausente**, nunca el valor: esa es la única señal que tiene el operador de
+que editó bien el `.env`.
+
+**Falla cerrada**, con la forma que ya existe en `twilio_client.enabled()`: oficina con variable sin
+definir → su webhook responde 403 y sus envíos quedan inertes. Va con su prueba de secreto ausente,
+como exige la skill `security-senior`.
+
+Consecuencia deliberada: `office_credential` **sí** se replica al espejo MSSQL. No contiene un solo
+secreto, así que la decisión de mirrorearla es explícita, no un descuido.
+
+### 8bis.4 El ruteo del webhook sale de la URL, no del payload
+
+```
+POST /webhook/{slug}          Meta   → firma HMAC con el app_secret de esa oficina
+POST /webhook/{slug}/twilio   Twilio → firma sobre callback_url('/webhook/mty/twilio')
+POST /webhook                 legado → oficina Matriz (se conserva)
+POST /webhook/twilio          legado → oficina Matriz (se conserva)
+```
+
+La firma debe verificarse **antes de parsear** el cuerpo (`webhook.py:35`), así que la oficina no
+puede salir del payload: sale de la ruta. De paso le queda natural a Twilio, que ya firma sobre la
+URL pública reconstruida con `PUBLIC_BASE_URL` (`twilio_client.callback_url`).
+
+### 8bis.5 Contenido por oficina: catálogo, corpus y sinónimos
+
+**Catálogo.** `app/catalog.py` expone hoy un `Catalog` global de módulo, leído por 15 archivos, que
+recarga completo en cada acceso. Pasa a ser un registro: `catalogo_de(office_id) -> Catalog`, cada
+instancia filtrando su `_refresh()` por oficina.
+
+*Descartado parametrizar el global* (`catalog.categories(office_id)`): obliga a tocar los 15
+archivos aunque la mayoría ya tiene la oficina en la mano, y deja abierta la llamada sin oficina que
+lee en silencio el catálogo equivocado. El registro falla ruidoso.
+
+El costo real no es el catálogo sino **meter la oficina al NLU**: `deduce_explained(text)` es *el*
+punto de entrada de la cascada, y arrastra `conversation._deduce_and_log()`, `NluEvent.office_id`,
+`_service_terms()`, el minero de sinónimos y `/agente`.
+
+**Corpus.** Una columna, `infodoc.office_id`, y `_docs()` pasa a `_docs(office_id)`. El caché de
+vectores de `TopKVectorial` (`rag.py:265`) está tecleado **por texto del documento**, no por corpus,
+así que el retriever sigue siendo una sola instancia compartida y dos oficinas que compartan un
+párrafo comparten el vector: partir el corpus no multiplica el gasto de embeddings, solo lo
+multiplica en lo que de verdad difiere. *Descartado un caché por oficina*: más código y más llamadas
+al endpoint para idéntico resultado.
+
+`INFO_DOCS_PATH` se queda como **corpus base de la empresa** y las filas de `InfoDoc` son la capa de
+cada oficina encima:
+
+```
+_docs(office_id) = párrafos del archivo (comunes) + InfoDoc WHERE office_id = ?
+```
+
+Sin esa separación, cada alta de oficina obligaría a recapturar las políticas generales, y la
+primera que alguien edite deja a las demás desactualizadas.
+
+**Sinónimos.** `SynonymProposal += office_id`; `/unmatched` filtra por oficina. La regla de oro
+*«nothing auto-learns»* gana una segunda dimensión: **un sinónimo aprobado en Monterrey no puede
+cambiar lo que cotiza Guadalajara.** Es exactamente el riesgo para el que se escribió la regla
+—sinónimo mal aprendido, cliente real, trámite equivocado—, solo que ahora el daño puede caer en una
+oficina que nunca revisó la propuesta.
+
+### 8bis.6 El alta de oficina clona tres cosas, o nace muda
+
+`Catalog._refresh()` siembra desde `catalog.json` **solo cuando `CatalogCategory` tiene cero filas**
+(`catalog.py:184`). A partir de la oficina #1 eso no vuelve a ser cierto jamás. Sin previsión, dar
+de alta una oficina produce **catálogo vacío, corpus vacío y cero sinónimos**: el bot no cotiza y
+tampoco informa, sin un solo error a la vista.
+
+```
+Alta de oficina
+  Catálogo:  ( ) Clonar de [oficina ▾]   ( ) Sembrar de catalog.json
+  Corpus:    ( ) Clonar de [oficina ▾]   ( ) Solo corpus base (archivo)
+  Sinónimos: ( ) Clonar los aprobados de [oficina ▾]   ( ) Empezar vacío
+```
+
+Los sinónimos clonados entran **ya aprobados** —un humano los aprobó en la oficina origen— y quedan
+en `AdminAudit` con su procedencia. Clonar propuestas `pendiente` sería importar trabajo sin revisar,
+que es la regla de oro por la puerta de atrás.
+
+### 8bis.7 Esquema: dos tablas y nueve columnas
+
+Tablas nuevas (**cinco sedes cada una**: `_SCHEMA_DDL`, `archive_<tabla>()` vía `_upsert`,
+`_register_listeners`, `backfill`, `MIRROR_TABLES`):
+
+```
+office             id, slug (unique, va en la URL del webhook), nombre, ciudad,
+                   habilitado, created_at
+office_credential  ver §8bis.3
+```
+
+Columnas nuevas, **todas nullable y luego backfilleadas a Matriz**, cada una en los **dos** dicts
+(`db.py::_*_COLUMNS_ADDED_AFTER_LAUNCH` y `archive.py:559`):
+
+```
+user            += office_id, office_role      ticket   += office_id
+conversation    += office_id                   infodoc  += office_id
+catalogcategory += office_id                   nluevent += office_id
+catalogaudit    += office_id                   synonymproposal += office_id
+```
+
+**Índices sobre `catalogcategory.office_id` e `infodoc.office_id` como SQL crudo en `init_db()`** —
+`Field(index=True)` es no-op sobre tabla existente. No son optimización: son lo que mantiene
+honestos dos `ponytail:` cuya condición esta fase acorta:
+
+| Marcador | Condición hoy | Condición nueva |
+|---|---|---|
+| `catalog.py:180` — recarga completa por acceso | «~60 filas» | ~60 filas **por oficina**, y solo si la consulta filtra por `office_id` |
+| `rag.py:259` — caché de vectores en memoria | «cuando el corpus pase de cientos de documentos» | El corpus total es la suma de todas las oficinas: se llega a cientos **N veces más rápido**. Al cruzarlo, persistir los vectores en SQLite |
+
+Ninguno de los dos se elimina; se les reescribe la condición, que es lo que el marcador exige.
+
+### 8bis.8 El aislamiento es default-deny en un código que no lo tiene
+
+`security-senior` es explícito: una ruta nueva **no hereda** guardas de sus hermanas. Aquí el mismo
+descuido, repetido en ~12 archivos, ya no produce una ruta pública sino una **fuga entre oficinas**.
+Se resuelve estructuralmente, no con disciplina:
+
+- Un único helper `auth.alcance_de(user) -> office_id | None` (`None` = admin global, ve todo),
+  llamado por handler. Nunca `.where()` sueltos repartidos.
+- **Clientes: filtrado derivado por relación** — un usuario ve los clientes con al menos un folio o
+  conversación en su oficina. Sin cambio de esquema. *Descartado `Client.office_id`*: contradice
+  «cliente compartido» y se rompe con un cliente de dos oficinas.
+- **`asignacion._elegibles` filtra por oficina.** No es una ruta, así que no lo protege ninguna
+  prueba de autorización, y sin él un folio de Guadalajara aterriza en un asesor de Monterrey.
+
+### 8bis.9 Motor: SQLite se queda
+
+Se evaluó migrar a Postgres y sumar Redis. **Ninguno hace falta, y multi-oficina no mueve esa
+decisión**: no cambia la forma de concurrencia —sigue siendo un proceso, un escritor, WAL—, solo
+multiplica linealmente el volumen de mensajes.
+
+Redis no tiene qué guardar: las sesiones del panel son cookie firmada (`SessionMiddleware`, sin
+estado en servidor) y el rate limit del bot va contra la base (`conversation._is_rate_limited`). El
+único estado en memoria es `_login_attempts` (`dashboard.py:45`).
+
+El detonante real **no es el tamaño de los datos: es el día que se necesite un segundo worker o un
+segundo contenedor** —que multi-oficina no exige—. Ese día se rompen tres cosas, por orden de daño:
+
+1. **`agent_settings` deja de funcionar sin avisar.** Hace `setattr` sobre el singleton `settings` y
+   su propio docstring dice que aplica *«porque hay UN worker de uvicorn»*. Con dos, el admin guarda
+   una perilla y la mitad de los mensajes se comporta distinto, con `/system` en verde.
+2. **SQLite sobre volumen compartido entre contenedores se corrompe.** Esta destruye datos.
+3. El lockout de login se debilita: 5 intentos por worker.
+
+Las dos primeras son de aplicación, no de motor: migrar a Postgres sin arreglarlas no compra nada. Y
+el almacén analítico ya existe — es el espejo MSSQL.
+
+**Regla que esta fase deja escrita: ninguna migración de motor se planea sin medición en mano**
+(mensajes/día y tamaño de `tramites.db` en producción), por la misma razón que la fase 1 va primero.
+
+### 8bis.10 Riesgo #1: el webhook legado
+
+El deploy es automático (push → CI → `promote` → cron del VPS cada 2 min) y `deploy/pull-deploy.sh`
+**solo hace rollback si `docker compose up` falla**. Un contenedor que arranca sano, contesta
+`/health` 200 y 403-ea cada webhook **no dispara el rollback**: el bot queda sordo y el health dice
+que todo bien, hasta que un cliente reclama.
+
+Por eso las rutas por oficina son **aditivas** y `/webhook` y `/webhook/twilio` siguen sirviendo a
+Matriz durante toda la transición, con la prueba que lo fija.
+
+### 8bis.11 Fases de aterrizaje
+
+No es recorte de alcance: es orden, para que la promoción automática no lleve a producción un
+aislamiento a medio aplicar.
+
+| Sub-fase | Contenido | Depende de |
+|---|---|---|
+| **A — Estructura** | `Office` + `OfficeCredential`, columnas nuevas, backfill a Matriz, `/oficinas` CRUD, `alcance_de()`, asignación de usuarios y `office_role` | — |
+| **B — Credenciales y ruteo** | `credencial()`, rutas por oficina con las legadas intactas, `oficina_de()`, folio y conversación nacen con oficina | A |
+| **C — Contenido por oficina** | `catalogo_de()`, oficina en el NLU, `_docs(office_id)` + corpus base, sinónimos por oficina, clonado en el alta | B |
+| **D — Aislamiento** | Filtros por `alcance_de()` en inbox/dashboard/clients/activity/cobranza, `asignacion._elegibles`, matriz de authz | A (paralelo a C) |
+
+Con una sola oficina, A no cambia ni un comportamiento observable. D va sola al final: ahí se
+concentra el riesgo de fuga.
+
+### 8bis.12 Lo que la Fase 7 NO hace
+
+- **No mueve la línea del producto.** El bot sigue sin fijar precio final, validar documentos,
+  confirmar pagos ni cerrar trámites — en ninguna oficina.
+- **No cifra secretos en la base**, ni los hace editables desde el panel. El `.env` del VPS sigue
+  siendo la única sede de un token.
+- **No parte `Client` por oficina.** Una persona es una persona.
+- **No resuelve horario ni zona horaria por oficina.** `horario.py` usa un `BUSINESS_TZ` único y
+  México abarca cuatro husos: con oficinas en Tijuana o Cancún el aviso de fuera de horario sale
+  mal. Queda como brecha abierta, candidata natural a la fase siguiente; no bloquea A–D.
+- **No hace multi-worker ni cambia de motor** (§8bis.9).
+
+### 8bis.13 Pruebas
+
+- `tests/test_oficinas.py` — alta, edición, clonado de catálogo/corpus/sinónimos, y que una oficina
+  recién creada **puede cotizar** (la prueba que atrapa el bot mudo de §8bis.6).
+- `tests/test_webhook_multi_oficina.py` — ruteo por `slug`; **la ruta legada `/webhook` sigue
+  verificando contra el secreto de Matriz**; variable de entorno ausente → 403 y envíos inertes.
+- `tests/test_authz.py` extendido con la forma de tres niveles que ya usa: usuario de A **no** ve
+  datos de B · usuario de A **sí** ve los de A —el control positivo es lo que atrapa un filtro mal
+  escrito que pasa como resultado vacío— · admin global ve ambas.
+- `tests/test_asignacion.py` — un folio de la oficina B nunca se asigna a un asesor de A.
+- `tests/test_harness.py` sigue verde: la tabla de ruteo de `AGENTS.md` no cambia en esta fase.
 
 ---
 
