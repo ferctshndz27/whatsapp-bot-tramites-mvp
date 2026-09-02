@@ -82,7 +82,7 @@ office
 ```
 office_credential
   id          int PK
-  office_id   int  -> office.id
+  office_id   int  -- apunta a office.id; SIN FK declarada, como el resto del repo
   provider    str            -- meta | twilio | stripe
   clave       str            -- WHATSAPP_TOKEN, TWILIO_WHATSAPP_FROM, STRIPE_SECRET_KEY, ...
   valor_cif   bytes          -- Fernet(valor). NUNCA se devuelve al navegador.
@@ -100,6 +100,8 @@ así el audit conserva quién la puso y cuándo.
 **`office_credential` NO se replica al espejo MSSQL.** El espejo es opt-in — una tabla que no está en
 los cinco lugares simplemente no se replica, y eso cuesta cero. Sacar secretos hacia un segundo motor
 duplicaría el radio de fuga a cambio de nada: nadie va a reportar sobre llaves de API.
+
+> Decisiones fijadas en el PR 1: la tabla física se llama `officecredential` (SQLModel sin `__tablename__`, igual que `ticketlabel`; el índice es `ux_officecredential_viva`); `clave` se guarda en MAYÚSCULAS con el nombre de la variable de entorno (unifica §2.2 con §7 paso 4); `office` tampoco se espeja por ahora — la spec solo excluía `office_credential`; espejarla serían los cinco lugares completos y se decide en el PR 3, cuando el panel cree oficinas.
 
 ### 2.3 `office_id` en las tablas existentes
 
@@ -127,8 +129,11 @@ Todas con el mismo DDL, que ya tiene precedente exacto en `db.py:41` (`provider 
 _OFFICE_COLUMN = {"office_id": "INTEGER NOT NULL DEFAULT 1"}
 ```
 
-Sin Alembic: cada tabla entra a su dict `_*_COLUMNS_ADDED_AFTER_LAUNCH` en `app/db.py` y —para las que
-sí se espejan— a `_COLUMNS_ADDED_AFTER_LAUNCH` en `app/archive.py`.
+Sin Alembic: **un solo dict compartido** aplicado en bucle sobre la tupla de las 15 tablas, igual que
+`_HABILITADO_COLUMN` / `_TABLES_NEEDING_HABILITADO` — no un dict por tabla. Y —para las que sí se
+espejan, que son las 15— la misma columna entra a `_COLUMNS_ADDED_AFTER_LAUNCH` en `app/archive.py`,
+donde el DDL se deriva de la misma constante `OFICINA_TLAXCALA_ID` para que los dos motores no se
+desfasen.
 
 ---
 
@@ -154,8 +159,14 @@ def credencial(session, office_id: int, provider: str, clave: str) -> str:
     ).first()
     if fila:
         return _descifrar(fila.valor_cif)
-    return getattr(settings, clave.lower(), "")
+    return getattr(settings, _ATRIBUTO_DE_SETTINGS[clave], "")
 ```
+
+`_ATRIBUTO_DE_SETTINGS` es un mapa explícito de `clave` (nombre de la variable de entorno) al atributo
+de `settings`, no un `clave.lower()`: dos de las llaves reales no siguen esa regla
+(`WHATSAPP_VERIFY_TOKEN` → `verify_token`, `WHATSAPP_APP_SECRET` → `app_secret`), y adivinarlo
+devolvería `""` para el secreto que valida la firma de los webhooks de Meta — un fail-closed que
+descartaría todo el tráfico entrante sin decir por qué.
 
 ### 3.1 Cifrado
 
@@ -164,7 +175,10 @@ def credencial(session, office_id: int, provider: str, clave: str) -> str:
 **Esto es una dependencia nueva real, no gratis.** `cryptography` **no** está en `requirements.txt` y
 ninguna de las que sí están lo arrastra: el `import cryptography` que funciona en la laptop viene de
 herramientas ajenas al proyecto instaladas en ese venv. En el contenedor de producción no existe. Hay
-que agregar la línea `cryptography==42.0.8` y reconstruir la imagen.
+que agregar la línea `cryptography==45.0.7` y reconstruir la imagen. **No 42.x**: toda esa rama (42.0.0
+–44.0.0) cae en el rango de CVE-2024-12797, corregido en 44.0.1. El bug es de la ruta TLS del OpenSSL
+empotrado en el wheel y no toca a Fernet, pero pinear una versión con advisory abierto para *endurecer*
+el almacenamiento de llaves se contradice sola, y cualquier escaneo de la imagen la marcaría.
 
 Qué compra y qué no, sin adornos:
 
@@ -173,7 +187,7 @@ Qué compra y qué no, sin adornos:
   exactamente la ruta de fuga que esto cierra.
 - **No compra:** nada contra un host comprometido. Quien lea el `.env` lee todo. No se pretende otra cosa.
 
-**Decisión tomada: se agrega.** `cryptography==42.0.8` entra en el PR 1 de §8, no queda a criterio del
+**Decisión tomada: se agrega.** `cryptography==45.0.7` entra en el PR 1 de §8, no queda a criterio del
 que lo implemente. La alternativa —texto plano, lo que hace Chatwoot— se descarta porque esta misma
 base ya guarda CURP/RFC/NSS y el respaldo abierto es la ruta de fuga concreta. Revertirla después es
 una decisión de riesgo explícita del operador, no un cambio de ingeniería: `valor_cif` guarda texto y
@@ -309,20 +323,27 @@ escrituras que empiecen a chocar con el lock de WAL.
 Tlaxcala tiene que ir en medio:
 
 1. `create_all()` crea `office` y `office_credential` vacías.
-2. **Sembrar Tlaxcala como `id = 1`** si `office` está vacía. Va aquí, no después: el resto de la
-   migración asume que la oficina 1 existe.
+2. **Sembrar Tlaxcala como `id = 1`** si no existe la fila `id = 1` — no «si la tabla está vacía»: lo
+   que cada `office_id DEFAULT 1` necesita es esa fila concreta, y comprobar por id evita además
+   resucitar una Tlaxcala dada de baja. Va aquí, no después: el resto de la migración asume que existe.
 3. `_add_missing_columns(...)` agrega `office_id INTEGER NOT NULL DEFAULT 1` a cada tabla. SQLite
    rellena todas las filas existentes con 1 en el mismo `ALTER`. **No hay backfill que escribir.**
-4. Las llaves **compartidas** (`whatsapp_token`, `app_secret`, `verify_token`, `twilio_account_sid`,
-   `twilio_auth_token`) **no se copian** a la tabla: son una sola llave para todas las oficinas y
+4. Las llaves **compartidas** (`WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`,
+   `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`) **no se copian** a la tabla: son una sola llave para todas las oficinas y
    duplicarlas sería crear N lugares donde rotar una. Por la herencia de §3 resuelven al `.env` actual
    — el comportamiento de producción no cambia ni un byte el día del despliegue— y el panel las muestra
    como `heredada del global` (§5), no como ausentes.
 5. Las llaves que **sí son por oficina** se siembran como filas de Tlaxcala:
-   - `phone_number_id` (Meta) y `whatsapp_from` (Twilio), `es_secreto = False`. Sin ellas §4.1 no puede
-     resolver la oficina y el fail-closed descartaría todo el tráfico actual.
-   - `stripe_secret_key` y `stripe_webhook_secret`, `es_secreto = True`. Stripe es cuenta por oficina
+   - `WHATSAPP_PHONE_NUMBER_ID` (Meta) y `TWILIO_WHATSAPP_FROM` (Twilio), `es_secreto = False`. Sin
+     ellas §4.1 no puede resolver la oficina y el fail-closed descartaría todo el tráfico actual.
+   - `STRIPE_SECRET_KEY` y `STRIPE_WEBHOOK_SECRET`, `es_secreto = True`. Stripe es cuenta por oficina
      por la decisión de §0; dejarlas heredadas del `.env` contradiría esa decisión desde el día uno.
+
+   `clave` es siempre el nombre EXACTO de la variable de entorno, en mayúsculas — que es como el
+   operador ya las conoce del `.env`. Ojo en el PR 2: dos de ellas no se derivan del atributo de
+   `settings` por `clave.lower()` (`WHATSAPP_VERIFY_TOKEN` → `settings.verify_token`,
+   `WHATSAPP_APP_SECRET` → `settings.app_secret`), así que la herencia de §3 necesita un mapa
+   explícito, no `getattr(settings, clave.lower())`.
 
    Con esto la única oficina que hoy opera queda con **todas sus llaves accesibles desde el panel** —
    las propias como fila, las compartidas como heredadas— que es literalmente lo pedido, sin duplicar
@@ -339,7 +360,7 @@ Cinco PRs. Cada uno despliega solo y deja producción funcionando igual que ante
 
 | PR | Qué | Riesgo | Prueba que lo cierra |
 |---|---|---|---|
-| 1 | `office` + `office_credential` + siembra de Tlaxcala + `office_id` en las tablas de §2.3 + `cryptography` en `requirements.txt` | Bajo — nada lo lee todavía | Arrancar sobre una copia de la base de producción y verificar que toda fila quedó en `office_id = 1` |
+| 1 | `office` + `office_credential` + siembra de Tlaxcala + `office_id` en las tablas de §2.3 + `cryptography` en `requirements.txt` + `office_id` en el espejo MSSQL (dict de `archive.py` + 15 upserts) | Bajo — nada lo lee todavía | Arrancar sobre una copia de la base de producción y verificar que toda fila quedó en `office_id = 1` |
 | 2 | `credencial()` con herencia + los 9 archivos que hoy leen `settings.*` pasan a usarla | **Medio — es el PR delicado** | El suite completo verde sin una sola fila en `office_credential`: prueba que la herencia reproduce el comportamiento actual |
 | 3 | Panel `/oficinas`: alta, usuarios, CRUD de llaves, auditoría | Bajo | Alta de una oficina de prueba, poner y quitar una llave, verificar que el valor nunca aparece en el HTML |
 | 4 | Filas de Meta/Twilio de Tlaxcala + ruteo por `phone_number_id` y por `To`, fail-closed | **Alto — toca el webhook** | Test de webhook con `phone_number_id` desconocido que debe descartar y registrar, no procesar |

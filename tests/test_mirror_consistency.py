@@ -455,3 +455,54 @@ def test_mirror_status_sin_mssql_reporta_una_fila_por_tabla_sin_reventar(monkeyp
         )
         # Sin conexión no se puede afirmar que la tabla está al día.
         assert not fila["ok"], f"Fila marcada como sincronizada sin MSSQL: {fila}"
+
+
+# --------------------------------------------------------------------------
+# office_id (multi-oficina, PR 1): amarra modelos, dict del espejo y upserts
+# --------------------------------------------------------------------------
+# Las 15 tablas MSSQL de §2.3 como LITERAL: derivarlas del código haría que quitar
+# la columna de un modelo y del dict a la vez pasara en verde.
+TABLAS_MSSQL_CON_OFICINA = frozenset({
+    "wa_clients", "conversations", "tickets", "app_users", "team_messages", "cobros",
+    "catalog_categories", "catalog_services", "synonym_proposals", "nlu_events",
+    "info_docs", "labels", "saved_replies", "message_templates", "agent_config",
+})
+
+
+def _mssql_con_office_id_segun_modelo() -> set[str]:
+    return {
+        tabla for modelo, tabla in system.MIRROR_TABLES
+        if "office_id" in modelo.__table__.columns
+    }
+
+
+def _mssql_con_office_id_segun_archive() -> set[str]:
+    return {t for t, cols in archive._COLUMNS_ADDED_AFTER_LAUNCH.items() if "office_id" in cols}
+
+
+def test_toda_tabla_espejada_con_office_id_lo_declara_en_el_espejo_con_el_mismo_ddl():
+    """REGLA: si el modelo SQLite lleva office_id, el espejo lo declara con UN solo
+    DDL (_OFFICE_ID_MSSQL). Sin el DEFAULT 1 en MSSQL el ALTER sobre tabla con
+    datos falla y el espejo entra en warning para siempre."""
+    assert _mssql_con_office_id_segun_modelo() == TABLAS_MSSQL_CON_OFICINA
+    for tabla in sorted(TABLAS_MSSQL_CON_OFICINA):
+        assert archive._COLUMNS_ADDED_AFTER_LAUNCH[tabla]["office_id"] == archive._OFFICE_ID_MSSQL, tabla
+
+
+def test_ninguna_tabla_del_espejo_declara_office_id_sin_modelo_que_lo_tenga():
+    # Una llave de más sería una columna fantasma siempre en 1.
+    assert _mssql_con_office_id_segun_archive() == TABLAS_MSSQL_CON_OFICINA
+
+
+@pytest.mark.parametrize("tabla", sorted(TABLAS_MSSQL_CON_OFICINA))
+def test_office_id_lo_escribe_el_upsert_de_cada_tabla_espejada(tabla):
+    # Cubre wa_clients vía sync_client_name y team_messages vía el INSERT literal.
+    assert "office_id" in _columnas_que_escribe(tabla), tabla
+
+
+def test_office_ni_officecredential_entran_al_espejo():
+    # Spec §2.2 y §9: secretos fuera del segundo motor; office se difiere (PR 3).
+    assert not {t for t in TABLAS_DDL if t.startswith("office")}
+    assert not {t for t in TABLAS_EN_SYSTEM if t.startswith("office")}
+    assert not {t for t in archive._COLUMNS_ADDED_AFTER_LAUNCH if t.startswith("office")}
+    assert not {m.__name__ for m, _ in system.MIRROR_TABLES} & {"Office", "OfficeCredential"}

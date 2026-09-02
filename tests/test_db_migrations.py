@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import SQLModel, create_engine
 
@@ -213,11 +214,11 @@ _COLUMNAS_QUE_AGREGA_LA_MIGRACION = {
         "habilitado",
         "provider",
     ),
-    "teammessage": ("habilitado",),
-    "user": ("is_admin", "habilitado", "estado", "phone"),
-    "ticket": ("agent_active", "habilitado", "requirements_json", "provider"),
-    "client": ("habilitado",),
-    "conversation": ("habilitado", "provider"),
+    "teammessage": ("habilitado", "office_id"),
+    "user": ("is_admin", "habilitado", "estado", "phone", "office_id"),
+    "ticket": ("agent_active", "habilitado", "requirements_json", "provider", "office_id"),
+    "client": ("habilitado", "office_id"),
+    "conversation": ("habilitado", "provider", "office_id"),
     "invitation": ("habilitado",),
     "ticketactivity": ("habilitado",),
 }
@@ -239,6 +240,14 @@ _ESQUEMA_DESPLEGADO = {
     "infodoc": (
         "id", "texto", "position", "habilitado", "updated_by",
         "created_at", "updated_at",
+    ),
+    # Multi-oficina (docs/SPEC-MULTI-OFICINA.md, PR 1): tablas nuevas, create_all()
+    # las crea completas. office_id NO va en las 15 tablas viejas de este snapshot:
+    # lo crea _OFFICE_COLUMN en app/db.py y el candado de abajo es quien lo vigila.
+    "office": ("id", "nombre", "slug", "ciudad", "zona_horaria", "habilitado", "created_at"),
+    "officecredential": (
+        "id", "office_id", "provider", "clave", "valor_cif", "pista",
+        "es_secreto", "habilitado", "updated_by", "updated_at",
     ),
     # Cobranza con Stripe: cinco tablas NUEVAS, no columnas agregadas a tablas
     # existentes — por eso no hay dict de migracion para ellas y create_all()
@@ -584,6 +593,10 @@ _DICTS_DE_MIGRACION = {
     # client también aparece en el spread de habilitado: misma fusión.
     "client": {**db._HABILITADO_COLUMN, **db._CLIENT_COLUMNS_ADDED_AFTER_LAUNCH},
 }
+# office_id entra por un dict compartido a 15 tablas (como habilitado): se fusiona
+# sobre lo que ya recibía cada tabla para no perder de vista ningún dict.
+for _tabla in db._TABLES_NEEDING_OFFICE:
+    _DICTS_DE_MIGRACION[_tabla] = {**_DICTS_DE_MIGRACION.get(_tabla, {}), **db._OFFICE_COLUMN}
 
 
 # ---------------------------------------------------------------------------
@@ -822,6 +835,11 @@ def test_init_db_es_idempotente_tres_veces_seguidas(bd_de_lanzamiento):
             "SELECT COUNT(*) FROM sqlite_master "
             "WHERE type = 'index' AND name = 'ux_message_wa_message_id'"
         ).scalar() == 1
+        assert conn.exec_driver_sql("SELECT COUNT(*) FROM office").scalar() == 1
+        assert conn.exec_driver_sql(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type = 'index' AND name = 'ux_officecredential_viva'"
+        ).scalar() == 1
 
 
 # ---------------------------------------------------------------------------
@@ -972,3 +990,109 @@ def test_importar_solo_app_db_registra_todos_los_modelos_en_el_metadata(tmp_path
         "importar app.db ya no registra todos los modelos: create_all() sería un "
         f"no-op en el cron. Faltan: {sorted(set(SQLModel.metadata.tables) - tablas)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. Multi-oficina (PR 1 de docs/SPEC-MULTI-OFICINA.md §8)
+# ---------------------------------------------------------------------------
+
+_TABLAS_VIEJAS_CON_OFICINA = ("client", "conversation", "ticket", "user", "teammessage")
+
+
+def test_toda_fila_vieja_queda_en_la_oficina_1_tras_migrar(bd_migrada):
+    # REGLA (criterio de aceptación del PR 1, spec :342): el histórico es de
+    # Tlaxcala. Sin DEFAULT las filas quedarían NULL y cada reporte por oficina
+    # saldría mal para siempre. Molde: test_las_filas_viejas_quedan_habilitadas_tras_migrar.
+    with bd_migrada.connect() as conn:
+        valores = {
+            tabla: conn.exec_driver_sql(f'SELECT office_id FROM "{tabla}"').fetchall()
+            for tabla in _TABLAS_VIEJAS_CON_OFICINA
+        }
+    for tabla, filas in valores.items():
+        assert filas, f"la fila histórica de {tabla} desapareció"
+        assert all(fila[0] == 1 for fila in filas), f"{tabla} quedó con office_id NULL/!=1"
+
+
+@pytest.mark.parametrize("tabla", sorted(db._TABLES_NEEDING_OFFICE))
+def test_office_id_tiene_el_mismo_ddl_en_base_migrada_y_nueva(bd_migrada, tabla, tmp_path, monkeypatch):
+    # Cierra el hueco de test_la_base_migrada_y_una_base_nueva_...: esa compara
+    # solo NOMBRES. Aquí (type, notnull, dflt_value) — un server_default olvidado
+    # en el modelo pone rojo el test. OJO con lo que NO prueba: bd_migrada nace de
+    # _DDL_DE_LANZAMIENTO, que solo trae las tablas del lanzamiento; para las otras
+    # 10 los dos lados son create_all() y la comparación es trivial. El ALTER real
+    # sobre las 15 con datos lo cubre el test de abajo.
+    def pragma(engine):
+        with engine.connect() as conn:
+            for row in conn.exec_driver_sql(f'PRAGMA table_info("{tabla}")'):
+                if row[1] == "office_id":
+                    return (row[2].upper(), row[3], row[4])
+        return None
+
+    engine_nuevo = _engine_de_archivo(tmp_path / "nueva.db")
+    monkeypatch.setattr(db, "engine", engine_nuevo)
+    db.init_db()
+    assert pragma(bd_migrada) == ("INTEGER", 1, "1")
+    assert pragma(engine_nuevo) == ("INTEGER", 1, "1")
+
+
+@pytest.fixture()
+def bd_sin_office_id(tmp_path, monkeypatch):
+    """Base con las 15 tablas POBLADAS y sin `office_id` — el VPS antes de este PR.
+
+    _DDL_DE_LANZAMIENTO solo cubre las tablas del lanzamiento, así que las otras
+    diez (cobro, catálogo, sinónimos, RAG...) nunca pasan por un ALTER en las
+    pruebas: nacen ya con la columna. Aquí se crea el esquema completo y se
+    QUITA la columna, que es exactamente el estado del que parte producción.
+    """
+    engine = _engine_de_archivo(tmp_path / "sin_office.db")
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        for tabla in db._TABLES_NEEDING_OFFICE:
+            conn.execute(text(f'ALTER TABLE "{tabla}" DROP COLUMN office_id'))
+    monkeypatch.setattr(db, "engine", engine)
+    return engine
+
+
+def test_el_alter_rellena_con_1_las_filas_de_las_quince_tablas(bd_sin_office_id):
+    """REGLA (criterio de cierre del PR 1): tras migrar, TODA fila preexistente de
+    las 15 tablas queda en la oficina 1. Una fila en NULL —o una tabla que se
+    quedó sin la columna— deja el histórico sin oficina y todo reporte por
+    oficina sale mal para siempre, en silencio.
+    """
+    # Una fila por tabla ANTES de migrar, con lo mínimo que exige cada esquema.
+    with bd_sin_office_id.begin() as conn:
+        for tabla in db._TABLES_NEEDING_OFFICE:
+            columnas, valores = [], {}
+            for col in SQLModel.metadata.tables[tabla].columns:
+                if col.name == "office_id" or (col.primary_key and col.autoincrement is True):
+                    continue
+                # NOT NULL sin server_default: hay que darle valor a mano. Los
+                # default_factory de SQLModel (created_at) viven en Python, no en
+                # el DDL, así que un INSERT crudo sí los necesita.
+                if col.nullable or col.server_default is not None:
+                    continue
+                columnas.append(col.name)
+                tipo = str(col.type).upper()
+                if "INT" in tipo or "BOOL" in tipo or "FLOAT" in tipo:
+                    valores[col.name] = 1
+                elif "DATE" in tipo:
+                    valores[col.name] = "2026-01-01 00:00:00"
+                else:
+                    valores[col.name] = f"v-{tabla}"
+            nombres = ", ".join(f'"{c}"' for c in columnas)
+            marcas = ", ".join(f":{c}" for c in columnas)
+            conn.execute(text(f'INSERT INTO "{tabla}" ({nombres}) VALUES ({marcas})'), valores)
+
+    db.init_db()
+
+    with bd_sin_office_id.connect() as conn:
+        for tabla in db._TABLES_NEEDING_OFFICE:
+            filas = conn.exec_driver_sql(f'SELECT office_id FROM "{tabla}"').fetchall()
+            assert filas, f"la fila previa de {tabla} desapareció al migrar"
+            assert all(f[0] == 1 for f in filas), f"{tabla} quedó con office_id NULL/!=1: {filas}"
+            ddl = [
+                (r[2].upper(), r[3], r[4])
+                for r in conn.exec_driver_sql(f'PRAGMA table_info("{tabla}")')
+                if r[1] == "office_id"
+            ]
+            assert ddl == [("INTEGER", 1, "1")], f"{tabla} recibió otro DDL: {ddl}"

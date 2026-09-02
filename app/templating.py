@@ -14,10 +14,11 @@ from fastapi.templating import Jinja2Templates
 
 from app.auth import is_admin
 from app.dinero import formato_monto
+from app.models import ZONA_HORARIA_DEFAULT
 
 # CDMX es UTC-6 todo el año (México eliminó el horario de verano en 2022). Es la
 # misma zona que usan los cortes "hoy/semana/mes" de la gráfica de actividad.
-BUSINESS_TZ = ZoneInfo("America/Mexico_City")
+BUSINESS_TZ = ZoneInfo(ZONA_HORARIA_DEFAULT)
 
 
 def local_dt(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:

@@ -1,6 +1,7 @@
 import logging
 
 from sqlalchemy import event, text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine
 
 # Importar los modelos aquí es lo que puebla SQLModel.metadata: sin esto,
@@ -62,6 +63,23 @@ _USER_COLUMNS_ADDED_AFTER_LAUNCH = {
 # message/teammessage/user ya lo tienen en sus dicts propios de arriba.
 _HABILITADO_COLUMN = {"habilitado": "BOOLEAN NOT NULL DEFAULT 1"}
 _TABLES_NEEDING_HABILITADO = ("client", "conversation", "ticket", "invitation", "ticketactivity")
+# Multi-oficina (docs/SPEC-MULTI-OFICINA.md §2.3). office_id: DEFAULT 1 porque
+# TODO lo que existe hoy es de Tlaxcala — es la única oficina que ha operado.
+# Dejarlo NULL dejaría el histórico sin oficina y cada reporte por oficina
+# saldría mal para siempre; NOT NULL sin DEFAULT tumbaría el arranque (SQLite
+# lo rechaza sobre tabla con datos, ver requirements_json abajo). SQLite rellena
+# las filas existentes con 1 en el mismo ALTER: no hay backfill que escribir.
+_OFFICE_COLUMN = {"office_id": f"INTEGER NOT NULL DEFAULT {models.OFICINA_TLAXCALA_ID}"}
+# Las 15 tablas que el panel filtra directamente. Las que solo se alcanzan por
+# join (message, ticketlabel, intentocobro, ...) heredan la oficina del padre y
+# NO llevan la columna. Mismo mecanismo que _TABLES_NEEDING_HABILITADO: 10 de
+# estas no tienen dict propio — nacieron por create_all, pero en el VPS ya
+# existen y office_id solo les llega por ALTER.
+_TABLES_NEEDING_OFFICE = (
+    "client", "conversation", "ticket", "user", "teammessage", "cobro",
+    "catalogcategory", "catalogservice", "synonymproposal", "nluevent", "infodoc",
+    "label", "savedreply", "plantilla", "agentconfig",
+)
 _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     "agent_active": "BOOLEAN NOT NULL DEFAULT 1",
     # Nullable a propósito: los folios viejos no tienen requisitos capturados y
@@ -126,6 +144,8 @@ _TABLAS_CON_TELEFONO_COMO_PK = ("client", "conversation")
 
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    # SPEC §7: la oficina 1 existe ANTES de que ninguna tabla reciba office_id.
+    _seed_office_tlaxcala()
     _add_missing_columns("message", _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("teammessage", _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("user", _USER_COLUMNS_ADDED_AFTER_LAUNCH)
@@ -134,6 +154,8 @@ def init_db() -> None:
     _add_missing_columns("client", _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH)
     for table in _TABLES_NEEDING_HABILITADO:
         _add_missing_columns(table, _HABILITADO_COLUMN)
+    for table in _TABLES_NEEDING_OFFICE:
+        _add_missing_columns(table, _OFFICE_COLUMN)
     with engine.begin() as conn:
         # Respaldo contra webhooks duplicados concurrentes: el chequeo en
         # conversation._already_processed cubre el caso normal; este índice
@@ -159,8 +181,62 @@ def init_db() -> None:
                 "ON ticketlabel(ticket_id, label_id) WHERE habilitado = 1"
             )
         )
+        # Llaves por oficina: una fila VIVA por (oficina, proveedor, clave).
+        # Parcial sobre habilitado, como ux_ticketlabel_viva: dar de baja es
+        # apagar la fila, y volver a dar de alta la misma llave no choca con la
+        # apagada — el audit conserva la vieja.
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_officecredential_viva "
+                "ON officecredential(office_id, provider, clave) WHERE habilitado = 1"
+            )
+        )
 
     _normalize_phones()
+
+
+def _seed_office_tlaxcala() -> None:
+    """Siembra la oficina 1 (Tlaxcala) si no existe.
+
+    Vive en init_db y no en main.on_startup porque el cron (app/jobs.py:43)
+    también llama init_db() y puede ser el primer proceso que toque una base
+    vacía. Idempotente: init_db corre en cada arranque y en cada corrida del
+    cron. id=1 EXPLÍCITO — no se confía en el autoincrement: la fila es lo que
+    referencia cada `office_id DEFAULT 1` del histórico, y una base restaurada
+    (o la tabla sin PK del candado de tests/test_db_migrations.py) tiene que
+    dar el mismo 1. Se comprueba por id, no por «tabla vacía»: una Tlaxcala
+    dada de baja (habilitado=0) NO se resiembra. `engine` se resuelve en la
+    llamada, que es lo que parchan los tests (tests/conftest.py:14).
+    """
+    with Session(engine) as session:
+        if session.get(models.Office, models.OFICINA_TLAXCALA_ID) is not None:
+            return
+        session.add(
+            models.Office(
+                id=models.OFICINA_TLAXCALA_ID,
+                nombre="Tlaxcala",
+                slug="tlaxcala",
+                ciudad="Tlaxcala",
+            )
+        )
+        try:
+            session.commit()
+        except IntegrityError:
+            # Carrera arranque-del-contenedor vs cron: los dos vieron la tabla
+            # vacía y el otro proceso ganó el INSERT. La fila ya está.
+            session.rollback()
+            with Session(engine) as verificacion:
+                if verificacion.get(models.Office, models.OFICINA_TLAXCALA_ID) is None:
+                    # NO fue la carrera: hay otra oficina ocupando el nombre o el
+                    # slug y la fila 1 sigue sin existir, así que todo office_id
+                    # del histórico apunta a la nada. Silenciarlo lo volvería
+                    # invisible arranque tras arranque.
+                    logger.error(
+                        "No se pudo sembrar la oficina %s (Tlaxcala): el nombre o el slug "
+                        "ya los tiene otra fila. Todo office_id del histórico apunta a una "
+                        "oficina inexistente hasta que se corrija a mano.",
+                        models.OFICINA_TLAXCALA_ID,
+                    )
 
 
 def _normalize_phones() -> None:
