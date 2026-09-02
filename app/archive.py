@@ -23,6 +23,9 @@ from sqlalchemy.orm import Session as SASession
 from sqlalchemy.orm import object_session
 
 from app.config import settings
+# Solo la constante: app.models no importa nada de app.*, así que no hay ciclo.
+# El resto de los modelos se importa dentro de las funciones (ver backfill).
+from app.models import OFICINA_TLAXCALA_ID
 
 logger = logging.getLogger(__name__)
 
@@ -554,6 +557,12 @@ _SCHEMA_DDL = [
     """,
 ]
 
+# office_id en el espejo (docs/SPEC-MULTI-OFICINA.md §2.3): el MISMO default que
+# en SQLite, derivado de la misma constante — no una copia que se pueda desfasar.
+# UNA cadena para las 15 tablas; el test de drift compara cada llave contra ella.
+# T-SQL rellena las filas existentes en el mismo ALTER (precedente: habilitado).
+_OFFICE_ID_MSSQL = f"INT NOT NULL DEFAULT {OFICINA_TLAXCALA_ID}"
+
 # ponytail: igual que db.py, sin alembic — columnas agregadas después del
 # lanzamiento se suman a mano vía ALTER TABLE si no existen.
 _COLUMNS_ADDED_AFTER_LAUNCH = {
@@ -567,7 +576,7 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "pricing_type": "NVARCHAR(40) NULL",
         "pricing_billable": "BIT NULL",
     },
-    "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL},
     "wa_clients": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         # Ficha CRM (fase 1) — mismos campos que Client en models.py.
@@ -580,11 +589,13 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "atributos_json": "NVARCHAR(MAX) NULL",
         "last_activity_at": "DATETIME2 NULL",
         "notas_internas": "NVARCHAR(MAX) NULL",
+        "office_id": _OFFICE_ID_MSSQL,
     },
     "app_users": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "estado": "NVARCHAR(20) NOT NULL DEFAULT 'disponible'",
         "phone": "NVARCHAR(20) NULL",
+        "office_id": _OFFICE_ID_MSSQL,
     },
     "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "tickets": {
@@ -597,12 +608,26 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "first_response_by": "NVARCHAR(64) NULL",
         "resolved_at": "DATETIME2 NULL",
         "status_changed_at": "DATETIME2 NULL",
+        "office_id": _OFFICE_ID_MSSQL,
     },
     "ticket_activity": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "conversations": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "provider": "NVARCHAR(20) NOT NULL DEFAULT 'meta'",
+        "office_id": _OFFICE_ID_MSSQL,
     },
+    # Multi-oficina: las 10 tablas de §2.3 que no habían recibido columnas
+    # después del lanzamiento. Solo office_id.
+    "cobros": {"office_id": _OFFICE_ID_MSSQL},
+    "catalog_categories": {"office_id": _OFFICE_ID_MSSQL},
+    "catalog_services": {"office_id": _OFFICE_ID_MSSQL},
+    "synonym_proposals": {"office_id": _OFFICE_ID_MSSQL},
+    "nlu_events": {"office_id": _OFFICE_ID_MSSQL},
+    "info_docs": {"office_id": _OFFICE_ID_MSSQL},
+    "labels": {"office_id": _OFFICE_ID_MSSQL},
+    "saved_replies": {"office_id": _OFFICE_ID_MSSQL},
+    "message_templates": {"office_id": _OFFICE_ID_MSSQL},
+    "agent_config": {"office_id": _OFFICE_ID_MSSQL},
 }
 
 
@@ -782,8 +807,9 @@ def archive_team_message(m) -> None:
             conn.execute(text("INSERT INTO team_users (username) VALUES (:u)"), {"u": m.author})
         conn.execute(
             text(
-                "INSERT INTO team_messages (source_id, author, body, media_path, habilitado, created_at)"
-                " VALUES (:sid, :a, :b, :mp, :hab, :c)"
+                "INSERT INTO team_messages"
+                " (source_id, author, body, media_path, habilitado, created_at, office_id)"
+                " VALUES (:sid, :a, :b, :mp, :hab, :c, :off)"
             ),
             {
                 "sid": m.id,
@@ -792,6 +818,7 @@ def archive_team_message(m) -> None:
                 "mp": m.media_path,
                 "hab": m.habilitado,
                 "c": _naive_utc(m.created_at),
+                "off": m.office_id,
             },
         )
 
@@ -833,6 +860,7 @@ def sync_client_name(c) -> None:
                 _naive_utc(c.last_activity_at) if c.last_activity_at else None
             ),
             "notas_internas": c.notas_internas,
+            "office_id": c.office_id,
         },
     )
 
@@ -863,6 +891,7 @@ def archive_user(u) -> None:
             "habilitado": u.habilitado,
             "estado": u.estado,
             "phone": u.phone,
+            "office_id": u.office_id,
         },
     )
 
@@ -904,6 +933,7 @@ def archive_saved_reply(r) -> None:
             "body": r.body,
             "habilitado": r.habilitado,
             "created_at": _naive_utc(r.created_at),
+            "office_id": r.office_id,
         },
     )
 
@@ -951,6 +981,7 @@ def archive_ticket(t) -> None:
             "status_changed_at": (
                 _naive_utc(t.status_changed_at) if t.status_changed_at else None
             ),
+            "office_id": t.office_id,
         },
     )
 
@@ -964,6 +995,7 @@ def archive_label(l) -> None:
             "descripcion": l.descripcion,
             "habilitado": l.habilitado,
             "created_at": _naive_utc(l.created_at),
+            "office_id": l.office_id,
         },
     )
 
@@ -1045,7 +1077,12 @@ def archive_web_session(w) -> None:
 def archive_catalog_category(c) -> None:
     _upsert(
         "catalog_categories", "id", c.id,
-        {"name": c.name, "position": c.position, "habilitado": c.habilitado},
+        {
+            "name": c.name,
+            "position": c.position,
+            "habilitado": c.habilitado,
+            "office_id": c.office_id,
+        },
     )
 
 
@@ -1060,6 +1097,7 @@ def archive_catalog_service(s) -> None:
             "requirements": s.requirements,
             "position": s.position,
             "habilitado": s.habilitado,
+            "office_id": s.office_id,
         },
     )
 
@@ -1092,6 +1130,7 @@ def archive_synonym_proposal(p) -> None:
             "decided_at": _naive_utc(p.decided_at) if p.decided_at else None,
             "habilitado": p.habilitado,
             "created_at": _naive_utc(p.created_at),
+            "office_id": p.office_id,
         },
     )
 
@@ -1137,6 +1176,7 @@ def archive_nlu_event(e) -> None:
             "termino_en_ticket": e.termino_en_ticket,
             "habilitado": e.habilitado,
             "created_at": _naive_utc(e.created_at),
+            "office_id": e.office_id,
         },
     )
 
@@ -1149,6 +1189,7 @@ def archive_agent_config(a) -> None:
             "updated_by": a.updated_by,
             "updated_at": _naive_utc(a.updated_at),
             "habilitado": a.habilitado,
+            "office_id": a.office_id,
         },
     )
 
@@ -1163,6 +1204,7 @@ def archive_info_doc(d) -> None:
             "updated_by": d.updated_by,
             "created_at": _naive_utc(d.created_at),
             "updated_at": _naive_utc(d.updated_at),
+            "office_id": d.office_id,
         },
     )
 
@@ -1177,6 +1219,7 @@ def archive_conversation(c) -> None:
             "updated_at": _naive_utc(c.updated_at),
             "habilitado": c.habilitado,
             "provider": c.provider,
+            "office_id": c.office_id,
         },
     )
 
@@ -1195,6 +1238,7 @@ def archive_plantilla(p) -> None:
             "habilitado": p.habilitado,
             "created_at": _naive_utc(p.created_at),
             "updated_at": _naive_utc(p.updated_at),
+            "office_id": p.office_id,
         },
     )
 
@@ -1260,6 +1304,7 @@ def archive_cobro(c) -> None:
             "created_at": _naive_utc(c.created_at),
             "updated_at": _naive_utc(c.updated_at),
             "habilitado": c.habilitado,
+            "office_id": c.office_id,
         },
     )
 
@@ -1488,8 +1533,9 @@ def _normalize_phones_espejo() -> None:
             if not ya_existe:
                 conn.execute(
                     text(
-                        "INSERT INTO wa_clients (phone, name, habilitado, created_at)"
-                        " SELECT :c, name, habilitado, created_at"
+                        "INSERT INTO wa_clients"
+                        " (phone, name, habilitado, created_at, office_id)"
+                        " SELECT :c, name, habilitado, created_at, office_id"
                         " FROM wa_clients WHERE phone = :p"
                     ),
                     {"c": canonico, "p": crudo},

@@ -25,6 +25,36 @@ PROVIDER_META = "meta"
 PROVIDER_TWILIO = "twilio"
 PROVIDERS = (PROVIDER_META, PROVIDER_TWILIO)
 
+# Multi-oficina (docs/SPEC-MULTI-OFICINA.md). La 1 es Tlaxcala: la única oficina
+# que ha operado, y por eso es el DEFAULT de office_id en las 15 tablas de §2.3.
+# La fila la siembra db.init_db(); nunca se borra (baja = habilitado=0).
+OFICINA_TLAXCALA_ID = 1
+# Fuente única de la zona horaria del negocio: default de office.zona_horaria y
+# origen de templating.BUSINESS_TZ. templating importa de aquí y no al revés:
+# este módulo no importa nada de app.*, así que no hay ciclo.
+ZONA_HORARIA_DEFAULT = "America/Mexico_City"
+
+
+def _office_id_field():
+    """Columna office_id de las 15 tablas de §2.3 — UNA definición, 15 usos.
+
+    Es una función y no una constante compartida por gusto de aislamiento: un
+    solo FieldInfo entre 15 modelos también funciona (pydantic lo copia por
+    clase), pero un Field por llamada deja el helper libre de suposiciones
+    sobre las internas de SQLModel. Mismo truco que Conversation.provider
+    (abajo): `default=` cubre el INSERT desde Python,
+    `server_default` cubre el DDL de create_all() y _OFFICE_COLUMN en app/db.py
+    cubre la base migrada — los tres caminos convergen en
+    `INTEGER NOT NULL DEFAULT 1`. Sin foreign_key= ni index=True a propósito:
+    el repo no declara FKs (PRAGMA foreign_keys apagado, app/db.py:19-27) y
+    _add_missing_columns solo hace ADD COLUMN, así que una FK o un índice
+    existirían en bases nuevas y nunca en el VPS sin que nadie lo note.
+    """
+    return Field(
+        default=OFICINA_TLAXCALA_ID,
+        sa_column_kwargs={"server_default": text(str(OFICINA_TLAXCALA_ID))},
+    )
+
 
 class TicketStatus(str, Enum):
     NUEVO = "nuevo"
@@ -38,6 +68,7 @@ class Client(SQLModel, table=True):
     name: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    office_id: int = _office_id_field()
     # Ficha CRM (fase 1 del análisis de brechas, docs/ANALISIS-BRECHAS-ERP-CRM.md).
     # Se normaliza a minúsculas al guardar (ver clients.update_client).
     email: str | None = None
@@ -70,6 +101,7 @@ class Conversation(SQLModel, table=True):
     failed_attempts: int = 0
     updated_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    office_id: int = _office_id_field()
     # Canal del ÚLTIMO mensaje entrante. Decide por dónde se responde: la
     # ventana de 24 h es por número, así que contestar por el otro canal deja
     # al negocio fuera de ventana con un remitente que el cliente no reconoce.
@@ -158,6 +190,7 @@ class Ticket(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    office_id: int = _office_id_field()
     # Número por el que llegó la solicitud. Es lo que permite reportar carga y
     # conversión por cuenta cuando las dos cuentas comparten este CRM.
     # server_default: una base NUEVA (create_all) nace con el mismo DEFAULT que
@@ -189,6 +222,7 @@ class User(SQLModel, table=True):
     password_hash: str
     is_admin: bool = False
     habilitado: bool = True
+    office_id: int = _office_id_field()
     # Disponibilidad visible al equipo: disponible | ocupado | ausente
     estado: str = "disponible"
     # Celular del colaborador (formato WhatsApp 521 + 10 dígitos), capturado
@@ -218,6 +252,7 @@ class Label(SQLModel, table=True):
     descripcion: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class TicketLabel(SQLModel, table=True):
@@ -254,6 +289,7 @@ class SavedReply(SQLModel, table=True):
     body: str
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class TeamMessage(SQLModel, table=True):
@@ -263,6 +299,7 @@ class TeamMessage(SQLModel, table=True):
     media_path: str | None = None
     created_at: datetime = Field(default_factory=utcnow, index=True)
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class TicketActivity(SQLModel, table=True):
@@ -347,6 +384,7 @@ class CatalogCategory(SQLModel, table=True):
     name: str
     position: int = 0
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class CatalogService(SQLModel, table=True):
@@ -361,6 +399,7 @@ class CatalogService(SQLModel, table=True):
     requirements: str = ""
     position: int = 0
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class CatalogAudit(SQLModel, table=True):
@@ -394,6 +433,7 @@ class SynonymProposal(SQLModel, table=True):
     decided_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow, index=True)
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class Feedback(SQLModel, table=True):
@@ -447,6 +487,7 @@ class NluEvent(SQLModel, table=True):
     termino_en_ticket: bool = False
     created_at: datetime = Field(default_factory=utcnow, index=True)
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class Alert(SQLModel, table=True):
@@ -503,6 +544,7 @@ class Plantilla(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class Invitation(SQLModel, table=True):
@@ -632,6 +674,7 @@ class Cobro(SQLModel, table=True):
     # Soft delete. NO entra en el WHERE del índice del candado: borrar un cobro
     # del panel no debe liberar un voucher que el cliente todavía puede pagar.
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class IntentoCobro(SQLModel, table=True):
@@ -777,6 +820,7 @@ class AgentConfig(SQLModel, table=True):
     updated_by: str | None = None
     updated_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    office_id: int = _office_id_field()
 
 
 class InfoDoc(SQLModel, table=True):
@@ -790,6 +834,54 @@ class InfoDoc(SQLModel, table=True):
     texto: str
     position: int = Field(default=0, index=True)
     habilitado: bool = True
+    office_id: int = _office_id_field()
     updated_by: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class Office(SQLModel, table=True):
+    """Oficina (sede) del ERP — docs/SPEC-MULTI-OFICINA.md §2.1.
+
+    La fila id=1 es Tlaxcala y la siembra db.init_db(): TODO office_id del
+    histórico apunta a ella. Nunca se borra; baja = habilitado=0. En el PR 1
+    nadie la lee todavía (credencial() es PR 2, el panel /oficinas es PR 3)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    nombre: str = Field(unique=True, index=True)
+    slug: str = Field(unique=True, index=True)  # URL del webhook de Stripe (PR 5)
+    ciudad: str
+    zona_horaria: str = ZONA_HORARIA_DEFAULT
+    habilitado: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class OfficeCredential(SQLModel, table=True):
+    """Llave de proveedor por oficina — docs/SPEC-MULTI-OFICINA.md §2.2.
+
+    Tabla física `officecredential` (SQLModel sin __tablename__, como
+    ticketlabel/catalogcategory). NO se espeja a MSSQL a propósito (§2.2, §9):
+    no entra a _SCHEMA_DDL ni a MIRROR_TABLES. valor_cif = Fernet(valor):
+    bytes -> BLOB; en este PR nadie la lee ni la escribe (cifrado/descifrado y
+    credencial() son PR 2). Unicidad VIVA (office_id, provider, clave) WHERE
+    habilitado=1: índice parcial ux_officecredential_viva creado en
+    db.init_db(), porque SQLModel no sabe declararlo.
+
+    `clave` es el nombre de la variable de entorno en MAYÚSCULAS
+    (WHATSAPP_TOKEN, STRIPE_SECRET_KEY, ...): la forma que el operador ya
+    conoce del .env. Ojo PR 2: WHATSAPP_VERIFY_TOKEN -> settings.verify_token y
+    WHATSAPP_APP_SECRET -> settings.app_secret NO siguen clave.lower()."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    office_id: int  # -> office.id; sin FK declarada, igual que TicketLabel.ticket_id
+    provider: str  # meta | twilio | stripe
+    clave: str
+    valor_cif: bytes  # sqlmodel 0.0.22 lo mapea a LargeBinary (BLOB) sin sa_column
+    pista: str = ""  # últimos 4 caracteres, lo único que verá el panel (PR 3)
+    es_secreto: bool = True  # False solo para identificadores (phone_number_id, whatsapp_from)
+    habilitado: bool = True  # baja = apagar, nunca borrar: conserva quién y cuándo
+    # NOT NULL a propósito (spec §2.2), a diferencia de AgentConfig/InfoDoc: aquí
+    # no hay .env que sea «la fuente»; toda fila la pone un humano o una siembra
+    # que se nombra a sí misma ('migracion').
+    updated_by: str
     updated_at: datetime = Field(default_factory=utcnow)

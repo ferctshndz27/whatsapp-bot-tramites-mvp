@@ -7,6 +7,7 @@ from sqlmodel import Session, SQLModel
 import app.archive as archive
 from app.config import settings
 from app.models import (
+    Client,
     Direction,
     Invitation,
     Message,
@@ -24,7 +25,7 @@ ARCHIVE_DDL = [
         email TEXT, origen TEXT, idioma TEXT DEFAULT 'es-MX',
         opt_in_at TIMESTAMP, opt_in_source TEXT, opt_out_at TIMESTAMP,
         atributos_json TEXT, last_activity_at TIMESTAMP,
-        notas_internas TEXT)""",
+        notas_internas TEXT, office_id INTEGER DEFAULT 1)""",
     """CREATE TABLE wa_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         phone TEXT REFERENCES wa_clients(phone), direction TEXT, body TEXT,
@@ -36,12 +37,13 @@ ARCHIVE_DDL = [
     """CREATE TABLE team_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         author TEXT REFERENCES team_users(username), body TEXT,
-        media_path TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
+        media_path TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP,
+        office_id INTEGER DEFAULT 1)""",
     """CREATE TABLE app_users (
         source_id INTEGER PRIMARY KEY, username TEXT UNIQUE,
         password_hash TEXT, is_admin INTEGER DEFAULT 0,
         habilitado INTEGER DEFAULT 1, estado TEXT DEFAULT 'disponible',
-        phone TEXT)""",
+        phone TEXT, office_id INTEGER DEFAULT 1)""",
     """CREATE TABLE followups (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT, note TEXT,
         due_at TIMESTAMP, done_at TIMESTAMP, habilitado INTEGER DEFAULT 1,
@@ -51,7 +53,8 @@ ARCHIVE_DDL = [
         habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
     """CREATE TABLE saved_replies (
         source_id INTEGER PRIMARY KEY, username TEXT, title TEXT, body TEXT,
-        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP,
+        office_id INTEGER DEFAULT 1)""",
     """CREATE TABLE invitations (
         source_id INTEGER PRIMARY KEY, token TEXT, phone TEXT, created_by TEXT,
         created_at TIMESTAMP, used_at TIMESTAMP, used_by TEXT,
@@ -65,7 +68,8 @@ ARCHIVE_DDL = [
         provider TEXT DEFAULT 'meta',
         first_response_at TIMESTAMP, first_response_by TEXT,
         resolved_at TIMESTAMP, status_changed_at TIMESTAMP,
-        created_at TIMESTAMP, updated_at TIMESTAMP)""",
+        created_at TIMESTAMP, updated_at TIMESTAMP,
+        office_id INTEGER DEFAULT 1)""",
     # Mínimas: _normalize_phones_espejo solo les lee/escribe phone. Las demás
     # columnas del espejo real no participan en ninguna prueba de este archivo.
     """CREATE TABLE feedback (
@@ -75,7 +79,7 @@ ARCHIVE_DDL = [
     """CREATE TABLE labels (
         source_id INTEGER PRIMARY KEY, nombre TEXT, color TEXT,
         descripcion TEXT, habilitado INTEGER DEFAULT 1,
-        created_at TIMESTAMP)""",
+        created_at TIMESTAMP, office_id INTEGER DEFAULT 1)""",
     """CREATE TABLE ticket_labels (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, label_id INTEGER,
         created_by TEXT, habilitado INTEGER DEFAULT 1,
@@ -86,7 +90,8 @@ ARCHIVE_DDL = [
     """CREATE TABLE conversations (
         phone TEXT PRIMARY KEY, state TEXT, context_json TEXT,
         failed_attempts INTEGER, habilitado INTEGER DEFAULT 1,
-        provider TEXT DEFAULT 'meta', updated_at TIMESTAMP)""",
+        provider TEXT DEFAULT 'meta', updated_at TIMESTAMP,
+        office_id INTEGER DEFAULT 1)""",
     """CREATE TABLE admin_audit (
         source_id INTEGER PRIMARY KEY, admin TEXT, action TEXT, target TEXT,
         habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
@@ -114,7 +119,7 @@ ARCHIVE_DDL = [
         pagado_at TIMESTAMP, cancelado_at TIMESTAMP,
         aviso_pago_enviado_at TIMESTAMP, reconciliado_at TIMESTAMP,
         created_at TIMESTAMP, updated_at TIMESTAMP,
-        habilitado INTEGER DEFAULT 1)""",
+        habilitado INTEGER DEFAULT 1, office_id INTEGER DEFAULT 1)""",
     """CREATE TABLE intentos_cobro (
         source_id INTEGER PRIMARY KEY, cobro_id INTEGER, numero INTEGER,
         clave_idempotencia TEXT, operacion TEXT, metodos_solicitados TEXT,
@@ -622,3 +627,47 @@ def test_backfill_repara_los_mensajes_que_la_caida_de_mssql_se_trago(mirror, ses
         ).first()
     assert tuple(wa) == (1, "perdido en la caída"), "backfill no reparó wa_messages"
     assert tuple(equipo) == (1, "también perdido"), "backfill no reparó team_messages"
+
+
+# ---------------------------------------------------------------------------
+# Multi-oficina (PR 1 de docs/SPEC-MULTI-OFICINA.md §8): office_id viaja al espejo
+# ---------------------------------------------------------------------------
+# Siempre office_id=2: con 1, el DEFAULT del fake enmascararía un upsert que no
+# escribe la columna (la fila saldría en 1 aunque SQLite dijera otra cosa).
+
+
+def test_office_id_viaja_al_espejo_por_upsert_generico(mirror):
+    archive.archive_ticket(Ticket(id=7, phone="521111", category="c", service_id="s",
+                                  service_name="n", price_info="$1", office_id=2))
+    archive.archive_user(User(id=3, username="ana", password_hash="h", office_id=2))
+    archive.sync_client_name(Client(phone="5215500001111", name="Ana", office_id=2))
+    with mirror.connect() as conn:
+        assert conn.execute(text("SELECT office_id FROM tickets WHERE source_id = 7")).scalar() == 2
+        assert conn.execute(text("SELECT office_id FROM app_users WHERE source_id = 3")).scalar() == 2
+        assert conn.execute(text("SELECT office_id FROM wa_clients WHERE phone = '5215500001111'")).scalar() == 2
+
+
+def test_office_id_viaja_al_espejo_por_insert_literal(mirror):
+    # archive_team_message es la única de las 15 que no pasa por _upsert.
+    archive.archive_team_message(
+        TeamMessage(id=9, author="bob", body="x", office_id=2,
+                    created_at=datetime.now(timezone.utc))
+    )
+    with mirror.connect() as conn:
+        assert conn.execute(text("SELECT office_id FROM team_messages WHERE source_id = 9")).scalar() == 2
+
+
+def test_office_id_viaja_en_la_copia_diferida_de_cobro(mirror):
+    # Molde: el helper _cobro() de test_cobro_archived_and_upsert_rewrites (mismos
+    # campos mínimos). Pasa por _instantanea, la copia que _diferir encola tras el
+    # commit: si esa copia no trajera office_id, el espejo de cobros quedaría en 1.
+    from app.models import Cobro
+
+    cobro = Cobro(id=1, phone="5215500001111", service_id="svc", concepto="CURP",
+                  moneda="mxn", monto_centavos=125000, estado="borrador",
+                  llave_cobro_vivo="5215500001111:svc:curp", token_verificacion="tok",
+                  creado_por="ana", created_at=datetime.now(timezone.utc),
+                  updated_at=datetime.now(timezone.utc), office_id=2)
+    archive.archive_cobro(archive._instantanea(cobro))
+    with mirror.connect() as conn:
+        assert conn.execute(text("SELECT office_id FROM cobros WHERE source_id = 1")).scalar() == 2
