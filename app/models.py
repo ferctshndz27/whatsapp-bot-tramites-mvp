@@ -862,15 +862,18 @@ class OfficeCredential(SQLModel, table=True):
     Tabla física `officecredential` (SQLModel sin __tablename__, como
     ticketlabel/catalogcategory). NO se espeja a MSSQL a propósito (§2.2, §9):
     no entra a _SCHEMA_DDL ni a MIRROR_TABLES. valor_cif = Fernet(valor):
-    bytes -> BLOB; en este PR nadie la lee ni la escribe (cifrado/descifrado y
-    credencial() son PR 2). Unicidad VIVA (office_id, provider, clave) WHERE
+    bytes -> BLOB. La LEE credenciales.credencial() desde el PR 2 —un SELECT por
+    lectura de credencial, y ahí mismo viven cifrar/descifrar—; la ESCRIBE el
+    panel del PR 3, así que hoy en producción sigue vacía y todo hereda del
+    .env. Unicidad VIVA (office_id, provider, clave) WHERE
     habilitado=1: índice parcial ux_officecredential_viva creado en
     db.init_db(), porque SQLModel no sabe declararlo.
 
     `clave` es el nombre de la variable de entorno en MAYÚSCULAS
     (WHATSAPP_TOKEN, STRIPE_SECRET_KEY, ...): la forma que el operador ya
-    conoce del .env. Ojo PR 2: WHATSAPP_VERIFY_TOKEN -> settings.verify_token y
-    WHATSAPP_APP_SECRET -> settings.app_secret NO siguen clave.lower()."""
+    conoce del .env. El atributo de `settings` al que hereda NO se deriva con
+    clave.lower() —WHATSAPP_VERIFY_TOKEN es settings.verify_token— así que el
+    mapa vive en config.CREDENCIALES y lo resuelve credenciales.credencial()."""
 
     id: int | None = Field(default=None, primary_key=True)
     office_id: int  # -> office.id; sin FK declarada, igual que TicketLabel.ticket_id

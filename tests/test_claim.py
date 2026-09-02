@@ -268,3 +268,47 @@ def test_duplicate_webhook_message_ignored(session):
         Message.wa_message_id == "wamid.DUP1", Message.direction == Direction.IN
     ).all()
     assert len(stored) == 1
+
+
+def test_el_aviso_y_la_encuesta_se_guardan(monkeypatch, session):
+    """REGLA: cerrar un folio deja DOS mensajes salientes en la base — el aviso
+    de cierre y la encuesta. Ninguno se puede perder.
+
+    Este test existe por un bug real del PR 2 (multi-oficina): leer una
+    credencial con `session=` DESPUÉS del session.add del aviso disparaba el
+    autoflush de esa fila, y la sesión anidada que abre send_buttons —bajo el
+    pool en memoria de la suite comparte la conexión DBAPI— la deshacía con su
+    ROLLBACK al cerrar. El aviso desaparecía sin un solo error, y ningún test
+    lo veía porque todos afirmaban sobre la lista `sent`, no sobre las filas.
+
+    Por eso aquí NO se parcha send_buttons: la sesión anidada tiene que correr
+    de verdad. Solo se corta la red, que es lo único que no puede pasar.
+    """
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(
+        dashboard.messaging, "send_text",
+        lambda phone, body: "wamid.AVISO",
+    )
+    # send_buttons SIN parchar: llega hasta messaging.canal_de y whatsapp_client,
+    # que abren sus propias sesiones. Se corta la red y nada más.
+    monkeypatch.setattr(
+        "app.whatsapp_client._post",
+        lambda *a, **k: {"messages": [{"id": "wamid.ENCUESTA"}]},
+        raising=False,
+    )
+    ticket = _make_ticket(session, assigned_to="bob", status=TicketStatus.EN_PROCESO)
+    session.add(Message(phone=ticket.phone, direction=Direction.IN, body="hola"))
+    session.commit()
+
+    finish_ticket(_request("bob"), ticket.id)
+
+    session.expire_all()
+    salientes = session.query(Message).filter(
+        Message.phone == ticket.phone, Message.direction == Direction.OUT
+    ).all()
+    cuerpos = [m.body for m in salientes]
+    assert len(salientes) == 2, (
+        f"se perdió un mensaje saliente al cerrar el folio: {cuerpos}"
+    )
+    assert any("folio #" in c for c in cuerpos), f"falta el aviso de cierre: {cuerpos}"
+    assert any("👍" in c or "1 " in c for c in cuerpos), f"falta la encuesta: {cuerpos}"

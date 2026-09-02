@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import NamedTuple
 
 from dotenv import load_dotenv
 
@@ -145,6 +146,11 @@ class Settings:
         # TODO con 403 a propósito: un webhook sin verificar es dinero ajeno
         # entrando a nuestra base.
         self.stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+        # Llave MAESTRA del cifrado en reposo de officecredential (§3.1). NO
+        # entra a CREDENCIALES: no puede ser fila de la tabla que protege.
+        # Vacía es inocuo mientras no exista una sola fila — que es el estado
+        # de producción hoy: con 0 filas _descifrar() no se llama nunca.
+        self.credentials_key = os.environ.get("CREDENTIALS_KEY", "")
         # Se pinea la versión para que un cambio de forma en la API de Stripe
         # no rompa el aplicador de eventos de un día para otro.
         self.stripe_api_version = os.environ.get("STRIPE_API_VERSION", "")
@@ -181,3 +187,38 @@ class Settings:
 
 
 settings = Settings()
+
+
+class Credencial(NamedTuple):
+    provider: str       # meta | twilio | stripe — columna officecredential.provider
+    atributo: str       # atributo de Settings — NO se deriva de clave.lower()
+    es_secreto: bool    # §2.2: False para identificadores, no para secretos
+    compartida: bool    # §7 paso 4: UNA sola llave para todas las oficinas
+
+
+# Inventario de credenciales por oficina — docs/SPEC-MULTI-OFICINA.md §3, §7.
+# La CLAVE es el nombre EXACTO de la variable de entorno, en MAYÚSCULAS: como
+# el operador ya la conoce del .env y como se guarda en officecredential.clave.
+#
+# NO se deriva con clave.lower(): dos no siguen esa regla (marcadas abajo) y
+# adivinarlas devolvería "" para el secreto que valida la firma de Meta
+# (webhook.py:63) — un fail-closed que descartaría TODO el tráfico entrante sin
+# decir por qué.
+#
+# OJO PR 3: `compartida=True` significa "el panel la RENDERIZA de solo lectura
+# como 'heredada del global' (§5)". NO significa que credencial() la ignore:
+# una fila viva que casa (office_id, provider, clave) SIEMPRE gana, sin
+# excepciones. Si el panel deja insertar una de estas para la oficina 1, esa
+# fila se usará — que es lo correcto, pero hay que decidirlo, no descubrirlo.
+CREDENCIALES: dict[str, Credencial] = {
+    "WHATSAPP_TOKEN":              Credencial("meta",   "whatsapp_token",              True,  True),
+    "WHATSAPP_PHONE_NUMBER_ID":    Credencial("meta",   "whatsapp_phone_number_id",    False, False),
+    "WHATSAPP_VERIFY_TOKEN":       Credencial("meta",   "verify_token",                True,  True),   # irregular
+    "WHATSAPP_APP_SECRET":         Credencial("meta",   "app_secret",                  True,  True),   # irregular
+    "TWILIO_ACCOUNT_SID":          Credencial("twilio", "twilio_account_sid",          True,  True),
+    "TWILIO_AUTH_TOKEN":           Credencial("twilio", "twilio_auth_token",           True,  True),
+    "TWILIO_WHATSAPP_FROM":        Credencial("twilio", "twilio_whatsapp_from",        False, False),
+    "TWILIO_CONTENT_SID_FEEDBACK": Credencial("twilio", "twilio_content_sid_feedback", False, True),
+    "STRIPE_SECRET_KEY":           Credencial("stripe", "stripe_secret_key",           True,  False),
+    "STRIPE_WEBHOOK_SECRET":       Credencial("stripe", "stripe_webhook_secret",       True,  False),
+}

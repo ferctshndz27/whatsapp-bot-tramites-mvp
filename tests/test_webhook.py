@@ -1,12 +1,15 @@
 import hashlib
 import hmac
 
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlmodel import select
 
 import app.db as db
 from app.config import settings
 from app.models import Direction, Message
-from app.webhook import _process_status, _tag_sent_message, _valid_signature
+from app.webhook import _process_status, _tag_sent_message, _valid_signature, router
 
 
 def test_valid_signature_is_accepted(monkeypatch):
@@ -47,3 +50,85 @@ def test_status_update_is_tagged_and_recorded(monkeypatch, session):
     assert row.wa_message_id == "wamid.ABC123"
     assert row.wa_status == "delivered"
     assert row.wa_status_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Handshake GET — caracterización ANTES de que la llave se resuelva por oficina
+#
+# `verify_webhook` tenía CERO cobertura. Estas cuatro pruebas fijan el
+# comportamiento de HOY para que la migración a credenciales.credencial()
+# (docs/SPEC-MULTI-OFICINA.md §3) no lo cambie sin querer: la herencia al .env
+# tiene que reproducirlo byte por byte, incluido el fail-open de la última.
+#
+# Todas parchan `settings.verify_token`: conftest.py no lo blanquea, así que sin
+# el parche el resultado dependería del .env del desarrollador.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def cliente():
+    """El handshake GET no toca la base: basta el router montado en un FastAPI
+    pelón (patrón de tests/test_stripe_webhook.py), sin los cuatro middlewares
+    de app.main ni la siembra del usuario del dashboard."""
+    api = FastAPI()
+    api.include_router(router)
+    return TestClient(api)
+
+
+def test_handshake_con_token_correcto_devuelve_el_challenge(cliente, monkeypatch):
+    monkeypatch.setattr(settings, "verify_token", "token-de-prueba")
+
+    r = cliente.get(
+        "/webhook?hub.mode=subscribe&hub.verify_token=token-de-prueba&hub.challenge=RETO123"
+    )
+
+    assert r.status_code == 200
+    assert r.text == "RETO123"
+
+
+def test_handshake_con_token_incorrecto_da_403(cliente, monkeypatch):
+    monkeypatch.setattr(settings, "verify_token", "token-de-prueba")
+
+    r = cliente.get(
+        "/webhook?hub.mode=subscribe&hub.verify_token=el-equivocado&hub.challenge=RETO123"
+    )
+
+    assert r.status_code == 403
+    assert "RETO123" not in r.text
+
+
+def test_handshake_sin_modo_subscribe_da_403(cliente, monkeypatch):
+    """El token correcto NO alcanza: `hub.mode` tiene que ser "subscribe"."""
+    monkeypatch.setattr(settings, "verify_token", "token-de-prueba")
+
+    sin_modo = cliente.get("/webhook?hub.verify_token=token-de-prueba&hub.challenge=RETO123")
+    otro_modo = cliente.get(
+        "/webhook?hub.mode=unsubscribe&hub.verify_token=token-de-prueba&hub.challenge=RETO123"
+    )
+
+    assert sin_modo.status_code == 403
+    assert otro_modo.status_code == 403
+
+
+def test_handshake_con_verify_token_vacio_acepta_el_parametro_vacio(cliente, monkeypatch):
+    """Fail-open documentado, NO un descuido de esta prueba.
+
+    Con `verify_token` vacío, un `hub.verify_token=` presente-y-vacío compara
+    "" == "" y devuelve 200 con el eco del challenge; el mismo GET SIN el
+    parámetro devuelve 403, porque ahí `webhook.py:25` da None y no "".
+
+    Severidad baja —el atacante solo recupera su propio `hub.challenge`, no se
+    filtra secreto ni cambia estado— y por eso el PR de credenciales lo
+    REPRODUCE en vez de arreglarlo: endurecerlo (`token and token == ...`)
+    cambia comportamiento observable y es decisión del operador, en su propio
+    PR. Si algún día se endurece, esta prueba truena — que es justo lo que se
+    quiere: la decisión se toma a la vista, no se descubre.
+    """
+    monkeypatch.setattr(settings, "verify_token", "")
+
+    presente_y_vacio = cliente.get("/webhook?hub.mode=subscribe&hub.verify_token=&hub.challenge=X")
+    ausente = cliente.get("/webhook?hub.mode=subscribe&hub.challenge=X")
+
+    assert presente_y_vacio.status_code == 200
+    assert presente_y_vacio.text == "X"
+    assert ausente.status_code == 403

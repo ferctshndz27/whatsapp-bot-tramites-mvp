@@ -3,7 +3,8 @@ import time
 
 import httpx
 
-from app.config import settings
+from app.credenciales import credencial
+from app.models import OFICINA_TLAXCALA_ID
 from app.utils import mask_phone
 
 logger = logging.getLogger(__name__)
@@ -27,11 +28,16 @@ CAPTION_MAX = 1024
 
 def _send(to_phone: str, payload: dict) -> str | None:
     """POST a /messages con reintentos y backoff. Devuelve el wamid o None."""
-    if not settings.whatsapp_token or not settings.whatsapp_phone_number_id:
+    # ponytail: office_id fijo a Tlaxcala — este adaptador no tiene la oficina
+    # en su alcance. El PR 4 la baja por el túnel que ya transporta `provider`
+    # (webhook.handle_inbound -> _deliver -> messaging.send_*).
+    token = credencial("WHATSAPP_TOKEN", office_id=OFICINA_TLAXCALA_ID)
+    pnid = credencial("WHATSAPP_PHONE_NUMBER_ID", office_id=OFICINA_TLAXCALA_ID)
+    if not token or not pnid:
         return None
 
-    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{settings.whatsapp_phone_number_id}/messages"
-    headers = {"Authorization": f"Bearer {settings.whatsapp_token}"}
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{pnid}/messages"
+    headers = {"Authorization": f"Bearer {token}"}
 
     delay = 1.0
     for attempt in range(1, MAX_RETRIES + 1):
@@ -137,11 +143,16 @@ def send_media(
     to_phone: str, file_path: str, mime_type: str, caption: str = "", filename: str | None = None
 ) -> str | None:
     """Sube un archivo a Meta y lo envía como imagen o documento. Devuelve el wamid."""
-    if not settings.whatsapp_token or not settings.whatsapp_phone_number_id:
+    # Se resuelven AQUÍ, fuera del try de abajo: ese except caza KeyError y
+    # credencial() levanta KeyError con una clave desconocida — dentro, un typo
+    # se volvería un `return None` mudo en vez de un fallo ruidoso.
+    token = credencial("WHATSAPP_TOKEN", office_id=OFICINA_TLAXCALA_ID)
+    pnid = credencial("WHATSAPP_PHONE_NUMBER_ID", office_id=OFICINA_TLAXCALA_ID)
+    if not token or not pnid:
         return None
 
-    base = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{settings.whatsapp_phone_number_id}"
-    headers = {"Authorization": f"Bearer {settings.whatsapp_token}"}
+    base = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{pnid}"
+    headers = {"Authorization": f"Bearer {token}"}
 
     # ponytail: sin reintentos para media (el asesor ve el error y reintenta a mano);
     # añadir backoff como en send_text si los fallos de red se vuelven frecuentes.

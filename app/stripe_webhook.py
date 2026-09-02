@@ -25,9 +25,9 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 
 from app import cobranza
-from app.config import settings
+from app.credenciales import credencial
 from app.db import get_session
-from app.models import EventoPasarela
+from app.models import EventoPasarela, OFICINA_TLAXCALA_ID
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,14 @@ def _verificar_firma(raw: bytes, header: str, secreto: str,
 async def stripe_webhook(request: Request) -> dict:
     # El cuerpo CRUDO antes de cualquier json(): la firma es sobre los bytes.
     raw = await request.body()
+    # ponytail: office_id fijo a Tlaxcala. Techo: es la ÚNICA llave por oficina
+    # que se lee en el event loop — 1 SELECT de 184 µs, una vez por evento. El
+    # PR 5 mueve la lectura a POST /webhooks/stripe/{slug} (§4.3), donde la
+    # oficina sale del path y no del payload. NO mandarla a threadpool: el salto
+    # cuesta 47 µs y subiría el SELECT de 184 a 231 µs de pared para ahorrar 137
+    # de loop — una pesimización medida.
     if not _verificar_firma(raw, request.headers.get("stripe-signature", ""),
-                            settings.stripe_webhook_secret):
+                            credencial("STRIPE_WEBHOOK_SECRET", office_id=OFICINA_TLAXCALA_ID)):
         logger.warning("Webhook de Stripe rechazado: firma inválida o ausente")
         raise HTTPException(status_code=403, detail="Firma inválida")
 

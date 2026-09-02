@@ -140,33 +140,52 @@ desfasen.
 ## 3. Resolución de credenciales: herencia, no duplicación
 
 Con una sola App de Meta y una sola cuenta de Twilio, copiar el mismo `WHATSAPP_TOKEN` en cinco filas
-sería crear cinco lugares donde rotarlo. Una función, con herencia:
+sería crear cinco lugares donde rotarlo. Una función, con herencia.
+
+**IMPLEMENTADO (PR 2, `app/credenciales.py`).** Esta es la firma real, no un esbozo — los PR 3/4/5 la
+leen como contrato:
 
 ```python
-def credencial(session, office_id: int, provider: str, clave: str) -> str:
-    """Valor de la oficina si existe; si no, el global del .env.
-
-    La herencia es lo que hace gratis la migración de Tlaxcala: cero filas en
-    office_credential = exactamente el comportamiento de hoy.
-    """
-    fila = session.exec(
-        select(OfficeCredential).where(
-            OfficeCredential.office_id == office_id,
-            OfficeCredential.provider == provider,
-            OfficeCredential.clave == clave,
-            OfficeCredential.habilitado == True,  # noqa: E712
-        )
-    ).first()
-    if fila:
-        return _descifrar(fila.valor_cif)
-    return getattr(settings, _ATRIBUTO_DE_SETTINGS[clave], "")
+def credencial(clave: str, *, office_id: int, session: "Session | None" = None) -> str:
 ```
 
-`_ATRIBUTO_DE_SETTINGS` es un mapa explícito de `clave` (nombre de la variable de entorno) al atributo
-de `settings`, no un `clave.lower()`: dos de las llaves reales no siguen esa regla
-(`WHATSAPP_VERIFY_TOKEN` → `verify_token`, `WHATSAPP_APP_SECRET` → `app_secret`), y adivinarlo
-devolvería `""` para el secreto que valida la firma de los webhooks de Meta — un fail-closed que
-descartaría todo el tráfico entrante sin decir por qué.
+Tres diferencias con el pseudocódigo original, cada una con su motivo:
+
+- **`provider` sale de la firma**, pero **NO sale del `WHERE`**: se deriva de `config.CREDENCIALES`.
+  Pasarlo a mano era un segundo lugar donde equivocarse, y equivocarse ahí no da error — la fila no
+  casa y se hereda en silencio la llave del `.env`. El `WHERE` lo sigue usando, así que el índice
+  parcial `ux_officecredential_viva` se aprovecha igual.
+- **`session` es keyword y opcional.** Se pasa solo donde ya está en la mano (`cobranza.py`,
+  `dashboard.py`); obligatoria está prohibida porque `stripe_client` declara que no conoce SQLModel y
+  `stripe_webhook` lee antes de que exista sesión.
+- **`_ATRIBUTO_DE_SETTINGS` se reemplaza por `config.CREDENCIALES`**: `dict[str, Credencial]` con
+  `provider`, `atributo`, `es_secreto` y `compartida`. Sigue siendo un mapa explícito y no un
+  `clave.lower()`: dos de las llaves reales no siguen esa regla (`WHATSAPP_VERIFY_TOKEN` →
+  `verify_token`, `WHATSAPP_APP_SECRET` → `app_secret`), y adivinarlo devolvería `""` para el secreto
+  que valida la firma de los webhooks de Meta — un fail-closed que descartaría todo el tráfico
+  entrante sin decir por qué. Una `clave` fuera del inventario levanta `KeyError`, nunca `""`.
+
+**Invariante, y es lo que el PR 3 tiene que respetar: una fila viva de `officecredential` que casa
+`(office_id, provider, clave)` SIEMPRE gana.** No hay atajo por tipo de llave: una llave marcada
+`compartida` con fila propia se resuelve por la fila, no por el `.env` (§5). El campo `compartida` es
+metadata de render del panel, no una regla del resolvedor.
+
+**Sin caché: un `SELECT` por lectura (184 µs medidos).** El fallback `getattr(settings, ...)` se
+reevalúa en CADA llamada, así que una llave editada desde el panel se ve en el siguiente request sin
+reiniciar. Si algún día se cachea, solo puede cachearse **la fila** (o su ausencia), nunca el valor
+efectivo.
+
+**Fallos, con la asimetría deliberada:**
+
+| Situación | Qué hace |
+|---|---|
+| Sin fila (el 100 % de producción hoy) | Hereda de `settings`. Devuelve `str`, nunca `None`. |
+| Tabla `officecredential` ausente o `SELECT` roto | Loguea `warning` y **hereda**: sin fila conocida, heredar es correcto y hoy ninguna lectura de configuración puede fallar. |
+| Hay fila y `CREDENTIALS_KEY` está ausente, malformada o ya no es la que cifró (o el `valor_cif` está corrupto) | `CredencialIlegible` (subclase de `RuntimeError`). **JAMÁS hereda ni devuelve `""`**: heredar sería firmar o cobrar con el secreto de otra oficina, y `""` lo leerían `webhook.py` / `stripe_webhook.py` como «no configurado» y darían 403 a TODO el tráfico con un diagnóstico falso. El mensaje lleva oficina/proveedor/clave y nunca el valor. |
+
+El `try/except` cubre **solo** el `SELECT`, nunca el descifrado. Con `officecredential` vacía
+`_descifrar()` no se ejecuta nunca, así que una `CREDENTIALS_KEY` ausente es **inobservable** el día
+del despliegue del PR 2 — se vuelve obligatoria el día que el PR 3 guarde la primera llave.
 
 ### 3.1 Cifrado
 
@@ -283,12 +302,28 @@ Stripe de cualquier oficina.** Con "admin global + admin de oficina" eso se acot
 segundo sistema de permisos y no es lo que se pidió aquí. Si más adelante hace falta, el corte natural
 es `user.office_id` y un flag `is_admin_global`; queda anotado, no construido.
 
-**La lista de llaves no deja huecos.** Cada llave del inventario de `app/config.py` aparece siempre en
-el detalle de la oficina, con uno de tres estados: `propia` (hay fila en `office_credential`, se muestra
-la pista), `heredada del global (.env)` (no hay fila, se muestra la pista del valor que efectivamente se
-usa) o `ausente` (ni fila ni `.env`). Un renglón en blanco no distingue "no configurada" de "compartida
-con las demás oficinas", y esa es justo la diferencia que el admin necesita ver para saber si rotar algo
-afecta a una oficina o a todas.
+**La lista de llaves no deja huecos.** Cada llave del inventario `config.CREDENCIALES` aparece siempre
+en el detalle de la oficina, con uno de **cuatro** estados: `propia` (hay fila en `officecredential`, se
+muestra la pista), `heredada del global (.env)` (no hay fila, se muestra la pista del valor que
+efectivamente se usa), `ausente` (ni fila ni `.env`) o **`ilegible`** (hay fila y `credencial()` levanta
+`CredencialIlegible` — `CREDENTIALS_KEY` ausente o cambiada; §3). Un renglón en blanco no distingue "no
+configurada" de "compartida con las demás oficinas", y esa es justo la diferencia que el admin necesita
+ver para saber si rotar algo afecta a una oficina o a todas. El cuarto estado tampoco puede colapsarse
+en "ausente": son dos acciones distintas del operador — pegar la llave contra restaurar
+`CREDENTIALS_KEY`.
+
+**Dos constricciones que el PR 2 le hereda al PR 3, y que hay que decidir a la vista, no descubrir:**
+
+1. **`compartida = True` significa "renderizar de solo lectura como *heredada del global*", NO "el
+   resolvedor la ignora".** El PR 2 rechazó el atajo que devolvía `settings` sin tocar la base: una
+   fila viva de una llave compartida **sí gana**, incluso para la oficina 1. Si el panel la deja
+   editar, la edición **funciona** — y solo para la oficina que la escribió, que es exactamente lo que
+   el paso 4 de §7 quiere evitar. La alternativa (ignorarla) era peor: el panel mostraría una llave
+   que nadie usa y la rotación mentiría en silencio.
+2. **El panel DEBE escribir `provider` desde el inventario**, nunca a mano ni desde el formulario. Una
+   fila con `provider` distinto al de `config.CREDENCIALES` no casa con el `WHERE` de `credencial()` y
+   **hereda en silencio**: la llave se guarda, el panel la muestra como `propia` y el sistema sigue
+   usando la del `.env`. No hay error que verlo.
 
 Aislamiento del resto del panel: cada consulta del dashboard filtra por `office_id` del usuario en
 sesión. Un admin ve todas; un colaborador ve la suya. El punto único donde se aplica es el helper de
@@ -328,11 +363,22 @@ Tlaxcala tiene que ir en medio:
    resucitar una Tlaxcala dada de baja. Va aquí, no después: el resto de la migración asume que existe.
 3. `_add_missing_columns(...)` agrega `office_id INTEGER NOT NULL DEFAULT 1` a cada tabla. SQLite
    rellena todas las filas existentes con 1 en el mismo `ALTER`. **No hay backfill que escribir.**
-4. Las llaves **compartidas** (`WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`,
-   `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`) **no se copian** a la tabla: son una sola llave para todas las oficinas y
+4. Las **seis** llaves **compartidas** (`WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`,
+   `WHATSAPP_VERIFY_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_CONTENT_SID_FEEDBACK`)
+   **no se copian** a la tabla: son una sola llave para todas las oficinas y
    duplicarlas sería crear N lugares donde rotar una. Por la herencia de §3 resuelven al `.env` actual
    — el comportamiento de producción no cambia ni un byte el día del despliegue— y el panel las muestra
    como `heredada del global` (§5), no como ausentes.
+
+   `TWILIO_CONTENT_SID_FEEDBACK` no estaba clasificada en ninguna de las dos listas; se marca
+   **compartida** porque el ContentSid pertenece a la cuenta de Twilio y §0 fijó una sola cuenta.
+   Es un juicio, no un dato de la spec original: revertirlo es una línea de `config.CREDENCIALES`, y
+   con el atajo del resolvedor rechazado (§3) la clasificación **solo** afecta cómo lo renderiza el
+   panel.
+
+   **No se copian ≠ el resolvedor las ignora.** Si alguien inserta una fila de una llave compartida
+   para la oficina 1, esa fila gana (§3, §5). El paso 4 es una instrucción de migración —qué NO
+   sembrar— no una regla de resolución.
 5. Las llaves que **sí son por oficina** se siembran como filas de Tlaxcala:
    - `WHATSAPP_PHONE_NUMBER_ID` (Meta) y `TWILIO_WHATSAPP_FROM` (Twilio), `es_secreto = False`. Sin
      ellas §4.1 no puede resolver la oficina y el fail-closed descartaría todo el tráfico actual.
@@ -348,6 +394,16 @@ Tlaxcala tiene que ir en medio:
    Con esto la única oficina que hoy opera queda con **todas sus llaves accesibles desde el panel** —
    las propias como fila, las compartidas como heredadas— que es literalmente lo pedido, sin duplicar
    un token que es uno solo.
+
+Seis compartidas + cuatro por oficina = **las diez** entradas de `config.CREDENCIALES`. El inventario
+no tiene huecos y una prueba de arnés (`tests/test_credenciales_inventario.py`) lo amarra en las dos
+direcciones contra `app/config.py`.
+
+**`PUBLIC_BASE_URL` queda FUERA del inventario a propósito**, aunque tenga forma de configuración por
+despliegue: es infra del contenedor (una URL pública por servicio), no una credencial, y equivocarla
+hace fallar **todas** las firmas de Twilio, no algunas. El riesgo real es que alguien la meta "por
+simetría" en un PR posterior: si §4.3 llega a exigirla por oficina, entra entonces y con ese motivo
+escrito, no antes.
 
 El paso 5 es el único que **debe** hacerse antes de que el ruteo por `phone_number_id` entre en vigor.
 Por eso va en su propio PR, antes que el del ruteo.

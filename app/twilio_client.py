@@ -31,7 +31,9 @@ from urllib.parse import quote
 import httpx
 
 from app.config import settings
+from app.credenciales import credencial
 from app.media_store import signed_media_path
+from app.models import OFICINA_TLAXCALA_ID
 from app.utils import mask_phone, normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -69,7 +71,14 @@ STATUS_MAP = {
 
 
 def enabled() -> bool:
-    return bool(settings.twilio_account_sid and settings.twilio_auth_token)
+    # ponytail: office_id fijo a Tlaxcala — el PR 4 lo resuelve desde el campo
+    # `To` (§4.2) y lo baja por el mismo túnel que ya transporta `provider`
+    # (webhook.handle_inbound -> _deliver -> messaging.send_*). La firma de
+    # enabled() no cambia: es el candado de tests/test_messaging_port.py.
+    return bool(
+        credencial("TWILIO_ACCOUNT_SID", office_id=OFICINA_TLAXCALA_ID)
+        and credencial("TWILIO_AUTH_TOKEN", office_id=OFICINA_TLAXCALA_ID)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +97,7 @@ def verify_signature(url: str, params: dict[str, str], signature_header: str) ->
     Sin TWILIO_AUTH_TOKEN devuelve False: aceptar sin verificar dejaría que
     cualquiera inyecte mensajes al bot y avance conversaciones ajenas.
     """
-    token = settings.twilio_auth_token
+    token = credencial("TWILIO_AUTH_TOKEN", office_id=OFICINA_TLAXCALA_ID)
     if not token or not signature_header:
         return False
 
@@ -158,12 +167,22 @@ def _to_whatsapp(phone: str) -> str:
 
 def _post_message(to_phone: str, data: dict) -> str | None:
     """POST a /Messages.json con reintentos. Devuelve el MessageSid o None."""
-    if not enabled() or not settings.twilio_whatsapp_from:
+    sid = credencial("TWILIO_ACCOUNT_SID", office_id=OFICINA_TLAXCALA_ID)
+    token = credencial("TWILIO_AUTH_TOKEN", office_id=OFICINA_TLAXCALA_ID)
+    desde = credencial("TWILIO_WHATSAPP_FROM", office_id=OFICINA_TLAXCALA_ID)
+    # La guarda comprueba los valores YA resueltos en vez de volver a llamar a
+    # enabled(), que resolvía OTRA VEZ esas mismas dos llaves: 5 SELECT por
+    # saliente en vez de 3, y —lo caro— validando una resolución distinta de la
+    # que después se usa para firmar el POST. Es exactamente la partición entre
+    # «lo que se valida» y «lo que se envía» que este PR declaró peligrosa y
+    # quitó en stripe_client. El fail-closed no cambia: enabled() es
+    # `bool(sid and token)`, así que `not sid or not token` es la misma guarda.
+    if not sid or not token or not desde:
         return None
 
-    url = f"{API_BASE}/Accounts/{quote(settings.twilio_account_sid)}/Messages.json"
-    auth = (settings.twilio_account_sid, settings.twilio_auth_token)
-    payload = {"From": settings.twilio_whatsapp_from, "To": _to_whatsapp(to_phone), **data}
+    url = f"{API_BASE}/Accounts/{quote(sid)}/Messages.json"
+    auth = (sid, token)
+    payload = {"From": desde, "To": _to_whatsapp(to_phone), **data}
 
     delay = 1.0
     for intento in range(1, MAX_RETRIES + 1):

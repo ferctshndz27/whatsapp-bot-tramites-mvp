@@ -18,12 +18,14 @@ from sqlmodel import Session, select
 
 from app.auth import is_admin
 from app.config import settings
+from app.credenciales import credencial
 from app.dinero import formato_monto
 from app.models import (
     Alert,
     Cobro,
     EventoPasarela,
     IntentoCobro,
+    OFICINA_TLAXCALA_ID,
     TicketActivity,
     utcnow,
 )
@@ -486,10 +488,35 @@ def aplicar_evento(session: Session, evento: EventoPasarela) -> str:
     # prueba jamás mueve un cobro real (ni al revés). La detección vive en
     # stripe_client porque `rk_live_` (llave restringida) también es dinero
     # real y `startswith("sk_live")` la daba por prueba.
-    from app.stripe_client import modo_real as _modo_real
+    from app.stripe_client import es_modo_real as _es_modo_real
 
-    modo_real = _modo_real()
-    if evento.livemode is not None and settings.stripe_secret_key and evento.livemode != modo_real:
+    # ponytail: office_id fijo a Tlaxcala. En el PR 5 la oficina del evento sale
+    # del path del webhook (POST /webhooks/stripe/{slug}, §4.3) y baja hasta
+    # aquí en la fila de EventoPasarela, no de una constante.
+    #
+    # `session=` NO es un lujo aquí: es obligatorio. Una lectura anidada con
+    # get_session() propia bajo las escrituras pendientes del llamador SÍ las
+    # pierde — con el engine en memoria de la suite (SingletonThreadPool) las
+    # dos sesiones comparten la MISMA conexión DBAPI y el close() de la interna
+    # hace ROLLBACK de lo que el llamador ya flusheó.
+    #
+    # Ese rollback tiene DOS formas, y la peligrosa es la callada:
+    #   - RUIDOSA: si lo flusheado era un UPDATE, la fila pierde su version_id y
+    #     `session.commit()` truena con StaleDataError — cobranza_jobs.py:281 y
+    #     cobranza_panel.py:393. Molesta, pero se ve.
+    #   - SILENCIOSA: si lo flusheado era un INSERT, la fila simplemente
+    #     desaparece. No hay excepción, el commit del llamador tiene éxito y el
+    #     registro nunca existió. Es la que se materializó en dashboard.py
+    #     (el aviso y la encuesta se perdían sin un solo error en el log), y la
+    #     cubre tests/test_claim.py::test_el_aviso_y_la_encuesta_se_guardan.
+    # Esperar el StaleDataError como señal de que algo se rompió es justamente
+    # el error: la mitad de los casos no lo levanta.
+    # Por eso tampoco se llama a stripe_client.modo_real() (que resuelve por su
+    # cuenta): se resuelve la llave UNA vez con esta sesión y se le pregunta el
+    # modo al valor. La regla `_live_` sigue viviendo solo en stripe_client.
+    llave = credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID, session=session)
+    modo_real = _es_modo_real(llave)
+    if evento.livemode is not None and llave and evento.livemode != modo_real:
         alerta(session, "cobro:modo-no-coincide", "Evento de Stripe en modo equivocado",
                f"{evento.stripe_event_id} livemode={evento.livemode} con llave "
                f"{'live' if modo_real else 'test'}")

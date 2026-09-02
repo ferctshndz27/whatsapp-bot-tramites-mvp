@@ -9,7 +9,9 @@ distintas: RespuestaStripe.indeterminado=True significa "la petición pudo
 haber llegado" (timeout, 5xx) y el que llama NUNCA debe tratarlo como un
 rechazo — ese cobro va al barrido de huérfanos, no a un reintento a ciegas.
 
-No conoce SQLModel ni FastAPI.
+No conoce FastAPI, y ninguna de sus firmas lleva Session: su única puerta a la
+base es credenciales.credencial(), que resuelve la llave de la oficina (§3).
+En el PR 5 la llave entra como parámetro y este import desaparece.
 """
 
 import logging
@@ -19,6 +21,8 @@ from dataclasses import dataclass
 import httpx
 
 from app.config import settings
+from app.credenciales import credencial
+from app.models import OFICINA_TLAXCALA_ID
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +57,16 @@ def _request(
     params: dict | None = None,
     clave_idempotencia: str | None = None,
 ) -> RespuestaStripe:
-    if not settings.stripe_secret_key:
+    # ponytail: office_id fijo a Tlaxcala — este cliente HTTP no tiene la
+    # oficina en su alcance. En el PR 5 la llave entra como parámetro (§4.2) y
+    # este módulo deja de leer la base.
+    # Se resuelve UNA sola vez, arriba y fuera del bucle de reintentos (:85):
+    # antes la guarda leía una llave y `auth=` leía otra en cada intento, así
+    # que una rotación a media petición dejaba estado_motivo="stripe rechazó:
+    # sin_credenciales" y llave_cobro_vivo=None (cobranza.py:857-859) sobre un
+    # cobro que Stripe nunca vio — rastro FALSO en el expediente de dinero.
+    llave = credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID)
+    if not llave:
         # No-op silencioso del cliente (patrón whatsapp_client); la UI es la
         # que avisa "Stripe no configurado" — un cobro fantasma es peor.
         return RespuestaStripe(
@@ -74,7 +87,7 @@ def _request(
             r = httpx.request(
                 metodo, f"{API_BASE}{path}",
                 data=data, params=params, headers=headers,
-                auth=(settings.stripe_secret_key, ""),
+                auth=(llave, ""),
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except httpx.RequestError as exc:
@@ -125,8 +138,8 @@ def _request(
     return ultima  # pragma: no cover — el bucle siempre retorna antes
 
 
-def modo_real() -> bool:
-    """True si la llave configurada opera sobre DINERO REAL.
+def es_modo_real(llave: str) -> bool:
+    """True si `llave` opera sobre DINERO REAL.
 
     No basta con `startswith("sk_live")`: Stripe también emite llaves
     restringidas (`rk_live_…` / `rk_test_…`). Una `rk_live_` clasificada como
@@ -134,8 +147,19 @@ def modo_real() -> bool:
     "modo no coincide" — dinero que entra y el sistema ignora en silencio.
     Encontrado contra una cuenta viva: la llave era `rk_live_` y el código
     viejo la reportaba como modo prueba.
+
+    Recibe el VALOR y no lo resuelve: cobranza.aplicar_evento ya tiene la llave
+    en la mano —resuelta con la sesión del llamador— y llamar a modo_real() ahí
+    abriría una sesión anidada que, bajo el pool de la suite, tira las
+    escrituras pendientes del llamador (ver el comentario en cobranza.py). La
+    regla `_live_` sigue viviendo en un solo lugar: aquí.
     """
-    return "_live_" in settings.stripe_secret_key
+    return "_live_" in llave
+
+
+def modo_real() -> bool:
+    """True si la llave configurada de la oficina opera sobre DINERO REAL."""
+    return es_modo_real(credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID))
 
 
 def _metadata_plana(prefijo: str, metadata: dict) -> dict:

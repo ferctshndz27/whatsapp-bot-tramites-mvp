@@ -23,6 +23,7 @@ from app import archive
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
+from app.credenciales import credencial
 from app.db import get_session
 from app.models import (
     AgentConfig,
@@ -45,6 +46,7 @@ from app.models import (
     LoginEvent,
     Message,
     NluEvent,
+    OFICINA_TLAXCALA_ID,
     PaymentMethod,
     PlanCobro,
     Plantilla,
@@ -207,7 +209,29 @@ def system_view(request: Request):
         "backup": _backup_info(),
         "disk": _disk_free(),
         "mssql_enabled": archive.enabled(),
-        "whatsapp_configured": bool(settings.whatsapp_token and settings.whatsapp_phone_number_id),
+        # ponytail: office_id fijo a Tlaxcala. Con varias oficinas un booleano
+        # GLOBAL deja de significar algo (una configurada y otra no); el corte
+        # natural es una fila por oficina en /system, y es del PR 3/5.
+        # Las dos llaves se resuelven POR SEPARADO aunque compartan el `and`:
+        # una está marcada compartida y la otra es por oficina, y con filas
+        # reales (PR 5) pueden venir de fuentes distintas.
+        # Sin `session=`: `info` se arma aquí y la única sesión de la vista la
+        # abre mirror_status() por dentro, después.
+        # /system sigue mostrando SOLO el booleano: nunca el valor, nunca la
+        # pista, nunca la longitud.
+        #
+        # ponytail: el booleano no tiene casilla para «hay fila y NO se
+        # descifra». Con filas reales (PR 5) y una CREDENTIALS_KEY cambiada,
+        # estas dos lecturas levantan CredencialIlegible y /system —la página
+        # que el operador abriría PRECISAMENTE para diagnosticar eso— contesta
+        # 500 en vez de decírselo. Hoy no ocurre porque `officecredential` está
+        # vacía y credencial() ni llega a descifrar. El PR 3 tiene que pintar
+        # ese CUARTO estado (configurada / sin configurar / heredada del .env /
+        # ILEGIBLE), que es el único de los cuatro que exige acción inmediata.
+        "whatsapp_configured": bool(
+            credencial("WHATSAPP_TOKEN", office_id=OFICINA_TLAXCALA_ID)
+            and credencial("WHATSAPP_PHONE_NUMBER_ID", office_id=OFICINA_TLAXCALA_ID)
+        ),
     }
     return templates.TemplateResponse(
         "system.html",

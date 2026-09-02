@@ -8,10 +8,10 @@ from sqlmodel import select
 from starlette.concurrency import run_in_threadpool
 
 from app import conversation, messaging, twilio_client
-from app.config import settings
 from app.conversation import handle_incoming
+from app.credenciales import credencial
 from app.db import get_session
-from app.models import PROVIDER_META, PROVIDER_TWILIO, Client, Message
+from app.models import OFICINA_TLAXCALA_ID, PROVIDER_META, PROVIDER_TWILIO, Client, Message
 from app.utils import mask_phone, normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,17 @@ def verify_webhook(request: Request) -> Response:
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge", "")
 
-    if mode == "subscribe" and token == settings.verify_token:
+    # ponytail: office_id fijo a Tlaxcala. El PR 4 lo resuelve desde
+    # metadata.phone_number_id (§4.1) / el campo `To` (§4.2) y lo baja por el
+    # mismo túnel que ya transporta `provider` (ver handle_inbound más abajo).
+    #
+    # A diferencia del SELECT del POST (ver _valid_signature), este NO toca el
+    # event loop: verify_webhook es `def` y no `async def`, así que Starlette ya
+    # lo corre en su threadpool. Y encima solo corre en el handshake de alta del
+    # webhook, no una vez por mensaje.
+    if mode == "subscribe" and token == credencial(
+        "WHATSAPP_VERIFY_TOKEN", office_id=OFICINA_TLAXCALA_ID
+    ):
         return Response(content=challenge, media_type="text/plain")
     raise HTTPException(status_code=403, detail="Verificación fallida")
 
@@ -60,9 +70,17 @@ async def receive_webhook(request: Request) -> dict:
 
 
 def _valid_signature(raw_body: bytes, signature_header: str) -> bool:
-    if not settings.app_secret or not signature_header.startswith("sha256="):
+    # ponytail: office_id fijo a Tlaxcala. El PR 4 lo resuelve desde
+    # metadata.phone_number_id (§4.1); mientras tanto este SELECT corre DENTRO
+    # del event loop, porque receive_webhook es `async def` y lo llama sin
+    # threadpool. Techo: 184 µs, uno por petición entrante. NO mandarlo a
+    # threadpool: el salto cuesta 47 µs y subiría el SELECT de 184 a 231 µs de
+    # pared para ahorrar 137 de loop — la misma pesimización medida que ya
+    # documenta stripe_webhook.py, y por el mismo motivo.
+    secreto = credencial("WHATSAPP_APP_SECRET", office_id=OFICINA_TLAXCALA_ID)
+    if not secreto or not signature_header.startswith("sha256="):
         return False
-    expected = hmac.new(settings.app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    expected = hmac.new(secreto.encode(), raw_body, hashlib.sha256).hexdigest()
     received = signature_header.removeprefix("sha256=")
     return hmac.compare_digest(expected, received)
 

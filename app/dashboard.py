@@ -16,6 +16,7 @@ from app.utils import ruta_interna
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
+from app.credenciales import credencial
 from app import asignacion
 from app.db import get_session
 from app.dinero import formato_monto, parse_monto
@@ -25,6 +26,7 @@ from app.models import (
     Invitation,
     Label,
     Message,
+    OFICINA_TLAXCALA_ID,
     Ticket,
     TicketActivity,
     TicketLabel,
@@ -588,7 +590,13 @@ def _contexto_cobranza(ticket: Ticket, user: str) -> dict:
         "cobros": cobros,
         "cobros_vivos_del_telefono": vivos,
         "puede_cobrar": cobranza.puede_cobrar(user, ticket, None),
-        "stripe_configurado": bool(settings.stripe_secret_key),
+        # ponytail: office_id fijo a Tlaxcala. En el PR 5 la oficina sale del
+        # ticket, no de una constante.
+        # Sin `session=`: contraintuitivo pero verificado — aquí NO hay sesión
+        # abierta, la de :561 cerró en :578.
+        "stripe_configurado": bool(
+            credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID)
+        ),
         # Único por RENDER: dos envíos del mismo formulario (F5, doble clic)
         # chocan contra ux_cobro_generacion en vez de crear dos cobros.
         "token_form": secrets.token_hex(16),
@@ -803,6 +811,22 @@ def _notify_finish(ticket_id: int) -> None:
             body = FINISH_NOTICE_GENERIC
         else:
             body = FINISH_NOTICE_SERVICE.format(service=ticket.service_name, folio=ticket.id)
+        # El ContentSid se resuelve AQUÍ, antes del primer session.add: leerlo
+        # con `session=` dispara el autoflush de lo que esté pendiente, y con una
+        # escritura en vuelo eso (a) toma el candado de ESCRITOR de SQLite y lo
+        # sostiene durante los reintentos de red a Meta —hasta ~33 s de
+        # "database is locked" para el webhook y el cron— y (b) bajo el pool de
+        # la suite deja esa fila a merced del ROLLBACK de la sesión anidada que
+        # abre messaging.send_buttons, y el aviso de cierre se pierde sin ruido.
+        # Con la sesión limpia el flush es un no-op y `session=` sigue siendo
+        # gratis: cero conexiones nuevas. No mover esta lectura hacia abajo: el
+        # orden ES el arreglo, y lo fija test_el_aviso_y_la_encuesta_se_guardan.
+        content_sid = credencial(
+            "TWILIO_CONTENT_SID_FEEDBACK",
+            office_id=OFICINA_TLAXCALA_ID,
+            session=session,
+        ) or None
+
         wamid = messaging.send_text(phone, body)
         session.add(
             Message(phone=phone, direction=Direction.OUT, body=body, wa_message_id=wamid)
@@ -817,7 +841,7 @@ def _notify_finish(ticket_id: int) -> None:
             phone,
             FEEDBACK_PROMPT,
             FEEDBACK_OPCIONES,
-            content_sid=settings.twilio_content_sid_feedback or None,
+            content_sid=content_sid,
         )
         opciones = " / ".join(f"{tecla} {titulo}" for tecla, titulo in FEEDBACK_OPCIONES)
         session.add(

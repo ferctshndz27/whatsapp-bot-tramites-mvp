@@ -34,10 +34,19 @@ from app import cobranza, cobranza_jobs, messaging, stripe_client, ventana
 from app.audit import log_admin
 from app.auth import is_admin
 from app.config import settings
+from app.credenciales import credencial
 from app.db import get_session
 from app.utils import ruta_interna
 from app.dinero import MONTO_MIN_CENTAVOS, OXXO_MAX_CENTAVOS, formato_monto, parse_monto
-from app.models import Cobro, Direction, IntentoCobro, Message, Ticket, utcnow
+from app.models import (
+    Cobro,
+    Direction,
+    IntentoCobro,
+    Message,
+    OFICINA_TLAXCALA_ID,
+    Ticket,
+    utcnow,
+)
 from app.templating import templates
 
 logger = logging.getLogger(__name__)
@@ -131,7 +140,16 @@ def generar_cobro(
         # Se rechaza ANTES de llamar a Stripe: el voucher no se emitiría.
         return _volver(ticket_id, volver=volver,err="monto-oxxo")
 
-    if not settings.stripe_secret_key:
+    # ponytail: office_id fijo a Tlaxcala. En el PR 5 la oficina sale del
+    # ticket, no de una constante.
+    # SIN `session=` a propósito: la sesión de :116 ya cerró y la siguiente
+    # abre en :176 — este bloque corre fuera de toda transacción, que es lo que
+    # el docstring del módulo exige para que la red a Stripe no sostenga un
+    # candado de escritura.
+    # ponytail: cuando existan filas (PR 5) esta lectura puede levantar
+    # CredencialIlegible; entonces se atrapa y se pinta `ilegible` en vez de
+    # reventar la vista. Hoy es inalcanzable: con 0 filas siempre hereda.
+    if not credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID):
         # El no-op silencioso es del cliente HTTP; aquí sí se avisa: un cobro
         # fantasma es peor que un error visible.
         return _volver(ticket_id, volver=volver,err="sin-stripe")
@@ -616,7 +634,19 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
         {
             "request": request, "user": admin, "cobros": cobros, "totales": totales,
             "todos": todos, "modo": "real" if _modo_real() else "prueba",
-            "stripe_configurado": bool(settings.stripe_secret_key),
+            # Sin `session=`: la de :590 ya cerró en :611.
+            # ponytail: cuando existan filas (PR 5) esto puede levantar
+            # CredencialIlegible y hay que pintar `ilegible` en vez de reventar
+            # la vista principal de cobranza. Hoy con 0 filas siempre hereda.
+            # Preexistente, NO se arregla aquí: el modo se resuelve por DOS
+            # caminos —_filtro_modo(todos) arma el WHERE y esta línea + :636
+            # arman la etiqueta—, así que la lista puede quedar filtrada por un
+            # modo y rotulada con otro. Ambos pasan por el mismo credencial(),
+            # o sea que este PR no lo empeora; arreglarlo cambia la firma de
+            # _filtro_modo y con ella el comportamiento observable.
+            "stripe_configurado": bool(
+                credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID)
+            ),
             "en_la_calle": en_la_calle, "recuperado": recuperado,
             "pagina": pagina, "total_n": total_n,
             "hay_mas": pagina * COBROS_POR_PAGINA < total_n,
