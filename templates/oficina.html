@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}{{ oficina.nombre }}{% endblock %}
+{% block content %}
+<h1>{{ oficina.nombre }}</h1>
+<p style="color:var(--text-muted); margin-top:-.5rem;">
+  <a href="/oficinas">← Oficinas</a> · <code>{{ oficina.slug }}</code> ·
+  {{ oficina.ciudad }} · {{ oficina.zona_horaria }}
+</p>
+
+{% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
+{% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}
+
+{% if not hay_llave_maestra %}
+<div class="banner-warn" role="alert">
+  No hay <code>CREDENTIALS_KEY</code> en el <code>.env</code>: se pueden ver los estados,
+  pero no guardar credenciales nuevas.
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Credenciales</h2>
+  <p style="color:var(--text-muted); font-size:.85rem; margin-top:0;">
+    Solo se muestran los últimos 4 caracteres de cada secreto. Una llave
+    <strong>heredada</strong> es la del <code>.env</code>, compartida con las demás oficinas:
+    cambiarla ahí las afecta a todas. Una <strong>propia</strong> vive cifrada en la base y
+    solo aplica a esta oficina.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Credencial</th><th>Proveedor</th><th>Estado</th><th>Valor</th><th>Acciones</th></tr>
+      </thead>
+      <tbody>
+        {% for l in llaves %}
+        <tr>
+          <td><code>{{ l.clave }}</code></td>
+          <td>{{ l.provider }}</td>
+          <td>
+            {% if l.estado == 'propia' %}
+            <span class="badge asignada">propia</span>
+            {% elif l.estado == 'heredada' %}
+            <span class="badge">heredada del global</span>
+            {% elif l.estado == 'ilegible' %}
+            <span class="badge caducada">ilegible</span>
+            {% else %}
+            <span class="badge">sin configurar</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if l.estado == 'ilegible' %}
+            <span style="color:var(--text-muted);">revisa <code>CREDENTIALS_KEY</code></span>
+            {% elif l.pista %}
+            {% if l.es_secreto %}<span aria-hidden="true">••••</span>{% endif %}<code>{{ l.pista }}</code>
+            {% else %}
+            <span style="color:var(--text-muted);">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if l.editable and hay_llave_maestra %}
+            <details style="display:inline-block; margin-right:.5rem;">
+              <summary class="btn-sm">{{ 'Rotar' if l.estado == 'propia' else 'Poner propia' }}</summary>
+              <form method="post" action="/oficinas/{{ oficina.id }}/llaves"
+                style="display:flex; gap:.5rem; margin-top:.5rem; align-items:flex-end;">
+                <input type="hidden" name="clave" value="{{ l.clave }}">
+                <div>
+                  <label for="valor-{{ l.clave }}">Valor</label>
+                  {# Nunca se rellena con el valor actual: el secreto no vuelve al HTML. #}
+                  <input type="password" id="valor-{{ l.clave }}" name="valor" required
+                    autocomplete="off" style="max-width:280px;">
+                </div>
+                <button type="submit">Guardar</button>
+              </form>
+            </details>
+            {% elif l.compartida %}
+            <span style="color:var(--text-muted); font-size:.85rem;">se administra en el <code>.env</code></span>
+            {% endif %}
+            {% if l.estado == 'propia' or l.estado == 'ilegible' %}
+            <form method="post" action="/oficinas/{{ oficina.id }}/llaves/{{ l.clave }}/baja"
+              style="display:inline;">
+              <button type="submit" class="btn-sm">Dar de baja</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Colaboradores</h2>
+  {% if usuarios %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for u in usuarios %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{% if u.is_admin %}<span class="badge asignada">admin</span>{% else %}colaborador{% endif %}</td>
+          <td>{% if u.habilitado %}<span class="badge cerrado">habilitado</span>
+              {% else %}<span class="badge caducada">deshabilitado</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);">Todavía no hay colaboradores en esta oficina.</p>
+  {% endif %}
+
+  {% if otros %}
+  <form method="post" action="/oficinas/{{ oficina.id }}/usuarios"
+    style="display:flex; gap:.75rem; align-items:flex-end; margin-top:1rem;">
+    <div>
+      <label for="username">Mover a esta oficina</label>
+      <select name="username" id="username">
+        {% for u in otros %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="submit">Mover</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

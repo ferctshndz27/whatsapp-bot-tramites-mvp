@@ -21,6 +21,7 @@ from app import (
     inbox,
     kb,
     my,
+    offices,
     replies,
     stripe_webhook,
     synonym_miner,
@@ -125,6 +126,7 @@ app.include_router(inbox.router)
 app.include_router(team_chat.router)
 app.include_router(activity.router)
 app.include_router(users.router)
+app.include_router(offices.router)
 app.include_router(catalog_admin.router)
 app.include_router(system.router)
 app.include_router(synonym_miner.router)

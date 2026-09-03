@@ -22,8 +22,9 @@ from sqlmodel import select
 from app import archive
 from app.audit import log_admin
 from app.auth import is_admin
-from app.config import settings
-from app.credenciales import credencial
+from app.config import CREDENCIALES, settings
+from app import credenciales
+from app.credenciales import CredencialIlegible, credencial
 from app.db import get_session
 from app.models import (
     AgentConfig,
@@ -150,6 +151,42 @@ def mirror_status() -> list[dict]:
     ]
 
 
+
+# Las dos llaves se resuelven POR SEPARADO aunque compartan el `and`: una está
+# marcada compartida y la otra es por oficina, y con filas reales (PR 5) pueden
+# venir de fuentes distintas. /system muestra SOLO el booleano: nunca el valor,
+# nunca la pista, nunca la longitud.
+#
+# ponytail: office_id fijo a Tlaxcala. Con varias oficinas un booleano GLOBAL
+# deja de significar algo (una configurada y otra no); el corte natural es una
+# fila por oficina, y es del PR 5.
+def _whatsapp_configurado() -> bool:
+    # Las dos claves LITERALES, no una tupla recorrida: tests/
+    # test_credenciales_inventario.py audita por nombre y una clave en variable
+    # la deja fuera del censo.
+    try:
+        return bool(
+            credencial("WHATSAPP_TOKEN", office_id=OFICINA_TLAXCALA_ID)
+            and credencial("WHATSAPP_PHONE_NUMBER_ID", office_id=OFICINA_TLAXCALA_ID)
+        )
+    except CredencialIlegible:
+        # Ilegible NO es «configurada»: el bot no puede enviar nada con ella.
+        return False
+
+
+def _credenciales_ilegibles() -> list[str]:
+    """Las llaves con fila viva que no se pueden descifrar. Solo el NOMBRE.
+
+    Usa `estado()` —el mismo resolvedor que pinta /oficinas— en vez de repetir
+    aquí el try/except: el cuarto estado se decide en UN lugar, y así esta
+    página y la de detalle nunca se contradicen.
+    """
+    return [
+        clave for clave in CREDENCIALES
+        if credenciales.estado(clave, office_id=OFICINA_TLAXCALA_ID)[0] == credenciales.ILEGIBLE
+    ]
+
+
 def _dir_size_mb(path: Path) -> float:
     if not path.exists():
         return 0.0
@@ -220,18 +257,13 @@ def system_view(request: Request):
         # /system sigue mostrando SOLO el booleano: nunca el valor, nunca la
         # pista, nunca la longitud.
         #
-        # ponytail: el booleano no tiene casilla para «hay fila y NO se
-        # descifra». Con filas reales (PR 5) y una CREDENTIALS_KEY cambiada,
-        # estas dos lecturas levantan CredencialIlegible y /system —la página
-        # que el operador abriría PRECISAMENTE para diagnosticar eso— contesta
-        # 500 en vez de decírselo. Hoy no ocurre porque `officecredential` está
-        # vacía y credencial() ni llega a descifrar. El PR 3 tiene que pintar
-        # ese CUARTO estado (configurada / sin configurar / heredada del .env /
-        # ILEGIBLE), que es el único de los cuatro que exige acción inmediata.
-        "whatsapp_configured": bool(
-            credencial("WHATSAPP_TOKEN", office_id=OFICINA_TLAXCALA_ID)
-            and credencial("WHATSAPP_PHONE_NUMBER_ID", office_id=OFICINA_TLAXCALA_ID)
-        ),
+        # El CUARTO estado, que el PR 3 estrena: con una fila viva y una
+        # CREDENTIALS_KEY cambiada, estas lecturas levantan CredencialIlegible y
+        # esta página —la que el operador abre PRECISAMENTE para diagnosticar
+        # eso— contestaba 500 en vez de decírselo. Ahora lo dice. El detalle por
+        # llave vive en /oficinas/{id}; aquí basta con la alarma.
+        "whatsapp_configured": _whatsapp_configurado(),
+        "credenciales_ilegibles": _credenciales_ilegibles(),
     }
     return templates.TemplateResponse(
         "system.html",

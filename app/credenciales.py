@@ -107,17 +107,7 @@ def credencial(clave: str, *, office_id: int, session: "Session | None" = None) 
     sostener una sesión ahí es el «database is locked» que ese docstring
     documenta) y por stripe_webhook.py, que lee antes de que exista sesión.
     """
-    try:
-        meta = CREDENCIALES[clave]
-    except KeyError:
-        # Un typo muere ruidoso en el call site. Un "" mudo es justo el
-        # fail-closed que §3 advierte: descartar todo sin decir por qué.
-        raise KeyError(
-            f"{clave!r} no está en config.CREDENCIALES. El provider se DERIVA de "
-            f"ahí a propósito: pasarlo a mano dejaría que un 'meta' para una "
-            f"llave de stripe no encuentre fila y herede en silencio la equivocada."
-        ) from None
-
+    meta = _meta(clave)
     cif = _valor_cifrado(clave, meta.provider, office_id, session)
     if cif is not None:
         return _descifrar(cif, office_id, meta.provider, clave)
@@ -143,6 +133,24 @@ def cifrar(valor: str) -> tuple[bytes, str]:
 # ---------------------------------------------------------------------------
 # Internos
 # ---------------------------------------------------------------------------
+
+
+def _meta(clave: str):
+    """La entrada del inventario, o KeyError con el porqué.
+
+    Un typo muere ruidoso en el call site. Un "" mudo sería justo el fail-closed
+    que §3 advierte: descartar todo sin decir por qué. Lo comparten credencial()
+    y las tres funciones del panel para que el provider salga SIEMPRE del mismo
+    lugar (§5, constricción 2).
+    """
+    try:
+        return CREDENCIALES[clave]
+    except KeyError:
+        raise KeyError(
+            f"{clave!r} no está en config.CREDENCIALES. El provider se DERIVA de "
+            f"ahí a propósito: pasarlo a mano dejaría que un 'meta' para una "
+            f"llave de stripe no encuentre fila y herede en silencio la equivocada."
+        ) from None
 
 
 def _valor_cifrado(clave, provider, office_id, session) -> bytes | None:
@@ -221,3 +229,109 @@ def _descifrar(cif: bytes, office_id: int, provider: str, clave: str) -> str:
     except (InvalidToken, ValueError, TypeError) as exc:
         # ValueError cubre una CREDENTIALS_KEY malformada (base64/longitud).
         raise CredencialIlegible(office_id, provider, clave, "no se pudo descifrar") from exc
+
+
+# ---------------------------------------------------------------------------
+# Escritura y estado: lo que consume el panel del PR 3 (§5)
+# ---------------------------------------------------------------------------
+#
+# Viven aquí y no en app/offices.py por la constricción 2 de §5: el `provider`
+# se DERIVA de config.CREDENCIALES en el mismo módulo que lo deriva credencial().
+# Si saliera de un formulario, una fila con provider ajeno no casaría con el
+# WHERE de _valor_cifrado y HEREDARÍA EN SILENCIO: el panel la pintaría `propia`
+# y el sistema seguiría usando la del .env. No hay error que ver — por eso el
+# dato no puede pasar por la interfaz.
+
+# Los cuatro estados de §5. Un renglón en blanco no distingue «no configurada»
+# de «compartida con las demás oficinas», y esa es justo la diferencia que
+# decide si rotar algo afecta a UNA oficina o a TODAS.
+PROPIA = "propia"
+HEREDADA = "heredada"
+AUSENTE = "ausente"
+ILEGIBLE = "ilegible"
+
+
+def guardar(clave: str, *, office_id: int, valor: str, updated_by: str) -> None:
+    """Da de baja la llave viva (si la hay) e inserta la nueva, en UNA transacción.
+
+    Baja + alta en vez de UPDATE in situ: el índice parcial
+    ux_officecredential_viva admite las dos, pero sobrescribir pierde el rastro
+    de rotación (quién la puso y desde cuándo). Comparten commit porque una
+    caída entre ambas dejaría la llave `ausente` — la oficina heredando del .env
+    sin que nadie lo haya pedido.
+
+    Levanta RuntimeError (desde cifrar) si no hay CREDENTIALS_KEY. El panel lo
+    comprueba antes para dar un mensaje accionable; guardar en claro como
+    respaldo está prohibido por §3.1: la tabla existe justamente para que un
+    volcado de data/*.db no sirva sin el .env.
+    """
+    meta = _meta(clave)
+    if not valor:
+        raise ValueError("el valor de la credencial no puede ir vacío")
+    valor_cif, pista = cifrar(valor)
+    with db.get_session() as session:
+        _apagar_vivas(session, clave, meta.provider, office_id)
+        session.add(
+            OfficeCredential(
+                office_id=office_id,
+                provider=meta.provider,
+                clave=clave,
+                valor_cif=valor_cif,
+                pista=pista,
+                es_secreto=meta.es_secreto,
+                updated_by=updated_by,
+            )
+        )
+        session.commit()
+
+
+def dar_de_baja(clave: str, *, office_id: int) -> bool:
+    """Apaga la llave viva de esta oficina; devuelve si había algo que apagar.
+
+    Soft delete, como el resto del panel: la fila queda para el rastro y la
+    oficina vuelve a heredar del .env.
+    """
+    meta = _meta(clave)
+    with db.get_session() as session:
+        apagadas = _apagar_vivas(session, clave, meta.provider, office_id)
+        session.commit()
+    return apagadas > 0
+
+
+def estado(clave: str, *, office_id: int) -> tuple[str, str]:
+    """(estado, pista) de una llave para el panel. NUNCA devuelve el secreto.
+
+    La pista son los últimos 4 caracteres de lo marcado `es_secreto`, y el valor
+    completo de lo que no lo es (WHATSAPP_PHONE_NUMBER_ID, TWILIO_WHATSAPP_FROM):
+    identificadores que el operador coteja contra la consola de Meta o Twilio, y
+    ocultarlos no protege nada.
+
+    Caza CredencialIlegible y la convierte en el CUARTO estado: la página que el
+    operador abre para diagnosticar una CREDENTIALS_KEY perdida no puede ser la
+    que contesta 500 por esa misma causa (el `ponytail` de system.py:216 nombra
+    esta deuda y este es el PR que la cierra).
+    """
+    meta = _meta(clave)
+    try:
+        valor = credencial(clave, office_id=office_id)
+    except CredencialIlegible:
+        return ILEGIBLE, ""
+    if not valor:
+        return AUSENTE, ""
+    propia = _valor_cifrado(clave, meta.provider, office_id, None) is not None
+    return (PROPIA if propia else HEREDADA), (valor if not meta.es_secreto else valor[-4:])
+
+
+def _apagar_vivas(session, clave: str, provider: str, office_id: int) -> int:
+    filas = session.exec(
+        select(OfficeCredential).where(
+            OfficeCredential.office_id == office_id,
+            OfficeCredential.provider == provider,
+            OfficeCredential.clave == clave,
+            OfficeCredential.habilitado == True,  # noqa: E712
+        )
+    ).all()
+    for fila in filas:
+        fila.habilitado = False
+        session.add(fila)
+    return len(filas)

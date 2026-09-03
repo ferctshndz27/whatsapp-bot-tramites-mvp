@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Oficinas{% endblock %}
+{% block content %}
+<h1>Oficinas</h1>
+
+{% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
+{% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}
+
+<div class="card">
+  <h2>Nueva oficina</h2>
+  <form method="post" action="/oficinas">
+    <div class="row" style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end;">
+      <div>
+        <label for="nombre">Nombre</label>
+        <input type="text" id="nombre" name="nombre" required autocomplete="off"
+          placeholder="Puebla" style="max-width:200px;">
+      </div>
+      <div>
+        <label for="slug">Slug</label>
+        <input type="text" id="slug" name="slug" required autocomplete="off"
+          pattern="[a-z0-9\-]+" placeholder="puebla" style="max-width:160px;"
+          aria-describedby="ayuda-slug">
+      </div>
+      <div>
+        <label for="ciudad">Ciudad</label>
+        <input type="text" id="ciudad" name="ciudad" required autocomplete="off"
+          placeholder="Puebla" style="max-width:200px;">
+      </div>
+      <div>
+        <label for="zona_horaria">Zona horaria</label>
+        <input type="text" id="zona_horaria" name="zona_horaria" autocomplete="off"
+          value="{{ tz_default }}" style="max-width:200px;">
+      </div>
+      <button type="submit">Crear oficina</button>
+    </div>
+    <p id="ayuda-slug" style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+      El slug será la URL del webhook de pagos de esta oficina: minúsculas, números y guiones.
+    </p>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Registradas</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Oficina</th><th>Slug</th><th>Colaboradores</th><th>Credenciales</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for r in resumen %}
+        <tr>
+          <td>
+            {{ r.oficina.nombre }}
+            {% if not r.oficina.habilitado %}
+            <span class="badge caducada">deshabilitada</span>
+            {% endif %}
+            <div style="color:var(--text-muted); font-size:.85rem;">{{ r.oficina.ciudad }} · {{ r.oficina.zona_horaria }}</div>
+          </td>
+          <td><code>{{ r.oficina.slug }}</code></td>
+          <td>{{ r.usuarios }}</td>
+          <td>
+            {# El color no es el único indicador: cada estado lleva su palabra (WCAG). #}
+            {% if r.ilegibles %}
+            <span class="badge caducada">{{ r.ilegibles }} ilegible{{ 's' if r.ilegibles != 1 }}</span>
+            {% endif %}
+            <span class="badge asignada">{{ r.propias }} propia{{ 's' if r.propias != 1 }}</span>
+            {% if r.ausentes %}
+            <span class="badge">{{ r.ausentes }} sin configurar</span>
+            {% endif %}
+          </td>
+          <td><a class="btn-sm" href="/oficinas/{{ r.oficina.id }}">Ver detalle</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

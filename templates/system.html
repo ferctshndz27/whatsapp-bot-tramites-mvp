@@ -84,6 +84,22 @@
             {% endif %}
           </td>
         </tr>
+        {% if info.credenciales_ilegibles %}
+        {# El cuarto estado: hay fila guardada y NO se descifra. Exige una acción
+           distinta a «sin credenciales» — restaurar CREDENTIALS_KEY, no pegar la
+           llave otra vez—, así que no puede colapsarse en el mismo renglón. #}
+        <tr>
+          <th scope="row">Credenciales ilegibles</th>
+          <td>
+            <span class="badge caducada">{{ info.credenciales_ilegibles | join(', ') }}</span>
+            <div style="color:var(--text-muted); font-size:.85rem;">
+              Hay una credencial guardada que no se puede descifrar: revisa
+              <code>CREDENTIALS_KEY</code> en el <code>.env</code>. Detalle por oficina en
+              <a href="/oficinas">Oficinas</a>.
+            </div>
+          </td>
+        </tr>
+        {% endif %}
       </tbody>
     </table>
   </div>

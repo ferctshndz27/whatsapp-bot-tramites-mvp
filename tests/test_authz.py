@@ -30,6 +30,7 @@ from typing import Callable
 
 import bcrypt
 import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import create_engine, select
@@ -42,6 +43,8 @@ from app.config import settings
 from app.db import get_session
 from app.main import app
 from app.models import (
+    Office,
+    OfficeCredential,
     AdminAudit,
     CatalogCategory,
     CatalogService,
@@ -301,6 +304,37 @@ RUTAS: list[Ruta] = [
         f"/clients/{PHONE}/notes/1/delete", f"/clients/{PHONE}",
         sonda=_campo(ClientNote, 1, "habilitado"), tras_admin=False,
     ),
+    # --- Oficinas: quien entra aquí lee la pista de las llaves de TODAS las
+    # oficinas y puede rotar la de Stripe (consecuencia asumida en §5 de
+    # docs/SPEC-MULTI-OFICINA.md: en este alcance solo existe `is_admin`).
+    Ruta(
+        "GET /oficinas", "GET", "/oficinas", "/",
+    ),
+    Ruta(
+        "POST /oficinas", "POST", "/oficinas", "/",
+        data={"nombre": "Sucursal Intrusa", "slug": "intrusa", "ciudad": "X"},
+        sonda=_conteo(Office, Office.slug == "intrusa"), tras_admin=1,
+    ),
+    Ruta(
+        "GET /oficinas/{id}", "GET", "/oficinas/1", "/",
+    ),
+    Ruta(
+        "POST /oficinas/{id}/llaves", "POST", "/oficinas/1/llaves", "/",
+        data={"clave": "STRIPE_SECRET_KEY", "valor": "sk_test_intruso_9999"},
+        sonda=_conteo(OfficeCredential, OfficeCredential.habilitado == True),  # noqa: E712
+        tras_admin=1,
+    ),
+    Ruta(
+        "POST /oficinas/{id}/llaves/{clave}/baja", "POST",
+        "/oficinas/1/llaves/STRIPE_SECRET_KEY/baja", "/",
+    ),
+    Ruta(
+        # A la oficina 2, no a la 1: VICTIMA ya nace en la 1 y mover ahí no
+        # cambiaría nada — la sonda sería ciega al guard que dice probar.
+        "POST /oficinas/{id}/usuarios", "POST", "/oficinas/2/usuarios", "/",
+        data={"username": VICTIMA},
+        sonda=_campo(User, 3, "office_id"), tras_admin=2,  # 3 = VICTIMA en _sembrar
+    ),
 ]
 
 
@@ -318,6 +352,9 @@ def _sembrar() -> None:
                 habilitado=True, phone=TELEFONO_COLABORADOR,
             )
         )
+        # Una segunda oficina para que «mover un colaborador» tenga a dónde:
+        # con una sola, la sonda mediría un cambio que no existe.
+        s.add(Office(id=2, nombre="Puebla", slug="puebla", ciudad="Puebla"))
         s.add(Client(phone=PHONE, name=CLIENTE_SECRETO, habilitado=True))
         # assigned_to=None a propósito: así el admin pasa el guard de
         # /finish por ser admin, no por ser el asignado.
@@ -401,6 +438,10 @@ def entorno(_isolated_db, monkeypatch):
     monkeypatch.setattr(settings, "mssql_host", "")  # apaga archive.enabled()
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "geoip_enabled", False)
+    # Sin esto, POST /oficinas/{id}/llaves rechaza a TODOS —también al admin— y
+    # el control positivo no podría distinguir «lo paró el guard» de «faltaba
+    # la llave maestra».
+    monkeypatch.setattr(settings, "credentials_key", Fernet.generate_key().decode())
     monkeypatch.setattr(nlu, "_get_client", _sin_llm)
     monkeypatch.setattr(whatsapp_client, "send_text", _sin_whatsapp)
     monkeypatch.setattr(whatsapp_client, "send_buttons", _sin_whatsapp)

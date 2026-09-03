@@ -253,7 +253,15 @@ def test_el_reparto_compartida_es_el_que_enumera_la_spec():
 # `app/` y exigen que nadie se salga de él.
 # ---------------------------------------------------------------------------
 
-MODULOS_APP = sorted((RAIZ / "app").glob("*.py"))
+# credenciales.py queda FUERA: es el módulo que DEFINE credencial(), y su
+# llamada interna (`estado()` -> `credencial(clave, office_id=office_id)`) es
+# paramétrica por diseño — las dos cosas que estos candados persiguen, una clave
+# en variable y un office_id inline, son ahí lo correcto y no la deuda del PR 4.
+# El hueco que abre esta exclusión lo tapa
+# test_el_resolvedor_no_fija_ninguna_oficina_a_mano.
+MODULOS_APP = sorted(
+    p for p in (RAIZ / "app").glob("*.py") if p.name != "credenciales.py"
+)
 
 _ATRIBUTOS = {meta.atributo for meta in CREDENCIALES.values()}
 
@@ -616,4 +624,27 @@ def test_ninguna_llamada_a_credencial_a_nivel_de_modulo():
     assert a_nivel_de_modulo == [], (
         f"credencial() llamada al importar en {a_nivel_de_modulo}: muévela dentro "
         f"de la función que la usa, o el panel del PR 3 editará llaves que nadie lee."
+    )
+
+
+def test_el_resolvedor_no_fija_ninguna_oficina_a_mano():
+    """Compensa la exclusión de credenciales.py de MODULOS_APP.
+
+    Ahí una clave en variable es correcta (el módulo resuelve CUALQUIER clave),
+    pero un `office_id=1` literal no lo sería nunca: significaría que el
+    resolvedor —o el panel que escribe a través de él— decidió por su cuenta una
+    oficina en vez de recibirla. Es el mismo fail-closed de §3 aplicado a quien
+    implementa la herencia.
+    """
+    arbol = ast.parse((RAIZ / "app" / "credenciales.py").read_text(encoding="utf-8"))
+    inline = [
+        f"línea {nodo.lineno}"
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.keyword)
+        and nodo.arg == "office_id"
+        and isinstance(nodo.value, ast.Constant)
+    ]
+    assert inline == [], (
+        f"credenciales.py fija una oficina a mano en {inline}: el resolvedor la "
+        f"recibe, nunca la elige"
     )
