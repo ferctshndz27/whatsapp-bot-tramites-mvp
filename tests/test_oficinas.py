@@ -273,3 +273,16 @@ def test_una_llave_compartida_no_se_vuelve_propia_por_un_post_directo(admin):
     assert r.status_code == 200 and "compartida" in r.text
     with Session(db.engine) as s:
         assert s.exec(select(OfficeCredential)).all() == []
+
+
+@pytest.mark.parametrize("ruta,data", [
+    ("/oficinas/999/llaves", {"clave": "STRIPE_SECRET_KEY", "valor": "sk_x"}),
+    ("/oficinas/999/llaves/STRIPE_SECRET_KEY/baja", {}),
+    ("/oficinas/999/usuarios", {"username": "colab"}),
+])
+def test_una_oficina_inexistente_no_es_un_500(admin, ruta, data):
+    """_render_detalle devuelve None cuando la oficina no existe: sin envoltorio
+    eso viajaba como cuerpo de la respuesta y una URL tecleada a mano tumbaba
+    la página."""
+    r = admin.post(ruta, data=data, follow_redirects=False)
+    assert r.status_code in (200, 303), f"{ruta} contestó {r.status_code}"

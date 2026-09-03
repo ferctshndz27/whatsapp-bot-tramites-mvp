@@ -312,14 +312,22 @@ def estado(clave: str, *, office_id: int) -> tuple[str, str]:
     esta deuda y este es el PR que la cierra).
     """
     meta = _meta(clave)
-    try:
-        valor = credencial(clave, office_id=office_id)
-    except CredencialIlegible:
-        return ILEGIBLE, ""
-    if not valor:
+    # UNA sola lectura de la fila, no dos: llamar a credencial() y después a
+    # _valor_cifrado() para la MISMA llave duplicaba los SELECT (20 por página de
+    # detalle, 20 × N en la lista) y abría una carrera estrecha — una baja entre
+    # ambos SELECT pintaba «heredada» con la pista de la fila que acababa de
+    # morir. Así el estado y el valor salen de la misma lectura.
+    cif = _valor_cifrado(clave, meta.provider, office_id, None)
+    if cif is not None:
+        try:
+            valor = _descifrar(cif, office_id, meta.provider, clave)
+        except CredencialIlegible:
+            return ILEGIBLE, ""
+        return PROPIA, (valor if not meta.es_secreto else valor[-4:])
+    heredado = getattr(settings, meta.atributo, "")
+    if not heredado:
         return AUSENTE, ""
-    propia = _valor_cifrado(clave, meta.provider, office_id, None) is not None
-    return (PROPIA if propia else HEREDADA), (valor if not meta.es_secreto else valor[-4:])
+    return HEREDADA, (heredado if not meta.es_secreto else heredado[-4:])
 
 
 def _apagar_vivas(session, clave: str, provider: str, office_id: int) -> int:

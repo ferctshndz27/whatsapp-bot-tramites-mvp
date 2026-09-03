@@ -1,5 +1,10 @@
 .env
 *.db
+# El WAL y el SHM llevan páginas de la base que todavía no se fusionaron:
+# datos de clientes reales. *.db NO los cubre y quedaban untracked en la
+# raíz, a un `git add -A` de distancia de una fuga.
+*.db-wal
+*.db-shm
 .venv/
 __pycache__/
 data/

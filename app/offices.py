@@ -7,7 +7,16 @@ reglas que este router NO puede relajar:
    a `AdminAudit.target` —esta última se espeja a MSSQL, así que un valor ahí
    viajaría en claro a otra base y anularía el cifrado de §3.1—. Lo único que se
    pinta es la pista (últimos 4) que devuelve `credenciales.estado()`.
-2. **El `provider` no pasa por el formulario.** Lo deriva `credenciales` del
+2. **Una llave `compartida` no se puede CREAR desde aquí** (§5: se renderiza de
+   solo lectura como «heredada del global»), y la comprobación vive en el
+   endpoint además del template: ocultar un botón no es una regla.
+
+   CONSECUENCIA PARA EL PR 4: la migración de Tlaxcala del §7 no puede pasar por
+   este panel para las cuatro llaves marcadas `compartida` — esas filas las
+   escribe un script llamando a `credenciales.guardar()` directo, que es
+   exactamente lo que hace tests/test_oficinas.py en la prueba de /system.
+
+3. **El `provider` no pasa por el formulario.** Lo deriva `credenciales` del
    inventario (§5, constricción 2). Una fila con provider ajeno no casa con el
    WHERE del resolvedor y heredaría en silencio: el panel la mostraría `propia`
    mientras el sistema sigue usando la del .env.
@@ -86,6 +95,16 @@ def _render_lista(request: Request, admin: str, error=None, ok=None):
         {"request": request, "user": admin, "resumen": resumen,
          "tz_default": ZONA_HORARIA_DEFAULT, "error": error, "ok": ok},
     )
+
+
+def _detalle_o_lista(request: Request, admin: str, office_id: int, error=None, ok=None):
+    """_render_detalle o la lista si esa oficina no existe.
+
+    Sin esto, un POST a /oficinas/999/llaves devolvía None como cuerpo de la
+    respuesta —un 500 por una URL tecleada a mano—.
+    """
+    return (_render_detalle(request, admin, office_id, error, ok)
+            or RedirectResponse("/oficinas", status_code=303))
 
 
 def _render_detalle(request: Request, admin: str, office_id: int, error=None, ok=None):
@@ -170,7 +189,7 @@ def oficina_detalle(request: Request, office_id: int):
     admin, redirect = _admin_or_redirect(request)
     if redirect:
         return redirect
-    respuesta = _render_detalle(request, admin, office_id)
+    respuesta = _detalle_o_lista(request, admin, office_id)
     return respuesta if respuesta is not None else RedirectResponse("/oficinas", status_code=303)
 
 
@@ -181,9 +200,9 @@ def llave_guardar(request: Request, office_id: int, clave: str = Form(...), valo
         return redirect
 
     if clave not in CREDENCIALES:
-        return _render_detalle(request, admin, office_id, error="Esa credencial no existe.")
+        return _detalle_o_lista(request, admin, office_id, error="Esa credencial no existe.")
     if not valor.strip():
-        return _render_detalle(request, admin, office_id, error="El valor no puede ir vacío.")
+        return _detalle_o_lista(request, admin, office_id, error="El valor no puede ir vacío.")
     # El formulario de estas ya no se pinta (§5: «de solo lectura como heredada
     # del global»), pero ocultar un botón no es una regla: sin esta rama un POST
     # directo crea la fila igual, y una llave compartida convertida en propia de
@@ -213,7 +232,7 @@ def llave_guardar(request: Request, office_id: int, clave: str = Form(...), valo
     # adminaudit se espeja a MSSQL y ahí viajaría en claro.
     log_admin(admin, "credencial:guardada", f"{clave} oficina={office_id}")
     logger.info("Credencial %s de la oficina %s actualizada por %s", clave, office_id, admin)
-    return _render_detalle(request, admin, office_id, ok=f"{clave} guardada para esta oficina.")
+    return _detalle_o_lista(request, admin, office_id, ok=f"{clave} guardada para esta oficina.")
 
 
 @router.post("/oficinas/{office_id}/llaves/{clave}/baja")
@@ -222,14 +241,14 @@ def llave_baja(request: Request, office_id: int, clave: str):
     if redirect:
         return redirect
     if clave not in CREDENCIALES:
-        return _render_detalle(request, admin, office_id, error="Esa credencial no existe.")
+        return _detalle_o_lista(request, admin, office_id, error="Esa credencial no existe.")
 
     if not credenciales.dar_de_baja(clave, office_id=office_id):
-        return _render_detalle(request, admin, office_id,
+        return _detalle_o_lista(request, admin, office_id,
                                error=f"{clave} no tenía fila propia en esta oficina.")
     log_admin(admin, "credencial:baja", f"{clave} oficina={office_id}")
     logger.info("Credencial %s de la oficina %s dada de baja por %s", clave, office_id, admin)
-    return _render_detalle(request, admin, office_id,
+    return _detalle_o_lista(request, admin, office_id,
                            ok=f"{clave} dada de baja: la oficina vuelve a heredar del .env.")
 
 
@@ -244,11 +263,11 @@ def usuario_mover(request: Request, office_id: int, username: str = Form(...)):
             return RedirectResponse("/oficinas", status_code=303)
         objetivo = session.exec(select(User).where(User.username == username)).first()
         if objetivo is None:
-            return _render_detalle(request, admin, office_id, error="Ese colaborador no existe.")
+            return _detalle_o_lista(request, admin, office_id, error="Ese colaborador no existe.")
         objetivo.office_id = office_id
         session.add(objetivo)
         session.commit()
 
     log_admin(admin, "usuario:oficina", f"{username} -> oficina={office_id}")
     logger.info("Usuario %s movido a la oficina %s por %s", username, office_id, admin)
-    return _render_detalle(request, admin, office_id, ok=f"{username} ahora es de esta oficina.")
+    return _detalle_o_lista(request, admin, office_id, ok=f"{username} ahora es de esta oficina.")

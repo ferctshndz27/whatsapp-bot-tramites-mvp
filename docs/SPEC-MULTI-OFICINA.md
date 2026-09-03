@@ -419,7 +419,7 @@ Cinco PRs. Cada uno despliega solo y deja producción funcionando igual que ante
 | 1 | `office` + `office_credential` + siembra de Tlaxcala + `office_id` en las tablas de §2.3 + `cryptography` en `requirements.txt` + `office_id` en el espejo MSSQL (dict de `archive.py` + 15 upserts) | Bajo — nada lo lee todavía | Arrancar sobre una copia de la base de producción y verificar que toda fila quedó en `office_id = 1` |
 | 2 | `credencial()` con herencia + los 9 archivos que hoy leen `settings.*` pasan a usarla | **Medio — es el PR delicado** | El suite completo verde sin una sola fila en `office_credential`: prueba que la herencia reproduce el comportamiento actual |
 | 3 | Panel `/oficinas`: alta, usuarios, CRUD de llaves, auditoría | Bajo | Alta de una oficina de prueba, poner y quitar una llave, verificar que el valor nunca aparece en el HTML |
-| 4 | Filas de Meta/Twilio de Tlaxcala + ruteo por `phone_number_id` y por `To`, fail-closed | **Alto — toca el webhook** | Test de webhook con `phone_number_id` desconocido que debe descartar y registrar, no procesar |
+| 4 | Filas de Meta/Twilio de Tlaxcala (por script con `credenciales.guardar()`: el panel del PR 3 no deja crear las llaves `compartida`, y las cuatro de Meta lo son) + ruteo por `phone_number_id` y por `To`, fail-closed | **Alto — toca el webhook** | Test de webhook con `phone_number_id` desconocido que debe descartar y registrar, no procesar |
 | 5 | Stripe por oficina: `/webhooks/stripe/{slug}` + filtro por `office_id` en todas las vistas del panel | Medio | Cobro de prueba en la oficina 2 que no aparece en el panel de la oficina 1 |
 
 El PR 2 es el que hay que revisar con lupa: cambia cómo se obtiene **toda** credencial en los 9
