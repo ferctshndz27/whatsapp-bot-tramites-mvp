@@ -58,6 +58,16 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
   inside the container (as `DB_PATH`, `MEDIA_DIR`, `CATALOG_PATH`, `MSSQL_HOST` do).
 - **Slower boot?** Time `archive.backfill()` — it is the growing term in `on_startup()`.
 - **Second process?** Any new cron/`docker exec` is another writer on the same WAL file.
+- **Does the nightly job still tell the truth?** Its output is redirected
+  (`>> /var/log/tramites-jobs.log 2>&1`, `app/jobs.py:6`), so the **exit code is the only thing
+  cron can read**. `app/jobs.py` ends by translating the result through `errores()`: exit 1 if any
+  piece failed, 0 otherwise. A failure reaches that result in **two different shapes, and reading
+  only the first is the trap**: `{"error": str(exc)}` when a whole piece dies
+  (`app/cobranza_jobs.py:502`), and `{"fallidos": n}` when the sweep survives but individual items
+  did not (`:115`, `:286`, `:407`, `:478`) — which is the case that actually happens. A sweep that
+  finishes cleanly having applied **zero of two hundred** Stripe events carries no `error` key at
+  all. A new piece is covered for free only if it uses one of those two shapes; one that invents
+  its own counter name is invisible again.
 
 ## Technical principles
 - `/health` (`app/main.py:168`) returns a static `{"status": "ok"}` and checks nothing. Its whole
@@ -81,6 +91,12 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 - `scripts/ship.sh` is a LOCAL operator tool, never committed to the repo. It enforces: on `main`
   → `pytest` → branch `claude/<slug>` → `git add -- "$@"` with an explicit file list → PR → wait
   for `main == production`.
+- **Carrying on after a failure and reporting success are two different things.** Best-effort is
+  the right shape for the nightly job — a broken sweep must not stop the alerts — but a process
+  that keeps going *and* exits 0 leaves a job that has been failing for weeks looking healthy.
+  This repo already knew the pattern in one place: Responsibility 2 above is the same bug in
+  `pull-deploy.sh` (HEAD advancing past a failed deploy, "exits 0 forever"). Keep the work that
+  succeeded, report the part that did not.
 
 ## Common mistakes
 - **Trusting `/system`'s deploy SHA after a failed build.** See the checklist; use `StartedAt`.
@@ -96,6 +112,21 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 - **Editing `app/catalog.json` expecting production to change.** It is a first-boot seed only
   (`AGENTS.md`), and prod points at `/data/catalog.json` anyway.
 - **Force-pushing or hand-pushing `production`.** It permanently breaks the `promote` job.
+- **Adding an env var without grepping for it first.** A config key is a contract with two ends
+  (`.env.example` and `app/config.py`) and *both* silently tolerate a duplicate. `PUBLIC_BASE_URL`
+  is declared twice in `.env.example` (lines 38 and 100) and assigned twice in `app/config.py`
+  (lines 136 and 158) — Twilio added it, Stripe added it again. In a `.env` **the last line wins**:
+  fill the first (the one carrying the whole Twilio warning) and leave the second empty and the
+  value is empty, which is the failure that file itself describes as looking "intermittent when it
+  is not". Today both assignments are identical so nothing breaks; the day one grows a validation
+  and the other does not, the second one wins in silence. `grep -c` the key in both files before
+  adding it.
+- **Reading CI green as "the image builds".** `.github/workflows/ci-cd.yml` contains **zero**
+  mentions of docker: it installs `requirements.txt` on 3.12 and runs `pytest`. The image is only
+  ever built on the VPS, by `pull-deploy.sh`, after `promote` already moved `production`. A
+  dependency that resolves for pip but breaks the Docker build passes CI, and the first thing that
+  notices is the deploy — which is exactly why `rollback()` has to keep working. Build it locally
+  before pushing anything that touches `requirements.txt` or the `Dockerfile`.
 - **`git add .` in the deploy flow.** `.env.old` exists locally and is untracked; `ship.sh:43-46`
   and `:64` exist precisely to prevent staging it.
 - **Assuming the nightly cron writes DB tables.** `app/db.py:6-11` documents that importing
@@ -131,7 +162,7 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
   if boot approaches the budget, move backfill off the startup path rather than raising the loop.
 - **Layer cache:** `Dockerfile:3-4` copies `requirements.txt` and installs *before*
   `COPY app/`, so a code-only commit rebuilds in seconds. Do not reorder.
-- **Unpinned deps:** `requirements.txt:12-13` (`anthropic>=0.92.0`, `rapidfuzz>=3.0`) float and
+- **Unpinned deps:** `requirements.txt:13-14` (`anthropic>=0.92.0`, `rapidfuzz>=3.0`) float and
   there is no lockfile, so two builds of the *same commit* can differ — and `rapidfuzz` drives
   the NLU fuzzy threshold. Pin both when a fuzzy-matching regression appears out of nowhere.
 - **Build context bloat:** `.dockerignore:1` excludes `venv/` but not `.venv/` (143M, the actual

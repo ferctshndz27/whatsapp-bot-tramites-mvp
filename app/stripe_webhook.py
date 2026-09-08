@@ -27,7 +27,9 @@ from sqlalchemy.exc import IntegrityError
 from app import cobranza
 from app.credenciales import credencial
 from app.db import get_session
-from app.models import EventoPasarela, OFICINA_TLAXCALA_ID
+from sqlmodel import select
+
+from app.models import EventoPasarela, OFICINA_TLAXCALA_ID, Office
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +66,61 @@ def _verificar_firma(raw: bytes, header: str, secreto: str,
     return any(hmac.compare_digest(esperada, v1) for v1 in v1s)
 
 
+@router.post("/webhooks/stripe/{slug}")
+async def stripe_webhook_oficina(request: Request, slug: str) -> dict:
+    """Endpoint por oficina — §4.3. Un slug desconocido es 403, no 404.
+
+    El evento de Stripe NO trae identificador de oficina: con una cuenta por
+    oficina hay un secreto por oficina, y la única forma de saber con cuál
+    verificar es que la oficina venga en la URL. La alternativa —probar todos
+    los secretos vivos— cuesta N verificaciones HMAC por evento y ensucia el
+    log; configurar el endpoint en Stripe ya es parte del alta de la cuenta.
+
+    403 y no 404 porque este endpoint es público: distinguir «esa oficina no
+    existe» de «tu firma no cuadra» le enumera las oficinas a cualquiera. Con la
+    misma respuesta para ambos, un slug inventado no dice nada.
+    """
+    office_id = _oficina_por_slug(slug)
+    if office_id is None:
+        logger.warning("Webhook de Stripe a un slug desconocido: %r", slug[:64])
+        raise HTTPException(status_code=403, detail="Firma inválida")
+    return await _procesar(request, office_id)
+
+
 @router.post("/webhooks/stripe")
 async def stripe_webhook(request: Request) -> dict:
+    """Ruta LEGADA, amarrada a Tlaxcala.
+
+    Se conserva a propósito: es el endpoint que hoy está configurado y
+    funcionando en producción, y moverlo sería coordinar un cambio en el panel
+    de Stripe con el deploy. Una oficina nueva usa la ruta con slug."""
+    return await _procesar(request, OFICINA_TLAXCALA_ID)
+
+
+def _oficina_por_slug(slug: str) -> int | None:
+    if not slug:
+        return None
+    with get_session() as session:
+        return session.exec(
+            select(Office.id).where(
+                Office.slug == slug,
+                Office.habilitado == True,  # noqa: E712
+            )
+        ).first()
+
+
+async def _procesar(request: Request, office_id: int) -> dict:
     # El cuerpo CRUDO antes de cualquier json(): la firma es sobre los bytes.
     raw = await request.body()
-    # ponytail: office_id fijo a Tlaxcala. Techo: es la ÚNICA llave por oficina
-    # que se lee en el event loop — 1 SELECT de 184 µs, una vez por evento. El
-    # PR 5 mueve la lectura a POST /webhooks/stripe/{slug} (§4.3), donde la
-    # oficina sale del path y no del payload. NO mandarla a threadpool: el salto
-    # cuesta 47 µs y subiría el SELECT de 184 a 231 µs de pared para ahorrar 137
-    # de loop — una pesimización medida.
+    # La llave SOLO autentica: la oficina del cobro sale del `Cobro` que el
+    # evento referencia, no de con qué secreto se verificó (§4.3). Por eso
+    # `eventopasarela` no lleva office_id y no hace falta que lo lleve.
+    #
+    # Este SELECT corre en el event loop: 184 µs una vez por evento. NO mandarlo
+    # a threadpool — el salto cuesta 47 µs y lo subiría a 231 µs de pared para
+    # ahorrar 137 de loop; es una pesimización medida.
     if not _verificar_firma(raw, request.headers.get("stripe-signature", ""),
-                            credencial("STRIPE_WEBHOOK_SECRET", office_id=OFICINA_TLAXCALA_ID)):
+                            credencial("STRIPE_WEBHOOK_SECRET", office_id=office_id)):
         logger.warning("Webhook de Stripe rechazado: firma inválida o ausente")
         raise HTTPException(status_code=403, detail="Firma inválida")
 

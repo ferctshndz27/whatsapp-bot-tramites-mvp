@@ -31,7 +31,7 @@
         {% if is_admin(user) %}
         <span class="nav-label">Administración</span>
         <a href="/invitations" {% if request.url.path.startswith('/invitations') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">✉️</span>Invitaciones</a>
-        <a href="/oficinas" {% if request.url.path.startswith('/oficinas') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🏢</span>Oficinas</a>
+        <a class="btn-nav" href="/oficinas" {% if request.url.path.startswith('/oficinas') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🏢</span>Oficinas</a>
         <a href="/users" {% if request.url.path.startswith('/users') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👥</span>Usuarios</a>
         <a href="/logins" {% if request.url.path.startswith('/logins') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🔐</span>Accesos</a>
         <a href="/catalog" {% if request.url.path.startswith('/catalog') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🗂️</span>Catálogo</a>

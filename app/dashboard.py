@@ -14,7 +14,7 @@ from sqlmodel import select
 from app import authlog, codigos, messaging, ventana
 from app.utils import ruta_interna
 from app.audit import log_admin
-from app.auth import is_admin
+from app.auth import alcance, is_admin
 from app.config import settings
 from app.credenciales import credencial
 from app import asignacion
@@ -27,6 +27,7 @@ from app.models import (
     Label,
     Message,
     OFICINA_TLAXCALA_ID,
+    Office,
     Ticket,
     TicketActivity,
     TicketLabel,
@@ -225,7 +226,14 @@ def register_submit(
             )
 
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-        session.add(User(username=username, password_hash=hashed.decode(), phone=normalized_phone))
+        # La oficina viene de la invitación, que la fijó quien invitó. Con el
+        # código MAESTRO (REGISTRATION_CODE) no hay invitación y no hay a quién
+        # preguntarle: cae en la principal, que es lo correcto mientras ese
+        # código siga siendo uno global del despliegue. Si algún día hace falta
+        # un código maestro por oficina, el lugar es config, no aquí.
+        office_id = invitation.office_id if invitation is not None else OFICINA_TLAXCALA_ID
+        session.add(User(username=username, password_hash=hashed.decode(),
+                         phone=normalized_phone, office_id=office_id))
         if invitation is not None:
             invitation.used_at = utcnow()
             invitation.used_by = username
@@ -267,9 +275,12 @@ def invitations_list(request: Request):
 
     with get_session() as session:
         invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
+        oficinas, nombres = _oficinas_para_invitar(session)
 
     return templates.TemplateResponse(
-        "invitations.html", {"request": request, "user": user, "invitations": invitations}
+        "invitations.html",
+        {"request": request, "user": user, "invitations": invitations,
+         "oficinas": oficinas, "nombres_oficina": nombres},
     )
 
 
@@ -295,8 +306,30 @@ def invitations_toggle(request: Request, invitation_id: int):
     return RedirectResponse("/invitations", status_code=303)
 
 
+def _oficinas_para_invitar(session):
+    """(oficinas habilitadas, {id: nombre}).
+
+    Solo las habilitadas: invitar a alguien a una oficina dada de baja lo dejaría
+    sin ver nada al entrar —su ruteo está cortado— y el síntoma no apunta a la
+    causa. El mapa de nombres es para pintar los códigos ya emitidos, incluidos
+    los de una oficina que se dio de baja después.
+    """
+    oficinas = session.exec(
+        select(Office).where(Office.habilitado == True).order_by(Office.id)  # noqa: E712
+    ).all()
+    nombres = {o.id: o.nombre for o in session.exec(select(Office)).all()}
+    return oficinas, nombres
+
+
 @router.post("/invitations")
-def invitations_create(request: Request):
+def invitations_create(request: Request, office_id: int = Form(OFICINA_TLAXCALA_ID)):
+    """Genera un código de un solo uso PARA UNA OFICINA.
+
+    La oficina se elige aquí y no en el registro a propósito: quien acepta la
+    invitación no sabe —ni le toca decidir— de qué sede es. Sin esto, todo
+    invitado nacía en la oficina 1 por el DEFAULT y había que moverlo después,
+    con el rescate de folios que eso arrastra (users.mover_de_oficina).
+    """
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -305,19 +338,34 @@ def invitations_create(request: Request):
 
     token = secrets.token_urlsafe(9)
     with get_session() as session:
-        session.add(Invitation(token=token, phone=None, created_by=user))
+        oficina = session.get(Office, office_id)
+        if oficina is None or not oficina.habilitado:
+            invitations = session.exec(
+                select(Invitation).order_by(Invitation.created_at.desc())
+            ).all()
+            oficinas, nombres = _oficinas_para_invitar(session)
+            return templates.TemplateResponse(
+                "invitations.html",
+                {"request": request, "user": user, "invitations": invitations,
+                 "oficinas": oficinas, "nombres_oficina": nombres,
+                 "error": "Esa oficina no existe o está dada de baja."},
+            )
+        session.add(Invitation(token=token, phone=None, created_by=user, office_id=office_id))
         session.commit()
         invitations = session.exec(
             select(Invitation).order_by(Invitation.created_at.desc())
         ).all()
+        oficinas, nombres = _oficinas_para_invitar(session)
 
-    logger.info("Invitación generada por %s", user)
+    logger.info("Invitación generada por %s para la oficina %s", user, office_id)
     return templates.TemplateResponse(
         "invitations.html",
         {
             "request": request,
             "user": user,
             "invitations": invitations,
+            "oficinas": oficinas,
+            "nombres_oficina": nombres,
             "new_token": token,
         },
     )
@@ -352,9 +400,16 @@ def ticket_list(
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    # La oficina se decide UNA vez (auth.alcance) y se aplica por consulta: un
+    # filtro global también taparía al bot, al cron y al espejo, que no tienen
+    # sesión de usuario que consultar.
+    vista = alcance(user)
     with get_session() as session:
         all_tickets = session.exec(
-            select(Ticket).where(Ticket.habilitado == True).order_by(Ticket.created_at.desc())  # noqa: E712
+            vista.filtrar(
+                select(Ticket).where(Ticket.habilitado == True),  # noqa: E712
+                Ticket.office_id,
+            ).order_by(Ticket.created_at.desc())
         ).all()
         # ponytail: recorre todos los mensajes en cada carga de «/», que además
         # se auto-refresca cada 30 s; pasar a una consulta agregada si el
@@ -478,9 +533,17 @@ def ticket_detail(
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
         if ticket is None:
+            return RedirectResponse("/", status_code=303)
+        # Referencia directa: el id viene de la URL, así que acotar el LISTADO
+        # no basta. Sin esto, teclear el id de un folio de otra oficina lo abre
+        # entero —teléfono del cliente, historial, notas—. Misma respuesta que
+        # «no existe»: distinguirlas confirmaría qué ids están ocupados.
+        if not vista.ve_todas and ticket.office_id != vista.office_id:
+            logger.warning("%s intentó abrir el folio %s de otra oficina", user, ticket_id)
             return RedirectResponse("/", status_code=303)
         teammates = [
             (u.username, u.estado)

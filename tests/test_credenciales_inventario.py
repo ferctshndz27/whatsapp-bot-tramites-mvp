@@ -557,7 +557,11 @@ PUNTOS_CON_OFICINA_INLINE = {
     ("dashboard.py", "STRIPE_SECRET_KEY"),
     ("dashboard.py", "TWILIO_CONTENT_SID_FEEDBACK"),
     ("stripe_client.py", "STRIPE_SECRET_KEY"),
-    ("stripe_webhook.py", "STRIPE_WEBHOOK_SECRET"),
+    # ("stripe_webhook.py", "STRIPE_WEBHOOK_SECRET") — RESUELTO en el PR 5: la
+    # oficina sale del slug de /webhooks/stripe/{slug} (§4.3) y la ruta legada le
+    # pasa OFICINA_TLAXCALA_ID a _procesar, no a credencial(). Es el primer punto
+    # de esta lista que se salda; el diff de este conjunto es el artefacto de
+    # auditoría que dice cuánto falta.
     ("system.py", "WHATSAPP_PHONE_NUMBER_ID"),
     ("system.py", "WHATSAPP_TOKEN"),
     ("twilio_client.py", "TWILIO_ACCOUNT_SID"),

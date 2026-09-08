@@ -306,7 +306,7 @@ dato que lo respalde. **Medir antes de construir.**
 | **4** | Integración y automatización | Webhooks salientes + motor de reglas | Backend + DevOps | Pendiente |
 | **5** | Crecimiento y analítica | Campañas + reportes/embudo | AI PM + FullStack | Pendiente |
 | **6** | Pulido | Importación, búsqueda global, Flows, vistas, equipos | FullStack + QA | Pendiente |
-| **7** | Multi-oficina | Oficinas, llaves por oficina, catálogo/corpus/sinónimos por oficina — spec en `docs/SPEC-MULTI-OFICINA.md` | Arquitecto + Backend + Seguridad | Pendiente |
+| **7** | Multi-oficina | Oficinas, llaves por oficina, ruteo de entrada por oficina, Stripe por oficina y alcance en el panel — spec en `docs/SPEC-MULTI-OFICINA.md` | Arquitecto + Backend + Seguridad | **Implementada** (los 5 PRs de §8) — §6 parcialmente diferido: el corpus del RAG y la medición del NLU sí se acotaron; el catálogo por oficina queda como su propio PR y los sinónimos están bloqueados por él, aseverados en `tests/test_alcance_oficina.py` (§11.3 de la spec) |
 
 **La fase 1 va primero porque sin ella no se puede priorizar el resto con datos.** Hoy no sabemos
 cuánto tarda una primera respuesta ni qué categoría de trámite se atasca. Construir asignación

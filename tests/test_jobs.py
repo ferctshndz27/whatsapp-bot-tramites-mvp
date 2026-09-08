@@ -7,6 +7,9 @@ Cubre lo que nadie más ejercita:
   en `{"propuestas": 0, "motivo": "error: ..."}` y el que convierte un fallo de
   alertas en `{"error": ...}`. Es código que corre desatendido de madrugada:
   la garantía operativa es que **el cron nunca revienta**.
+* Y su otra mitad, que faltaba: **el cron nunca revienta, pero tampoco miente**.
+  `errores()` traduce ese resultado a lo único que el cron sabe leer —el código
+  de salida— y el proceso se ejecuta de verdad, como lo ejecuta el host.
 * La REGLA DE ORO en tiempo de ejecución: la minería nocturna deja las
   propuestas en "pendiente" y NO llama a `catalog.add_synonym`. Nada auto-aprende.
 * `app.alerts`: las reglas `respaldo_viejo` y `disco_bajo` — las únicas dos que
@@ -21,6 +24,11 @@ ni tests/test_learning.py (persistencia/aprobación/rechazo desde el panel).
 
 import json
 import logging
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -34,10 +42,11 @@ import app.system as system
 from app.catalog import catalog
 from app.config import settings
 from app.conversation import NOT_RECOGNIZED_HINT
-from app.jobs import nightly
+from app.jobs import errores, nightly
 from app.models import AdminAudit, Direction, Message, SynonymProposal
 
 PHONE = "5215500000000"
+_RAIZ = Path(__file__).resolve().parent.parent
 # Texto que el motor determinista NO relaciona con ningún servicio del catálogo
 # (verificado: nlu._deduce_keywords devuelve (None, None)), así que
 # unmatched_messages lo entrega como pendiente de minar.
@@ -214,6 +223,122 @@ def test_nightly_no_revienta_si_la_evaluacion_de_alertas_falla(monkeypatch, capl
     assert result["alertas"] == {"error": "no such table: alert"}
     assert result["propuestas"] == 0
     assert "Evaluación de alertas falló" in caplog.text
+
+
+# --------------------------------------------------------------------------
+# El código de salida: lo único que el cron sabe leer
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("resultado", "esperado"), [
+    # Noches normales: no hay nada que reportar.
+    ({"propuestas": 3, "cobranza": {}, "alertas": {"nuevas": 0}}, []),
+    ({"propuestas": 0, "motivo": "sin mensajes pendientes",
+      "cobranza": {}, "alertas": {"nuevas": 0}}, []),
+    ({"propuestas": 0, "motivo": "sin OLLAMA_URL ni ANTHROPIC_API_KEY",
+      "cobranza": {}, "alertas": {}}, []),
+    # Fallos, cada uno con la forma que le da su propia función.
+    ({"propuestas": 0, "motivo": "error: connection refused",
+      "cobranza": {}, "alertas": {}}, ["mineria"]),
+    ({"propuestas": 0, "cobranza": {}, "alertas": {"error": "no such table: alert"}},
+     ["alertas"]),
+    # El caso que importa: un barrido de cobranza caído es DINERO, y su error
+    # viene anidado un nivel más abajo (app/cobranza_jobs.py lo pone por barrido).
+    ({"propuestas": 0, "cobranza": {"barrer_vencidos": {"error": "MSSQL caído"},
+                                    "barrer_expirados": {"cerrados": 2}},
+      "alertas": {}}, ["cobranza.barrer_vencidos"]),
+    # Varios a la vez: se reportan todos, no solo el primero.
+    ({"propuestas": 0, "motivo": "error: boom",
+      "cobranza": {"barrer_vencidos": {"error": "x"}},
+      "alertas": {"error": "y"}}, ["alertas", "cobranza.barrer_vencidos", "mineria"]),
+    # Y el que de verdad ocurre: el barrido NO revienta —termina bien y devuelve
+    # su resumen—, pero no aplicó ni un solo evento. No hay ninguna clave
+    # "error" por ningún lado; el fallo vive entero en un contador.
+    ({"propuestas": 0, "alertas": {},
+      "cobranza": {"eventos_pendientes": {"pendientes": 200, "aplicados": 0, "fallidos": 200}}},
+     ["cobranza.eventos_pendientes"]),
+    # Un fallo aislado entre muchos aciertos también cuenta: 199 de 200 no es
+    # "todo bien", y el log de esa madrugada nadie lo abre.
+    ({"propuestas": 0, "alertas": {},
+      "cobranza": {"eventos_pendientes": {"pendientes": 200, "aplicados": 199, "fallidos": 1}}},
+     ["cobranza.eventos_pendientes"]),
+    # `fallidos: 0` es la noche sana que devuelven los cinco barridos siempre:
+    # si esto contara, el cron alarmaría cada madrugada y se silenciaría.
+    ({"propuestas": 0, "alertas": {},
+      "cobranza": {"eventos_pendientes": {"pendientes": 0, "aplicados": 0, "fallidos": 0},
+                   "huerfanos": {"huerfanos": 3, "resueltos": 1,
+                                 "sin_resolver": 2, "irresolubles": 0}}}, []),
+])
+def test_errores_distingue_una_noche_sana_de_una_rota(resultado, esperado):
+    """REGLA: "no había nada que hacer" no es un fallo; "no pude hacerlo" sí.
+    Confundirlos en cualquiera de los dos sentidos rompe el valor del exit code:
+    silencio ante un barrido caído, o ruido cada noche tranquila hasta que
+    alguien silencia la alarma."""
+    assert errores(resultado) == esperado
+
+
+def _correr_el_cron(tmp_path, barrido):
+    """`python -m app.jobs` como lo corre el host, contra una base desechable.
+
+    Se ejecuta el módulo de verdad —no se importa `errores()` y se le llama—
+    porque lo que se está probando es precisamente que `__main__` la use para
+    decidir su código de salida. `barrer_todo` se importa DENTRO de la función
+    (app/jobs.py), así que sustituirlo en el módulo basta.
+    """
+    guion = textwrap.dedent(f"""
+        import runpy
+        import app.cobranza_jobs as cj
+        cj.barrer_todo = lambda: {barrido!r}
+        runpy.run_module("app.jobs", run_name="__main__")
+    """)
+    return subprocess.run(
+        [sys.executable, "-c", guion],
+        capture_output=True, text=True, timeout=180, cwd=str(_RAIZ),
+        env={**os.environ, "DB_PATH": str(tmp_path / "cron.db"), "MSSQL_HOST": ""},
+    )
+
+
+def test_el_proceso_del_cron_sale_con_1_cuando_un_barrido_de_cobranza_falla(tmp_path):
+    """REGLA: el cron redirige su salida al log (`>> /var/log/tramites-jobs.log`),
+    así que el CÓDIGO DE SALIDA es lo único que puede leer. Antes salía 0 pasara
+    lo que pasara: un barrido de cobranza caído —dinero— se veía exactamente
+    igual que una noche sana, y así podía quedarse semanas."""
+    proc = _correr_el_cron(tmp_path, {"barrer_vencidos": {"error": "MSSQL caído"}})
+
+    assert proc.returncode == 1, (
+        f"el cron vio exit {proc.returncode} con un barrido caído. "
+        f"stdout={proc.stdout[-300:]!r} stderr={proc.stderr[-300:]!r}"
+    )
+    assert "barrer_vencidos" in proc.stdout + proc.stderr
+
+
+def test_el_proceso_del_cron_sale_con_0_en_una_noche_sana(tmp_path):
+    """La otra mitad, y la que evita que el arreglo se vuelva ruido: sin fallos,
+    exit 0. Un job que alarma cada noche se silencia, y entonces no avisa nada."""
+    proc = _correr_el_cron(tmp_path, {"barrer_vencidos": {"cerrados": 0}})
+
+    assert proc.returncode == 0, (
+        f"el cron vio exit {proc.returncode} en una noche sin fallos. "
+        f"stdout={proc.stdout[-300:]!r} stderr={proc.stderr[-300:]!r}"
+    )
+
+
+def test_el_proceso_del_cron_sale_con_1_si_el_barrido_termina_bien_pero_no_aplico_nada(tmp_path):
+    """REGRESIÓN. El primer arreglo del exit code solo miraba `{"error": ...}`, y
+    ese caso —el barrido REVIENTA— es el raro. El normal es este: el barrido
+    corre completo, devuelve su resumen y los doscientos eventos de Stripe que
+    no se aplicaron viven solo en `fallidos`. Sin contar el contador, el arreglo
+    dejaba pasar exactamente el escenario que más importa."""
+    proc = _correr_el_cron(
+        tmp_path,
+        {"eventos_pendientes": {"pendientes": 200, "aplicados": 0, "fallidos": 200}},
+    )
+
+    assert proc.returncode == 1, (
+        f"el cron vio exit {proc.returncode} con 200 eventos de Stripe sin aplicar. "
+        f"stdout={proc.stdout[-300:]!r} stderr={proc.stderr[-300:]!r}"
+    )
+    assert "eventos_pendientes" in proc.stdout + proc.stderr
 
 
 def test_nightly_crea_el_esquema_si_la_base_esta_vacia(monkeypatch, infra_sana):

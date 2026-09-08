@@ -29,9 +29,10 @@ PROVIDERS = (PROVIDER_META, PROVIDER_TWILIO)
 # que ha operado, y por eso es el DEFAULT de office_id en las 15 tablas de §2.3.
 # La fila la siembra db.init_db(); nunca se borra (baja = habilitado=0).
 OFICINA_TLAXCALA_ID = 1
-# Fuente única de la zona horaria del negocio: default de office.zona_horaria y
-# origen de templating.BUSINESS_TZ. templating importa de aquí y no al revés:
-# este módulo no importa nada de app.*, así que no hay ciclo.
+# Fuente única de la zona horaria del negocio: origen de templating.BUSINESS_TZ
+# (hoy un valor GLOBAL fijo, no por oficina — Office ya no tiene columna propia).
+# templating importa de aquí y no al revés: este módulo no importa nada de
+# app.*, así que no hay ciclo.
 ZONA_HORARIA_DEFAULT = "America/Mexico_City"
 
 
@@ -64,7 +65,10 @@ class TicketStatus(str, Enum):
 
 
 class Client(SQLModel, table=True):
-    phone: str = Field(primary_key=True)
+    phone: str = Field(
+        sa_column_kwargs={"primary_key": True},
+        title="phone",
+    )
     name: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
@@ -548,9 +552,17 @@ class Plantilla(SQLModel, table=True):
 
 
 class Invitation(SQLModel, table=True):
+    """Código de un solo uso para que alguien se registre eligiendo su clave.
+
+    Lleva `office_id` porque la oficina se decide al INVITAR, no al registrarse:
+    quien acepta la invitación no sabe —ni debe decidir— de qué sede es. Sin
+    esto, todo invitado nacía en la oficina 1 por el DEFAULT y había que moverlo
+    a mano después, con el rescate de folios que eso implica (users.py)."""
+
     id: int | None = Field(default=None, primary_key=True)
     token: str = Field(unique=True, index=True)
     phone: str | None = None
+    office_id: int = _office_id_field()
     created_by: str
     created_at: datetime = Field(default_factory=utcnow)
     used_at: datetime | None = None
@@ -851,7 +863,6 @@ class Office(SQLModel, table=True):
     nombre: str = Field(unique=True, index=True)
     slug: str = Field(unique=True, index=True)  # URL del webhook de Stripe (PR 5)
     ciudad: str
-    zona_horaria: str = ZONA_HORARIA_DEFAULT
     habilitado: bool = True
     created_at: datetime = Field(default_factory=utcnow)
 

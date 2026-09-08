@@ -24,7 +24,7 @@ from sqlmodel import Session, func, select
 import app.db as db
 from app import agent_settings, rag
 from app.audit import log_admin
-from app.auth import is_admin
+from app.auth import alcance, is_admin
 from app.config import settings
 from app.models import InfoDoc, NluEvent, utcnow
 from app.templating import templates
@@ -72,14 +72,19 @@ def _parrafos(session: Session) -> list[dict]:
     return [{"id": f.id, "texto": f.texto, "position": f.position} for f in filas]
 
 
-def _metricas_por_capa(session: Session) -> dict[str, int]:
-    """Mensajes por capa (14 días) para pintar actividad en cada nodo."""
+def _metricas_por_capa(session: Session, office_id: int | None = None) -> dict[str, int]:
+    """Mensajes por capa (14 días) para pintar actividad en cada nodo.
+
+    `office_id=None` = todas (§6: «el benchmark del NLU deja de ser un promedio
+    de ciudades distintas» — lo que pide es poder desglosar, no restringir)."""
     from datetime import timedelta
 
     cutoff = utcnow() - timedelta(days=METRICAS_DIAS)
+    de_la_oficina = () if office_id is None else (NluEvent.office_id == office_id,)
     filas = session.exec(
         select(NluEvent.capa, func.count())
         .where(NluEvent.created_at >= cutoff)
+        .where(*de_la_oficina)
         .where(NluEvent.habilitado == True)  # noqa: E712
         .group_by(NluEvent.capa)
     ).all()
@@ -115,7 +120,7 @@ def _asesores_disponibles(session: Session) -> int:
     return len(asignacion._elegibles(session))
 
 
-def _herramientas(session: Session) -> list[dict]:
+def _herramientas(session: Session, office_id: int | None = None) -> list[dict]:
     """Uso por herramienta del nodo agéntico (14 días).
 
     Cuenta las filas capa "tool"/"tool_error" — una por LLAMADA — y NO se mezcla
@@ -129,9 +134,11 @@ def _herramientas(session: Session) -> list[dict]:
     from app import agent_tools
 
     cutoff = utcnow() - timedelta(days=METRICAS_DIAS)
+    de_la_oficina = () if office_id is None else (NluEvent.office_id == office_id,)
     filas = session.exec(
         select(NluEvent.service_id, NluEvent.capa, func.count())
         .where(NluEvent.created_at >= cutoff)
+        .where(*de_la_oficina)
         .where(NluEvent.capa.in_(("tool", "tool_error")))
         .where(NluEvent.habilitado == True)  # noqa: E712
         .group_by(NluEvent.service_id, NluEvent.capa)
@@ -166,14 +173,17 @@ HORAS_FALLA = 48
 MINIMO_PARA_CONCLUIR = 3
 
 
-def _fallos_recientes(session: Session, horas: int = HORAS_FALLA) -> int:
+def _fallos_recientes(session: Session, horas: int = HORAS_FALLA,
+                      office_id: int | None = None) -> int:
     from datetime import timedelta
 
     cutoff = utcnow() - timedelta(hours=horas)
+    de_la_oficina = () if office_id is None else (NluEvent.office_id == office_id,)
     return session.exec(
         select(func.count())
         .select_from(NluEvent)
         .where(NluEvent.created_at >= cutoff)
+        .where(*de_la_oficina)
         .where(NluEvent.capa == "ollama_error")
         .where(NluEvent.habilitado == True)  # noqa: E712
     ).one()
@@ -343,7 +353,11 @@ def crear_parrafo(request: Request, data: ParrafoIn):
         return JSONResponse({"error": motivo}, status_code=400)
     with Session(db.engine) as session:
         tope = session.exec(select(func.max(InfoDoc.position))).one() or 0
-        fila = InfoDoc(texto=texto, position=tope + 1, updated_by=user)
+        # La oficina del admin que lo escribe: sin esto, el corpus de una
+        # oficina nueva nace en la 1 por el server_default y el filtro de
+        # rag._docs() no lo encontraría nunca (§6).
+        fila = InfoDoc(texto=texto, position=tope + 1, updated_by=user,
+                       office_id=alcance(user).office_id)
         session.add(fila)
         session.commit()
         session.refresh(fila)
@@ -430,7 +444,9 @@ def probar(request: Request, data: PruebaIn):
         sugerencias = [s.name for s in nlu.suggestions(texto)]
         resultado["sugerencias"] = sugerencias
         if settings.rag_enabled and rag.es_pregunta_informativa(texto):
-            respuesta, motivo = rag.answer_explained(texto)
+            # Con la oficina del admin que prueba: si el probador leyera el
+            # corpus de otra, mostraría una respuesta que su bot nunca daría.
+            respuesta, motivo = rag.answer_explained(texto, alcance(user).office_id)
             resultado["respuesta_rag"] = respuesta
             resultado["rag_descartada"] = motivo
             # Sin respuesta y sin guardrail = el modelo dijo NO_SE o la
@@ -439,7 +455,7 @@ def probar(request: Request, data: PruebaIn):
             resultado["rag_sin_respuesta"] = respuesta is None and motivo is None
             # Desglose de la recuperación (docs, vía, coseno): sin esto el
             # umbral semántico del híbrido se calibraría a ciegas.
-            resultado["retrieval"] = rag.explicar_retrieval(texto)
+            resultado["retrieval"] = rag.explicar_retrieval(texto, alcance(user).office_id)
         if resultado["respuesta_rag"] is None and not sugerencias:
             resultado["le_tocaria_tools"] = settings.agent_tools_enabled
     # Un timeout de Ollama y un "no sé" del modelo daban EXACTAMENTE el mismo

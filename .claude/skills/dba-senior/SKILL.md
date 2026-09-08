@@ -42,6 +42,13 @@ drifting apart without anyone noticing, and land schema changes by hand — ther
       `sa_column_kwargs={"server_default": text("'meta'")}` so `create_all` and `ALTER TABLE` agree.
 - [ ] New index? Raw `CREATE INDEX IF NOT EXISTS` inside `init_db()`, not `Field(index=True)`.
 - [ ] Raw SQL write? A mirror twin exists (pattern: `_normalize_phones_espejo`).
+- [ ] Adding a loop to `backfill()`? Know that **one `try` wraps the whole body**
+      (`app/archive.py:1639-1707`) and the function returns `None`. Blow up between the `Client`
+      loop and the `Message` loop and the log says `Backfill de MSSQL incompleto` with no
+      indication of how far it got — the tables before the failure are mirrored, the ones after
+      are not, and `/system` just shows counts that disagree. The upserts are idempotent by
+      `source_id`, so re-running is free and *that* is what makes the single `try` acceptable;
+      what it costs is knowing whether it finished. Put the most valuable tables first.
 
 ## Technical principles
 

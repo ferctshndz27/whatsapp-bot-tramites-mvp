@@ -460,12 +460,17 @@ def test_mirror_status_sin_mssql_reporta_una_fila_por_tabla_sin_reventar(monkeyp
 # --------------------------------------------------------------------------
 # office_id (multi-oficina, PR 1): amarra modelos, dict del espejo y upserts
 # --------------------------------------------------------------------------
-# Las 15 tablas MSSQL de §2.3 como LITERAL: derivarlas del código haría que quitar
-# la columna de un modelo y del dict a la vez pasara en verde.
+# Las tablas MSSQL con oficina como LITERAL: derivarlas del código haría que
+# quitar la columna de un modelo y del dict a la vez pasara en verde.
+#
+# Son 16, no las 15 de §2.3: `invitations` se sumó cuando el panel de
+# invitaciones pasó a elegir la oficina — la decide quien invita, no quien
+# acepta el código.
 TABLAS_MSSQL_CON_OFICINA = frozenset({
     "wa_clients", "conversations", "tickets", "app_users", "team_messages", "cobros",
     "catalog_categories", "catalog_services", "synonym_proposals", "nlu_events",
     "info_docs", "labels", "saved_replies", "message_templates", "agent_config",
+    "invitations",
 })
 
 

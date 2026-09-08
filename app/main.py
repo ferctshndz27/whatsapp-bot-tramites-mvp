@@ -40,7 +40,24 @@ logger = logging.getLogger(__name__)
 # volver a iniciar sesión.
 SESSION_MAX_AGE = 12 * 60 * 60
 
-app = FastAPI(title="Bot de trámites — MVP")
+# Sin `/docs`, `/redoc` ni `/openapi.json`: los tres nacen abiertos en FastAPI y
+# no hay guard de sesión que los cubra —los middlewares de abajo agregan
+# cabeceras y contexto, no autenticación—, así que publicaban el mapa completo
+# del ERP (98 rutas: /oficinas, /agente/config, /system, /clients/upsert...) a
+# cualquiera que lo pidiera. Nadie los consume: ni una referencia en app/,
+# templates/, tests/ ni deploy/. El esquema sigue disponible en local con
+# `app.openapi()` desde una shell, que es donde hace falta.
+#
+# `openapi_url=None` por sí solo ya apaga los tres —las dos UIs se sirven DESDE
+# el esquema, así que sin él FastAPI ni siquiera registra sus rutas—. Los otros
+# dos van explícitos de todos modos: el día que alguien reactive el esquema para
+# generar un cliente, no debe reabrir Swagger y ReDoc de paso sin notarlo.
+app = FastAPI(
+    title="Bot de trámites — MVP",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 # CSS/JS estáticos del panel (el CSS vive en static/css/*.css). No es un
 # middleware: no altera el orden de los cuatro middlewares de abajo.
@@ -86,6 +103,13 @@ async def _nav_context(request, call_next):
     # admin en base.html). Best-effort: si falla, el nav no muestra badge y el
     # request sigue normal. Corre DENTRO de SessionMiddleware (usa la sesión).
     request.state.pending_proposals = 0
+    # Los estáticos no renderizan base.html, así que su badge no lo lee nadie:
+    # una navegación del panel pide la página y luego su CSS y su JS, y sin esta
+    # línea cada uno de esos pedía también el COUNT. La comparación de prefijo
+    # cuesta nada y es segura por construcción — lo que se monta en /static/ no
+    # pasa por una plantilla.
+    if request.url.path.startswith("/static/"):
+        return await call_next(request)
     try:
         if request.session.get("user"):
             from sqlmodel import func, select

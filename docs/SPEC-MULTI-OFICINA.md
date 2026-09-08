@@ -72,10 +72,14 @@ office
   nombre        str  unique      -- "Tlaxcala"
   slug          str  unique      -- "tlaxcala" (para URLs de webhook de Stripe)
   ciudad        str
-  zona_horaria  str  default "America/Mexico_City"
   habilitado    bool default 1   -- soft delete, como el resto del repo
   created_at    datetime
 ```
+
+`zona_horaria` se retiró del modelo tras el PR 3: nunca alimentó `templating.BUSINESS_TZ`
+(sigue siendo un valor global fijo, no por oficina), así que era un dato mostrado sin lógica
+detrás. La columna sigue existiendo físicamente en la base ya desplegada del VPS (este repo
+no hace `DROP COLUMN`, solo `ADD`) como huérfana inofensiva.
 
 ### 2.2 `office_credential`
 
@@ -287,7 +291,7 @@ Router nuevo `app/offices.py`, registrado en `app/main.py` junto a los demás.
 | Ruta | Quién | Qué |
 |---|---|---|
 | `GET /oficinas` | admin | Lista de oficinas con conteo de usuarios y estado de sus llaves |
-| `POST /oficinas` | admin | Alta de oficina (nombre, ciudad, slug, zona horaria) |
+| `POST /oficinas` | admin | Alta de oficina (nombre, ciudad, slug) |
 | `GET /oficinas/{id}` | admin | Detalle: usuarios, llaves (presente/ausente + pista), catálogo |
 | `POST /oficinas/{id}/llaves` | admin | Agregar / editar una llave |
 | `POST /oficinas/{id}/llaves/{cid}/baja` | admin | Eliminar (soft delete) |
@@ -405,8 +409,26 @@ hace fallar **todas** las firmas de Twilio, no algunas. El riesgo real es que al
 simetría" en un PR posterior: si §4.3 llega a exigirla por oficina, entra entonces y con ese motivo
 escrito, no antes.
 
-El paso 5 es el único que **debe** hacerse antes de que el ruteo por `phone_number_id` entre en vigor.
-Por eso va en su propio PR, antes que el del ruteo.
+~~El paso 5 es el único que **debe** hacerse antes de que el ruteo por `phone_number_id` entre en
+vigor. Por eso va en su propio PR, antes que el del ruteo.~~
+
+**CORREGIDO AL IMPLEMENTAR EL PR 4.** El paso 5 **no** es un requisito previo, y sembrar esas dos
+filas empeoraría el sistema. El resolvedor de `app/ruteo.py` compara contra el valor **resuelto** de
+cada oficina —`credencial()`, con la herencia del PR 2— así que con `officecredential` vacía la
+oficina 1 hereda del `.env` y casa: el ruteo funciona ANTES de sembrar nada. Eso elimina el día de
+bandera que este párrafo temía, en el que desplegar el ruteo antes de correr un script descartaría
+todo el tráfico entrante.
+
+Y al revés: **sembrarlas cifradas ataría el webhook a `CREDENTIALS_KEY`**. Hoy una llave maestra
+perdida rompe el panel y los envíos; con las filas de ruteo sembradas rompería también la ENTRADA —
+`_descifrar` levanta, la oficina no resuelve y el fail-closed descarta todo—, convirtiendo un
+problema de configuración en un apagón. Heredando, el peor caso deja los mensajes entrando a la
+bandeja correcta.
+
+Queda entonces: `WHATSAPP_PHONE_NUMBER_ID` y `TWILIO_WHATSAPP_FROM` **se dejan heredadas** salvo que
+una segunda oficina obligue a distinguirlas (y entonces se siembran desde el panel, que es su lugar).
+`STRIPE_SECRET_KEY` y `STRIPE_WEBHOOK_SECRET` siguen siendo por oficina —§0— y se cargan desde
+`/oficinas/{id}` cuando exista la segunda cuenta; no las necesita el ruteo de entrada.
 
 ---
 
@@ -419,8 +441,8 @@ Cinco PRs. Cada uno despliega solo y deja producción funcionando igual que ante
 | 1 | `office` + `office_credential` + siembra de Tlaxcala + `office_id` en las tablas de §2.3 + `cryptography` en `requirements.txt` + `office_id` en el espejo MSSQL (dict de `archive.py` + 15 upserts) | Bajo — nada lo lee todavía | Arrancar sobre una copia de la base de producción y verificar que toda fila quedó en `office_id = 1` |
 | 2 | `credencial()` con herencia + los 9 archivos que hoy leen `settings.*` pasan a usarla | **Medio — es el PR delicado** | El suite completo verde sin una sola fila en `office_credential`: prueba que la herencia reproduce el comportamiento actual |
 | 3 | Panel `/oficinas`: alta, usuarios, CRUD de llaves, auditoría | Bajo | Alta de una oficina de prueba, poner y quitar una llave, verificar que el valor nunca aparece en el HTML |
-| 4 | Filas de Meta/Twilio de Tlaxcala (por script con `credenciales.guardar()`: el panel del PR 3 no deja crear las llaves `compartida`, y las cuatro de Meta lo son) + ruteo por `phone_number_id` y por `To`, fail-closed | **Alto — toca el webhook** | Test de webhook con `phone_number_id` desconocido que debe descartar y registrar, no procesar |
-| 5 | Stripe por oficina: `/webhooks/stripe/{slug}` + filtro por `office_id` en todas las vistas del panel | Medio | Cobro de prueba en la oficina 2 que no aparece en el panel de la oficina 1 |
+| 4 | Ruteo por `phone_number_id` y por `To`, fail-closed. **SIN sembrar filas**: el resolvedor compara contra el valor resuelto por `credencial()`, así que la oficina 1 hereda del `.env` y el ruteo funciona con la tabla vacía — sembrarlas cifradas ataría la ENTRADA a `CREDENTIALS_KEY` (ver la corrección al final de §7). Cuando haga falta sembrar una llave `compartida` —las tres de Meta que lo son, más las de Twilio— va por script con `credenciales.guardar()`: el panel del PR 3 no las deja crear. | **Alto — toca el webhook** | Test de webhook con `phone_number_id` desconocido que debe descartar y registrar, no procesar |
+| 5 | Stripe por oficina: `/webhooks/stripe/{slug}` + `auth.alcance()` y el filtro donde se puede observar (ver la corrección abajo) | Medio | **Folio** de la oficina 2 que no aparece para un colaborador de la oficina 1, ni por el listado ni tecleando su id |
 
 El PR 2 es el que hay que revisar con lupa: cambia cómo se obtiene **toda** credencial en los 9
 archivos que hoy leen `settings` directamente (`cobranza.py`, `cobranza_panel.py`, `dashboard.py`,
@@ -452,3 +474,92 @@ archivos que hoy leen `settings` directamente (`cobranza.py`, `cobranza_panel.py
 | Una consulta del panel olvida el filtro `office_id` y una oficina ve datos de otra | El filtro se aplica en el helper de sesión, un solo lugar. Test que recorre las vistas de lista con dos oficinas sembradas y verifica que ninguna filtra de más. |
 | `cryptography` rompe el build de la imagen Docker | Se pinea versión exacta y se prueba el build antes de promover a `production`. |
 | El fail-closed de §4.1 descarta tráfico legítimo si falta la fila de Tlaxcala | Por eso el PR 4 va después del que inserta esa fila, y el descarte se registra con `logger.warning` — un `grep` al log lo delata en minutos. |
+
+
+---
+
+## 11. Correcciones hechas al implementar
+
+Dos veces la implementación contradijo a la spec y ganó la implementación, con la evidencia medida.
+Queda escrito aquí para que el que venga no lo redescubra como bug.
+
+### 11.1 El paso 5 de §7 no era un requisito previo (PR 4)
+
+Está corregido en el propio §7. Resumen: el resolvedor compara contra el valor **resuelto** por
+`credencial()`, así que la oficina 1 hereda del `.env` y el ruteo funciona con `officecredential`
+vacía. Sembrar esas filas cifradas ataría la ENTRADA a `CREDENTIALS_KEY` y convertiría una llave
+maestra perdida en un apagón.
+
+### 11.2 La prueba de cierre del PR 5 era imposible como estaba escrita
+
+§8 pedía «cobro de prueba en la oficina 2 que no aparece en el panel de la oficina 1». **No se puede
+observar**: `/cobros` exige `is_admin` (`_admin_or_redirect`), y §5 decidió —al descartar el rol de
+admin-de-oficina— que **cualquier admin ve todas**. Nadie que llegue a esa pantalla está acotado
+nunca, así que el filtro ahí es inerte por construcción, no solo por tener una sola oficina.
+
+§5 manda sobre la fila de §8: es la decisión de roles sobre la que el PR 3 ya construyó, mientras que
+la fila era una sugerencia de prueba. Las vistas donde «un colaborador ve la suya» significa algo son
+las que un colaborador alcanza: `/`, `/tickets/{id}`, `/clients`, `/inbox/{phone}`, `/my`, `/team`,
+`/kb`, `/replies`. La prueba de cierre se mudó a `/`, la lista de folios donde vive todo el día.
+
+El filtro de `cobranza_panel.py` se conserva —es correcto y `ve_todas=True` lo vuelve un no-op— con
+un comentario que dice que hoy es inerte, para que nadie lo lea como comportamiento probado.
+
+**Y un hallazgo que la spec no anticipaba:** acotar el LISTADO no cierra `/tickets/{id}`, cuyo id
+viene de la URL. Un colaborador tecleando el id de un folio de otra oficina lo abriría entero —
+teléfono del cliente, historial, notas—. Eso sí es un agujero de autorización, no preparación
+inerte, y se cierra en el detalle además del listado.
+
+### 11.3 §6: cerrado el corpus del RAG, diferido el resto
+
+De los cuatro puntos de §6 se cerró **uno**, el que puede darle una respuesta equivocada a un cliente
+hoy: `rag._docs()` acota el corpus curado (`InfoDoc`) por oficina, el bot le pasa la del cliente
+(`conversation._try_informative`) y el Estudio la del admin que prueba, que además es la oficina en
+la que nacen los párrafos nuevos —sin eso, el admin de una oficina nueva escribiría documentos que su
+propio bot no podría leer—.
+
+El **catálogo sigue global a propósito**, no por olvido: acotarlo son 61 puntos de uso de su API más
+el botón «Copiar catálogo de…», o sea un PR entero. Y lo que aporta al corpus son nombres y
+requisitos de servicio, que es justo lo que el flujo determinista ya le dice a cualquier cliente.
+
+La **medición del NLU también se cerró**: `alerts._no_entendidos_stats` y las tres métricas del
+Estudio aceptan `office_id`, con `None` = todas como default. Lo que §6 pide ahí es poder DESGLOSAR
+—«el benchmark deja de ser un promedio de ciudades distintas»— no restringir: quien mira esas
+pantallas es siempre un admin, y un admin ve todas por §5. La prueba lo enseña con números: 50 % en
+Tlaxcala y 0 % en Puebla promedian un 25 % que no describe a ninguna de las dos.
+
+**La ALERTA sigue siendo una sola y combinada**, y es deliberado: partirla por oficina exige decidir
+a quién se le manda cada una, y ese ruteo no existe. Un porcentaje combinado que dispara de más es un
+aviso de sobra; uno por oficina que nadie recibe es un aviso perdido. Lo amarra una prueba.
+
+Quedan dos, aseverados en `tests/test_alcance_oficina.py` (`SEIS_DIFERIDO`):
+
+| Punto de §6 | Estado |
+|---|---|
+| Catálogo por oficina + «Copiar catálogo de…» | **Decisión vigente: compartido.** No es deuda — ver abajo |
+| Sinónimos aprobados dentro de su oficina | Bloqueado por el anterior, no por tamaño |
+
+**El catálogo compartido es una decisión, no una simplificación pendiente** (confirmado con el
+operador el 2026-09-03): hoy los trámites y sus requisitos son los mismos en todas las oficinas, así
+que un solo catálogo es la respuesta correcta. El **disparador** para separarlo es concreto: el día
+que una oficina necesite un precio o un requisito distinto. Entonces son 61 puntos de uso de la API
+del catálogo más el botón «Copiar catálogo de…», y detrás va el de los sinónimos.
+
+El de los sinónimos merece decirse completo, porque parece pequeño y no lo es. Son 3 consultas, pero
+`catalog.add_synonym` escribe `CatalogService.synonyms_json`, que es **global**. Acotar solo la lista
+de propuestas construiría justo la ilusión que §6 quiere evitar, y en peor forma que hoy: ahora todo
+admin ve todas las propuestas y sabe que aprobar tiene efecto global; con la lista acotada, el admin
+de Puebla aprobaría algo que se ve suyo y cambiaría el NLU de Tlaxcala **en silencio** — un trámite
+mal cotizado a un cliente real, que es exactamente la falla que la regla de oro («nada se
+auto-aprende») existe para impedir. El estado actual es más seguro que la media solución.
+
+Ninguno de los dos es observable hasta que una segunda oficina opere. Por eso la lista es una prueba
+y no una nota: cerrar uno obliga a actualizarla en el mismo commit.
+
+### 11.4 Lo que queda sin acotar en el panel, aseverado
+
+Con una sola oficina operando, un filtro que falta no se nota en ninguna pantalla. Por eso la lista
+de módulos del panel todavía sin acotar vive como un candado en `tests/test_alcance_oficina.py`
+(`SIN_ACOTAR`) y no como una nota: agregar un módulo de panel nuevo rompe la prueba. `users.py` está
+ahí **a propósito** —acotarlo contradiría a §5— y `offices.py` también, porque ver todas las oficinas
+es su función entera.

@@ -58,7 +58,8 @@ ARCHIVE_DDL = [
     """CREATE TABLE invitations (
         source_id INTEGER PRIMARY KEY, token TEXT, phone TEXT, created_by TEXT,
         created_at TIMESTAMP, used_at TIMESTAMP, used_by TEXT,
-        habilitado INTEGER DEFAULT 1)""",
+        habilitado INTEGER DEFAULT 1,
+        office_id INTEGER NOT NULL DEFAULT 1)""",
     """CREATE TABLE tickets (
         source_id INTEGER PRIMARY KEY, phone TEXT, client_name TEXT, category TEXT,
         service_id TEXT, service_name TEXT, price_info TEXT, status TEXT,

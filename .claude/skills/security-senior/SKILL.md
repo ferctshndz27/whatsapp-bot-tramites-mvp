@@ -91,6 +91,13 @@ change from silently opening one of them.
   goes only to `authlog`. Lockout is 5 attempts / 300 s, in-memory per process (`dashboard.py:40-45`).
 
 ## Common mistakes
+- **Assuming the middlewares authenticate.** The four in `app/main.py` add session state, nav
+  context and security headers — **none of them is a guard**. Anything FastAPI mounts on its own
+  is therefore public: `/docs`, `/redoc` and `/openapi.json` served the ERP's full route map (98
+  paths, `/oficinas`, `/agente/config`, `/system`) to anyone until they were turned off in the
+  constructor. Every new mount inherits that: it is public unless its own handler checks the
+  session. `openapi_url=None` alone closes all three — both UIs are served *from* the schema — but
+  keep the other two explicit so re-enabling the schema does not quietly reopen them.
 
 - Calling `await request.json()` first and hashing a re-serialized body.
 - Building the Twilio signature base from `request.url` instead of `callback_url(path)`.

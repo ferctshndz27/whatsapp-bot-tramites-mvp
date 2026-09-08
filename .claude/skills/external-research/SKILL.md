@@ -31,7 +31,8 @@ bring the wrong papers to a government office.
   are for; a notebook knows nothing about `app/rag.py`.
 - Anything about live state — deployed SHA, row counts, mirror health. That is `/system`.
 - In CI or on the VPS. The skill needs a visible Chrome and a human Google login; it is local
-  Claude Code only, by design.
+  Claude Code only, by design. Under Gemini CLI there is no equivalent: fetch the official page
+  directly and cite it.
 - When the document is small, public and a direct fetch answers it. A browser round-trip costs
   seconds and burns one of a limited number of daily queries.
 

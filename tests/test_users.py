@@ -4,7 +4,7 @@ import bcrypt
 from sqlmodel import select
 
 import app.db as db
-from app.models import User
+from app.models import OFICINA_TLAXCALA_ID, Office, User
 from app.users import (
     users_create,
     users_list,
@@ -18,7 +18,21 @@ def _request(user: str | None) -> SimpleNamespace:
     return SimpleNamespace(session={"user": user} if user else {}, url=SimpleNamespace(path="/users"))
 
 
+def _sembrar_oficina(session) -> None:
+    """La oficina 1 en una base que no pasó por init_db.
+
+    En producción la siembra `db.init_db()` y hay un candado que lo amarra
+    (tests/test_multi_oficina.py), pero el fixture `session` solo hace
+    create_all: sin esto, el alta rechaza —con razón— una oficina que no existe.
+    """
+    if session.get(Office, OFICINA_TLAXCALA_ID) is None:
+        session.add(Office(id=OFICINA_TLAXCALA_ID, nombre="Tlaxcala", slug="tlaxcala",
+                           ciudad="Tlaxcala"))
+        session.commit()
+
+
 def _make_user(session, username: str, is_admin: bool = False, habilitado: bool = True) -> None:
+    _sembrar_oficina(session)
     session.add(
         User(username=username, password_hash="x", is_admin=is_admin, habilitado=habilitado)
     )
@@ -58,7 +72,8 @@ def test_admin_creates_user_with_bcrypt_hash(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     _make_user(session, "jefa", is_admin=True)
 
-    users_create(_request("jefa"), username="Nuevo_Colab", password="secreta123")
+    users_create(_request("jefa"), username="Nuevo_Colab", password="secreta123",
+        office_id=OFICINA_TLAXCALA_ID)
 
     created = session.exec(select(User).where(User.username == "nuevo_colab")).one()
     assert created.is_admin is False
@@ -71,7 +86,8 @@ def test_create_rejects_duplicate_username(monkeypatch, session):
     _make_user(session, "jefa", is_admin=True)
     _make_user(session, "colab")
 
-    response = users_create(_request("jefa"), username="colab", password="secreta123")
+    response = users_create(_request("jefa"), username="colab", password="secreta123",
+        office_id=OFICINA_TLAXCALA_ID)
 
     assert "ya existe" in response.context["error"]
 
@@ -80,7 +96,8 @@ def test_create_rejects_short_password(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     _make_user(session, "jefa", is_admin=True)
 
-    response = users_create(_request("jefa"), username="valido", password="corta")
+    response = users_create(_request("jefa"), username="valido", password="corta",
+        office_id=OFICINA_TLAXCALA_ID)
 
     assert response.context["error"] is not None
     assert session.exec(select(User).where(User.username == "valido")).first() is None

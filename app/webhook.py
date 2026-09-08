@@ -11,6 +11,7 @@ from app import conversation, messaging, twilio_client
 from app.conversation import handle_incoming
 from app.credenciales import credencial
 from app.db import get_session
+from app.ruteo import resolver_oficina_meta, resolver_oficina_twilio
 from app.models import OFICINA_TLAXCALA_ID, PROVIDER_META, PROVIDER_TWILIO, Client, Message
 from app.utils import mask_phone, normalize_phone
 
@@ -50,6 +51,20 @@ async def receive_webhook(request: Request) -> dict:
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {})
+            # La firma ya pasó: dice que el mensaje es legítimo, no de quién es.
+            # La oficina sale del metadata, y un phone_number_id que no mapea a
+            # ninguna se DESCARTA — caer a Tlaxcala por omisión metería los
+            # mensajes de un número nuevo en su bandeja sin que nadie se entere.
+            phone_number_id = value.get("metadata", {}).get("phone_number_id", "")
+            office_id = await run_in_threadpool(resolver_oficina_meta, phone_number_id)
+            if office_id is None:
+                # Sin el payload y sin exc_info: esto corre en un endpoint
+                # público, así que el volumen lo decide quien mande los POST.
+                logger.warning(
+                    "Webhook de Meta con phone_number_id desconocido: %r; descartado",
+                    phone_number_id[:64],
+                )
+                continue
             for message in value.get("messages", []):
                 try:
                     # En threadpool: toda la cadena de abajo (NLU con red, envío
@@ -57,11 +72,21 @@ async def receive_webhook(request: Request) -> dict:
                     # con UN solo worker — dentro del event loop bloquearía el
                     # proceso entero por hasta ~8 s por mensaje. El orden dentro
                     # del payload se conserva: se espera cada mensaje.
-                    await run_in_threadpool(_process_message, message)
+                    await run_in_threadpool(_process_message, message, office_id)
                 except Exception:
                     logger.exception("Error procesando mensaje de WhatsApp id=%s", message.get("id"))
             for status in value.get("statuses", []):
                 try:
+                    # Sin office_id: un acuse solo marca entregado/leído un
+                    # mensaje que YA está guardado, y ese mensaje trae su
+                    # oficina. Pero SÍ pasa por el fail-closed de arriba, y eso
+                    # es deliberado: el envelope de un payload de solo-acuses
+                    # también trae metadata.phone_number_id —verificado en la
+                    # referencia de Meta, que lo muestra en los tres ejemplos
+                    # (sent, read, failed)—, así que resolver una vez arriba no
+                    # deja acuses legítimos fuera.
+                    # developers.facebook.com/documentation/business-messaging/
+                    #   whatsapp/webhooks/reference/messages/status
                     await run_in_threadpool(_process_status, status)
                 except Exception:
                     logger.exception("Error procesando estado de WhatsApp id=%s", status.get("id"))
@@ -85,8 +110,12 @@ def _valid_signature(raw_body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(expected, received)
 
 
-def _process_message(message: dict) -> None:
-    """Entrada de Meta: se traduce a la forma común y se procesa."""
+def _process_message(message: dict, office_id: int) -> None:
+    """Entrada de Meta: se traduce a la forma común y se procesa.
+
+    `office_id` llega resuelto y verificado desde receive_webhook: aquí ya no se
+    puede descartar nada, y por eso NO lleva default — un mensaje sin oficina
+    tuvo que morir arriba, no aterrizar en Tlaxcala por omisión."""
     # Se normaliza AQUÍ, en el borde: el formato crudo de cada proveedor no
     # entra a la base. Sin esto, el mismo humano por Meta y por Twilio serían
     # dos clientes distintos (la PK de `client` es el teléfono).
@@ -94,11 +123,12 @@ def _process_message(message: dict) -> None:
     if not phone:
         return
     text, is_media = _extract_text(message)
-    handle_inbound(phone, text, is_media, message.get("id"), PROVIDER_META)
+    handle_inbound(phone, text, is_media, message.get("id"), PROVIDER_META, office_id)
 
 
 def handle_inbound(
-    phone: str, text: str, is_media: bool, message_id: str | None, provider: str
+    phone: str, text: str, is_media: bool, message_id: str | None, provider: str,
+    office_id: int,
 ) -> None:
     """Tronco común a los dos proveedores.
 
@@ -106,7 +136,10 @@ def handle_inbound(
     entrega— es idéntico venga de donde venga: para cuando se llega aquí, cada
     adaptador ya tradujo su formato al canónico. `provider` viaja explícito
     hasta la entrega para que la respuesta salga POR EL MISMO NÚMERO que recibió
-    el mensaje.
+    el mensaje. `office_id` viaja por el mismo túnel y SIN default: el día que
+    se agregue un tercer adaptador, quien avise de que falta rutearlo tiene que
+    ser un TypeError al arrancar, no un cliente cuyo mensaje cayó en la bandeja
+    equivocada.
     """
     with get_session() as session:
         client = session.get(Client, phone)
@@ -116,7 +149,8 @@ def handle_inbound(
 
     with get_session() as session:
         replies = handle_incoming(
-            session, phone, text, is_media=is_media, wa_message_id=message_id, provider=provider
+            session, phone, text, is_media=is_media, wa_message_id=message_id,
+            provider=provider, office_id=office_id,
         )
         outbound = conversation.presentation(session, phone, replies)
 
@@ -254,6 +288,18 @@ async def receive_twilio(request: Request) -> Response:
 
     datos = twilio_client.parse_inbound(form)
     if datos is not None:
+        # El `To` es el número de la oficina y viene del form YA verificado.
+        office_id = await run_in_threadpool(resolver_oficina_twilio, form.get("To", ""))
+        if office_id is None:
+            logger.warning(
+                "Webhook de Twilio con To desconocido: %r; descartado",
+                form.get("To", "")[:64],
+            )
+            # 204 igual que el camino de éxito de este handler: un descarte no es
+            # un error para Twilio (reintentaría), y devolver un text/xml vacío
+            # donde el resto devuelve 204 sin cuerpo le daría a Twilio un XML
+            # malformado que registrar.
+            return Response(status_code=204)
         try:
             # Mismo motivo que en receive_webhook: cadena síncrona fuera del loop.
             await run_in_threadpool(
@@ -263,6 +309,7 @@ async def receive_twilio(request: Request) -> Response:
                 datos["is_media"],
                 datos["message_id"],
                 PROVIDER_TWILIO,
+                office_id,
             )
         except Exception:
             logger.exception("Error procesando mensaje de Twilio sid=%s", datos["message_id"])

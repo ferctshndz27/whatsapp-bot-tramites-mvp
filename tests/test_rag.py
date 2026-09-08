@@ -277,7 +277,7 @@ def test_lexico_elige_el_parrafo_relevante_y_descarta_el_resto(monkeypatch):
         "Si necesita el documento físico, el asesor le indica las opciones."
     )
     ruido = "El clima de la ciudad es templado la mayor parte del año."
-    monkeypatch.setattr(rag, "_docs", lambda: [ruido, parrafo])
+    monkeypatch.setattr(rag, "_docs", lambda *_: [ruido, parrafo])
 
     contexto = rag.TopKLexical().contexto("¿entregas documento físico?")
 
@@ -286,7 +286,7 @@ def test_lexico_elige_el_parrafo_relevante_y_descarta_el_resto(monkeypatch):
 
 
 def test_lexico_sin_traslape_devuelve_corpus_vacio(monkeypatch):
-    monkeypatch.setattr(rag, "_docs", lambda: ["Solo hablamos de actas aquí."])
+    monkeypatch.setattr(rag, "_docs", lambda *_: ["Solo hablamos de actas aquí."])
     assert rag.TopKLexical().contexto("¿aceptan mascotas?") == ""
 
 
@@ -430,7 +430,7 @@ def test_con_ollama_la_validacion_sigue_mandando(monkeypatch):
 def test_pregunta_libre_con_rag_prendido_se_responde(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")  # cascada sin LLM
     monkeypatch.setattr(settings, "rag_enabled", True)
-    monkeypatch.setattr(rag, "answer_explained", lambda text: ("Sí, sábados de 9 a 13 😊", None))
+    monkeypatch.setattr(rag, "answer_explained", lambda text, *_: ("Sí, sábados de 9 a 13 😊", None))
     _sembrar()
 
     respuestas = _conversar("¿atienden los sábados?")
@@ -449,7 +449,7 @@ def test_pregunta_con_palabra_del_catalogo_prefiere_la_respuesta_al_menu(monkeyp
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "rag_enabled", True)
     monkeypatch.setattr(
-        rag, "answer_explained", lambda text: ("Entregamos en 3 a 5 días hábiles 😊", None)
+        rag, "answer_explained", lambda text, *_: ("Entregamos en 3 a 5 días hábiles 😊", None)
     )
     _sembrar()
 
@@ -462,7 +462,7 @@ def test_sin_respuesta_con_evidencia_el_menu_de_sugerencias_sigue_vivo(monkeypat
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "rag_enabled", True)
     monkeypatch.setattr(
-        rag, "answer_explained", lambda text: (None, None)
+        rag, "answer_explained", lambda text, *_: (None, None)
     )  # NO_SE / falla / apagada
     _sembrar()
 
@@ -497,7 +497,7 @@ def test_informes_genericos_siguen_en_su_embudo_calido(monkeypatch):
     # el embudo de informes gana y la capa rag NI SE INTENTA.
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "rag_enabled", True)
-    monkeypatch.setattr(rag, "answer_explained", lambda text: ("no debería llamarse", None))
+    monkeypatch.setattr(rag, "answer_explained", lambda text, *_: ("no debería llamarse", None))
     _sembrar()
 
     respuestas = _conversar("¿cuánto cuesta?")
@@ -603,7 +603,7 @@ def test_ollama_responde_json_estructurado(monkeypatch):
 def test_umbral_semantico_corta_documentos_poco_relacionados(monkeypatch):
     # El bug que el umbral mata: sin él, el vectorial mandaba top-k SIEMPRE,
     # relevante o no, y el modelo opinaba de mascotas con docs de actas.
-    monkeypatch.setattr(rag, "_docs", lambda: ["Solo hablamos de actas aquí."])
+    monkeypatch.setattr(rag, "_docs", lambda *_: ["Solo hablamos de actas aquí."])
     monkeypatch.setattr(
         rag,
         "_embed",
@@ -619,8 +619,8 @@ def test_umbral_semantico_corta_documentos_poco_relacionados(monkeypatch):
 def test_hibrido_doc_en_ambas_listas_gana(monkeypatch):
     # RRF: aparecer en las dos listas pesa más que ser top-1 de una sola.
     hibrido = rag.Hibrido(rag.TopKLexical(), rag.TopKVectorial())
-    monkeypatch.setattr(hibrido._lexico, "candidatos", lambda pregunta: ["B", "A"])
-    monkeypatch.setattr(hibrido._vectorial, "relevantes", lambda pregunta: ["C", "A"])
+    monkeypatch.setattr(hibrido._lexico, "candidatos", lambda pregunta, *_: ["B", "A"])
+    monkeypatch.setattr(hibrido._vectorial, "relevantes", lambda pregunta, *_: ["C", "A"])
     monkeypatch.setattr(settings, "rag_top_k", 3)
 
     orden = hibrido.fusion("da igual")
@@ -632,9 +632,9 @@ def test_hibrido_doc_en_ambas_listas_gana(monkeypatch):
 def test_hibrido_fallo_de_embeddings_degrada_a_lexico(monkeypatch):
     # Labs caído: la capa no se muere, responde con el léxico de siempre.
     hibrido = rag.Hibrido(rag.TopKLexical(), rag.TopKVectorial())
-    monkeypatch.setattr(hibrido._lexico, "candidatos", lambda pregunta: ["doc léxico"])
+    monkeypatch.setattr(hibrido._lexico, "candidatos", lambda pregunta, *_: ["doc léxico"])
 
-    def _boom(pregunta):
+    def _boom(pregunta, *_):
         raise RuntimeError("labs caído")
 
     monkeypatch.setattr(hibrido._vectorial, "relevantes", _boom)
@@ -644,14 +644,14 @@ def test_hibrido_fallo_de_embeddings_degrada_a_lexico(monkeypatch):
 def test_hibrido_union_vacia_devuelve_corpus_vacio(monkeypatch):
     # Conserva la semántica del léxico: nada relevante = corpus vacío = NO_SE.
     hibrido = rag.Hibrido(rag.TopKLexical(), rag.TopKVectorial())
-    monkeypatch.setattr(hibrido._lexico, "candidatos", lambda pregunta: [])
-    monkeypatch.setattr(hibrido._vectorial, "relevantes", lambda pregunta: [])
+    monkeypatch.setattr(hibrido._lexico, "candidatos", lambda pregunta, *_: [])
+    monkeypatch.setattr(hibrido._vectorial, "relevantes", lambda pregunta, *_: [])
     assert hibrido.contexto("¿aceptan mascotas?") == ""
 
 
 def test_cache_de_vectores_no_reembebe(monkeypatch):
     llamadas = []
-    monkeypatch.setattr(rag, "_docs", lambda: ["Atendemos sábados."])
+    monkeypatch.setattr(rag, "_docs", lambda *_: ["Atendemos sábados."])
 
     def _embed_contando(texts):
         llamadas.append(list(texts))
@@ -671,7 +671,7 @@ def test_prefijos_nomic_viajan_en_el_embed(monkeypatch):
     # nomic-embed-text rinde mejor con prefijo de tarea; el caché se llavea
     # por el documento SIN prefijo.
     lotes = []
-    monkeypatch.setattr(rag, "_docs", lambda: ["Atendemos sábados."])
+    monkeypatch.setattr(rag, "_docs", lambda *_: ["Atendemos sábados."])
 
     def _embed_espia(texts):
         lotes.append(list(texts))
@@ -689,7 +689,7 @@ def test_explicar_retrieval_reporta_via_y_coseno(monkeypatch):
     monkeypatch.setattr(settings, "embeddings_url", "http://labs/api/embed")
     monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
     monkeypatch.setattr(settings, "rag_min_coseno", 0.35)
-    monkeypatch.setattr(rag, "_docs", lambda: ["Atendemos sábados de 9 a 13 h."])
+    monkeypatch.setattr(rag, "_docs", lambda *_: ["Atendemos sábados de 9 a 13 h."])
     monkeypatch.setattr(rag, "_embed", lambda texts: [[1.0, 0.0] for _ in texts])
     # Instancia fresca: no contaminar el caché global con vectores falsos.
     monkeypatch.setattr(
@@ -706,7 +706,7 @@ def test_explicar_retrieval_reporta_via_y_coseno(monkeypatch):
 def test_explicar_retrieval_con_labs_caido_explica_el_modo_degradado(monkeypatch):
     monkeypatch.setattr(settings, "embeddings_url", "http://labs/api/embed")
     monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
-    monkeypatch.setattr(rag, "_docs", lambda: ["Atendemos sábados de 9 a 13 h."])
+    monkeypatch.setattr(rag, "_docs", lambda *_: ["Atendemos sábados de 9 a 13 h."])
 
     def _boom(texts):
         raise RuntimeError("labs caído")

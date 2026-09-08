@@ -16,7 +16,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import app.db as db
 import app.stripe_webhook as sw
 from app.config import settings
-from app.models import Cobro, EventoPasarela
+from app.models import Cobro, EventoPasarela, Office
 
 SECRETO = "whsec_sintetico"
 
@@ -175,3 +175,77 @@ def test_la_ruta_esta_montada_en_main():
     import app.main as main
 
     assert any(getattr(r, "path", "") == "/webhooks/stripe" for r in main.app.routes)
+
+
+# --- Endpoint por oficina — docs/SPEC-MULTI-OFICINA.md §4.3 (PR 5) ---------
+
+SECRETO_PUEBLA = "whsec_de_puebla"
+
+
+@pytest.fixture()
+def dos_oficinas(cliente, monkeypatch):
+    """Tlaxcala heredando del .env y Puebla con su propio secreto en la tabla.
+
+    Es la forma que tendrá producción cuando exista la segunda cuenta de Stripe:
+    una oficina con fila y otra sin ella.
+    """
+    from cryptography.fernet import Fernet
+
+    from app import credenciales
+    db.init_db()
+    monkeypatch.setattr(settings, "credentials_key", Fernet.generate_key().decode())
+    with Session(db.engine) as s:
+        s.add(Office(id=2, nombre="Puebla", slug="puebla", ciudad="Puebla"))
+        s.commit()
+    credenciales.guardar("STRIPE_WEBHOOK_SECRET", office_id=2,
+                         valor=SECRETO_PUEBLA, updated_by="qa")
+    return cliente
+
+
+def _post(cliente, ruta: str, raw: bytes, secreto: str):
+    return cliente.post(ruta, content=raw, headers={"stripe-signature": _firma(raw, secreto)})
+
+
+def test_cada_oficina_verifica_con_su_propio_secreto(dos_oficinas):
+    raw = _evento_crudo("evt_puebla")
+    assert _post(dos_oficinas, "/webhooks/stripe/puebla", raw, SECRETO_PUEBLA).status_code == 200
+    with Session(db.engine) as s:
+        assert s.exec(select(EventoPasarela)).one().stripe_event_id == "evt_puebla"
+
+
+def test_el_secreto_de_una_oficina_no_sirve_para_otra(dos_oficinas):
+    """LO QUE ESTE ENDPOINT EXISTE PARA IMPEDIR: aceptar como propio un evento de
+    dinero firmado por la cuenta de Stripe de otra oficina."""
+    raw = _evento_crudo("evt_cruzado")
+    assert _post(dos_oficinas, "/webhooks/stripe/tlaxcala", raw, SECRETO_PUEBLA).status_code == 403
+    assert _post(dos_oficinas, "/webhooks/stripe/puebla", raw, SECRETO).status_code == 403
+    with Session(db.engine) as s:
+        assert s.exec(select(EventoPasarela)).all() == [], "escribió con una firma ajena"
+
+
+def test_un_slug_desconocido_da_403_y_no_404(dos_oficinas):
+    """403 y no 404: este endpoint es público, y distinguir «esa oficina no
+    existe» de «tu firma no cuadra» le enumera las oficinas a cualquiera."""
+    raw = _evento_crudo("evt_x")
+    r = _post(dos_oficinas, "/webhooks/stripe/no-existe", raw, SECRETO)
+    assert r.status_code == 403
+
+
+def test_una_oficina_deshabilitada_deja_de_recibir_cobros(dos_oficinas):
+    with Session(db.engine) as s:
+        oficina = s.get(Office, 2)
+        oficina.habilitado = False
+        s.add(oficina)
+        s.commit()
+    raw = _evento_crudo("evt_baja")
+    assert _post(dos_oficinas, "/webhooks/stripe/puebla", raw, SECRETO_PUEBLA).status_code == 403
+
+
+def test_la_ruta_legada_sigue_siendo_la_de_tlaxcala(dos_oficinas):
+    """Es el endpoint configurado HOY en el panel de Stripe de producción:
+    moverlo sería coordinar un cambio allá con el deploy."""
+    raw = _evento_crudo("evt_legado")
+    assert _post(dos_oficinas, "/webhooks/stripe", raw, SECRETO).status_code == 200
+    # Y sigue verificando con el secreto de Tlaxcala, no con cualquiera.
+    assert _post(dos_oficinas, "/webhooks/stripe", _evento_crudo("evt_2"),
+                 SECRETO_PUEBLA).status_code == 403

@@ -95,8 +95,7 @@ def test_sin_sesion_va_al_login():
 # --- Alta ------------------------------------------------------------------
 
 def test_alta_de_oficina(admin):
-    r = admin.post("/oficinas", data={"nombre": "Puebla", "slug": "puebla",
-                                      "ciudad": "Puebla", "zona_horaria": "America/Mexico_City"})
+    r = admin.post("/oficinas", data={"nombre": "Puebla", "slug": "puebla", "ciudad": "Puebla"})
     assert r.status_code == 200 and "Puebla" in r.text
     with Session(db.engine) as s:
         assert s.exec(select(Office).where(Office.slug == "puebla")).first() is not None
@@ -118,14 +117,6 @@ def test_un_slug_en_mayusculas_se_normaliza(admin):
     admin.post("/oficinas", data={"nombre": "Puebla", "slug": "PUEBLA", "ciudad": "Puebla"})
     with Session(db.engine) as s:
         assert s.exec(select(Office).where(Office.nombre == "Puebla")).one().slug == "puebla"
-
-
-def test_una_zona_horaria_inventada_se_rechaza(admin):
-    r = admin.post("/oficinas", data={"nombre": "Y", "slug": "y", "ciudad": "Y",
-                                      "zona_horaria": "America/Nolandia"})
-    assert "Zona horaria desconocida" in r.text
-    with Session(db.engine) as s:
-        assert s.exec(select(Office).where(Office.slug == "y")).first() is None
 
 
 def test_un_nombre_repetido_no_es_un_500(admin):
@@ -286,3 +277,105 @@ def test_una_oficina_inexistente_no_es_un_500(admin, ruta, data):
     la página."""
     r = admin.post(ruta, data=data, follow_redirects=False)
     assert r.status_code in (200, 303), f"{ruta} contestó {r.status_code}"
+
+
+# --- CRUD completo: editar y dar de baja -----------------------------------
+
+def _crear_puebla(admin):
+    admin.post("/oficinas", data={"nombre": "Puebla", "slug": "puebla", "ciudad": "Puebla"})
+    with Session(db.engine) as s:
+        return s.exec(select(Office).where(Office.slug == "puebla")).one().id
+
+
+def test_editar_los_datos_de_una_oficina(admin):
+    oid = _crear_puebla(admin)
+    r = admin.post(f"/oficinas/{oid}", data={
+        "nombre": "Puebla Centro", "slug": "puebla-centro", "ciudad": "Puebla"})
+    assert r.status_code == 200
+    with Session(db.engine) as s:
+        fila = s.get(Office, oid)
+        assert (fila.nombre, fila.slug) == ("Puebla Centro", "puebla-centro")
+
+
+def test_al_cambiar_el_slug_avisa_que_se_movio_el_webhook_de_pagos(admin):
+    """El endpoint viejo deja de existir en el instante del guardado y Stripe
+    sigue mandando ahí: los eventos se pierden hasta que alguien actualice la
+    URL en su panel. No se impide —renombrar es legítimo— pero se dice."""
+    oid = _crear_puebla(admin)
+    r = admin.post(f"/oficinas/{oid}", data={
+        "nombre": "Puebla", "slug": "puebla-2", "ciudad": "Puebla"})
+    assert "/webhooks/stripe/puebla-2" in r.text
+    assert "Stripe" in r.text
+
+
+def test_la_edicion_valida_igual_que_el_alta(admin):
+    """Sin la validación compartida se podría EDITAR una oficina hasta un estado
+    que el alta rechaza — un slug con espacios, un nombre vacío."""
+    oid = _crear_puebla(admin)
+    for datos, esperado in (
+        ({"nombre": "P", "slug": "con espacio", "ciudad": "P"}, "slug"),
+        ({"nombre": "", "slug": "ok", "ciudad": "P"}, "obligatorios"),
+    ):
+        r = admin.post(f"/oficinas/{oid}", data=datos)
+        assert esperado.lower() in r.text.lower(), f"{datos} no fue rechazado"
+    with Session(db.engine) as s:
+        assert s.get(Office, oid).slug == "puebla", "una edición inválida sí escribió"
+
+
+def test_no_se_puede_editar_hasta_chocar_con_otra_oficina(admin):
+    oid = _crear_puebla(admin)
+    r = admin.post(f"/oficinas/{oid}", data={
+        "nombre": "Tlaxcala", "slug": "puebla", "ciudad": "Puebla"})
+    assert r.status_code == 200 and "Ya existe" in r.text
+
+
+def test_la_baja_es_soft_delete_y_es_reversible(admin):
+    """Nunca DELETE físico: un borrado dejaría cada office_id del histórico
+    —folios, clientes, cobros— apuntando a una oficina que ya no existe."""
+    oid = _crear_puebla(admin)
+
+    admin.post(f"/oficinas/{oid}/baja")
+    with Session(db.engine) as s:
+        fila = s.get(Office, oid)
+        assert fila is not None, "la fila se borró: tenía que ser soft delete"
+        assert fila.habilitado is False
+
+    admin.post(f"/oficinas/{oid}/baja")
+    with Session(db.engine) as s:
+        assert s.get(Office, oid).habilitado is True, "la baja no fue reversible"
+
+
+def test_la_baja_corta_la_entrada_y_los_cobros_de_esa_oficina(admin, monkeypatch):
+    """Lo que se quiere de una sede cerrada: que no entre trabajo nuevo,
+    mientras su historial sigue consultable."""
+    from app import ruteo
+
+    oid = _crear_puebla(admin)
+    credenciales.guardar("WHATSAPP_PHONE_NUMBER_ID", office_id=oid,
+                         valor="999888777666555", updated_by="jefa")
+    assert ruteo.resolver_oficina_meta("999888777666555") == oid
+
+    admin.post(f"/oficinas/{oid}/baja")
+    assert ruteo.resolver_oficina_meta("999888777666555") is None, (
+        "una oficina dada de baja sigue recibiendo mensajes"
+    )
+
+
+def test_la_oficina_principal_no_se_puede_dar_de_baja(admin):
+    """Todo lo anterior a la Fase 7 vive en ella por el DEFAULT 1 de las 15
+    tablas, el webhook legado de Stripe está amarrado a ella y el ruteo de
+    Tlaxcala dejaría de resolver: un apagón de producción con un clic."""
+    r = admin.post("/oficinas/1/baja")
+    assert r.status_code == 200 and "no se puede dar de baja" in r.text
+    with Session(db.engine) as s:
+        assert s.get(Office, 1).habilitado is True
+
+
+def test_el_detalle_ofrece_editar_y_dar_de_baja(admin):
+    """El CRUD tiene que estar alcanzable desde la interfaz, no solo por POST."""
+    oid = _crear_puebla(admin)
+    html = admin.get(f"/oficinas/{oid}").text
+    assert f'action="/oficinas/{oid}"' in html, "no hay formulario de edición"
+    assert f'action="/oficinas/{oid}/baja"' in html, "no hay botón de baja"
+    # Y la principal no ofrece el botón que su propia ruta rechaza.
+    assert 'action="/oficinas/1/baja"' not in admin.get("/oficinas/1").text

@@ -11,10 +11,12 @@ reglas que este router NO puede relajar:
    solo lectura como «heredada del global»), y la comprobación vive en el
    endpoint además del template: ocultar un botón no es una regla.
 
-   CONSECUENCIA PARA EL PR 4: la migración de Tlaxcala del §7 no puede pasar por
-   este panel para las cuatro llaves marcadas `compartida` — esas filas las
-   escribe un script llamando a `credenciales.guardar()` directo, que es
-   exactamente lo que hace tests/test_oficinas.py en la prueba de /system.
+   CONSECUENCIA: las SEIS llaves marcadas `compartida` (tres de Meta, tres de
+   Twilio; `WHATSAPP_PHONE_NUMBER_ID` y `TWILIO_WHATSAPP_FROM` no lo son) no se
+   pueden cargar desde aquí. Cuando haga falta —no en el PR 4, cuyo ruteo las
+   deja heredadas a propósito— esas filas las escribe un script llamando a
+   `credenciales.guardar()` directo, como hace tests/test_oficinas.py en la
+   prueba de /system.
 
 3. **El `provider` no pasa por el formulario.** Lo deriva `credenciales` del
    inventario (§5, constricción 2). Una fila con provider ajeno no casa con el
@@ -23,7 +25,6 @@ reglas que este router NO puede relajar:
 """
 
 import logging
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
@@ -34,9 +35,9 @@ from app import credenciales
 from app.audit import log_admin
 from app.config import CREDENCIALES
 from app.db import get_session
-from app.models import ZONA_HORARIA_DEFAULT, Office, User
+from app.models import OFICINA_TLAXCALA_ID, Office, User
 from app.templating import templates
-from app.users import _admin_or_redirect
+from app.users import _admin_or_redirect, mover_de_oficina
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,7 @@ def _render_lista(request: Request, admin: str, error=None, ok=None):
         })
     return templates.TemplateResponse(
         "oficinas.html",
-        {"request": request, "user": admin, "resumen": resumen,
-         "tz_default": ZONA_HORARIA_DEFAULT, "error": error, "ok": ok},
+        {"request": request, "user": admin, "resumen": resumen, "error": error, "ok": ok},
     )
 
 
@@ -128,6 +128,24 @@ def _render_detalle(request: Request, admin: str, office_id: int, error=None, ok
     )
 
 
+def _normalizar(nombre: str, slug: str, ciudad: str):
+    """(datos_limpios, error). Una sola validación para el alta y la edición:
+    duplicarla dejaría que se pudiera EDITAR una oficina hasta un estado que el
+    alta rechaza."""
+    nombre, ciudad = nombre.strip(), ciudad.strip()
+    slug = slug.strip().lower()
+
+    if not nombre or not ciudad:
+        return None, "Nombre y ciudad son obligatorios."
+    # El slug es la URL de /webhooks/stripe/{slug} del PR 5: lo que se acepte
+    # hoy es el endpoint de mañana. Un slug con espacios o acentos se guarda sin
+    # ruido y rompe allá, lejos de aquí.
+    if not slug or not all(c.isalnum() and c.isascii() or c == "-" for c in slug):
+        return None, ("El slug solo admite minúsculas, números y guiones "
+                      "(será la URL del webhook).")
+    return (nombre, slug, ciudad), None
+
+
 @router.get("/oficinas")
 def oficinas_lista(request: Request):
     admin, redirect = _admin_or_redirect(request)
@@ -142,38 +160,19 @@ def oficinas_crear(
     nombre: str = Form(...),
     slug: str = Form(...),
     ciudad: str = Form(...),
-    zona_horaria: str = Form(ZONA_HORARIA_DEFAULT),
 ):
     admin, redirect = _admin_or_redirect(request)
     if redirect:
         return redirect
 
-    nombre, ciudad = nombre.strip(), ciudad.strip()
-    slug = slug.strip().lower()
-    zona_horaria = zona_horaria.strip() or ZONA_HORARIA_DEFAULT
-
-    if not nombre or not ciudad:
-        return _render_lista(request, admin, error="Nombre y ciudad son obligatorios.")
-    # El slug es la URL de /webhooks/stripe/{slug} del PR 5: lo que se acepte
-    # hoy es el endpoint de mañana. Un slug con espacios o acentos se guarda sin
-    # ruido y rompe allá, lejos de aquí.
-    if not slug or not all(c.isalnum() and c.isascii() or c == "-" for c in slug):
-        return _render_lista(
-            request, admin,
-            error="El slug solo admite minúsculas, números y guiones (será la URL del webhook).",
-        )
-    try:
-        ZoneInfo(zona_horaria)
-    except Exception:
-        return _render_lista(
-            request, admin,
-            error=f"Zona horaria desconocida: {zona_horaria}. Ejemplo: {ZONA_HORARIA_DEFAULT}.",
-        )
+    datos, error = _normalizar(nombre, slug, ciudad)
+    if error:
+        return _render_lista(request, admin, error=error)
+    nombre, slug, ciudad = datos
 
     try:
         with get_session() as session:
-            session.add(Office(nombre=nombre, slug=slug, ciudad=ciudad,
-                               zona_horaria=zona_horaria))
+            session.add(Office(nombre=nombre, slug=slug, ciudad=ciudad))
             session.commit()
     except IntegrityError:
         # nombre y slug son UNIQUE. Sin esta rama, un alta repetida es un 500.
@@ -191,6 +190,112 @@ def oficina_detalle(request: Request, office_id: int):
         return redirect
     respuesta = _detalle_o_lista(request, admin, office_id)
     return respuesta if respuesta is not None else RedirectResponse("/oficinas", status_code=303)
+
+
+@router.post("/oficinas/{office_id}")
+def oficina_editar(
+    request: Request,
+    office_id: int,
+    nombre: str = Form(...),
+    slug: str = Form(...),
+    ciudad: str = Form(...),
+):
+    """Editar los datos de una oficina. Misma validación que el alta.
+
+    CAMBIAR EL SLUG MUEVE LA URL DEL WEBHOOK DE STRIPE (§4.3). El endpoint viejo
+    deja de existir en el instante del guardado y Stripe sigue mandando ahí: los
+    eventos se pierden hasta que alguien actualice la URL en su panel. No se
+    impide —renombrar una oficina es legítimo— pero el aviso lo dice con todas
+    sus letras, porque es dinero.
+    """
+    admin, redirect = _admin_or_redirect(request)
+    if redirect:
+        return redirect
+
+    datos, error = _normalizar(nombre, slug, ciudad)
+    if error:
+        return _detalle_o_lista(request, admin, office_id, error=error)
+    nombre, slug, ciudad = datos
+
+    with get_session() as session:
+        oficina = session.get(Office, office_id)
+        if oficina is None:
+            return RedirectResponse("/oficinas", status_code=303)
+        slug_anterior = oficina.slug
+        oficina.nombre, oficina.slug = nombre, slug
+        oficina.ciudad = ciudad
+        session.add(oficina)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            return _detalle_o_lista(request, admin, office_id,
+                                    error="Ya existe otra oficina con ese nombre o slug.")
+
+    log_admin(admin, "oficina:editada", f"{slug_anterior} -> {slug}")
+    logger.info("Oficina %s editada por %s (slug %s -> %s)", office_id, admin, slug_anterior, slug)
+    aviso = f"Oficina {nombre} actualizada."
+    if slug != slug_anterior:
+        aviso += (f" El webhook de pagos cambió a /webhooks/stripe/{slug}: actualízalo en el "
+                  f"panel de Stripe o los cobros de esta oficina dejarán de registrarse.")
+    return _detalle_o_lista(request, admin, office_id, ok=aviso)
+
+
+@router.post("/oficinas/{office_id}/baja")
+def oficina_baja(request: Request, office_id: int):
+    """Alta/baja de una oficina — SOFT DELETE, nunca DELETE físico.
+
+    Igual que el resto del panel: `habilitado = 0` y la fila se queda. Un DELETE
+    dejaría cada `office_id` de su histórico —folios, clientes, cobros—
+    apuntando a una oficina que ya no existe, y ningún reporte por oficina
+    volvería a cuadrar.
+
+    Dar de baja SÍ tiene efecto inmediato y deliberado: el ruteo de entrada deja
+    de resolverla (app/ruteo.py) y su webhook de Stripe deja de aceptar (§4.3).
+    Eso es lo que se quiere de una sede cerrada — que no entre trabajo nuevo—
+    mientras su historial sigue consultable.
+
+    LA OFICINA 1 NO SE PUEDE DAR DE BAJA. Todo lo anterior a la Fase 7 vive en
+    ella por el `DEFAULT 1` de las 15 tablas, el webhook legado de Stripe está
+    amarrado a ella y el ruteo de Tlaxcala dejaría de resolver: sería un apagón
+    de producción con un clic. Mismo criterio que impide a un admin
+    deshabilitarse a sí mismo (app/users.py).
+    """
+    admin, redirect = _admin_or_redirect(request)
+    if redirect:
+        return redirect
+
+    with get_session() as session:
+        oficina = session.get(Office, office_id)
+        if oficina is None:
+            return RedirectResponse("/oficinas", status_code=303)
+        if oficina.id == OFICINA_TLAXCALA_ID and oficina.habilitado:
+            return _detalle_o_lista(
+                request, admin, office_id,
+                error=("La oficina principal no se puede dar de baja: todo el histórico "
+                       "anterior a las multi-oficina le pertenece y su webhook de pagos "
+                       "sigue activo."),
+            )
+        oficina.habilitado = not oficina.habilitado
+        session.add(oficina)
+        session.commit()
+        estado = "reactivada" if oficina.habilitado else "dada de baja"
+        nombre = oficina.nombre
+        # Cuánto trabajo queda dentro: no impide la baja —una sede se cierra
+        # aunque tenga cosas abiertas— pero decirlo evita descubrirlo después.
+        colaboradores = session.exec(
+            select(func.count()).select_from(User)
+            .where(User.office_id == office_id, User.habilitado == True)  # noqa: E712
+        ).one()
+
+    log_admin(admin, f"oficina:{estado.replace(' ', '-')}", nombre)
+    logger.info("Oficina %s (%s) %s por %s", office_id, nombre, estado, admin)
+    aviso = f"{nombre} {estado}."
+    if estado == "dada de baja":
+        aviso += " Deja de recibir mensajes y pagos; su historial sigue disponible."
+        if colaboradores:
+            aviso += f" Ojo: {colaboradores} colaborador(es) siguen asignados a ella."
+    return _detalle_o_lista(request, admin, office_id, ok=aviso)
 
 
 @router.post("/oficinas/{office_id}/llaves")
@@ -261,13 +366,11 @@ def usuario_mover(request: Request, office_id: int, username: str = Form(...)):
     with get_session() as session:
         if session.get(Office, office_id) is None:
             return RedirectResponse("/oficinas", status_code=303)
-        objetivo = session.exec(select(User).where(User.username == username)).first()
-        if objetivo is None:
-            return _detalle_o_lista(request, admin, office_id, error="Ese colaborador no existe.")
-        objetivo.office_id = office_id
-        session.add(objetivo)
+        cambio, aviso = mover_de_oficina(session, username, office_id, admin=admin)
+        if not cambio:
+            return _detalle_o_lista(request, admin, office_id, error=aviso)
         session.commit()
 
     log_admin(admin, "usuario:oficina", f"{username} -> oficina={office_id}")
     logger.info("Usuario %s movido a la oficina %s por %s", username, office_id, admin)
-    return _detalle_o_lista(request, admin, office_id, ok=f"{username} ahora es de esta oficina.")
+    return _detalle_o_lista(request, admin, office_id, ok=aviso)

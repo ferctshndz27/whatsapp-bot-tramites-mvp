@@ -129,10 +129,11 @@ class Settings:
         # sale como texto con las opciones numeradas, que se sigue pudiendo
         # contestar tecleando.
         self.twilio_content_sid_feedback = os.environ.get("TWILIO_CONTENT_SID_FEEDBACK", "")
-        # URL pública del servicio, SIN diagonal final. Twilio firma la URL
-        # COMPLETA que llamó; detrás del proxy, request.url reporta el host
-        # interno y http://, así que reconstruirla desde aquí no es un lujo:
-        # sin esto fallan TODAS las firmas, no algunas.
+        # URL pública del servicio, SIN diagonal final. La leen DOS consumidores
+        # y por eso vive una sola vez, aquí: Twilio firma la URL COMPLETA que
+        # llamó —detrás del proxy request.url reporta el host interno y http://,
+        # así que reconstruirla no es un lujo: sin esto fallan TODAS las firmas,
+        # no algunas— y Stripe la exige para success_url/cancel_url del checkout.
         self.public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
         self.mssql_host = os.environ.get("MSSQL_HOST", "")
         self.mssql_port = int(os.environ.get("MSSQL_PORT", "1433"))
@@ -154,8 +155,8 @@ class Settings:
         # Se pinea la versión para que un cambio de forma en la API de Stripe
         # no rompa el aplicador de eventos de un día para otro.
         self.stripe_api_version = os.environ.get("STRIPE_API_VERSION", "")
-        # URL pública del panel: Stripe la exige para success_url/cancel_url.
-        self.public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        # (`public_base_url`, que Stripe necesita para success_url/cancel_url,
+        # se lee UNA vez arriba junto al motivo de Twilio.)
         # Tope defensivo: un dedazo del asesor no debe poder cobrar $1,000,000.
         self.cobro_monto_maximo_centavos = int(
             os.environ.get("COBRO_MONTO_MAXIMO_CENTAVOS", "10000000")

@@ -40,11 +40,26 @@ DISCO_CRIT_PCT = 5
 _LEVEL_RANK = {"ok": 0, "warn": 1, "critical": 2}
 
 
-def _no_entendidos_stats(session: Session, days: int = NO_ENTENDIDOS_DAYS) -> tuple[int, float]:
+def _no_entendidos_stats(session: Session, days: int = NO_ENTENDIDOS_DAYS,
+                         office_id: int | None = None) -> tuple[int, float]:
     """(total, pct_no_entendidos) de nluevent en la ventana. El corte fino por
     fecha lo hace SQL con naive-UTC (mismo criterio que synonym_miner). Los
-    grupos ignorados a mano (soft delete) no cuentan, igual que en el panel."""
+    grupos ignorados a mano (soft delete) no cuentan, igual que en el panel.
+
+    `office_id=None` = TODAS, y es el default a propósito (§6: «el benchmark del
+    NLU deja de ser un promedio de ciudades distintas»). Lo que §6 pide es poder
+    DESGLOSAR, no restringir: quien mira estas métricas es siempre un admin, y
+    un admin ve todas las oficinas por §5.
+
+    La ALERTA sigue siendo una sola y combinada, y eso es deliberado: partirla
+    por oficina exige decidir a quién se le manda cada una, y ese ruteo no
+    existe todavía. Un porcentaje combinado que dispara de más es un aviso de
+    sobra; uno por oficina que nadie recibe es un aviso perdido.
+    """
     cutoff = (utcnow() - timedelta(days=days)).astimezone(timezone.utc).replace(tzinfo=None)
+    # Una tupla vacía = sin condición. Pasar `True` a .where() le entrega un bool
+    # de Python a SQLAlchemy y funciona por casualidad, no por contrato.
+    de_la_oficina = () if office_id is None else (NluEvent.office_id == office_id,)
     total = session.exec(
         select(func.count())
         .select_from(NluEvent)
@@ -55,6 +70,7 @@ def _no_entendidos_stats(session: Session, days: int = NO_ENTENDIDOS_DAYS) -> tu
         # conversation._try_agent_tools): contarlas diluiría el % y podría
         # silenciar la alerta.
         .where(NluEvent.capa.not_in(CAPAS_EXTRA))
+        .where(*de_la_oficina)
     ).one()
     if not total:
         return 0, 0.0
@@ -64,6 +80,7 @@ def _no_entendidos_stats(session: Session, days: int = NO_ENTENDIDOS_DAYS) -> tu
         .where(NluEvent.created_at >= cutoff)
         .where(NluEvent.habilitado == True)  # noqa: E712
         .where(NluEvent.capa == "ninguna")
+        .where(*de_la_oficina)
     ).one()
     return total, round(ninguna / total * 100, 1)
 

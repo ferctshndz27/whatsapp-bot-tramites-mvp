@@ -173,6 +173,7 @@ APP_SECRET = "test-secret-concurrencia"
 def app_webhook(monkeypatch):
     """App mínima con solo el router del webhook (sin middlewares del panel)."""
     monkeypatch.setattr(settings, "app_secret", APP_SECRET)
+    monkeypatch.setattr(settings, "whatsapp_phone_number_id", PNID_OFICINA)
     aplicacion = FastAPI()
     aplicacion.include_router(webhook.router)
     return aplicacion
@@ -183,6 +184,9 @@ def _firmar(raw: bytes) -> dict[str, str]:
     return {"x-hub-signature-256": "sha256=" + firma, "content-type": "application/json"}
 
 
+PNID_OFICINA = "PNID-TLAXCALA"
+
+
 def _payload_texto(phone: str, wamid: str, texto: str) -> bytes:
     return json.dumps(
         {
@@ -191,6 +195,10 @@ def _payload_texto(phone: str, wamid: str, texto: str) -> bytes:
                     "changes": [
                         {
                             "value": {
+                                # Meta SIEMPRE manda el metadata; desde el PR 4
+                                # es lo que decide la oficina (§4.1) y sin él el
+                                # fail-closed descarta el mensaje.
+                                "metadata": {"phone_number_id": PNID_OFICINA},
                                 "messages": [
                                     {
                                         "id": wamid,

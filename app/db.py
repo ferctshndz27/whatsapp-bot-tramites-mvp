@@ -79,6 +79,9 @@ _TABLES_NEEDING_OFFICE = (
     "client", "conversation", "ticket", "user", "teammessage", "cobro",
     "catalogcategory", "catalogservice", "synonymproposal", "nluevent", "infodoc",
     "label", "savedreply", "plantilla", "agentconfig",
+    # La 16ª, agregada después de la Fase 7: la oficina se decide al invitar
+    # (models.Invitation), no cuando la persona acepta.
+    "invitation",
 )
 _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     "agent_active": "BOOLEAN NOT NULL DEFAULT 1",

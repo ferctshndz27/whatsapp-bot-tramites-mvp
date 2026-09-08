@@ -26,6 +26,7 @@ from app import twilio_client
 from app.config import settings
 from app.main import app
 from app.models import (
+    OFICINA_TLAXCALA_ID,
     PROVIDER_META,
     PROVIDER_TWILIO,
     Client,
@@ -40,6 +41,9 @@ RUTA = "/webhook/twilio"
 RUTA_ESTADO = "/webhook/twilio/status"
 
 CRUDO_TWILIO = "whatsapp:+5215500000000"
+# El número de LA OFICINA (el `To` del form). Twilio siempre lo manda; desde el
+# PR 4 es lo que resuelve la oficina, y sin él el fail-closed de §4.2 descarta.
+TO_OFICINA = "whatsapp:+5215599999999"
 CANONICO = "525500000000"
 SID = "SM00000000000000000000000000000001"
 
@@ -62,7 +66,7 @@ def _entorno(monkeypatch):
     db.init_db()
     monkeypatch.setattr(settings, "twilio_account_sid", "ACtest")
     monkeypatch.setattr(settings, "twilio_auth_token", TOKEN)
-    monkeypatch.setattr(settings, "twilio_whatsapp_from", "whatsapp:+5215599999999")
+    monkeypatch.setattr(settings, "twilio_whatsapp_from", TO_OFICINA)
     monkeypatch.setattr(settings, "public_base_url", BASE)
     monkeypatch.setattr(settings, "mssql_host", "")
     monkeypatch.setattr(settings, "geoip_enabled", False)
@@ -91,7 +95,7 @@ def _post(http, ruta: str, form: dict[str, str], firma: str | None = None):
 
 
 def test_una_firma_valida_se_acepta():
-    form = {"From": CRUDO_TWILIO, "Body": "hola", "MessageSid": SID}
+    form = {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola", "MessageSid": SID}
     url = BASE + RUTA
 
     assert twilio_client.verify_signature(url, form, _firmar(url, form)) is True
@@ -109,7 +113,7 @@ def test_alterar_cualquier_parametro_invalida_la_firma(mutacion):
     # REGLA: la firma cubre TODOS los parámetros. Si solo cubriera algunos, se
     # podría cambiar el remitente y hacer avanzar la conversación de otra
     # persona con un payload firmado legítimamente.
-    form = {"From": CRUDO_TWILIO, "Body": "hola", "MessageSid": SID}
+    form = {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola", "MessageSid": SID}
     url = BASE + RUTA
     firma = _firmar(url, form)
 
@@ -120,7 +124,7 @@ def test_la_url_es_parte_de_lo_firmado():
     # REGLA: por esto PUBLIC_BASE_URL no es opcional. Detrás del proxy la app ve
     # el host interno y http://; si se firmara con esa URL fallarían TODAS las
     # firmas — no algunas, lo que lo haría parecer un problema intermitente.
-    form = {"From": CRUDO_TWILIO, "Body": "hola"}
+    form = {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola"}
     firma = _firmar(BASE + RUTA, form)
 
     assert twilio_client.verify_signature("http://interno:8000" + RUTA, form, firma) is False
@@ -130,7 +134,7 @@ def test_sin_auth_token_no_se_acepta_nada(monkeypatch):
     # REGLA: sin token no hay forma de verificar. Aceptar "porque no está
     # configurado" dejaría el bot abierto a que cualquiera inyecte mensajes.
     monkeypatch.setattr(settings, "twilio_auth_token", "")
-    form = {"From": CRUDO_TWILIO, "Body": "hola"}
+    form = {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola"}
 
     assert twilio_client.verify_signature(BASE + RUTA, form, _firmar(BASE + RUTA, form)) is False
 
@@ -143,7 +147,7 @@ def test_sin_auth_token_no_se_acepta_nada(monkeypatch):
 def test_el_telefono_se_normaliza_al_canonico():
     # REGLA: el formato de Twilio no entra a la base. Si entrara, el mismo
     # humano sería dos clientes distintos (la PK de `client` es el teléfono).
-    datos = twilio_client.parse_inbound({"From": CRUDO_TWILIO, "Body": "hola"})
+    datos = twilio_client.parse_inbound({"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola"})
 
     assert datos["phone"] == CANONICO
 
@@ -153,7 +157,7 @@ def test_una_respuesta_de_lista_llega_como_su_id_no_como_su_titulo():
     # ("1"). Tomar el Body ("Servicios básicos") rompería la máquina de estados,
     # que espera el número.
     datos = twilio_client.parse_inbound(
-        {"From": CRUDO_TWILIO, "Body": "Servicios básicos", "ListId": "1"}
+        {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "Servicios básicos", "ListId": "1"}
     )
 
     assert datos["text"] == "1"
@@ -161,7 +165,7 @@ def test_una_respuesta_de_lista_llega_como_su_id_no_como_su_titulo():
 
 def test_un_boton_llega_como_su_payload():
     datos = twilio_client.parse_inbound(
-        {"From": CRUDO_TWILIO, "Body": "Sí, confirmo", "ButtonPayload": "si"}
+        {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "Sí, confirmo", "ButtonPayload": "si"}
     )
 
     assert datos["text"] == "si"
@@ -214,7 +218,7 @@ def test_un_estado_desconocido_no_se_inventa():
 
 def test_un_mensaje_de_twilio_crea_cliente_conversacion_y_mensaje_en_su_canal():
     with TestClient(app) as http:
-        respuesta = _post(http, RUTA, {"From": CRUDO_TWILIO, "Body": "hola", "MessageSid": SID})
+        respuesta = _post(http, RUTA, {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola", "MessageSid": SID})
 
     assert respuesta.status_code == 204
     with Session(db.engine) as s:
@@ -228,7 +232,7 @@ def test_las_respuestas_tambien_quedan_marcadas_en_el_canal_de_twilio():
     # REGLA: si un saliente quedara marcado como Meta, el estado de entrega de
     # Twilio se aplicaría a la fila equivocada (ver _tag_sent_message).
     with TestClient(app) as http:
-        _post(http, RUTA, {"From": CRUDO_TWILIO, "Body": "hola", "MessageSid": SID})
+        _post(http, RUTA, {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola", "MessageSid": SID})
 
     with Session(db.engine) as s:
         salientes = s.exec(select(Message).where(Message.direction == Direction.OUT)).all()
@@ -239,7 +243,7 @@ def test_las_respuestas_tambien_quedan_marcadas_en_el_canal_de_twilio():
 def test_una_firma_invalida_se_rechaza_y_no_deja_rastro():
     with TestClient(app) as http:
         respuesta = _post(
-            http, RUTA, {"From": CRUDO_TWILIO, "Body": "hola"}, firma="firma-inventada"
+            http, RUTA, {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola"}, firma="firma-inventada"
         )
 
     assert respuesta.status_code == 403
@@ -267,7 +271,7 @@ def test_el_mismo_sid_repetido_no_duplica_el_mensaje():
     # REGLA: Twilio reintenta si tarda la respuesta. Sin este candado, un
     # reintento avanzaría la máquina de estados dos veces.
     with TestClient(app) as http:
-        form = {"From": CRUDO_TWILIO, "Body": "hola", "MessageSid": SID}
+        form = {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola", "MessageSid": SID}
         _post(http, RUTA, form)
         _post(http, RUTA, form)
 
@@ -337,7 +341,7 @@ def test_el_mismo_humano_por_las_dos_cuentas_es_un_solo_cliente(monkeypatch):
     monkeypatch.setattr(settings, "app_secret", "")  # firma de Meta desactivada
 
     with TestClient(app) as http:
-        _post(http, RUTA, {"From": CRUDO_TWILIO, "Body": "hola", "MessageSid": SID})
+        _post(http, RUTA, {"From": CRUDO_TWILIO, "To": TO_OFICINA, "Body": "hola", "MessageSid": SID})
         from app import webhook
 
         webhook._process_message(
@@ -346,7 +350,8 @@ def test_el_mismo_humano_por_las_dos_cuentas_es_un_solo_cliente(monkeypatch):
                 "id": "wamid.X1",
                 "type": "text",
                 "text": {"body": "sigo aquí"},
-            }
+            },
+            OFICINA_TLAXCALA_ID,
         )
 
     with Session(db.engine) as s:

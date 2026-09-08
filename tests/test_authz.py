@@ -186,6 +186,13 @@ RUTAS: list[Ruta] = [
         sonda=_conteo(User, User.username == VICTIMA, User.habilitado == True),  # noqa: E712
         tras_admin=0,
     ),
+    Ruta(
+        # Mover a alguien de oficina le cambia lo que ve y suelta sus folios:
+        # un colaborador que pudiera hacerlo se mudaría solo a donde quisiera.
+        "POST /users/{u}/oficina", "POST", f"/users/{VICTIMA}/oficina", "/",
+        data={"office_id": 2},
+        sonda=_campo(User, 3, "office_id"), tras_admin=2,  # 3 = VICTIMA en _sembrar
+    ),
     # --- Catálogo: quien lo edita decide el precio que se le cotiza al cliente ---
     Ruta(
         "GET /catalog", "GET", "/catalog", "/",
@@ -317,6 +324,18 @@ RUTAS: list[Ruta] = [
     ),
     Ruta(
         "GET /oficinas/{id}", "GET", "/oficinas/1", "/",
+    ),
+    Ruta(
+        # Editar mueve la URL del webhook de Stripe de esa oficina: un
+        # colaborador que pudiera hacerlo dejaría sus cobros en el limbo.
+        "POST /oficinas/{id}", "POST", "/oficinas/2", "/",
+        data={"nombre": "Secuestrada", "slug": "secuestrada", "ciudad": "X"},
+        sonda=_campo(Office, 2, "slug"), tras_admin="secuestrada",
+    ),
+    Ruta(
+        # La baja de una oficina corta su entrada de mensajes y sus pagos.
+        "POST /oficinas/{id}/baja", "POST", "/oficinas/2/baja", "/",
+        sonda=_campo(Office, 2, "habilitado"), tras_admin=False,
     ),
     Ruta(
         "POST /oficinas/{id}/llaves", "POST", "/oficinas/1/llaves", "/",

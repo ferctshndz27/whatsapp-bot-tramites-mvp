@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "hooks": [
+          {
+            "name": "barandales-del-operador",
+            "type": "command",
+            "command": "python3 \"$GEMINI_PROJECT_DIR/.gemini/hooks/guardrails.py\"",
+            "description": "Espejo del deny de .claude/settings.json: ni git push, ssh, scp, rm -rf ni scripts/ship.sh; no se lee .env ni se escribe data/, tramites.db o la política del harness. Ver .gemini/hooks/guardrails.py.",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

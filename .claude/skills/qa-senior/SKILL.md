@@ -95,6 +95,15 @@ Before writing a single assertion:
     person exactly how to refill it (LFT art. 74). Copy that pattern for any closed list with a shelf life.
 
 ## Common mistakes
+- **Writing a test that passes for the wrong reason.** Three that were caught by mutation in this
+  repo, all of which looked right: a middleware test run by an **anonymous** client, when the code
+  under test only runs `if request.session.get("user")` — it passed with the fix reverted; a
+  template test whose notes all belonged to the logged-in user, so Jinja **short-circuited** the
+  `n.author == user or is_admin(user)` and never called the function being counted; and a spy
+  installed on `templates.env.globals` **after** the template was cached — Jinja copies globals
+  into the template at load time, so `env.cache.clear()` is what makes the spy visible. The common
+  shape: the assertion never exercised the branch. Revert the fix and watch the suite go red, every
+  time.
 - Asserting `len(activities) == N` or list equality on `TicketActivity`: fase 3b added a
   `sistema / asignado-auto:{asesor}` row to every alta and broke that shape everywhere.
 - Using the `session` fixture with a route (`claim_ticket`, `inbox_send`, `release_ticket`) and

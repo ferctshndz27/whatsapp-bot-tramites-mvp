@@ -1,0 +1,41 @@
+# Barandales del operador para el Policy Engine de Gemini CLI: el mismo deny
+# que .claude/settings.json y que el hook .gemini/hooks/guardrails.py.
+# tests/test_harness.py exige que los tres digan lo mismo.
+#
+# Por qué existe además del hook: la propia CLI (0.58.0) avisa que
+# `tools.exclude` está deprecado y manda al Policy Engine, pero las políticas
+# de workspace (.gemini/policies/) vienen apagadas por código en esa versión
+# (`disableWorkspacePolicies = true`). Hasta que se enciendan, el operador lo
+# activa desde ~/.gemini/settings.json:
+#
+#   "policyPaths": ["~/.gemini/policies", "/ruta/al/repo/.gemini/policies"]
+#
+# La lista REEMPLAZA al directorio de políticas de usuario, por eso su propio
+# directorio va también. Por sesión: `gemini --policy .gemini/policies`.
+#
+# `priority` va de 0 a 999 dentro del tier; 900 deja sitio para que una regla
+# más específica del mismo tier pueda ir por encima si algún día hace falta.
+# `argsPattern` es una regex sobre los argumentos serializados como JSON
+# (`"file_path":"/ruta/absoluta"`), y `commandPrefix` casa por prefijo de
+# comando exactamente igual que el hook.
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["git push", "scripts/ship.sh", "ssh", "scp", "rm -rf"]
+decision = "deny"
+priority = 900
+denyMessage = "Barandal del operador: los push, ssh, scp y deploys los corre el humano en su terminal. Prepara el comando listo para pegar."
+
+[[rule]]
+toolName = ["read_file", "read_many_files"]
+argsPattern = '/\.env(\.old|\.bk)?"'
+decision = "deny"
+priority = 900
+denyMessage = "Barandal del operador: .env no se lee entero ni se imprime; si una variable existe se comprueba con grep -c."
+
+[[rule]]
+toolName = ["write_file", "replace"]
+argsPattern = '"file_path":\s*"[^"]*/(\.env|tramites\.db|data/[^"]*|\.agents/[^"]*|marketing/[^"]*|HTTP|\.gemini/[^"]*|\.claude/settings\.json)"'
+decision = "deny"
+priority = 900
+denyMessage = "Barandal del operador: datos de producción, .env, directorios del operador y la política del harness no se escriben desde el agente."

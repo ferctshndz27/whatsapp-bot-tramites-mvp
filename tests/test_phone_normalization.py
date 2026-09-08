@@ -21,7 +21,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.db as db
-from app.models import Client, Conversation, Message, Ticket
+from app.models import OFICINA_TLAXCALA_ID, Client, Conversation, Message, Ticket
 from app.utils import normalize_phone
 
 CRUDO_META = "5215500000000"
@@ -98,7 +98,8 @@ def test_el_webhook_guarda_el_canonico_aunque_meta_mande_el_crudo(monkeypatch):
     webhook = _mudo(monkeypatch)
 
     webhook._process_message(
-        {"from": CRUDO_META, "id": "wamid.TEST1", "type": "text", "text": {"body": "hola"}}
+        {"from": CRUDO_META, "id": "wamid.TEST1", "type": "text", "text": {"body": "hola"}},
+        OFICINA_TLAXCALA_ID,
     )
 
     with Session(db.engine) as s:
@@ -117,7 +118,8 @@ def test_dos_formatos_del_mismo_humano_no_crean_dos_clientes(monkeypatch):
 
     for i, formato in enumerate((CRUDO_META, CANONICO, "whatsapp:+5215500000000")):
         webhook._process_message(
-            {"from": formato, "id": f"wamid.T{i}", "type": "text", "text": {"body": "hola"}}
+            {"from": formato, "id": f"wamid.T{i}", "type": "text", "text": {"body": "hola"}},
+            OFICINA_TLAXCALA_ID,
         )
 
     with Session(db.engine) as s:

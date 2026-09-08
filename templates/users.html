@@ -27,6 +27,14 @@
           <option value="admin">admin</option>
         </select>
       </div>
+      {% if oficinas | length > 1 %}
+      <div>
+        <label for="office_id">Oficina</label>
+        <select name="office_id" id="office_id">
+          {% for o in oficinas %}<option value="{{ o.id }}">{{ o.nombre }}</option>{% endfor %}
+        </select>
+      </div>
+      {% endif %}
       <button type="submit">Crear usuario</button>
     </div>
   </form>
@@ -42,7 +50,7 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Usuario</th><th>Teléfono</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr>
+        <tr><th>Usuario</th><th>Teléfono</th><th>Rol</th><th>Oficina</th><th>Estado</th><th>Acciones</th></tr>
       </thead>
       <tbody>
         {% for u in users %}
@@ -54,6 +62,22 @@
             <span class="badge asignada">admin</span>
             {% else %}
             colaborador
+            {% endif %}
+          </td>
+          <td>
+            {% if oficinas | length > 1 %}
+            <form method="post" action="/users/{{ u.username }}/oficina"
+              style="display:flex; gap:.35rem; align-items:center;">
+              <label class="sr-only" for="of-{{ u.username }}">Oficina de {{ u.username }}</label>
+              <select name="office_id" id="of-{{ u.username }}">
+                {% for o in oficinas %}
+                <option value="{{ o.id }}" {% if o.id == u.office_id %}selected{% endif %}>{{ o.nombre }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="btn-sm">Mover</button>
+            </form>
+            {% else %}
+            {{ nombres_oficina.get(u.office_id, '—') }}
             {% endif %}
           </td>
           <td>

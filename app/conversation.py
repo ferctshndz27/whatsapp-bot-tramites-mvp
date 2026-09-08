@@ -16,6 +16,7 @@ from app.catalog import (
 from app.config import settings
 from app.dinero import formato_monto, parse_monto
 from app.models import (
+    OFICINA_TLAXCALA_ID,
     CAPAS_EXTRA,
     PROVIDER_META,
     Client,
@@ -266,15 +267,25 @@ def handle_incoming(
     is_media: bool = False,
     wa_message_id: str | None = None,
     provider: str = PROVIDER_META,
+    office_id: int = OFICINA_TLAXCALA_ID,
 ) -> list[str]:
+    """`office_id` viaja por el mismo túnel explícito que `provider` (§4).
+
+    Lleva default —a diferencia de credenciales.credencial(), donde uno sería el
+    fallback silencioso que ese módulo prohíbe— por dos razones que no aplican
+    allá: aquí equivocarse escribe una fila en la oficina 1 en vez de firmar con
+    el secreto de otra oficina, y hay 229 call sites, casi todos de la suite,
+    para los que Tlaxcala es la respuesta correcta. El ÚNICO camino donde la
+    oficina es ambigua es el webhook, y ahí se pasa siempre explícito: lo amarra
+    tests/test_ruteo_oficina.py con un candado AST."""
     if wa_message_id and _already_processed(session, wa_message_id):
         logger.info("Mensaje duplicado ignorado (reintento del proveedor): %s", wa_message_id)
         return []
 
-    client = _get_or_create_client(session, phone)
+    client = _get_or_create_client(session, phone, office_id)
     # Se fija ANTES de registrar nada: todo lo que se escriba en este request
     # —el entrante y las respuestas— hereda de aquí el canal correcto.
-    conv = _get_or_create_conversation(session, phone, provider)
+    conv = _get_or_create_conversation(session, phone, provider, office_id)
     _log_message(
         session, phone, Direction.IN, "[archivo adjunto]" if is_media else text, wa_message_id
     )
@@ -750,6 +761,7 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
                 service_name=service.name,
                 price_info=service.price_info,
                 status=TicketStatus.NUEVO,
+                office_id=client.office_id,
                 # Nace en NUEVO CON dueño: TOMADO significaría «alguien lo
                 # tiene», falso para un folio que nadie ha mirado, y
                 # corrompería el embudo de operacion_stats.
@@ -1138,6 +1150,7 @@ def _log_nlu(
         NluEvent(
             phone=phone, text=text[:200], capa=capa,
             service_id=service_id, confianza=confianza,
+            office_id=_oficina_de(session, phone),
         )
     )
 
@@ -1282,7 +1295,10 @@ def _try_informative(session: Session, phone: str, text: str) -> str | None:
     las filas extra (models.CAPAS_EXTRA) para no inflar su denominador."""
     if not settings.rag_enabled or not rag.es_pregunta_informativa(text):
         return None
-    respuesta, motivo = rag.answer_explained(text)
+    # El corpus curado que ve el modelo es el de la oficina del cliente (§6):
+    # requisitos y precios varían por estado, y contestarle a alguien de
+    # Tlaxcala con los requisitos de otra ciudad es peor que no contestarle.
+    respuesta, motivo = rag.answer_explained(text, _oficina_de(session, phone))
     # La capa informativa tiene su propio timeout (prompt largo): puede caerse
     # aunque el clasificador haya pasado, así que se revisa otra vez.
     _log_fallo_ollama(session, phone, text)
@@ -1439,6 +1455,7 @@ def _escalate(
             service_name="Escalado a asesor",
             price_info="N/A",
             status=TicketStatus.NUEVO,
+            office_id=client.office_id,
             assigned_to=asesor,
             escalado=True,
             notes=f"Cliente pidió hablar con un asesor. Último mensaje: {original_text[:MAX_NOTE_TEXT]}",
@@ -1507,10 +1524,12 @@ def _parse_int(normalized: str) -> int | None:
     return int(normalized) if normalized.isdigit() else None
 
 
-def _get_or_create_client(session: Session, phone: str) -> Client:
+def _get_or_create_client(
+    session: Session, phone: str, office_id: int = OFICINA_TLAXCALA_ID
+) -> Client:
     client = session.get(Client, phone)
     if client is None:
-        client = Client(phone=phone, last_activity_at=utcnow())
+        client = Client(phone=phone, last_activity_at=utcnow(), office_id=office_id)
         session.add(client)
         session.commit()
         session.refresh(client)
@@ -1522,11 +1541,12 @@ def _get_or_create_client(session: Session, phone: str) -> Client:
 
 
 def _get_or_create_conversation(
-    session: Session, phone: str, provider: str = PROVIDER_META
+    session: Session, phone: str, provider: str = PROVIDER_META,
+    office_id: int = OFICINA_TLAXCALA_ID,
 ) -> Conversation:
     conv = session.get(Conversation, phone)
     if conv is None:
-        conv = Conversation(phone=phone, provider=provider)
+        conv = Conversation(phone=phone, provider=provider, office_id=office_id)
         session.add(conv)
         session.commit()
         session.refresh(conv)
@@ -1539,6 +1559,13 @@ def _get_or_create_conversation(
         session.commit()
         session.refresh(conv)
     return conv
+
+
+def _oficina_de(session: Session, phone: str) -> int:
+    """La oficina del cliente. `session.get` pega al identity map: si el flujo ya
+    cargó la fila —siempre, en la cadena del entrante— no hay SELECT."""
+    client = session.get(Client, phone)
+    return client.office_id if client is not None else OFICINA_TLAXCALA_ID
 
 
 def _log_message(
@@ -1562,6 +1589,12 @@ def _log_message(
             body=body[:MAX_STORED_TEXT],
             wa_message_id=wa_message_id,
             provider=provider,
+            # Sin office_id A PROPÓSITO: `message` no es una de las 15 tablas de
+            # §2.3. El mensaje pertenece a la conversación, que sí la lleva, así
+            # que la oficina es derivable y duplicarla abriría la puerta a que
+            # las dos discrepen. OJO: SQLModel ACEPTA Y DESCARTA en silencio un
+            # kwarg que no es columna, así que ponerlo aquí no daría error —
+            # sería un no-op mudo. Lo amarra test_ruteo_oficina.py.
         )
     )
     session.commit()

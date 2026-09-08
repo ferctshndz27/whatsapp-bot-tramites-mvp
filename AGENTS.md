@@ -1,6 +1,8 @@
 
-This file provides guidance to ANY agent (claude.ai/code) when working with code in this repository.
-It holds the **global rules**. Domain knowledge lives in `.claude/skills/` and loads on demand.
+This file provides guidance to ANY agent working in this repository. Antigravity (`agy`) reads it
+natively; Claude Code through `CLAUDE.md` and Gemini CLI through `GEMINI.md`, both a one-line import
+of this file. It holds the **global rules**. Domain knowledge lives in `.claude/skills/` — linked
+from `.agents/skills/`, the directory both Google agents scan — and loads on demand.
 
 ## How to work here
 
@@ -35,11 +37,38 @@ The user never has to say "act as a DBA". Infer it from the task and invoke the 
 - *"The bot answered something wrong"* → `ai-ml-senior` + `qa-senior`
 - *"New button in the panel"* → `frontend-senior` + `backend-senior`
 
+### Which instructions win
+
+More than one instruction file loads at once: the user's global `~/.claude/CLAUDE.md` (under
+Gemini, `~/.gemini/GEMINI.md`, where nodeterm keeps its canvas instructions), a parent
+`Projects/CLAUDE.md` written for other codebases (Claude only — Gemini never loads it), and this
+file. Resolve conflicts in this order, most specific first:
+
+1. What the user asks for in the conversation.
+2. The user's own global rules.
+3. This file and the skills it routes to — they are scoped to this repo.
+4. A parent file, only where it applies here. Its tables of .NET/Flutter skills and its mandatory
+   `gitnexus_*` calls describe other projects; a FastAPI bot is not one of them.
+
+A tool a parent file makes mandatory is not mandatory here if this repo doesn't use it. Say so once
+and move on, don't silently obey and don't argue about it every turn.
+
 ### Before changing code
 
 Understand → inspect **only the relevant files** → identify the domain → load those skills → plan →
 implement → `pytest -q` → review → verify. Don't read the whole repo, and don't edit before you
 understand. Both failures cost the same.
+
+`pytest -q` runs even when the change looks like it cannot break anything. A docs-only edit still
+touches `AGENTS.md`, and `tests/test_harness.py` is precisely the test that goes red on a citation
+that stopped resolving.
+
+**Never edit a test so that it passes.** A red test is a claim about production behaviour; the first
+hypothesis is that the claim is right and the code is wrong. Changing the test is legitimate only
+when changing it *is* the task — and then it is said out loud, not slipped into the diff.
+
+Report each check by its exact command, prefixed `✅` pass, `⚠️` environment limitation (no local
+MSSQL, no Ollama), `❌` fail. A check that was skipped is reported as skipped, never as green.
 
 ### Token discipline
 
@@ -51,14 +80,34 @@ don't open files the task doesn't touch.
 
 This routing table is a contract, not documentation: `tests/test_harness.py` asserts —in both
 directions— that every skill on disk has a row and every row points at a skill that exists, that
-each `name:` matches its folder, and that every repo path a skill cites still resolves. Adding a
-skill is three places: the file, the row, and a green harness test **in the same commit**.
+each `name:` matches its folder, that every skill still carries a `description:` and the eleven
+shared sections in order, and that every repo path a skill cites still resolves. Adding a skill is
+three places: the file, the row, and a green harness test **in the same commit**.
 
 `.claude/settings.json` carries the permission policy the agent works under: the operator runs every
 `git push`, `ssh` and deploy, and `deny` now enforces that instead of trusting memory. The agent
 cannot edit that file — the platform refuses — so changes to it are handed over as a copy-paste
 block. Why the harness looks like this, and how it measures up against a reference harness, is in
 `docs/HARNESS.md`.
+
+The same harness is operable from the Google agents without a second copy of anything:
+`.agents/skills/` links the thirteen skills (Antigravity and Gemini CLI both scan it; only Gemini
+CLI also reads `.gemini/`), and `GEMINI.md` imports this file for Gemini CLI, which unlike
+Antigravity does not read `AGENTS.md` on its own. `.gitignore` versions those thirteen links and
+nothing else — the rest of `.agents/` belongs to the operator.
+
+**The guardrails do not travel the same way, and that matters.** Under Claude Code they are the
+`deny` of `.claude/settings.json`; under Gemini CLI, the `BeforeTool` hook in `.gemini/settings.json`
+(`.gemini/hooks/guardrails.py`). **Under Antigravity there is nothing in the repo enforcing them**:
+its permissions are `permissionGrants` in the operator's own home
+(`~/.gemini/config/projects/<uuid>.json`), which this repo cannot version. So when the agent is
+Antigravity, *the rules below are the only guardrail* — no `git push`, `ssh`, `scp` or deploys, no
+reading `.env`, no writing `data/` or `tramites.db`. Follow them because they are the rule, not
+because something will stop you.
+
+Neither Google agent has the platform lock that stops Claude from rewriting its own policy, so the
+lock is `tests/test_harness.py`: it asserts the mirrors and runs the hook as a process against real
+calls. Gemini CLI applies none of this in an untrusted folder.
 
 ## What this is
 

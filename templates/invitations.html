@@ -3,6 +3,8 @@
 {% block content %}
 <h1>Invitar colaboradores</h1>
 
+{% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
+
 <div class="card">
   {% if new_token %}
   <div class="banner-warn" role="status">
@@ -18,8 +20,22 @@
     <p style="color: var(--text-muted); font-size: .85rem; margin: 0 0 .5rem;">
       Genera un código de un solo uso y compártelo tú mismo con el colaborador
       (botón «Copiar código»). El registro se hace en <strong>/register</strong>.
+      {% if oficinas | length > 1 %}
+      Quien lo use entrará en la oficina que elijas aquí: al registrarse no se le
+      pregunta.
+      {% endif %}
     </p>
-    <button type="submit">Generar invitación</button>
+    <div style="display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap;">
+      {% if oficinas | length > 1 %}
+      <div>
+        <label for="office_id">Oficina</label>
+        <select name="office_id" id="office_id">
+          {% for o in oficinas %}<option value="{{ o.id }}">{{ o.nombre }}</option>{% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <button type="submit">Generar invitación</button>
+    </div>
   </form>
 </div>
 
@@ -30,7 +46,7 @@
     <table>
       <thead>
         <tr>
-          <th>Código</th><th>Teléfono</th><th>Creado por</th><th>Creado</th><th>Estado</th><th></th>
+          <th>Código</th><th>Teléfono</th><th>Oficina</th><th>Creado por</th><th>Creado</th><th>Estado</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -38,6 +54,7 @@
         <tr>
           <td>{{ i.token }}</td>
           <td>{{ i.phone or '—' }}</td>
+          <td>{{ nombres_oficina.get(i.office_id, '—') }}</td>
           <td>{{ i.created_by }}</td>
           <td>{{ i.created_at | local }}</td>
           <td>

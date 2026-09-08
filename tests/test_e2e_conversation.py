@@ -84,6 +84,10 @@ def e2e_engine(_isolated_db, monkeypatch):
     monkeypatch.setattr(db, "engine", engine)
     db.init_db()
     monkeypatch.setattr(settings, "app_secret", APP_SECRET)
+    # El phone_number_id que traen los payloads de _envelope: sin esto el
+    # fail-closed de §4.1 los descarta —correctamente— y ninguna prueba de
+    # conversación llegaría a correr.
+    monkeypatch.setattr(settings, "whatsapp_phone_number_id", "PNID")
     monkeypatch.setattr(settings, "anthropic_api_key", "")  # deducción determinista, sin red
     monkeypatch.setattr(settings, "mssql_host", "")  # apaga archive.enabled()
     return engine
@@ -823,3 +827,84 @@ def test_wamid_no_se_asigna_a_la_fila_equivocada_tras_un_envio_fallido(wa):
         assert len(salidas) == 2
         assert salidas[0].wa_message_id is None
         assert salidas[1].wa_message_id == "wamid.OUT1"
+
+
+# --- Ruteo por oficina (§4.1) ----------------------------------------------
+
+def test_un_phone_number_id_desconocido_se_descarta_y_no_deja_rastro(wa, caplog):
+    """LA PRUEBA QUE CIERRA EL PR 4 según §8 de la spec.
+
+    Un número que no es de ninguna oficina no puede aterrizar en la bandeja de
+    Tlaxcala: el cliente recibiría respuesta de un negocio que no le escribió, y
+    el folio caería en la lista de otra oficina sin que nadie se entere. El 200
+    es correcto y deliberado —Meta reintenta ante cualquier otra cosa, y esto no
+    es un error transitorio— pero NADA se procesa.
+    """
+    sobre = _envelope(_text_msg("hola"))
+    sobre["entry"][0]["changes"][0]["value"]["metadata"]["phone_number_id"] = "NO-ES-DE-NADIE"
+
+    with caplog.at_level("WARNING", logger="app.webhook"):
+        respuesta = _post(sobre)
+
+    assert respuesta.status_code == 200, "un descarte no es un error para Meta"
+    assert wa.sent == [], f"le contestó a un número ajeno: {wa.sent}"
+    with Session(db.engine) as s:
+        assert s.exec(select(Client)).all() == [], "creó cliente de un número ajeno"
+        assert s.exec(select(Message)).all() == []
+        assert s.exec(select(Ticket)).all() == []
+    assert any("phone_number_id desconocido" in r.message for r in caplog.records), (
+        f"el descarte fue mudo; registros: {[r.message for r in caplog.records]}"
+    )
+
+
+def test_el_mensaje_del_numero_de_la_oficina_aterriza_en_esa_oficina(wa):
+    """El otro lado del fail-closed: lo que SÍ es de la oficina 1 nace con su
+    office_id en las cuatro tablas de la cadena, no solo en el cliente."""
+    # Un trámite, no un saludo: el saludo no pasa por la deducción y no dejaría
+    # NluEvent que mirar.
+    _post(_envelope(_text_msg("necesito mi acta de nacimiento")))
+
+    with Session(db.engine) as s:
+        cliente = s.exec(select(Client)).one()
+        assert cliente.office_id == 1
+        assert {c.office_id for c in s.exec(select(Conversation)).all()} == {1}
+        # `message` no lleva office_id (§2.3): la oficina se deriva de la
+        # conversación. Aquí se comprueba que los mensajes existen y cuelgan de
+        # ella, no que repitan el dato.
+        assert s.exec(select(Message)).all(), "no guardó el entrante"
+        eventos = s.exec(select(NluEvent)).all()
+        assert eventos and {e.office_id for e in eventos} == {1}
+
+
+def test_un_payload_de_solo_acuses_se_rutea_igual_que_los_mensajes(wa):
+    """Los acuses viajan en su propio webhook y su envelope TAMBIÉN trae
+    metadata.phone_number_id (referencia de Meta: aparece en los tres ejemplos,
+    sent/read/failed). Por eso resolver una vez, arriba de los dos bucles, no
+    deja fuera acuses legítimos — y uno de un número ajeno sí se descarta.
+    """
+    _post(_envelope(_text_msg("hola", wamid="wamid.ACUSE1")))
+    with Session(db.engine) as s:
+        antes = s.exec(select(Message).where(Message.wa_message_id == "wamid.ACUSE1")).one()
+        estado_antes = antes.wa_status
+
+    # Del número de la oficina: se procesa.
+    _post(_envelope(statuses=[_status("wamid.ACUSE1", "delivered", 1700000001)]))
+    with Session(db.engine) as s:
+        s.expire_all()
+        assert s.exec(select(Message).where(
+            Message.wa_message_id == "wamid.ACUSE1")).one().wa_status != estado_antes, (
+            "el acuse del número propio no se aplicó"
+        )
+        aplicado = s.exec(select(Message).where(
+            Message.wa_message_id == "wamid.ACUSE1")).one().wa_status
+
+    # De un número ajeno: se descarta sin tocar nada.
+    sobre = _envelope(statuses=[_status("wamid.ACUSE1", "read", 1700000002)])
+    sobre["entry"][0]["changes"][0]["value"]["metadata"]["phone_number_id"] = "AJENO"
+    _post(sobre)
+    with Session(db.engine) as s:
+        s.expire_all()
+        assert s.exec(select(Message).where(
+            Message.wa_message_id == "wamid.ACUSE1")).one().wa_status == aplicado, (
+            "un acuse de un número ajeno modificó un mensaje de esta oficina"
+        )

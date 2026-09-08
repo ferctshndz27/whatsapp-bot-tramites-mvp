@@ -2,9 +2,9 @@
 {% block title %}{{ oficina.nombre }}{% endblock %}
 {% block content %}
 <h1>{{ oficina.nombre }}</h1>
-<p style="color:var(--text-muted); margin-top:-.5rem;">
-  <a href="/oficinas">← Oficinas</a> · <code>{{ oficina.slug }}</code> ·
-  {{ oficina.ciudad }} · {{ oficina.zona_horaria }}
+<p style="margin-top:0;"><a class="btn-nav" href="/oficinas">← Oficinas</a></p>
+<p style="color:var(--text-muted); margin-top:-.25rem;">
+  <code>{{ oficina.slug }}</code> · {{ oficina.ciudad }}
 </p>
 
 {% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
@@ -16,6 +16,57 @@
   pero no guardar credenciales nuevas.
 </div>
 {% endif %}
+
+<div class="card">
+  <h2>Datos de la oficina</h2>
+  <form method="post" action="/oficinas/{{ oficina.id }}">
+    <div class="row" style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end;">
+      <div>
+        <label for="nombre">Nombre</label>
+        <input type="text" id="nombre" name="nombre" required value="{{ oficina.nombre }}"
+          autocomplete="off" style="max-width:200px;">
+      </div>
+      <div>
+        <label for="slug">Slug</label>
+        <input type="text" id="slug" name="slug" required value="{{ oficina.slug }}"
+          pattern="[a-z0-9\-]+" autocomplete="off" style="max-width:160px;"
+          aria-describedby="ayuda-slug">
+      </div>
+      <div>
+        <label for="ciudad">Ciudad</label>
+        <input type="text" id="ciudad" name="ciudad" required value="{{ oficina.ciudad }}"
+          autocomplete="off" style="max-width:200px;">
+      </div>
+      <button type="submit">Guardar cambios</button>
+    </div>
+    <p id="ayuda-slug" style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+      Cambiar el slug mueve la URL del webhook de pagos a
+      <code>/webhooks/stripe/{{ oficina.slug }}</code>: hay que actualizarla en el panel de
+      Stripe o los cobros de esta oficina dejan de registrarse.
+    </p>
+  </form>
+
+  <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border);">
+    {% if oficina.id == 1 %}
+    <p style="color:var(--text-muted); font-size:.85rem; margin:0;">
+      La oficina principal no se puede dar de baja: todo el histórico anterior a las
+      multi-oficina le pertenece y su webhook de pagos sigue activo.
+    </p>
+    {% elif oficina.habilitado %}
+    <form method="post" action="/oficinas/{{ oficina.id }}/baja">
+      <button type="submit">Dar de baja</button>
+      <span style="color:var(--text-muted); font-size:.85rem; margin-left:.5rem;">
+        Deja de recibir mensajes y pagos. El historial se conserva y se puede reactivar.
+      </span>
+    </form>
+    {% else %}
+    <form method="post" action="/oficinas/{{ oficina.id }}/baja">
+      <button type="submit">Reactivar</button>
+      <span class="badge caducada" style="margin-left:.5rem;">dada de baja</span>
+    </form>
+    {% endif %}
+  </div>
+</div>
 
 <div class="card">
   <h2>Credenciales</h2>

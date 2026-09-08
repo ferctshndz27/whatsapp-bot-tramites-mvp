@@ -115,7 +115,7 @@ def test_inyeccion_que_pide_el_system_prompt_cae_por_larga(monkeypatch):
 def test_descarte_en_flujo_deja_fila_rag_descartado_con_motivo(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")  # cascada sin LLM
     monkeypatch.setattr(settings, "rag_enabled", True)
-    monkeypatch.setattr(rag, "answer_explained", lambda text: (None, "dinero"))
+    monkeypatch.setattr(rag, "answer_explained", lambda text, *_: (None, "dinero"))
     _sembrar()
 
     respuestas = _conversar("¿cuánto tarda mi pedido raro?")
@@ -130,7 +130,7 @@ def test_descarte_en_flujo_deja_fila_rag_descartado_con_motivo(monkeypatch):
 def test_no_se_en_flujo_no_deja_fila_de_descarte(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "rag_enabled", True)
-    monkeypatch.setattr(rag, "answer_explained", lambda text: (None, None))
+    monkeypatch.setattr(rag, "answer_explained", lambda text, *_: (None, None))
     _sembrar()
 
     _conversar("¿cuánto tarda mi pedido raro?")

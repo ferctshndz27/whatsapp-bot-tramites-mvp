@@ -21,3 +21,33 @@ graphify-out/
 
 # Configuración y permisos locales del agente Claude
 .claude/settings.local.json
+
+# Informes y documentos de auditoría internos
+docs/INFORME-AUDITORIA-APP.md
+
+# `.agents/` es la raíz de personalización que escanean Antigravity y Gemini
+# CLI, y es del OPERADOR: sus propias skills viven ahí y no son de este repo
+# (hoy, tidyfactor-styler). De todo el árbol se versionan ÚNICAMENTE los
+# enlaces a las trece skills de `.claude/skills/`, uno por uno y por nombre.
+#
+# Se listan a mano a propósito: re-incluir `.agents/skills/*` entero metería
+# al repo la siguiente skill que el operador guarde ahí, y un `git add .`
+# bastaría para hacerlo sin que nadie lo note. tests/test_harness.py verifica
+# que esta lista y las skills en disco coincidan, así que agregar una skill sin
+# su línea aquí pone la suite en rojo en vez de fallar en silencio.
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/ai-ml-senior
+!.agents/skills/architecture-senior
+!.agents/skills/backend-senior
+!.agents/skills/dba-senior
+!.agents/skills/devops-senior
+!.agents/skills/external-research
+!.agents/skills/frontend-senior
+!.agents/skills/harness-engineer
+!.agents/skills/integration-senior
+!.agents/skills/performance-senior
+!.agents/skills/product-owner
+!.agents/skills/qa-senior
+!.agents/skills/security-senior

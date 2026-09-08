@@ -16,10 +16,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine, select
 
+import app.auth as auth
 import app.db as db
+import app.templating as templating
 from app.config import settings
 from app.main import app
-from app.models import AdminAudit, Client, Conversation, Ticket, User
+from app.models import AdminAudit, Client, ClientNote, Conversation, Ticket, User
 
 CRUDO = "5215500000000"
 CANONICO = "525500000000"
@@ -279,3 +281,56 @@ def test_el_directorio_no_lista_clientes_deshabilitados(sesion_panel):
     html = sesion_panel.get("/clients").text
     assert "Visible" in html
     assert "Bloqueado" not in html
+
+
+TEL_FICHA = "525511113333"
+
+
+def test_la_ficha_del_cliente_resuelve_el_rol_una_sola_vez(sesion_panel):
+    """REGLA: `is_admin` es un global de Jinja (app/templating.py) y cada
+    llamada abre una sesión y consulta SQLite durante el render (app/auth.py).
+    En la ficha del cliente se usaba DENTRO del bucle de notas, así que el costo
+    crecía con el historial: una consulta idéntica por cada nota AJENA (el `or`
+    cortocircuita en las propias), en la página que un admin abre para revisar
+    el trabajo del equipo.
+
+    Se cuenta la llamada, no el tiempo: el reloj aquí mediría la máquina.
+    """
+    with Session(db.engine) as s:
+        s.add(Client(phone=TEL_FICHA, name="Cliente con historial"))
+        s.commit()
+        # De OTRO autor a propósito: la condición es `n.author == user or
+        # is_admin(user)` y Jinja cortocircuita el `or`. Con notas propias
+        # `is_admin` no se evalúa nunca y este test pasaría con el arreglo
+        # revertido — comprobado. El caso real es justo este: el admin mirando
+        # las notas que escribió el equipo.
+        for i in range(12):
+            s.add(ClientNote(phone=TEL_FICHA, body=f"nota {i}", author="otra-persona"))
+        s.commit()
+
+    llamadas = 0
+    original = auth.is_admin
+
+    def contando(username):
+        nonlocal llamadas
+        llamadas += 1
+        return original(username)
+
+    # Jinja copia `env.globals` a la plantilla al CARGARLA, así que sustituirlo
+    # después no alcanza a una plantilla ya cacheada: hay que vaciar la caché
+    # para que se recompile con el espía. Sin esto el test pasa siempre —
+    # comprobado revirtiendo el arreglo.
+    templating.templates.env.globals["is_admin"] = contando
+    templating.templates.env.cache.clear()
+    try:
+        r = sesion_panel.get(f"/clients/{TEL_FICHA}")
+    finally:
+        templating.templates.env.globals["is_admin"] = original
+        templating.templates.env.cache.clear()
+
+    assert r.status_code == 200
+    assert "nota 11" in r.text, "la ficha no pintó las notas: el test mediría otra cosa"
+    assert llamadas <= 2, (
+        f"la ficha resolvió el rol {llamadas} veces con 12 notas: la llamada volvió al bucle "
+        "(base.html la usa una vez; la ficha, una)"
+    )

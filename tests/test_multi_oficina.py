@@ -14,12 +14,18 @@ from sqlmodel import Session, SQLModel
 import app.db as db
 from app.models import OFICINA_TLAXCALA_ID, Office, OfficeCredential
 
-# Las 15 tablas de §2.3 como LITERAL: derivarlas de db._TABLES_NEEDING_OFFICE
-# haría que borrar una de la tupla también borrara la expectativa.
+# Las tablas de §2.3 como LITERAL: derivarlas de db._TABLES_NEEDING_OFFICE haría
+# que borrar una de la tupla también borrara la expectativa.
+#
+# Son 16, no las 15 de la spec original: `invitation` se agregó después, cuando
+# el panel de invitaciones pasó a elegir la oficina. La oficina se decide al
+# INVITAR —quien acepta no sabe ni debe decidir de qué sede es— y sin la columna
+# todo invitado nacía en la 1 por el DEFAULT.
 TABLAS_CON_OFICINA = frozenset({
     "client", "conversation", "ticket", "user", "teammessage", "cobro",
     "catalogcategory", "catalogservice", "synonymproposal", "nluevent", "infodoc",
     "label", "savedreply", "plantilla", "agentconfig",
+    "invitation",
 })
 
 
@@ -57,7 +63,7 @@ def test_solo_las_15_tablas_de_la_spec_llevan_office_id():
     } - {"officecredential"}
     assert con_columna == TABLAS_CON_OFICINA
     assert set(db._TABLES_NEEDING_OFFICE) == TABLAS_CON_OFICINA
-    assert len(db._TABLES_NEEDING_OFFICE) == 15  # sin duplicados en la tupla
+    assert len(db._TABLES_NEEDING_OFFICE) == 16  # sin duplicados en la tupla
 
 
 @pytest.mark.parametrize("tabla", sorted(TABLAS_CON_OFICINA))
@@ -78,9 +84,9 @@ def test_office_id_nace_not_null_con_server_default_1(tabla):
 def test_init_db_siembra_tlaxcala_como_oficina_1(bd_inicializada):
     with bd_inicializada.connect() as conn:
         filas = conn.exec_driver_sql(
-            "SELECT id, nombre, slug, ciudad, zona_horaria, habilitado FROM office"
+            "SELECT id, nombre, slug, ciudad, habilitado FROM office"
         ).fetchall()
-    assert filas == [(1, "Tlaxcala", "tlaxcala", "Tlaxcala", "America/Mexico_City", 1)]
+    assert filas == [(1, "Tlaxcala", "tlaxcala", "Tlaxcala", 1)]
 
 
 def test_la_siembra_es_idempotente_y_no_pisa_una_fila_editada(bd_inicializada):

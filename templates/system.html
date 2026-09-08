@@ -94,9 +94,9 @@
             <span class="badge caducada">{{ info.credenciales_ilegibles | join(', ') }}</span>
             <div style="color:var(--text-muted); font-size:.85rem;">
               Hay una credencial guardada que no se puede descifrar: revisa
-              <code>CREDENTIALS_KEY</code> en el <code>.env</code>. Detalle por oficina en
-              <a href="/oficinas">Oficinas</a>.
+              <code>CREDENTIALS_KEY</code> en el <code>.env</code>.
             </div>
+            <p style="margin:.5rem 0 0;"><a class="btn-nav" href="/oficinas">🏢 Ver por oficina</a></p>
           </td>
         </tr>
         {% endif %}

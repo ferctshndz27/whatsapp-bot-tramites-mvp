@@ -4,9 +4,18 @@ decide en /unmatched.
 
 Corre dentro del contenedor vía cron del host (mismo patrón que el deploy):
   30 3 * * * docker exec tramites-bot python -m app.jobs >> /var/log/tramites-jobs.log 2>&1
+
+Cada pieza es best-effort y ninguna tumba a las demás: que falle la minería no
+puede impedir el barrido de cobranza. Pero seguir tras un fallo y ADEMÁS
+reportar éxito son dos cosas distintas, y esa segunda es la que deja un job
+roto pareciendo sano durante semanas: la salida se redirige al log, así que el
+código de salida es lo único que el cron sabe leer. Por eso `__main__` sale con
+1 cuando algo falló, sin cambiar nada de lo que el job hace ni de lo que
+`nightly()` devuelve.
 """
 
 import logging
+import sys
 
 from app.config import settings
 from app.db import get_session, init_db
@@ -83,6 +92,73 @@ def nightly() -> dict:
             "alertas": _evaluate_alerts_safe()}
 
 
+# Contador de fallos POR ELEMENTO. Los cinco barridos de cobranza no revientan
+# cuando un evento falla: registran `logger.exception`, suman aquí y siguen con
+# el siguiente (app/cobranza_jobs.py:111-115, :281-286, :403-408, :474-478).
+# Sin esta clave, una noche con 200 eventos de Stripe pendientes y 200 fallidos
+# no tiene ninguna clave "error" y salía como noche sana: justo el caso que más
+# importa, porque es dinero.
+_CONTADOR_DE_FALLOS = "fallidos"
+
+
+def errores(resultado: dict, _ruta: str = "") -> list[str]:
+    """Qué falló dentro del resultado del job, por nombre. Vacía = todo bien.
+
+    No inspecciona excepciones: para cuando esta función corre, cada pieza ya
+    las convirtió en dato. Y las convierte de DOS formas distintas, que es lo
+    que hace falta mirar por separado:
+
+    1. `{"error": str(exc)}` cuando revienta la pieza ENTERA — la usan
+       `_evaluate_alerts_safe`, `_barrer_cobranza_safe` y `barrer_todo`
+       (`app/cobranza_jobs.py:502`) cuando muere un barrido completo. Se busca
+       a cualquier profundidad, así que una pieza nueva que siga la convención
+       queda cubierta sola.
+    2. `{"fallidos": n}` cuando falla ELEMENTO a elemento y el barrido sigue
+       adelante, que es el caso normal y el que de verdad ocurre: el barrido
+       termina bien, devuelve su resumen, y los doscientos eventos que no se
+       aplicaron viven solo en un contador.
+
+    La minería es aparte: reporta en `motivo`, donde "no había nada que minar"
+    y "reventó" comparten campo. Solo el prefijo `error:` es un fallo; "sin
+    mensajes pendientes" y "sin OLLAMA_URL ni ANTHROPIC_API_KEY" son noches
+    normales, no incidentes.
+
+    Sabe lo que no ve, y son dos huecos deliberados:
+
+    - El fallo al aplicar los overrides del Estudio queda solo en el log
+      (arriba, `nightly`): su consecuencia es caer al `.env` —el comportamiento
+      anterior— y no una corrida incompleta.
+    - `sin_resolver` del barrido de huérfanos (`app/cobranza_jobs.py:225-231`)
+      **no** se cuenta, aunque a veces sí sea un fallo: esa rama mezcla la
+      excepción con el «todavía no empareja», que es una noche perfectamente
+      normal. Contarlo alarmaría cada madrugada, y un job que alarma siempre se
+      silencia y deja de avisar de nada. Si algún día ese barrido distingue las
+      dos causas, esto se vuelve una clave más aquí. `irresolubles` tampoco: es
+      estado terminal de negocio y ya tiene su alerta `critical` propia en
+      `app/cobranza_alertas.py`.
+    """
+    fallos = []
+    for clave, valor in resultado.items():
+        ruta = f"{_ruta}.{clave}" if _ruta else clave
+        if clave == "error":
+            fallos.append(_ruta or "job")
+        elif clave == _CONTADOR_DE_FALLOS and isinstance(valor, int) and valor > 0:
+            fallos.append(_ruta or "job")
+        elif isinstance(valor, dict):
+            fallos.extend(errores(valor, ruta))
+        elif clave == "motivo" and isinstance(valor, str) and valor.startswith("error:"):
+            fallos.append(_ruta or "mineria")
+    return sorted(set(fallos))
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print(nightly())
+    resultado = nightly()
+    print(resultado)
+    # El trabajo que sí se hizo ya quedó guardado; esto solo decide qué le
+    # dice el proceso al cron. Con exit 0 pase lo que pase, un barrido de
+    # cobranza caído —dinero— se veía igual que una noche sana.
+    fallos = errores(resultado)
+    if fallos:
+        logger.error("Job nocturno con %d fallo(s): %s", len(fallos), ", ".join(fallos))
+    sys.exit(1 if fallos else 0)

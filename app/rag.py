@@ -40,6 +40,7 @@ import httpx
 from app import nlu
 from app.catalog import catalog, requisitos_texto
 from app.config import settings
+from app.models import OFICINA_TLAXCALA_ID
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +141,18 @@ def es_pregunta_informativa(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _docs() -> list[str]:
+def _docs(office_id: int = OFICINA_TLAXCALA_ID) -> list[str]:
     """Un documento por servicio del catálogo + párrafos del doc curado.
+
+    ACOTADO POR OFICINA en el corpus curado (§6): «requisitos y precios varían
+    por estado; mezclarlos es exactamente la respuesta equivocada a un cliente
+    real». Es el único de los cuatro puntos de §6 que puede darle una respuesta
+    equivocada a alguien hoy, y por eso es el que se cierra aquí.
+
+    El CATÁLOGO sigue global a propósito, no por olvido: acotarlo es cambiar la
+    firma de sus 43 puntos de uso —un PR entero— y lo que aporta al corpus son
+    nombres de servicio y requisitos, o sea lo que el flujo determinista ya le
+    dice a cualquier cliente. Se acotará cuando se acote el catálogo mismo.
 
     FRONTERA DE PRIVACIDAD: esta función es el ÚNICO origen del contexto que
     ve el modelo. Solo lee el catálogo (información que el bot ya da a
@@ -167,6 +178,7 @@ def _docs() -> list[str]:
             filas = sesion.exec(
                 select(InfoDoc)
                 .where(InfoDoc.habilitado == True)  # noqa: E712
+                .where(InfoDoc.office_id == office_id)
                 .order_by(InfoDoc.position, InfoDoc.id)
             ).all()
         docs.extend(f.texto.strip() for f in filas if f.texto.strip())
@@ -183,15 +195,15 @@ def _docs() -> list[str]:
 
 
 class Retriever(Protocol):
-    def contexto(self, pregunta: str) -> str: ...
+    def contexto(self, pregunta: str, office_id: int = OFICINA_TLAXCALA_ID) -> str: ...
 
 
 class CorpusCompleto:
     """A este tamaño (~17k caracteres) recuperar es innecesario: viaja todo.
     Prefijo estable = caché de prompts amortiza el costo."""
 
-    def contexto(self, pregunta: str) -> str:
-        return "\n".join(_docs())
+    def contexto(self, pregunta: str, office_id: int = OFICINA_TLAXCALA_ID) -> str:
+        return "\n".join(_docs(office_id))
 
 
 class TopKLexical:
@@ -210,19 +222,19 @@ class TopKLexical:
 
     MAX_CHARS = 4000  # ≈1k tokens: prefill de segundos en la CPU de labs
 
-    def candidatos(self, pregunta: str) -> list[str]:
+    def candidatos(self, pregunta: str, office_id: int = OFICINA_TLAXCALA_ID) -> list[str]:
         """Documentos con traslape > 0, mejor primero. Sin tope de tamaño:
         el tope (top-k y caracteres) lo aplica quien arma el contexto."""
         terminos = _terminos(pregunta)
         puntuados = sorted(
-            ((len(terminos & _terminos(d)), d) for d in _docs()),
+            ((len(terminos & _terminos(d)), d) for d in _docs(office_id)),
             key=lambda par: par[0],
             reverse=True,
         )
         return [d for puntos, d in puntuados if puntos > 0]
 
-    def contexto(self, pregunta: str) -> str:
-        return _acotar(self.candidatos(pregunta))
+    def contexto(self, pregunta: str, office_id: int = OFICINA_TLAXCALA_ID) -> str:
+        return _acotar(self.candidatos(pregunta, office_id))
 
 
 def _acotar(docs: list[str]) -> str:
@@ -264,10 +276,15 @@ class TopKVectorial:
     def __init__(self) -> None:
         self._cache: dict[str, list[float]] = {}
 
-    def puntuados(self, pregunta: str) -> list[tuple[float, str]]:
+    def puntuados(self, pregunta: str,
+                  office_id: int = OFICINA_TLAXCALA_ID) -> list[tuple[float, str]]:
         """[(coseno, doc)] de todo el corpus, mejor primero. Embebe solo lo
-        que el caché no tiene, en UNA llamada batch."""
-        docs = _docs()
+        que el caché no tiene, en UNA llamada batch.
+
+        El caché es texto -> vector, NO una lista de documentos: dos oficinas
+        con el mismo párrafo comparten su embedding, que es correcto, y ninguna
+        ve el corpus de la otra porque `docs` se recalcula en cada llamada."""
+        docs = _docs(office_id)
         faltantes = [d for d in docs if d not in self._cache]
         if faltantes:
             vectores = _embed([_PREFIJO_DOC + d for d in faltantes])
@@ -280,12 +297,14 @@ class TopKVectorial:
             reverse=True,
         )
 
-    def relevantes(self, pregunta: str) -> list[str]:
+    def relevantes(self, pregunta: str,
+                   office_id: int = OFICINA_TLAXCALA_ID) -> list[str]:
         """Solo los documentos que superan el umbral semántico."""
-        return [d for c, d in self.puntuados(pregunta) if c >= settings.rag_min_coseno]
+        return [d for c, d in self.puntuados(pregunta, office_id)
+                if c >= settings.rag_min_coseno]
 
-    def contexto(self, pregunta: str) -> str:
-        return "\n".join(self.relevantes(pregunta)[: settings.rag_top_k])
+    def contexto(self, pregunta: str, office_id: int = OFICINA_TLAXCALA_ID) -> str:
+        return "\n".join(self.relevantes(pregunta, office_id)[: settings.rag_top_k])
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
@@ -334,22 +353,22 @@ class Hibrido:
         self._lexico = lexico
         self._vectorial = vectorial
 
-    def fusion(self, pregunta: str) -> list[str]:
+    def fusion(self, pregunta: str, office_id: int = OFICINA_TLAXCALA_ID) -> list[str]:
         try:
-            vectoriales = self._vectorial.relevantes(pregunta)
+            vectoriales = self._vectorial.relevantes(pregunta, office_id)
         except Exception as exc:
             logger.warning(
                 "Embeddings fallaron; este turno recupera solo el léxico: %s", exc
             )
-            return self._lexico.candidatos(pregunta)
+            return self._lexico.candidatos(pregunta, office_id)
         puntajes: dict[str, float] = {}
-        for lista in (self._lexico.candidatos(pregunta), vectoriales):
+        for lista in (self._lexico.candidatos(pregunta, office_id), vectoriales):
             for rango, doc in enumerate(lista):
                 puntajes[doc] = puntajes.get(doc, 0.0) + 1.0 / (self.RRF_K + rango + 1)
         return sorted(puntajes, key=lambda d: puntajes[d], reverse=True)
 
-    def contexto(self, pregunta: str) -> str:
-        return _acotar(self.fusion(pregunta))
+    def contexto(self, pregunta: str, office_id: int = OFICINA_TLAXCALA_ID) -> str:
+        return _acotar(self.fusion(pregunta, office_id))
 
 
 _retriever_vectorial = TopKVectorial()
@@ -371,7 +390,7 @@ def _retriever() -> Retriever:
     return CorpusCompleto()
 
 
-def explicar_retrieval(text: str) -> dict:
+def explicar_retrieval(text: str, office_id: int = OFICINA_TLAXCALA_ID) -> dict:
     """Desglose de la recuperación para el probador del Estudio: qué
     documentos viajarían y por qué vía (léxico, vectorial o ambas), con su
     coseno. Solo diagnóstico — el camino caliente no pasa por aquí — y nunca
@@ -382,9 +401,9 @@ def explicar_retrieval(text: str) -> dict:
     try:
         if isinstance(r, Hibrido):
             info["umbral"] = settings.rag_min_coseno
-            en_lexico = r._lexico.candidatos(pregunta)
+            en_lexico = r._lexico.candidatos(pregunta, office_id)
             try:
-                cosenos = {d: c for c, d in r._vectorial.puntuados(pregunta)}
+                cosenos = {d: c for c, d in r._vectorial.puntuados(pregunta, office_id)}
             except Exception as exc:  # labs caído: se explica el modo degradado
                 info["error"] = f"embeddings: {exc}"
                 info["docs"] = [
@@ -392,7 +411,7 @@ def explicar_retrieval(text: str) -> dict:
                     for d in en_lexico[: settings.rag_top_k]
                 ]
                 return info
-            for doc in r.fusion(pregunta)[: settings.rag_top_k]:
+            for doc in r.fusion(pregunta, office_id)[: settings.rag_top_k]:
                 vias = ["léxico"] if doc in en_lexico else []
                 if cosenos.get(doc, 0.0) >= settings.rag_min_coseno:
                     vias.append("vectorial")
@@ -404,13 +423,13 @@ def explicar_retrieval(text: str) -> dict:
             info["umbral"] = settings.rag_min_coseno
             info["docs"] = [
                 {"texto": d[:90], "vias": ["vectorial"], "coseno": round(c, 3)}
-                for c, d in r.puntuados(pregunta)[: settings.rag_top_k]
+                for c, d in r.puntuados(pregunta, office_id)[: settings.rag_top_k]
                 if c >= settings.rag_min_coseno
             ]
         elif isinstance(r, TopKLexical):
             info["docs"] = [
                 {"texto": d[:90], "vias": ["léxico"], "coseno": None}
-                for d in r.candidatos(pregunta)[: settings.rag_top_k]
+                for d in r.candidatos(pregunta, office_id)[: settings.rag_top_k]
             ]
         else:  # CorpusCompleto: no hay ranking que explicar
             info["docs"] = [
@@ -459,13 +478,14 @@ _FORMATO_RESPUESTA = {
 }
 
 
-def answer(text: str) -> str | None:
+def answer(text: str, office_id: int = OFICINA_TLAXCALA_ID) -> str | None:
     """Respuesta informativa validada, o None (= que siga el flujo normal)."""
-    respuesta, _ = answer_explained(text)
+    respuesta, _ = answer_explained(text, office_id)
     return respuesta
 
 
-def answer_explained(text: str) -> tuple[str | None, str | None]:
+def answer_explained(text: str,
+                     office_id: int = OFICINA_TLAXCALA_ID) -> tuple[str | None, str | None]:
     """(respuesta, motivo_descarte). El motivo solo viene cuando un guardrail
     tumbó una respuesta candidata (GUARDRAIL_MOTIVOS); apagado, sin respuesta
     del modelo o error de red es (None, None).
@@ -480,7 +500,7 @@ def answer_explained(text: str) -> tuple[str | None, str | None]:
         return None, None
     try:
         pregunta = text.strip()[:MAX_INPUT_CHARS]
-        corpus = _retriever().contexto(pregunta)
+        corpus = _retriever().contexto(pregunta, office_id)
         system = _SYSTEM_TEMPLATE.format(no_se=NO_SE, corpus=corpus)
         if settings.ollama_url:
             message = nlu.ollama_chat(

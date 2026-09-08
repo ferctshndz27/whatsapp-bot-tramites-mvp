@@ -18,6 +18,9 @@ authority anyway. That is the failure mode this role exists to make loud.
 - Adding, renaming, splitting or deleting a skill under `.claude/skills/`.
 - Editing the role-routing table in `AGENTS.md`, or deciding which skill owns a new domain.
 - Changing `.claude/settings.json` — the `allow`/`deny` policy the agent works under.
+- The same harness seen from the Google agents: the `GEMINI.md` cover, the skill symlinks under
+  `.agents/skills/` (with their `.gitignore` lines), and everything under `.gemini/` — the
+  `BeforeTool` guardrail hook and its Policy Engine twin.
 - `tests/test_harness.py` is red and you need to know whether the fix is the citation or the code.
 - Preparing a ship command for the operator, or changing what `scripts/ship.sh` is asked to do.
 - Someone asks "why didn't the agent load the right skill?".
@@ -41,12 +44,24 @@ authority anyway. That is the failure mode this role exists to make loud.
 
 ## Analysis checklist
 
-Adding a skill is **three places**, and the third is not optional:
+Adding a skill is **five places**, and none of the last three is optional:
 
 1. `.claude/skills/<name>/SKILL.md`, with frontmatter `name:` equal to the directory name.
 2. A row in the routing table of `AGENTS.md` — format `| what the task touches | \`skill-name\` |`.
-3. `.venv/bin/pytest tests/test_harness.py -q` green **in the same commit**. The table↔disk assert
+3. `ln -s ../../.claude/skills/<name> .agents/skills/<name>` — **relative**, so it survives a clone.
+   That directory, not `.gemini/skills/`, is what Antigravity and Gemini CLI both scan; a copy
+   instead of a link is a second source of truth and the test rejects both.
+4. `!.agents/skills/<name>` in `.gitignore`, or the link never enters the repo. The rest of
+   `.agents/` stays ignored on purpose: it is the operator's, and re-including the whole directory
+   would let a `git add .` swallow their own skills.
+5. `.venv/bin/pytest tests/test_harness.py -q` green **in the same commit**. The table↔disk assert
    is bidirectional, so a skill added without its row fails, and so does a row without its skill.
+
+Changing a guardrail is **three places in one commit**: the `deny` of `.claude/settings.json` (which
+only the operator can paste), `PREFIJOS_SHELL` / `LECTURA_PROHIBIDA` / `ESCRITURA_PROHIBIDA` in
+`.gemini/hooks/guardrails.py`, and `.gemini/policies/guardrails.toml`. The test asserts parity
+between the three; a rule that lives in only one is a guardrail that depends on which agent is
+sitting down.
 
 Before citing any repo path inside a SKILL.md, ask whether a fresh clone has it. `scripts/ship.sh`
 does not: it is the operator's local tool, excluded in `.git/info/exclude` and untracked. A citation
@@ -64,6 +79,22 @@ place to hide broken citations.
   is refused by the platform's classifier, by Bash and by the Write tool alike. This is correct and
   load-bearing: a policy the agent can rewrite is not a policy. Changes to it are prepared as a
   copy-paste block and applied by the operator, exactly like a deploy command.
+- **Under the Google agents that lock does not exist, so the test is the lock.** Neither has a
+  classifier stopping the agent from editing `.gemini/settings.json` or its own hook. What holds the
+  line is `tests/test_harness.py`: it demands parity with the `deny` Claude cannot touch, and runs
+  the hook as a process against real allowed and forbidden calls. Weakening that side means going
+  red in CI, which gates the bot's deploy.
+- **Antigravity enforces nothing from the repo, and the docs must say so.** Its permissions are
+  `permissionGrants` in the operator's home (`~/.gemini/config/projects/<uuid>.json`), unversionable
+  here. When the agent is `agy`, the written rules are the only guardrail. Do not paper over that
+  asymmetry — `AGENTS.md` states it plainly.
+- **Verify against the tool's binary, not its docs — and against the tool the operator actually
+  runs.** Two findings, both only visible in the code: `tools.exclude` reads like the obvious way to
+  deny `run_shell_command(git push)` and the docs suggest it, but in 0.58.0 that entry becomes a rule
+  whose `toolName` is compared by exact equality against `run_shell_command` — it never matches; and
+  Antigravity does not scan `.gemini/skills/` at all, so a whole mirror was built for a CLI that was
+  not installed. The probe: `npm i @google/gemini-cli` in a scratch dir and read the bundle;
+  `strings ~/.gemini/bin/agy` for Antigravity. `docs/HARNESS.md` records what was measured.
 - **`deny` binds the agent's own Bash tool, not the operator's terminal.** `scripts/ship.sh` runs
   `git push -u origin` and `gh pr create`; the operator runs it in their own shell, outside Claude
   Code, where these rules do not apply. What the rule blocks is the agent pushing on its own — the
@@ -133,6 +164,9 @@ place to hide broken citations.
 
 - [ ] Every skill on disk has a routing row in `AGENTS.md`, and every row points at a skill that
       exists — verified by the test, in the same commit.
+- [ ] Every skill also has its relative symlink in `.agents/skills/` **and** its `!` line in
+      `.gitignore`, and any guardrail change landed in all three copies (Claude's `deny`, the hook,
+      the TOML).
 - [ ] Frontmatter `name:` matches the directory name for every skill.
 - [ ] Every repo path cited in a new or edited skill resolves from a clean clone, or is a named,
       justified entry in `_LOCALES` / `_MARCADORES`.

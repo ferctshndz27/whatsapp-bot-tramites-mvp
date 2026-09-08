@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Cliente {{ client.name or client.phone }}{% endblock %}
 {% block content %}
+{# `is_admin` abre una sesión y consulta SQLite en cada llamada (app/auth.py), y
+   abajo se usa DENTRO del bucle de notas: una consulta por nota. Se resuelve una
+   sola vez aquí — el rol no cambia a media página. #}
+{% set es_admin = is_admin(user) %}
 {# `volver` trae el folio o el chat de origen; el texto dice a dónde regresa. #}
 {% set volver_texto = '← Volver a la solicitud' if volver.startswith('/tickets') else ('← Volver al chat' if volver.startswith('/inbox') else '← Volver a clientes') %}
 <p style="margin-top:0;"><a class="btn-nav" href="{{ volver or '/clients' }}">{{ volver_texto }}</a></p>
@@ -75,7 +79,7 @@
       {{ n.body }}<br>
       <span style="color:var(--text-muted); font-size:.78rem;">
         — {{ n.author }} · {{ n.created_at | local }}
-        {% if n.author == user or is_admin(user) %}
+        {% if n.author == user or es_admin %}
         · <form method="post" action="/clients/{{ client.phone }}/notes/{{ n.id }}/delete" style="display:inline;"
             onsubmit="return confirm('¿Ocultar esta nota?');">
             <button type="submit" style="background:none; border:none; padding:0; min-height:auto; color:inherit; text-decoration:underline; cursor:pointer; font-size:inherit;">eliminar</button>

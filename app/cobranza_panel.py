@@ -32,7 +32,7 @@ from sqlmodel import select
 
 from app import cobranza, cobranza_jobs, messaging, stripe_client, ventana
 from app.audit import log_admin
-from app.auth import is_admin
+from app.auth import alcance, is_admin
 from app.config import settings
 from app.credenciales import credencial
 from app.db import get_session
@@ -587,8 +587,12 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
     pagina = max(1, pagina)
     filtro = _filtro_modo(todos)
 
+    # La oficina se decide UNA vez, aquí, y se aplica a cada consulta: el
+    # helper resuelve QUIÉN es y qué alcanza (§5); acotar es de cada consulta,
+    # porque un filtro global también taparía al bot, al cron y al espejo.
+    vista = alcance(admin)
     with get_session() as session:
-        consulta = select(Cobro)
+        consulta = vista.filtrar(select(Cobro), Cobro.office_id)
         agregado = select(
             Cobro.estado,
             func.count().label("n"),
@@ -596,6 +600,7 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
             func.sum(func.coalesce(Cobro.monto_pagado_centavos, 0)).label("recibido"),
             func.sum(func.coalesce(Cobro.neto_centavos, 0)).label("neto"),
         )
+        agregado = vista.filtrar(agregado, Cobro.office_id)
         if filtro is not None:
             consulta = consulta.where(filtro)
             agregado = agregado.where(filtro)
@@ -687,10 +692,13 @@ def export_cobros(request: Request):
     if redirect:
         return redirect
 
+    vista = alcance(admin)
+
     def _filas():
         with get_session() as session:
             for c in session.exec(
-                select(Cobro).order_by(Cobro.created_at)  # type: ignore[arg-type]
+                vista.filtrar(select(Cobro), Cobro.office_id)
+                .order_by(Cobro.created_at)  # type: ignore[arg-type]
             ).yield_per(CSV_LOTE):
                 yield [
                     c.id, c.ticket_id or "", c.phone, c.client_name or "",
@@ -731,10 +739,12 @@ def export_conciliacion(request: Request):
     if redirect:
         return redirect
 
+    vista = alcance(admin)
+
     def _filas():
         with get_session() as session:
             consulta = (
-                select(Cobro)
+                vista.filtrar(select(Cobro), Cobro.office_id)
                 .where(
                     or_(
                         Cobro.estado.in_(("pagado", "reembolsado")),  # type: ignore[union-attr]
@@ -792,9 +802,10 @@ def vista_payouts(request: Request, dias: int = PAYOUTS_DIAS):
     dias = max(1, min(dias, 1095))
     corte = cobranza.naive_utc(utcnow() - timedelta(days=dias))
 
+    vista = alcance(admin)
     with get_session() as session:
         cobros = session.exec(
-            select(Cobro)
+            vista.filtrar(select(Cobro), Cobro.office_id)
             .where(Cobro.payout_id.is_not(None))  # type: ignore[union-attr]
             .where(Cobro.pagado_at >= corte)
             .order_by(Cobro.pagado_at)  # type: ignore[arg-type]

@@ -924,13 +924,26 @@ def test_los_dicts_de_migracion_no_declaran_columnas_fantasma():
 # 4. Base nueva vs. base migrada: no pueden divergir
 # ---------------------------------------------------------------------------
 
+# Excepción CONOCIDA y deliberada a la regla de convergencia de abajo: este repo
+# no tiene DROP COLUMN, solo ADD (ver docstring de _ESQUEMA_DESPLEGADO). Cuando
+# se retira un campo de app/models.py, una base NUEVA deja de crear esa columna,
+# pero la base YA desplegada en el VPS la conserva para siempre como huérfana
+# inofensiva (SQLAlchemy Core selecciona por columna declarada, nunca SELECT *).
+# `office.zona_horaria` fue el primer caso: se quitó del modelo porque nunca
+# alimentó templating.BUSINESS_TZ (spec §2.1). Si algún día se hace un DROP
+# COLUMN manual en el VPS, borra la entrada de aquí.
+_COLUMNAS_RETIRADAS_QUE_QUEDAN_HUERFANAS_EN_LA_BASE_MIGRADA = {
+    "office": {"zona_horaria"},
+}
+
 
 def test_la_base_migrada_y_una_base_nueva_terminan_con_las_mismas_columnas(
     bd_migrada, tmp_path, monkeypatch
 ):
     # REGLA: el VPS migra una base con años de datos; los entornos nuevos (y
     # estas pruebas) nacen de create_all(). Si los dos caminos no convergen al
-    # mismo esquema, aparece un bug que SOLO se ve en producción.
+    # mismo esquema (más allá de las excepciones ya conocidas de arriba), aparece
+    # un bug que SOLO se ve en producción.
     ruta_nueva = tmp_path / "nueva.db"
     engine_nuevo = _engine_de_archivo(ruta_nueva)
     monkeypatch.setattr(db, "engine", engine_nuevo)
@@ -938,7 +951,8 @@ def test_la_base_migrada_y_una_base_nueva_terminan_con_las_mismas_columnas(
 
     diferencias: dict[str, dict[str, list[str]]] = {}
     for tabla in _ESQUEMA_DESPLEGADO:
-        en_migrada = set(_columnas(bd_migrada, tabla))
+        huerfanas = _COLUMNAS_RETIRADAS_QUE_QUEDAN_HUERFANAS_EN_LA_BASE_MIGRADA.get(tabla, set())
+        en_migrada = set(_columnas(bd_migrada, tabla)) - huerfanas
         en_nueva = set(_columnas(engine_nuevo, tabla))
         if en_migrada != en_nueva:
             diferencias[tabla] = {

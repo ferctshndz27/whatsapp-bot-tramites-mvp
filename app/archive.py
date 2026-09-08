@@ -597,7 +597,7 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "phone": "NVARCHAR(20) NULL",
         "office_id": _OFFICE_ID_MSSQL,
     },
-    "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1"},
+    "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL},
     "tickets": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "agent_active": "BIT NOT NULL DEFAULT 1",
@@ -944,6 +944,7 @@ def archive_invitation(i) -> None:
         {
             "token": i.token,
             "phone": i.phone,
+            "office_id": i.office_id,
             "created_by": i.created_by,
             "created_at": _naive_utc(i.created_at),
             "used_at": _naive_utc(i.used_at) if i.used_at else None,
