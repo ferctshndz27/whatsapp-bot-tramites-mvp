@@ -1,18 +1,23 @@
-.env
+# Secretos y entornos locales (cubre .env, .env.bk, .env.local, .env.old, etc.)
+.env*
+!.env.example
+
+# Base de datos SQLite y memoria compartida (WAL/SHM)
 *.db
-# El WAL y el SHM llevan páginas de la base que todavía no se fusionaron:
-# datos de clientes reales. *.db NO los cubre y quedaban untracked en la
-# raíz, a un `git add -A` de distancia de una fuga.
 *.db-wal
 *.db-shm
+
+# Entorno virtual y caché de Python
 .venv/
 __pycache__/
+
+# Carpetas locales de datos y medios
 data/
 media/
 CLAUDE.md
 
-# Artefactos de /graphify: se regeneran, no se versionan.
+# Artefactos generados
 graphify-out/
-.env.old
-.env.old
-.env.old
+
+# Configuración y permisos locales del agente Claude
+.claude/settings.local.json
