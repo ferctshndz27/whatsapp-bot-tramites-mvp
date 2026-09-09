@@ -86,8 +86,14 @@ class Settings:
         # Topes del bucle agéntico. Los defaults son espejo de
         # agent_tools.MAX_TURNOS / MAX_RESPONSE_WORDS (un test lo verifica);
         # aquí viven para poder ajustarlos en caliente desde /agente.
-        self.agent_max_turnos = int(os.environ.get("AGENT_MAX_TURNOS", "3"))
-        self.agent_max_words = int(os.environ.get("AGENT_MAX_WORDS", "80"))
+        # Con barandal, y con las MISMAS cotas que el panel: /agente rechaza un
+        # valor fuera de rango (agent_settings.CONFIG_EDITABLE), pero el .env
+        # entraba sin que nadie lo mirara. Un cero de más —AGENT_MAX_TURNOS=30—
+        # dejaba el bucle agéntico haciendo treinta llamadas a Ollama por
+        # mensaje, y el panel seguía dibujando el deslizador en 1..5 como si
+        # nada. Un barandal que solo vive en la UI no es un barandal.
+        self.agent_max_turnos = max(1, min(5, int(os.environ.get("AGENT_MAX_TURNOS", "3"))))
+        self.agent_max_words = max(30, min(120, int(os.environ.get("AGENT_MAX_WORDS", "80"))))
         # Documento curado OPCIONAL con información pública del negocio
         # (horarios, tiempos de entrega, políticas). Regla dura: solo texto que
         # cualquier cliente puede saber — jamás datos de clientes ni internos.
@@ -123,7 +129,8 @@ class Settings:
         # capa. En CPU el costo está en releer el catálogo del prompt, no en
         # generar: con p90 medido de 6.0s, un tope de 6s cortaría la mitad de
         # las respuestas buenas.
-        self.ollama_timeout = float(os.environ.get("OLLAMA_TIMEOUT", "12"))
+        # Mismo criterio y misma cota que la perilla de /agente (1-60 s).
+        self.ollama_timeout = max(1.0, min(60.0, float(os.environ.get("OLLAMA_TIMEOUT", "12"))))
         # Umbral de la capa difusa (rapidfuzz) para aceptar un servicio con
         # faltas de ortografía. Barandal 70-95: bajarlo de más dispara falsos
         # positivos que cotizan el trámite equivocado a un cliente real.

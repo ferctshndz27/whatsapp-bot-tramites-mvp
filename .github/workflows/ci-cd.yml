@@ -26,8 +26,27 @@ jobs:
       - name: Ejecutar tests
         run: pytest -q
 
+  # CI instalaba requirements.txt y corría pytest, pero NUNCA construía la
+  # imagen: eso solo pasaba en el VPS, ya con `production` movido. Un commit que
+  # rompa el build —un COPY que falta, una dependencia que necesita compilador,
+  # una edición del Dockerfile— pasaba verde, `promote` avanzaba, y el cron
+  # entraba en un bucle que NO se cura solo: `up --build` falla, rollback
+  # devuelve HEAD al commit viejo, el siguiente tick ve LOCAL != REMOTE y
+  # reintenta... cada 2 minutos, indefinidamente, en una caja de 2 vCPU. Ese
+  # reintento es deliberado para un fallo transitorio (un MSSQL enfermo); para
+  # un build roto es una máquina quemándose.
+  # Se construye y se tira: sin buildx, sin registry, sin push.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir la imagen
+        run: docker build -t tramites-bot:ci .
+
   promote:
-    needs: test
+    # Los dos, y en paralelo: un build roto no debe llegar a `production` igual
+    # que no debe llegar un test rojo.
+    needs: [test, build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

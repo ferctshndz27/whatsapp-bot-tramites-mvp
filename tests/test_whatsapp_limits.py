@@ -627,3 +627,52 @@ def test_ver_mas_pasada_la_ultima_pagina_no_entrega_un_menu_vacio(db_session, ca
     )
     assert "No hay más opciones" in replies[-1] or hay_opciones
     assert json.loads(conv.context_json).get("page") != 2
+
+
+# ---------------------------------------------------------------------------
+# La FORMA de la respuesta de Meta también es parte del contrato
+# ---------------------------------------------------------------------------
+
+
+class _RespuestaFalsa:
+    def __init__(self, cuerpo, revienta_json=False):
+        self._cuerpo = cuerpo
+        self._revienta = revienta_json
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        if self._revienta:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+        return self._cuerpo
+
+
+@pytest.mark.parametrize(("nombre", "cuerpo", "esperado"), [
+    ("la forma normal", {"messages": [{"id": "wamid.OK"}]}, "wamid.OK"),
+    # Los cuatro que reventaban o podían reventar. `messages: []` era el caro:
+    # `["messages"][0]` lanzaba IndexError, que NO está en los except de _send
+    # —solo capturan errores de httpx— ni en el bucle de webhook.py que llama a
+    # _deliver. O sea: 500 al webhook de Meta, Meta reintentando el mensaje
+    # entrante, y el cliente recibiendo la conversación repetida.
+    ("200 con messages vacío", {"messaging_product": "whatsapp", "messages": []}, None),
+    ("200 sin la clave messages", {"messaging_product": "whatsapp"}, None),
+    ("messages en null", {"messages": None}, None),
+    ("un mensaje sin id", {"messages": [{}]}, None),
+    ("el cuerpo es una lista", [1, 2, 3], None),
+])
+def test_una_respuesta_con_forma_rara_no_tumba_el_envio(nombre, cuerpo, esperado):
+    """REGLA: el envío puede quedarse sin wamid; lo que no puede es reventar.
+
+    Un wamid None ya está previsto aguas arriba —`webhook._tag_sent_message`
+    solo corre `if wa_message_id`—, así que el mensaje sale igual y solo se
+    pierde la correlación con su acuse. Una excepción, en cambio, sube hasta el
+    webhook.
+    """
+    assert whatsapp_client._wamid(_RespuestaFalsa(cuerpo)) == esperado, nombre
+
+
+def test_un_cuerpo_que_no_es_json_tampoco_tumba_el_envio():
+    """Meta puede contestar 200 con HTML (una página de error de un proxy de por
+    medio). `.json()` lanza ValueError y hasta aquí llega."""
+    assert whatsapp_client._wamid(_RespuestaFalsa(None, revienta_json=True)) is None

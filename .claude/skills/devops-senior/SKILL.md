@@ -40,10 +40,15 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 5. Keep secrets out of the image and out of git; keep published ports on loopback only.
 
 ## Analysis checklist
-- **Did it really deploy?** `data/deploy-info` is written at `pull-deploy.sh:34` **before** the
-  build at line 35, and `rollback()` (lines 21-28) never rewrites it. After a failed deploy
-  `/system` (`app/system.py:159 _deploy_info()`) shows a SHA that never served a request. The
-  honest check is the container, not the file:
+- **Did it really deploy?** `data/deploy-info` is now written **after** the health check passes,
+  inside the success branch of `deploy()` — so the SHA in `/system` (`app/system.py`
+  `_deploy_info()`) is one that answered a request. It used to be written before the build, and
+  since `rollback()` never rewrites it, a failed deploy left `/system` announcing a commit that
+  never served anyone — sending whoever looked to debug the wrong code. Verified by running
+  `deploy()` against fake `docker`/`curl`: build-fails and health-never-answers both keep the
+  previous SHA.
+  Still true, and the reason to keep the habit: the file says what is *serving*, not what is
+  *running*. For "did this exact container restart", the container is the source:
   `docker inspect -f '{{.State.StartedAt}}' tramites-bot`.
 - **Did `promote` even run?** `ci-cd.yml:41` is `git push origin HEAD:production` with no
   `--force`. Any direct push to `production` makes promote fail permanently and the VPS keeps
@@ -137,7 +142,13 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 - Every new env var: present in `.env.example` with a Spanish comment saying what degrades
   without it, and read through `app/config.py` — never `os.environ` scattered in a router.
 - Every change to `pull-deploy.sh`: shellcheck-clean under `set -euo pipefail`, and the failure
-  path must still call `rollback`.
+  path must still call `rollback`. **shellcheck does not check that second half.** The script was
+  clean and still had the bug: `docker compose logs --tail 30 bot >&2` sat unguarded right before
+  `rollback`, so a non-zero exit there — a commit that renames the `bot` service, a docker daemon
+  that died during the build — killed the script under `set -e` and the rollback never ran, leaving
+  HEAD on the broken commit and the cron exiting 0 forever. Anything between the failure and
+  `rollback` needs `|| true`. `tests/test_deploy_rollback.py` runs the real script against a fake
+  git repo to keep it that way.
 - Every change to `docker-compose.yml` or `Dockerfile`: state which of the three persistence
   surfaces it touches (image layer / `./data` bind mount / `mssql_data` named volume).
 - `pytest -q` green locally before the operator pushes; CI runs only `pytest` (no linter).

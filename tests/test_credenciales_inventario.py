@@ -139,6 +139,22 @@ def test_config_no_tiene_credenciales_fuera_del_inventario():
         f"config.py cambió de forma y esta prueba dejó de mirar lo que dice mirar"
     )
 
+    # El regex de arriba reconoce UNA forma. `os.getenv(...)`, `os.environ[...]`
+    # y la comilla simple son la MISMA lectura escrita distinto, y con cualquiera
+    # de ellas una credencial nueva entraría al sistema sin pasar por el censo:
+    # la prueba seguiría verde mirando a otro lado. Es el modo de fallo que el
+    # piso de arriba cubre para el reformateo y este cubre para la variante.
+    # `os.getenv` es además la forma que sale sola al escribir Python, así que no
+    # es un caso rebuscado.
+    otras_formas = re.findall(
+        r"os\.getenv\(|os\.environ\[|environ\.get\(\s*'", CONFIG_PY
+    )
+    assert otras_formas == [], (
+        f"config.py lee el entorno de {len(otras_formas)} forma(s) que el censo no reconoce "
+        f"({sorted(set(otras_formas))}). Usa os.environ.get(\"CLAVE\", ...) con comilla doble, "
+        "o esa credencial entra sin que nadie la audite."
+    )
+
     huerfanas = encontradas - set(CREDENCIALES) - NO_SON_CREDENCIALES
 
     assert huerfanas == set(), (

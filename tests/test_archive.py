@@ -707,3 +707,42 @@ def test_el_backfill_dice_en_que_etapa_se_cortó(mirror, monkeypatch, caplog):
     assert "cobranza" in caplog.text, (
         f"el log no dice en qué etapa se cortó: {caplog.text[-300:]}"
     )
+
+
+def test_el_espejo_falso_no_inventa_tablas_que_el_real_no_tiene():
+    """Candado del doble: toda tabla de ARCHIVE_DDL existe en el DDL de verdad.
+
+    El fake es MÍNIMO a propósito —`nlu_events` declara dos columnas contra las
+    ocho reales— y eso no es deuda: si `archive_*()` escribiera una columna que
+    el fake no tiene, el INSERT revienta y la prueba se pone roja, que es la
+    protección que se quiere. Lo que un fake mínimo NO puede detectar es un
+    nombre que dejó de existir: si mañana se renombra una tabla en
+    `_SCHEMA_DDL` y aquí se queda la vieja, estas pruebas siguen verdes
+    escribiendo en una tabla que en producción ya no está — verdes en vacío,
+    que es la falla que tests/test_mirror_consistency.py existe para evitar en
+    el otro extremo.
+
+    Solo se comparan NOMBRES: exigir columna por columna obligaría a mantener a
+    mano las 32 tablas completas y el doble dejaría de ser un doble.
+    """
+    import re
+
+    def nombres(bloques):
+        return {
+            m.group(1)
+            for b in bloques
+            if (m := re.search(r"CREATE TABLE\s+(?:dbo\.)?(\w+)", b))
+        }
+
+    del_fake = nombres(ARCHIVE_DDL)
+    del_real = nombres(archive._SCHEMA_DDL)
+
+    assert del_fake, "el detector no encontró tablas en el doble: candado ciego"
+    assert del_real, "el detector no encontró tablas en _SCHEMA_DDL: candado ciego"
+
+    fantasmas = sorted(del_fake - del_real)
+    assert fantasmas == [], (
+        f"el doble crea tablas que el espejo real no tiene: {fantasmas}. "
+        "Si se renombró una tabla en _SCHEMA_DDL, hay que renombrarla aquí; si no, "
+        "estas pruebas escriben en una tabla que en producción no existe."
+    )

@@ -143,6 +143,12 @@ pytest tests/test_observability.py::test_fuzzy_threshold_clamped_to_safe_range -
   degrades silently by design (`_safe()` wrapper).
 - There is no configured linter/formatter in-repo; global rules prefer black/isort/ruff but CI only
   runs `pytest`.
+- **`pip install -r requirements.txt` targets Python 3.12** (`Dockerfile:1`, `ci-cd.yml:22`) — the
+  pins are correct *there*. On an interpreter this repo is not deployed on, running it can leave
+  the venv unusable: `sqlmodel==0.0.22` does not import on 3.14, and `pymssql` has no wheel for it,
+  so the whole install aborts. If the local venv already works, do not "fix" it by reinstalling
+  from the file. CI and the image are the ones that must agree with the pins; the dev venv only has
+  to run `pytest`.
 
 ## Deploy (pull-based — no server credentials in GitHub)
 

@@ -26,6 +26,39 @@ BUTTON_TITLE_MAX = 20
 CAPTION_MAX = 1024
 
 
+def _wamid(response) -> str | None:
+    """El id del mensaje que devolvió Meta, o None si la respuesta no lo trae.
+
+    Meta contesta `{"messages": [{"id": "wamid..."}]}` y el camino feliz es ese.
+    Lo que no puede pasar es que una respuesta con OTRA forma —200 con
+    `{"messages": []}`, o un cuerpo de error que no levantó `raise_for_status`—
+    tumbe el envío: la extracción directa `["messages"][0]` lanza IndexError,
+    que NO está en los `except` de abajo (solo capturan errores de httpx) y
+    subiría hasta el bucle de `webhook.py`, que tampoco lo atrapa. El resultado
+    sería un 500 al webhook, Meta reintentando el mensaje entrante y el cliente
+    recibiendo la conversación otra vez.
+
+    Un wamid None ya es un caso previsto aguas arriba: `_tag_sent_message` solo
+    corre `if wa_message_id`, así que el mensaje sale y simplemente no se puede
+    correlacionar con su acuse.
+    """
+    try:
+        cuerpo = response.json()
+    except ValueError:  # cuerpo que no es JSON
+        return None
+    # `isinstance` y no `cuerpo.get(...)` directo: un 200 cuyo cuerpo sea una
+    # lista daría AttributeError, y el punto de esta función es que NINGUNA
+    # forma inesperada llegue a propagar.
+    if not isinstance(cuerpo, dict):
+        logger.warning("Meta respondió 200 con un cuerpo que no es objeto JSON")
+        return None
+    mensajes = cuerpo.get("messages") or []
+    if not isinstance(mensajes, list) or not mensajes or not isinstance(mensajes[0], dict):
+        logger.warning("Meta respondió 200 sin wamid; el mensaje salió sin acuse correlacionable")
+        return None
+    return mensajes[0].get("id")
+
+
 def _send(to_phone: str, payload: dict) -> str | None:
     """POST a /messages con reintentos y backoff. Devuelve el wamid o None.
 
@@ -56,7 +89,7 @@ def _send(to_phone: str, payload: dict) -> str | None:
             response = httpx.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
             response.raise_for_status()
             logger.info("WhatsApp enviado a %s (intento %s)", mask_phone(to_phone), attempt)
-            return response.json().get("messages", [{}])[0].get("id")
+            return _wamid(response)
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             if status not in RETRYABLE_STATUS or attempt == MAX_RETRIES:
@@ -196,7 +229,7 @@ def send_media(
         )
         response.raise_for_status()
         logger.info("Media %s enviado a %s", kind, mask_phone(to_phone))
-        return response.json().get("messages", [{}])[0].get("id")
+        return _wamid(response)
     except (httpx.HTTPError, OSError, KeyError) as exc:
         logger.error("Fallo al enviar media a %s: %s", mask_phone(to_phone), exc)
         return None

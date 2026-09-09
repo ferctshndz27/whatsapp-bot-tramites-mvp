@@ -153,3 +153,53 @@ def test_unmatched_view_redirects_non_admin(monkeypatch, session):
     response = miner.unmatched_view(_request("colab"))
 
     assert response.headers["location"] == "/"
+
+
+def test_una_alerta_que_escala_actualiza_su_severidad_y_su_cifra(monkeypatch, session):
+    """REGLA: reusar la fila no es lo mismo que refrescarla.
+
+    `test_second_run_does_not_duplicate` ya prueba que no nace una segunda fila,
+    pero cuenta filas — no mira el CONTENIDO. Con eso, vaciar la rama de upsert
+    de `alerts.py` (dejar solo `updated += 1`, sin asignar campos) deja la suite
+    ENTERA en verde: comprobado.
+
+    Lo que se perdería sin esta prueba: el disco baja de 14% a 3%, la alerta
+    sigue diciendo «14%» y en nivel `warning`, y como `health_level` lee
+    `a.level` de la fila vieja el banner del panel se queda naranja —«conviene
+    liberar espacio pronto»— mientras el bot está por no poder guardar mensajes.
+    El mismo mecanismo aplica a las alertas de cobranza: una disputa que pasa a
+    perdida se quedaría en `warning`.
+    """
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    monkeypatch.setattr(system, "_backup_info",
+                        lambda: {"exists": True, "age_hours": 1.0, "stale": False})
+
+    monkeypatch.setattr(system, "_disk_free",
+                        lambda: {"free_pct": 14, "free_gb": 20.0, "low": True})
+    alerts.evaluate_alerts()
+
+    session.expire_all()
+    primera = session.exec(select(Alert).where(Alert.code == "disco_bajo")).one()
+    nivel_inicial, cifra_inicial = primera.level, primera.metric_value
+
+    # El disco empeora: misma alerta, otra severidad y otra cifra.
+    monkeypatch.setattr(system, "_disk_free",
+                        lambda: {"free_pct": 3, "free_gb": 0.6, "low": True})
+    resultado = alerts.evaluate_alerts()
+
+    session.expire_all()
+    filas = session.exec(select(Alert).where(Alert.code == "disco_bajo")).all()
+    assert len(filas) == 1, "debía reusar la fila, no abrir otra"
+    assert resultado["actualizadas"] == 1
+
+    fila = filas[0]
+    assert fila.metric_value != cifra_inicial, (
+        f"la alerta sigue reportando {fila.metric_value}: la fila se reusó sin refrescarse"
+    )
+    assert fila.metric_value == 3.0
+    assert fila.level != nivel_inicial or fila.level == "critical", (
+        f"la severidad se quedó en {fila.level} con el disco al 3%"
+    )
+    assert "3" in fila.detail or "3" in fila.title, (
+        f"el texto que ve el operador no menciona la cifra nueva: {fila.title!r} / {fila.detail!r}"
+    )

@@ -29,9 +29,7 @@ rollback() {
 
 deploy() {
   git reset --hard "origin/$BRANCH"
-  # Versión desplegada visible en el panel /system (data/ está montado en /data)
   mkdir -p data
-  echo "$REMOTE $(date -Is)" > data/deploy-info
   if ! docker compose up -d --build; then
     # Con `depends_on: service_healthy`, un MSSQL enfermo aborta el up y
     # DESTRUYE el contenedor viejo del bot antes de crear el nuevo.
@@ -47,6 +45,15 @@ deploy() {
 
   for _ in $(seq 1 12); do
     if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+      # Versión desplegada visible en /system (data/ está montado en /data). Se
+      # escribe AQUÍ y no antes del build: hasta este punto nada garantizaba que
+      # el commit llegara a servir una petición, y como rollback() no reescribe
+      # el archivo, un deploy fallido dejaba a /system anunciando un SHA que
+      # nunca atendió a nadie —y a quien lo mirara, buscando el bug en el código
+      # equivocado—. Escrito después del health check, el archivo dice lo que
+      # está corriendo: durante el arranque muestra el commit anterior, que es
+      # justamente el que sigue sirviendo.
+      echo "$REMOTE $(date -Is)" > data/deploy-info
       echo "$(date -Is) deploy OK: $REMOTE"
       return 0
     fi
@@ -54,7 +61,19 @@ deploy() {
   done
 
   echo "$(date -Is) ERROR: health check falló tras desplegar $REMOTE" >&2
-  docker compose logs --tail 30 bot >&2
+  # `|| true` NO es cosmético: bajo `set -e`, un `docker compose logs` que
+  # devuelva != 0 mata el script AQUÍ y `rollback` nunca corre. Y falla más de lo
+  # que parece — basta que el commit malo renombre el servicio `bot` en
+  # docker-compose.yml ("no such service: bot"), o que el demonio de docker haya
+  # muerto en esa ventana, que en un VPS de 2 vCPU con MSSQL y un `--build`
+  # encima es justo el estado donde más falta hace el rollback.
+  # Sin esto, HEAD se queda en el commit malo, el siguiente tick del cron ve
+  # LOCAL == REMOTE, sale 0 para siempre, y el bot queda CAÍDO sin una sola
+  # alerta hasta que un humano entre por SSH: exactamente la caída permanente
+  # que rollback() fue escrito para evitar (ver su comentario arriba).
+  # Los logs se vuelcan ANTES del rollback a propósito: rollback recrea los
+  # contenedores y se llevaría la evidencia.
+  docker compose logs --tail 30 bot >&2 || true
   rollback
   return 1
 }
