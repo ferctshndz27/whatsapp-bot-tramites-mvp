@@ -1,0 +1,128 @@
+{# Tarjetas de cartera + tabla + paginación de cobros.
+
+   Lo comparten /cobros (toda la oficina) y /my/cobros (la cartera del asesor):
+   son la misma tabla mirada con distinto filtro, y duplicarla era garantizar
+   que un día el asesor y su jefa leyeran columnas distintas del mismo cobro.
+
+   Espera del contexto: totales, en_la_calle, recuperado, cobros, pagina,
+   hay_mas, total_n, todos, volver_actual, y `ruta` — el path al que apuntan los
+   enlaces de paginación, que es lo único que cambia entre las dos vistas. #}
+
+{% if totales %}
+<div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+  <div class="card" style="min-width:190px; margin:0; border-left:4px solid #be1e51;">
+    <div style="color:var(--text-muted); font-size:.82rem;">En la calle</div>
+    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(en_la_calle) }}</div>
+    <div style="color:var(--text-muted); font-size:.82rem;">falta por cobrar</div>
+  </div>
+  <div class="card" style="min-width:190px; margin:0; border-left:4px solid #1e7d52;">
+    <div style="color:var(--text-muted); font-size:.82rem;">Recuperado</div>
+    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(recuperado) }}</div>
+    <div style="color:var(--text-muted); font-size:.82rem;">ya entró</div>
+  </div>
+  {# Ese cobro sigue `pendiente` a propósito: el estado «pagado» es exclusivo de
+     Stripe. Pero el asesor ya vio el recibo, y sin decírselo la cifra de arriba
+     le reclama dinero que él sabe que llegó. Se muestra, no se descuenta. #}
+  {% if confirmado_sin_stripe %}
+  <div class="card" style="min-width:190px; margin:0; border-left:4px solid #b8860b;">
+    <div style="color:var(--text-muted); font-size:.82rem;">Confirmado sin Stripe</div>
+    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(confirmado_sin_stripe) }}</div>
+    <div style="color:var(--text-muted); font-size:.82rem;">incluido en «en la calle»</div>
+  </div>
+  {% endif %}
+</div>
+<div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+  {% for estado, t in totales.items() %}
+  <div class="card" style="min-width:170px; margin:0;">
+    <div style="color:var(--text-muted); font-size:.82rem;">{{ estado|replace('_', ' ')|capitalize }}</div>
+    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(t.centavos) }}</div>
+    <div style="color:var(--text-muted); font-size:.82rem;">
+      {{ t.n }} cobro{{ '' if t.n == 1 else 's' }}
+      {# Lo pedido y lo recibido son numeros distintos: un SPEI parcial deja
+         el cobro pendiente con dinero ya adentro, y sumarlos como uno solo
+         hacia que la cartera por cobrar se viera casi en cero. #}
+      {% if t.recibido and t.recibido != t.centavos %}
+      · recibido {{ formato_monto(t.recibido) }}
+      {% endif %}
+      {% if t.neto %}· neto {{ formato_monto(t.neto) }}{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if cobros %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>Folio</th><th>Cliente</th><th>Concepto</th>
+        <th>Monto</th><th>Estado</th><th>Método</th><th>Neto</th><th>Creado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in cobros %}
+      <tr {% if c.ticket_id %}data-href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}"{% endif %}>
+        <td>{{ c.id }}</td>
+        <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
+        <td>{{ c.client_name or c.phone }}</td>
+        <td>{{ c.concepto }}</td>
+        <td>
+          {{ formato_monto(c.monto_centavos, c.moneda) }}
+          {% if c.monto_pagado_centavos and c.monto_pagado_centavos != c.monto_centavos %}
+          <br><small style="color:#be1e51;">cobrado {{ formato_monto(c.monto_pagado_centavos, c.moneda_pagada or c.moneda) }}</small>
+          {% endif %}
+        </td>
+        <td>
+          {% if c.estado == 'pagado' %}<span class="badge cerrado">✓ Pagado</span>
+          {% elif c.estado == 'pendiente' %}<span class="badge tomado">⏳ Pendiente</span>
+          {% elif c.estado == 'cancelacion_solicitada' %}<span class="badge nuevo">⚠ Cancelación sin confirmar</span>
+          {% elif c.estado == 'reembolsado' %}<span class="badge asignada">↩ Reembolsado</span>
+          {% elif c.estado == 'borrador' %}<span class="badge asignada">✎ Borrador</span>
+          {% else %}<span class="badge caducada">✕ {{ c.estado|capitalize }}</span>{% endif %}
+          {% if c.confirmado_por_asesor and c.estado != 'pagado' %}
+          <br><small>confirmado por {{ c.confirmado_por }}, sin Stripe</small>
+          {% endif %}
+          {% if c.discrepancia %}<br><small style="color:#be1e51;">⚠ discrepancia</small>{% endif %}
+          {% if c.disputado %}<br><small style="color:#be1e51;">⚠ en disputa</small>{% endif %}
+        </td>
+        <td>
+          {{ c.metodo_usado or (c.metodos_ofrecidos|replace(',', ', ')) }}
+          {% if c.msi_meses_usado %}<br><small>{{ c.msi_meses_usado }} MSI</small>{% endif %}
+        </td>
+        <td>
+          {% if c.neto_centavos is not none %}{{ formato_monto(c.neto_centavos, c.moneda_liquidacion or c.moneda) }}
+          {% elif c.estado == 'pagado' %}<small style="color:var(--text-muted);">por conciliar</small>
+          {% else %}—{% endif %}
+        </td>
+        <td><small>{{ c.created_at|local }}<br>por {{ c.creado_por }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<nav aria-label="Paginación de cobros"
+     style="display:flex; gap:1rem; align-items:center; margin-top:1rem;">
+  {% if pagina > 1 %}
+  <a href="{{ ruta }}?pagina={{ pagina - 1 }}{% if todos %}&todos=1{% endif %}"
+     rel="prev">&larr; Anteriores</a>
+  {% endif %}
+  <span style="color:var(--text-muted); font-size:.9rem;">
+    Página {{ pagina }} · {{ total_n }} cobro{{ '' if total_n == 1 else 's' }} en total
+  </span>
+  {% if hay_mas %}
+  <a href="{{ ruta }}?pagina={{ pagina + 1 }}{% if todos %}&todos=1{% endif %}"
+     rel="next">Siguientes &rarr;</a>
+  {% endif %}
+</nav>
+{% else %}
+<p style="color:var(--text-muted);">
+  {% if pagina > 1 %}
+  No hay más cobros en esta página.
+  <a href="{{ ruta }}{% if todos %}?todos=1{% endif %}">Volver al inicio</a>
+  {% else %}
+  {{ vacio }}
+  {% endif %}
+</p>
+{% endif %}

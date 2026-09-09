@@ -31,6 +31,16 @@
     <div class="label">Mis solicitudes activas</div>
     <div class="value">{{ tickets | length }}</div>
   </div>
+  {# Es un <a> y no un <div> a propósito: la cartera solo cambia el día de
+     alguien si se llega a ella desde la pantalla que ya abre todas las
+     mañanas. `.stats` es grid, así que el ancla se comporta como bloque sola.
+     El importe baja a 1.25rem porque «$1,250.50 MXN» a 2rem no cabe en 190px. #}
+  <a class="stat-card {{ 'orange' if cobros_vivos else 'green' }}" href="/my/cobros"
+     style="text-decoration:none;">
+    <div class="label">Mi cartera por cobrar</div>
+    <div class="value" style="font-size:1.25rem;">{{ formato_monto(cobros_en_la_calle) }}</div>
+    <div class="label">{{ cobros_vivos }} cobro{{ '' if cobros_vivos == 1 else 's' }} vivo{{ '' if cobros_vivos == 1 else 's' }}</div>
+  </a>
 </div>
 
 {% if waiting %}

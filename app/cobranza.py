@@ -14,6 +14,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.auth import is_admin
@@ -26,6 +27,7 @@ from app.models import (
     EventoPasarela,
     IntentoCobro,
     OFICINA_TLAXCALA_ID,
+    Ticket,
     TicketActivity,
     utcnow,
 )
@@ -155,6 +157,35 @@ def puede_cobrar(user: str | None, ticket, cobro) -> bool:
     if cobro is not None and cobro.creado_por == user:
         return True
     return is_admin(user)
+
+
+def mios(consulta, user: str):
+    """La misma pregunta que `puede_cobrar`, pero en SQL: los cobros de ESTE
+    colaborador. Vive aquí y no en el panel para que la respuesta sea una sola
+    — un día que `puede_cobrar` cambie de criterio, la lista tiene que moverse
+    con él o el asesor vería un cobro que no puede tocar (o al revés).
+
+    Tres diferencias con `puede_cobrar`, las tres a propósito:
+
+    - **No incluye la rama de admin.** Esto arma una CARTERA PERSONAL, no un
+      permiso: un admin que abre su propia lista quiere ver lo suyo, no las
+      18,000 filas que ya le pinta /cobros.
+    - **No acota por oficina, y no puede.** Ese es el helper de `app/auth.py`,
+      que necesita la sesión del usuario; este módulo también corre para el
+      bot, el cron y el espejo, que no tienen ninguna (lo vigila
+      tests/test_alcance_oficina.py, y por eso aquí no se nombra la función).
+      El que llama compone las dos: primero acota, luego pide lo suyo.
+    - **El JOIN es OUTER.** `Cobro.ticket_id` es nullable y el cobro sobrevive
+      al folio: con un INNER, los vouchers de OXXO —justo los que más urge
+      cobrar— desaparecerían de la lista del asesor que los generó.
+
+    Se recibe la consulta entera en vez de devolver la cláusula suelta porque
+    la cláusula sin su `outerjoin` es un error silencioso: SQLAlchemy arma un
+    producto cartesiano con Ticket y la lista sale inflada, no vacía.
+    """
+    return consulta.outerjoin(Ticket, Cobro.ticket_id == Ticket.id).where(
+        or_(Ticket.assigned_to == user, Cobro.creado_por == user)
+    )
 
 
 def alerta(session: Session, code: str, title: str, detail: str,

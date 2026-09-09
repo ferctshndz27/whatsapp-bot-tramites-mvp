@@ -14,6 +14,7 @@ from fastapi.responses import RedirectResponse
 from app.templating import templates
 from sqlmodel import select
 
+from app import cobranza_panel
 from app.auth import is_admin
 from app.db import get_session
 from app.inbox import build_conversation_items
@@ -70,6 +71,9 @@ def my_day(request: Request):
         ).all()
         me = session.exec(select(User).where(User.username == user)).first()
 
+    # Fuera del `with`: abre su propia sesión y no tiene por qué alargar esta.
+    cobros_vivos, cobros_en_la_calle = cobranza_panel.cartera_de(user)
+
     naive_now = now.replace(tzinfo=None)
     return templates.TemplateResponse(
         "my.html",
@@ -83,6 +87,8 @@ def my_day(request: Request):
             "upcoming": [f for f in followups if f.due_at > naive_now][:10],
             "estado": me.estado if me else "disponible",
             "estados": ESTADOS,
+            "cobros_vivos": cobros_vivos,
+            "cobros_en_la_calle": cobros_en_la_calle,
         },
     )
 

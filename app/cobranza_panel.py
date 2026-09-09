@@ -577,6 +577,94 @@ def _filtro_modo(todos: int):
     return or_(Cobro.livemode.is_(None), Cobro.livemode == real)  # type: ignore[union-attr]
 
 
+def _agregado(*extra):
+    """El SELECT de totales por (estado, confirmado). `extra` antepone columnas
+    para abrir otra dimensión —hoy el asesor— sin duplicar las cuatro sumas,
+    que duplicadas es exactamente como los números de dos vistas empiezan a no
+    cuadrar entre sí.
+
+    `confirmado_por_asesor` entra al GROUP BY, y no es adorno: ese cobro sigue
+    `pendiente` a propósito (el rango 4 es exclusivo de Stripe), así que sin
+    separarlo la cartera le sigue reclamando al asesor dinero que él ya vio
+    entrar por otra vía. Nadie usa dos días una lista que le miente.
+    """
+    return select(
+        *extra,
+        Cobro.estado,
+        Cobro.confirmado_por_asesor,
+        func.count().label("n"),
+        func.sum(Cobro.monto_centavos).label("pedido"),
+        func.sum(func.coalesce(Cobro.monto_pagado_centavos, 0)).label("recibido"),
+        func.sum(func.coalesce(Cobro.neto_centavos, 0)).label("neto"),
+    )
+
+
+def _por_estado(filas_asesor):
+    """Pliega las filas (asesor, estado, confirmado) quitándole el asesor.
+
+    Con esto el total global sale de las MISMAS filas que el corte por asesor
+    en vez de una segunda consulta, y el «En la calle» de arriba es la suma de
+    la columna de abajo *por construcción*, no porque dos SELECT parecidos
+    coincidan. De paso /cobros hace un agregado menos.
+
+    Se ordena por el rango de la máquina de estados —el orden en que un cobro
+    los recorre— y no por el que devuelva SQLite, que no promete ninguno.
+    """
+    acumulado: dict[tuple, list] = {}
+    for _asesor, estado, confirmado, n, pedido, recibido, neto in filas_asesor:
+        fila = acumulado.setdefault((estado, confirmado),
+                                    [estado, confirmado, 0, 0, 0, 0])
+        fila[2] += n
+        fila[3] += int(pedido or 0)
+        fila[4] += int(recibido or 0)
+        fila[5] += int(neto or 0)
+    return [acumulado[k] for k in sorted(
+        acumulado, key=lambda k: (cobranza.RANGO.get(k[0], 99), k[0], bool(k[1]))
+    )]
+
+
+def _resumen(filas):
+    """Los agregados por estado y los números que resumen una cartera.
+
+    Es UNA función y no dos copias porque `en_la_calle` es el número que el
+    admin compara contra la suma de sus asesores: si cada vista lo calculara
+    por su cuenta, la primera vez que discrepen nadie sabría cuál miente.
+
+    Se ACUMULA en `totales[estado]` en vez de asignar: llegan hasta dos filas
+    por estado (confirmado y no), y asignar se comía la primera en silencio.
+    """
+    totales: dict[str, dict[str, int]] = {}
+    total_n = en_la_calle = recuperado = confirmado_sin_stripe = 0
+    for estado, confirmado, n, pedido, recibido, neto in filas:
+        pedido, recibido, neto = int(pedido or 0), int(recibido or 0), int(neto or 0)
+        total_n += n
+        # PEDIDO y RECIBIDO son cosas distintas y el diseño (§6) prohíbe
+        # confundirlas: un SPEI parcial escribe monto_pagado dejando el estado
+        # en pendiente, así que usar el pagado para los estados vivos hacía que
+        # la cartera por cobrar se desplomara justo mientras crecía.
+        cobrado = estado in ("pagado", "reembolsado")
+        acumula = totales.setdefault(estado, {"n": 0, "centavos": 0, "pedido": 0,
+                                              "recibido": 0, "neto": 0,
+                                              "confirmado": 0})
+        acumula["n"] += n
+        acumula["centavos"] += recibido if cobrado else pedido
+        acumula["pedido"] += pedido
+        acumula["recibido"] += recibido
+        acumula["neto"] += neto
+        if estado in cobranza.ESTADOS_VIVOS:
+            falta = pedido - recibido
+            en_la_calle += falta
+            if confirmado:
+                # NO se descuenta de en_la_calle: hasta que Stripe lo diga, el
+                # dinero sigue sin comprobarse. Se reporta aparte para que el
+                # asesor sepa cuánto de su cifra ya está en trámite de cerrar.
+                confirmado_sin_stripe += falta
+                acumula["confirmado"] += falta
+        elif estado == "pagado":
+            recuperado += recibido
+    return totales, total_n, en_la_calle, recuperado, confirmado_sin_stripe
+
+
 @router.get("/cobros")
 def listado_cobros(request: Request, tareas: BackgroundTasks,
                    todos: int = 0, pagina: int = 1):
@@ -593,17 +681,17 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
     vista = alcance(admin)
     with get_session() as session:
         consulta = vista.filtrar(select(Cobro), Cobro.office_id)
-        agregado = select(
-            Cobro.estado,
-            func.count().label("n"),
-            func.sum(Cobro.monto_centavos).label("pedido"),
-            func.sum(func.coalesce(Cobro.monto_pagado_centavos, 0)).label("recibido"),
-            func.sum(func.coalesce(Cobro.neto_centavos, 0)).label("neto"),
-        )
-        agregado = vista.filtrar(agregado, Cobro.office_id)
+        # Un solo agregado, abierto por (asesor, estado, confirmado). Por
+        # asesor se agrupa por
+        # `creado_por` y NO por `assigned_to`, que es la columna que la cartera
+        # personal también mira: `assigned_to` se suelta (queda NULL) y se
+        # reasigna, así que un corte por él pierde filas y le cambia el pasado
+        # a un mes ya cerrado. `creado_por` es permanente y NOT NULL — cada
+        # cobro cae en exactamente un asesor y la suma cuadra.
+        por_asesor = vista.filtrar(_agregado(Cobro.creado_por), Cobro.office_id)
         if filtro is not None:
             consulta = consulta.where(filtro)
-            agregado = agregado.where(filtro)
+            por_asesor = por_asesor.where(filtro)
 
         cobros = list(session.exec(
             consulta.order_by(Cobro.created_at.desc())  # type: ignore[union-attr]
@@ -612,26 +700,29 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
         ).all())
         # Los totales se agregan en SQL y sobre TODA la cartera, no sobre la
         # página: sumar en Python obligaba a traer las 18,000 filas al heap.
-        filas = session.exec(agregado.group_by(Cobro.estado)).all()  # type: ignore[arg-type]
+        # (asesor, estado, confirmado) son n_asesores × 16 filas como mucho,
+        # no 18,000 — y de ahí se pliega el total global sin otra consulta.
+        filas_asesor = session.exec(
+            por_asesor.group_by(  # type: ignore[arg-type]
+                Cobro.creado_por, Cobro.estado, Cobro.confirmado_por_asesor
+            )
+        ).all()
 
-    totales: dict[str, dict[str, int]] = {}
-    total_n = en_la_calle = recuperado = 0
-    for estado, n, pedido, recibido, neto in filas:
-        pedido, recibido, neto = int(pedido or 0), int(recibido or 0), int(neto or 0)
-        total_n += n
-        # PEDIDO y RECIBIDO son cosas distintas y el diseño (§6) prohíbe
-        # confundirlas: un SPEI parcial escribe monto_pagado dejando el estado
-        # en pendiente, así que usar el pagado para los estados vivos hacía que
-        # la cartera por cobrar se desplomara justo mientras crecía.
-        cobrado = estado in ("pagado", "reembolsado")
-        totales[estado] = {
-            "n": n, "centavos": recibido if cobrado else pedido,
-            "pedido": pedido, "recibido": recibido, "neto": neto,
-        }
-        if estado in cobranza.ESTADOS_VIVOS:
-            en_la_calle += pedido - recibido
-        elif estado == "pagado":
-            recuperado += recibido
+    totales, total_n, en_la_calle, recuperado, confirmado_sin_stripe = _resumen(
+        _por_estado(filas_asesor)
+    )
+
+    agrupado: dict[str, list] = {}
+    for asesor, *resto in filas_asesor:
+        agrupado.setdefault(asesor or "", []).append(resto)
+    asesores = []
+    for asesor, propias in agrupado.items():
+        _t, n, calle, cobrado, confirmado = _resumen(propias)
+        asesores.append({"asesor": asesor, "n": n, "en_la_calle": calle,
+                         "recuperado": cobrado, "confirmado": confirmado})
+    # Primero quien más dinero trae en la calle: es la lista de a quién
+    # preguntarle hoy, no un directorio.
+    asesores.sort(key=lambda a: (-a["en_la_calle"], a["asesor"]))
 
     tareas.add_task(_drenar_eventos)
     return templates.TemplateResponse(
@@ -653,6 +744,91 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
                 credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID)
             ),
             "en_la_calle": en_la_calle, "recuperado": recuperado,
+            "confirmado_sin_stripe": confirmado_sin_stripe,
+            "asesores": asesores,
+            "pagina": pagina, "total_n": total_n,
+            "hay_mas": pagina * COBROS_POR_PAGINA < total_n,
+        },
+    )
+
+
+def cartera_de(user: str) -> tuple[int, int]:
+    """(cuántos cobros vivos, cuánto dinero en la calle) de este colaborador.
+
+    Para la tarjeta de /my, que es la que hace que la cartera exista: una vista
+    a la que hay que acordarse de entrar no cambia el comportamiento de nadie.
+    Un solo agregado —no la lista— porque /my ya corre cuatro consultas y esta
+    se paga en cada carga del panel de trabajo diario.
+    """
+    filtro = _filtro_modo(0)
+    vista = alcance(user)
+    consulta = cobranza.mios(vista.filtrar(_agregado(), Cobro.office_id), user)
+    if filtro is not None:
+        consulta = consulta.where(filtro)
+    with get_session() as session:
+        filas = session.exec(
+            consulta.group_by(Cobro.estado, Cobro.confirmado_por_asesor)  # type: ignore[arg-type]
+        ).all()
+    totales, _n, en_la_calle, _recuperado, _confirmado = _resumen(filas)
+    vivos = sum(t["n"] for estado, t in totales.items()
+                if estado in cobranza.ESTADOS_VIVOS)
+    return vivos, en_la_calle
+
+
+@router.get("/my/cobros")
+def mis_cobros(request: Request, tareas: BackgroundTasks,
+               todos: int = 0, pagina: int = 1):
+    """La cartera del colaborador: «¿a quién le cobro hoy?».
+
+    NO es admin-only, y esa es toda la idea. Vive aquí y no en `app/my.py`
+    porque comparte los agregados con /cobros: la cifra que el asesor ve como
+    suya tiene que ser la misma que su jefa ve en el corte por asesor, y eso se
+    garantiza compartiendo el código, no repitiéndolo.
+
+    Tampoco es una frontera de seguridad, y conviene decirlo en voz alta: un
+    colaborador ya puede abrir cualquier folio de su oficina (`/tickets/{id}`
+    solo checa `office_id`) y auto-asignárselo con «Tomar» — la oficina es el
+    libro compartido, por diseño. Esto es una COLA DE TRABAJO encima de ese
+    libro. Lo que sí cierra la puerta es `alcance()`, que acota por oficina.
+    """
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    pagina = max(1, pagina)
+    filtro = _filtro_modo(todos)
+    vista = alcance(user)
+
+    with get_session() as session:
+        # `mios` mete el OUTER JOIN con Ticket. No duplica filas: el join va
+        # contra la PK de Ticket, así que cada cobro casa con un renglón o con
+        # ninguno — y con ninguno es justo el voucher de OXXO cuyo folio ya
+        # cerró, que tiene que seguir apareciéndole a quien lo generó.
+        consulta = cobranza.mios(vista.filtrar(select(Cobro), Cobro.office_id), user)
+        agregado = cobranza.mios(vista.filtrar(_agregado(), Cobro.office_id), user)
+        if filtro is not None:
+            consulta = consulta.where(filtro)
+            agregado = agregado.where(filtro)
+
+        cobros = list(session.exec(
+            consulta.order_by(Cobro.created_at.desc())  # type: ignore[union-attr]
+            .limit(COBROS_POR_PAGINA)
+            .offset((pagina - 1) * COBROS_POR_PAGINA)
+        ).all())
+        filas = session.exec(
+            agregado.group_by(Cobro.estado, Cobro.confirmado_por_asesor)  # type: ignore[arg-type]
+        ).all()
+
+    totales, total_n, en_la_calle, recuperado, confirmado_sin_stripe = _resumen(filas)
+
+    tareas.add_task(_drenar_eventos)
+    return templates.TemplateResponse(
+        "mis_cobros.html",
+        {
+            "request": request, "user": user, "cobros": cobros, "totales": totales,
+            "todos": todos, "modo": "real" if _modo_real() else "prueba",
+            "en_la_calle": en_la_calle, "recuperado": recuperado,
+            "confirmado_sin_stripe": confirmado_sin_stripe,
             "pagina": pagina, "total_n": total_n,
             "hay_mas": pagina * COBROS_POR_PAGINA < total_n,
         },

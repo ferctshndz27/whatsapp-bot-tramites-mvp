@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Mi cartera{% endblock %}
+{% block content %}
+{% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
+<h1>Mi cartera</h1>
+
+<div class="card">
+  <p style="margin-top:0; color:var(--text-muted); font-size:.9rem;">
+    Los cobros que <strong>generé yo</strong> o los de un folio que tengo asignado.
+    Es mi cola de trabajo, no un candado: los folios de la oficina siguen siendo
+    de todos y cualquiera puede tomar uno desde <a href="/tickets">Solicitudes</a>.
+    {% if modo %}Llave en modo <strong>{{ modo }}</strong>.{% endif %}
+    {% if todos %}
+      <a href="/my/cobros" class="btn-sm" style="text-decoration:none;">Ver solo los de modo {{ modo }}</a>
+    {% else %}
+      <a href="/my/cobros?todos=1" class="btn-sm" style="text-decoration:none;">Ver todos</a>
+    {% endif %}
+  </p>
+
+  {% set ruta = '/my/cobros' %}
+  {% set vacio = 'No tienes cobros a tu nombre.' %}
+  {% include "_cobros_tabla.html" %}
+</div>
+{% endblock %}

@@ -775,3 +775,80 @@ Nada de código. Falta lo que solo puede hacer el dueño (§10):
 7. Un guardarraíl que apareció al hacerlo: el formulario de generar lleva un
    `confirm()` nativo con el monto en el texto. Detiene el envío hasta que un
    humano lea la cifra — el riesgo operativo #1 es el cero de más.
+
+---
+
+# ADENDA — La cartera del colaborador (2026-09-08)
+
+El panel de cobranza nació admin-only: `/cobros` es la vista de la jefa y el
+asesor solo veía cobros de a uno, entrando por el folio. Faltaba la pregunta
+que un asesor se hace todos los días —**«¿a quién le cobro hoy?»**— y la que
+se hace quien lo supervisa —**«¿quién trae dinero en la calle?»**.
+
+## C.1 Es una cola de trabajo, NO una frontera de acceso
+
+Decisión del dueño, y hay que tenerla presente antes de "endurecerla":
+`/my/cobros` filtra por dueño para que el asesor tenga una lista corta y suya,
+no para esconderle nada a nadie. La razón es que el repo ya decidió lo
+contrario en otras dos partes, y fingir lo opuesto sería seguridad de teatro:
+
+* `POST /tickets/{id}/claim` es **autoservicio**: cualquiera se asigna
+  cualquier folio libre de su oficina. Una columna que uno mismo se pone no
+  puede ser un permiso.
+* `GET /tickets/{id}` valida **solo `office_id`**. La oficina es el libro
+  compartido, por diseño.
+
+La frontera dura sigue siendo `alcance()` —la oficina— y las acciones sobre un
+cobro las sigue gateando `cobranza.puede_cobrar`. La cartera se compone con la
+primera, no la reemplaza.
+
+## C.2 «Suyo» son dos puertas, y por eso hay UN predicado
+
+Decisión del dueño: un cobro es del asesor si **lo generó él** (`creado_por`)
+**o** si el folio está asignado a él (`assigned_to`). Las dos hacen falta:
+sin `creado_por`, soltar el folio le borra de la vista un voucher que todavía
+debe perseguir; sin `assigned_to`, quien hereda un folio no ve la deuda que
+hereda con él.
+
+Vive en `app/cobranza.py` junto a `puede_cobrar`, como su gemelo en SQL
+(`mios()`), para que la lista y el permiso no puedan divergir: el día que uno
+cambie de criterio, el otro se mueve con él o la prueba se pone roja.
+
+El JOIN con `ticket` es **OUTER**, y es la única forma correcta: `ticket_id`
+es nullable porque el cobro sobrevive al folio (§4), así que un INNER se comía
+en silencio justo los vouchers de OXXO, los más urgentes de la lista.
+
+## C.3 El corte por asesor se agrupa por `creado_por`, no por el asignado
+
+`assigned_to` se suelta (queda NULL) y se reasigna: un corte por él pierde
+filas en un cubo «sin asesor» y **le cambia el pasado a un mes ya cerrado**.
+`creado_por` es permanente y NOT NULL, así que cada cobro cae en exactamente
+un asesor y la suma cuadra.
+
+Y cuadra de verdad, no de palabra: el total global se **pliega de las mismas
+filas** del corte por asesor (`_por_estado`), así que `Σ(en la calle por
+asesor) == en_la_calle` por construcción y no porque dos SELECT parecidos
+coincidan. De paso `/cobros` hace un agregado menos que antes.
+
+## C.4 Lo confirmado por el asesor se reporta aparte, no se descuenta
+
+`confirmar_por_asesor` **no** escribe `estado='pagado'` —el rango 4 es
+exclusivo de Stripe (§0)— así que ese cobro sigue `pendiente` y seguía sumando
+en «En la calle» hasta que el link vencía. La cartera le reclamaba al asesor
+dinero que él ya había visto entrar, que es exactamente como una lista
+operativa deja de creerse a la segunda semana.
+
+Ni descontarlo (sería fingir que Stripe lo confirmó) ni esconderlo: se agrega
+`confirmado_por_asesor` al GROUP BY y se muestra como cifra propia, rotulada
+«incluido en en la calle».
+
+## C.5 Dónde vive
+
+| Qué | Dónde |
+|---|---|
+| El predicado en SQL | `app/cobranza.py` → `mios()`, junto a `puede_cobrar` |
+| La vista personal | `app/cobranza_panel.py` → `GET /my/cobros` (NO admin-only) |
+| El número para la tarjeta de `/my` | `app/cobranza_panel.py` → `cartera_de()` |
+| El corte por asesor | dentro de `GET /cobros`, misma consulta agregada |
+| La tabla, compartida por las dos vistas | `templates/_cobros_tabla.html` |
+| Las pruebas, con sus mutaciones | `tests/test_cobranza_cartera.py` |
