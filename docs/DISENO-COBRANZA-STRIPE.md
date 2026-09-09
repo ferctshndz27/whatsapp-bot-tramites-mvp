@@ -852,3 +852,79 @@ Ni descontarlo (sería fingir que Stripe lo confirmó) ni esconderlo: se agrega
 | El corte por asesor | dentro de `GET /cobros`, misma consulta agregada |
 | La tabla, compartida por las dos vistas | `templates/_cobros_tabla.html` |
 | Las pruebas, con sus mutaciones | `tests/test_cobranza_cartera.py` |
+
+## C.6 La antigüedad: una tarjeta agregada, no solo una columna
+
+Pedido: «que se vea la antigüedad». Lo que **no** basta es una columna en la
+fila, y esa fue la conclusión que cambió el diseño: la lista va por
+`created_at DESC` y pagina de 100 en 100, así que la página 1 es por definición
+lo **más nuevo** — los cobros viejos, los únicos por los que se pide ver la
+antigüedad, viven en la última página, donde nadie mira. Una columna sola
+prueba lo que el orden ya decía y no cambia el comportamiento de nadie.
+
+Por eso van las dos cosas:
+
+1. **Tarjeta «Con más de 3 días»**, agregada en SQL sobre TODA la cartera, con
+   el mismo alcance de oficina, el mismo filtro de modo y —en `/my/cobros`— el
+   mismo `mios()` que la lista. Si contara una población distinta de la que se
+   ve, sería la primera cifra que se deja de creer.
+2. **La antigüedad en la celda «Creado»**, no en una décima columna:
+   `.table-wrap` no reparte espacio, manda lo que sobra al scroll lateral, y la
+   única media query del panel no toca `table`. En el celular del asesor —que
+   es donde se cobra— una columna más simplemente no se ve.
+
+### Cada estado tiene su propio reloj
+
+«Cuántos días lleva» **no es el mismo hecho** en los ocho estados de `RANGO`, y
+una resta suelta en Jinja miente en la mitad. `cobranza.antiguedad()` decide:
+
+| Estado | Qué dice | Por qué |
+|---|---|---|
+| vivo, 0-2 días | «hoy» / «hace 2 días», gris | el silencio de los dos primeros días es lo que le da valor al tercero |
+| vivo, 3+ días | badge «N días sin pagar» | pasó de dato a tarea |
+| vivo, instrumento vencido | «⚠ ficha vencida: regenera el link» | decirle «4 días sin pagar» a un link que ya no abre manda al asesor a gastar llamadas en un pago imposible |
+| pagado / reembolsado | «pagó en N días» | `created_at→pagado_at`, **no** `→ahora`: un pagado de hace ocho meses en rojo vuelve la lista una pared roja y quema la señal |
+| cancelado / vencido / fallido | «hace N días», gris | es arqueología, no cola de trabajo |
+
+Qué instrumento manda es la **misma regla** que la rama
+`checkout.session.expired` de `_aplicar_a_cobro`: con PaymentIntent vivo la
+sesión puede expirar sin matar el cobro; sin él, la sesión *es* el instrumento.
+SPEI no tiene fecha de muerte propia, y fecharlo con la sesión lo mataría 24 h
+después de nacer — en la pantalla y solo ahí.
+
+### El fallo que esto habría causado, y que se cerró antes
+
+`utcnow()` es **aware** y las columnas salen **naive** de SQLite: la resta cruda
+levanta `TypeError`, y como el cálculo cae dentro del parcial compartido se
+lleva `/cobros` **y** `/my/cobros` al mismo tiempo. Comprobado ejecutándolo, no
+leyéndolo. Toda fecha pasa por `cobranza.aware_utc` — el helper que ya existía
+como «fuente única para el dominio», en vez de una cuarta copia.
+
+Y la variante silenciosa, que es peor: `datetime.now()` sin tzinfo **no truena**
+y pasa verde en CI (sin TZ), pero el contenedor corre con
+`TZ=America/Mexico_City`, así que en producción sale seis horas corrido y con
+antigüedades negativas. Por eso la firma es `antiguedad(cobro, ahora=None)`: una
+prueba con reloj inyectado distingue el cálculo correcto del corrido, y una que
+llame sin parámetro no.
+
+### Dónde vive el 3
+
+`cobranza.COBRO_VIEJO_DIAS`, constante de módulo con marcador `# ponytail:`
+porque **es un número elegido, no medido** — la política de reintentos sigue
+siendo una decisión abierta. Se calibra con la mediana de `created_at→pagado_at`
+que la misma función ya expone como `tardo`.
+
+No se recicla `settings.oxxo_dias_vencimiento`: ese 3 es el `expires_after_days`
+de la ficha OXXO, y el día que operaciones lo baje a 1 pintaría de rojo toda la
+cartera de **tarjeta** por una razón que no tiene nada que ver con tarjetas.
+Tampoco se vuelve variable de entorno: eso pone rojo
+`tests/test_credenciales_inventario.py`, que barre `config.py` con regex, y el
+que lo viera creería que rompió multi-oficina.
+
+### Qué NO se tocó, a propósito
+
+El `ORDER BY` de ninguna ruta (reordenar rompe `test_cobranza_panel.py`), los
+CSV (`export_cobros` / `export_conciliacion`: un derivado del reloj rompe que el
+archivo sea reproducible contra el estado de cuenta — en Excel es `=HOY()-creado`),
+y nada del esquema. La antigüedad es **derivada**: una columna costaría los cinco
+lugares del espejo MSSQL y el valor nacería rancio al día siguiente.

@@ -12,7 +12,8 @@ viene de Stripe se escribe también ahí con id sintético, así el replay
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 from sqlalchemy import or_
 from sqlmodel import Session, select
@@ -52,6 +53,21 @@ RANGO = {
 # Mientras el estado sea uno de estos existe (o puede existir) un instrumento
 # cobrable: el candado llave_cobro_vivo NO se libera.
 ESTADOS_VIVOS = {"borrador", "pendiente", "cancelacion_solicitada"}
+
+# Días sin pagar a partir de los cuales el cobro deja de ser un dato y pasa a
+# ser una tarea. El techo lo pone Stripe (~30 días de ventana de recuperación);
+# 3 es donde el asesor todavía rescata el cobro sin que el cliente lo sienta
+# acoso.
+# NO se recicla settings.oxxo_dias_vencimiento: ese 3 es la vida de la ficha
+# OXXO que se le manda a Stripe como expires_after_days, y el día que
+# operaciones lo baje a 1 se pintaría de rojo toda la cartera de TARJETA por
+# una razón que no tiene nada que ver con tarjetas.
+# ponytail: número elegido, no medido — la política de reintentos sigue siendo
+# una decisión abierta. Se calibra con la mediana de created_at→pagado_at que
+# `antiguedad()` ya expone como `tardo`. Vive aquí y no en config/.env porque
+# cobranza_alertas.py ya importa de este módulo: el día que exista la regla
+# «cartera vieja» leerá este número y no una segunda copia.
+COBRO_VIEJO_DIAS = 3
 
 PAYLOAD_MAX = 32_768
 RESPUESTA_MAX = 8_192
@@ -157,6 +173,78 @@ def puede_cobrar(user: str | None, ticket, cobro) -> bool:
     if cobro is not None and cobro.creado_por == user:
         return True
     return is_admin(user)
+
+
+class Antiguedad(NamedTuple):
+    """Todo lo que el panel necesita para pintar UNA celda de antigüedad."""
+
+    dias: int                  # días completos desde created_at
+    vivo: bool                 # el dinero sigue en la calle
+    viejo: bool                # vivo Y pasó el umbral
+    tardo: int | None          # días que tardó en caer; solo si ya se pagó
+    instrumento_vencido: bool  # el cliente ya NO puede pagar: hay que regenerar
+
+
+def corte_viejo(ahora: datetime | None = None) -> datetime:
+    """La fecha NAIVE desde la cual un cobro cuenta como viejo, lista para un
+    WHERE de SQLite — que guarda y devuelve naive."""
+    return naive_utc(ahora or utcnow()) - timedelta(days=COBRO_VIEJO_DIAS)
+
+
+def antiguedad(cobro, ahora: datetime | None = None) -> Antiguedad:
+    """Cuánto lleva este cobro en la calle y si hay que hacer algo hoy.
+
+    Vive en el dominio y no en la plantilla porque «cuántos días lleva» NO es
+    el mismo hecho en los ocho estados de RANGO, y una resta suelta en Jinja
+    miente en la mitad de ellos: un pagado reporta cuánto TARDÓ en caer, no su
+    edad, y un instrumento vencido pide regenerar el link, no insistirle al
+    cliente. `ahora` es parámetro para poder probar el umbral sin congelar el
+    reloj del proceso.
+
+    TODA fecha pasa por `aware_utc`: utcnow() es aware y las columnas se leen
+    naive de SQLite, así que la resta cruda levanta TypeError — y como el
+    parcial de la tabla es compartido, se llevaría /cobros y /my/cobros al
+    mismo tiempo. Y jamás `datetime.now()` sin tzinfo para «que compile»: el
+    contenedor corre con TZ=America/Mexico_City, así que eso sale 6 h corrido
+    SOLO en producción y verde en CI, que es la peor combinación posible.
+
+    Es DERIVADA a propósito, no una columna: guardarla costaría los cinco
+    lugares del espejo MSSQL y el valor nacería rancio al día siguiente.
+    """
+    ahora = aware_utc(ahora or utcnow())
+    creado = aware_utc(cobro.created_at)
+    # Días completos de 24 h, no hojas de calendario: restar fechas UTC contra
+    # el calendario de CDMX se equivoca por un día entero en todo cobro
+    # generado después de las 18:00, que es cuando más links se mandan.
+    # max(0, …) porque un respaldo restaurado o el reloj del contenedor movido
+    # dan fechas futuras, y «hoy» es feo pero «hace -1 días» es un reporte de
+    # bug que nadie va a saber contestar.
+    dias = max(0, (ahora - creado).days)
+
+    tardo = None
+    if cobro.pagado_at is not None:
+        tardo = max(0, (aware_utc(cobro.pagado_at) - creado).days)
+
+    vivo = cobro.estado in ESTADOS_VIVOS
+
+    # Qué instrumento manda: la MISMA regla que la rama checkout.session.expired
+    # de _aplicar_a_cobro. Con PaymentIntent vivo la sesión de Checkout puede
+    # expirar sin matar el cobro; sin él, la sesión ES el instrumento. SPEI
+    # (PI vivo, sin voucher) no tiene fecha de muerte propia, y fecharlo con la
+    # sesión lo mataría 24 h después de nacer — en la pantalla y solo ahí.
+    vence = cobro.voucher_expira_at
+    if vence is None and not cobro.stripe_payment_intent_id:
+        vence = cobro.url_expira_at
+
+    return Antiguedad(
+        dias=dias,
+        vivo=vivo,
+        viejo=vivo and dias >= COBRO_VIEJO_DIAS,
+        tardo=tardo,
+        instrumento_vencido=bool(
+            vivo and vence is not None and aware_utc(vence) <= ahora
+        ),
+    )
 
 
 def mios(consulta, user: str):

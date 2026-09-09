@@ -599,6 +599,38 @@ def _agregado(*extra):
     )
 
 
+def _agregado_viejos():
+    """El SELECT de la tarjeta «con más de N días»: cuántos y cuánto falta."""
+    return select(
+        func.count().label("n"),
+        func.sum(
+            Cobro.monto_centavos - func.coalesce(Cobro.monto_pagado_centavos, 0)
+        ).label("centavos"),
+    )
+
+
+def _viejos(session, consulta) -> dict:
+    """La cartera atrasada, agregada en SQL sobre TODO, no sobre la página.
+
+    Aquí está la diferencia entre una columna que informa y una que cambia el
+    día de alguien. La lista va por `created_at DESC` y pagina de 100 en 100,
+    así que la página 1 es por definición lo MÁS NUEVO: los cobros viejos —los
+    únicos por los que se pidió ver la antigüedad— viven en la última página,
+    donde nadie mira. Este número no depende de la paginación.
+
+    `consulta` llega ya acotada exactamente igual que la lista (oficina, modo
+    y, en la cartera personal, dueño). Si contara una población distinta de la
+    que se ve, sería la primera cifra que se deja de creer.
+    """
+    n, centavos = session.exec(
+        consulta
+        .where(Cobro.estado.in_(tuple(sorted(cobranza.ESTADOS_VIVOS))))  # type: ignore[attr-defined]
+        .where(Cobro.created_at < cobranza.corte_viejo())  # type: ignore[operator]
+    ).one()
+    return {"n": int(n or 0), "centavos": int(centavos or 0),
+            "dias": cobranza.COBRO_VIEJO_DIAS}
+
+
 def _por_estado(filas_asesor):
     """Pliega las filas (asesor, estado, confirmado) quitándole el asesor.
 
@@ -689,9 +721,12 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
         # a un mes ya cerrado. `creado_por` es permanente y NOT NULL — cada
         # cobro cae en exactamente un asesor y la suma cuadra.
         por_asesor = vista.filtrar(_agregado(Cobro.creado_por), Cobro.office_id)
+        atrasados = vista.filtrar(_agregado_viejos(), Cobro.office_id)
         if filtro is not None:
             consulta = consulta.where(filtro)
             por_asesor = por_asesor.where(filtro)
+            atrasados = atrasados.where(filtro)
+        viejos = _viejos(session, atrasados)
 
         cobros = list(session.exec(
             consulta.order_by(Cobro.created_at.desc())  # type: ignore[union-attr]
@@ -745,6 +780,7 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
             ),
             "en_la_calle": en_la_calle, "recuperado": recuperado,
             "confirmado_sin_stripe": confirmado_sin_stripe,
+            "viejos": viejos,
             "asesores": asesores,
             "pagina": pagina, "total_n": total_n,
             "hay_mas": pagina * COBROS_POR_PAGINA < total_n,
@@ -806,9 +842,15 @@ def mis_cobros(request: Request, tareas: BackgroundTasks,
         # cerró, que tiene que seguir apareciéndole a quien lo generó.
         consulta = cobranza.mios(vista.filtrar(select(Cobro), Cobro.office_id), user)
         agregado = cobranza.mios(vista.filtrar(_agregado(), Cobro.office_id), user)
+        # Mismo `mios`: la tarjeta de atrasados tiene que contar la cartera del
+        # asesor, no la de la oficina, o le reclama dinero de otro.
+        atrasados = cobranza.mios(
+            vista.filtrar(_agregado_viejos(), Cobro.office_id), user)
         if filtro is not None:
             consulta = consulta.where(filtro)
             agregado = agregado.where(filtro)
+            atrasados = atrasados.where(filtro)
+        viejos = _viejos(session, atrasados)
 
         cobros = list(session.exec(
             consulta.order_by(Cobro.created_at.desc())  # type: ignore[union-attr]
@@ -829,6 +871,7 @@ def mis_cobros(request: Request, tareas: BackgroundTasks,
             "todos": todos, "modo": "real" if _modo_real() else "prueba",
             "en_la_calle": en_la_calle, "recuperado": recuperado,
             "confirmado_sin_stripe": confirmado_sin_stripe,
+            "viejos": viejos,
             "pagina": pagina, "total_n": total_n,
             "hay_mas": pagina * COBROS_POR_PAGINA < total_n,
         },

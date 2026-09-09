@@ -4,9 +4,12 @@
    son la misma tabla mirada con distinto filtro, y duplicarla era garantizar
    que un día el asesor y su jefa leyeran columnas distintas del mismo cobro.
 
-   Espera del contexto: totales, en_la_calle, recuperado, cobros, pagina,
-   hay_mas, total_n, todos, volver_actual, y `ruta` — el path al que apuntan los
-   enlaces de paginación, que es lo único que cambia entre las dos vistas. #}
+   Espera del contexto: totales, en_la_calle, recuperado, confirmado_sin_stripe,
+   viejos, cobros, pagina, hay_mas, total_n, todos, volver_actual, y `ruta` — el
+   path al que apuntan los enlaces de paginación, que es lo único que cambia
+   entre las dos vistas. La antigüedad NO viaja por contexto: es el global
+   `antiguedad()` de app/templating.py, precisamente para que no se pueda
+   olvidar en una de las dos rutas sin que Jinja diga nada. #}
 
 {% if totales %}
 <div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem;">
@@ -28,6 +31,20 @@
     <div style="color:var(--text-muted); font-size:.82rem;">Confirmado sin Stripe</div>
     <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(confirmado_sin_stripe) }}</div>
     <div style="color:var(--text-muted); font-size:.82rem;">incluido en «en la calle»</div>
+  </div>
+  {% endif %}
+  {# La tarjeta que de verdad contesta «¿a quién le cobro hoy?». La antigüedad
+     de cada fila solo describe la PÁGINA, y con created_at DESC la página 1 es
+     por definición lo más nuevo: los cobros viejos viven en la última, donde
+     nadie mira. Esto se agrega en SQL sobre TODA la cartera, igual que «En la
+     calle», así que es independiente de la paginación por construcción. #}
+  {% if viejos and viejos.n %}
+  <div class="card" style="min-width:190px; margin:0; border-left:4px solid #be1e51;">
+    <div style="color:var(--text-muted); font-size:.82rem;">Con más de {{ viejos.dias }} días</div>
+    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(viejos.centavos) }}</div>
+    <div style="color:var(--text-muted); font-size:.82rem;">
+      {{ viejos.n }} cobro{{ '' if viejos.n == 1 else 's' }} · toca insistir
+    </div>
   </div>
   {% endif %}
 </div>
@@ -95,7 +112,43 @@
           {% elif c.estado == 'pagado' %}<small style="color:var(--text-muted);">por conciliar</small>
           {% else %}—{% endif %}
         </td>
-        <td><small>{{ c.created_at|local }}<br>por {{ c.creado_por }}</small></td>
+        {# La antigüedad se lee de la MISMA fecha que ya está en esta celda, así
+           que va aquí y no en una décima columna: .table-wrap no reparte
+           espacio, manda lo que sobra al scroll lateral, y la única media query
+           del panel no toca la tabla — en el celular del asesor, que es donde
+           se cobra, una columna más simplemente no se ve.
+
+           El número nunca va solo: la frase dice QUÉ reloj está contando,
+           porque «cuántos días lleva» no es el mismo hecho en los ocho estados
+           de RANGO. La regla completa vive en cobranza.antiguedad(); aquí solo
+           se pinta, para que /cobros y /my/cobros no puedan divergir. #}
+        <td><small>
+          {{ c.created_at|local }}<br>por {{ c.creado_por }}<br>
+          {% set a = antiguedad(c) %}
+          {% if a.vivo %}
+            {% if a.viejo %}
+            <span class="badge caducada">{{ a.dias }} días sin pagar</span>
+            {% else %}
+            <span style="color:var(--text-muted);">{% if a.dias == 0 %}hoy{% else %}hace {{ a.dias }} día{{ '' if a.dias == 1 else 's' }}{% endif %}</span>
+            {% endif %}
+            {% if a.instrumento_vencido %}
+            {# El cliente YA NO PUEDE PAGAR: la acción es regenerar el link, no
+               llamarle. Mismo rosa que «⚠ discrepancia» de la celda de Estado —
+               el color refuerza, el texto es el dato (WCAG 1.4.1). #}
+            <br><span style="color:#be1e51;">⚠ ficha vencida: regenera el link</span>
+            {% endif %}
+          {% elif a.tardo is not none %}
+          {# Ya cayó: lo útil no es su edad sino cuánto TARDÓ en caer. Un pagado
+             de hace ocho meses con «hace 240 días» en rojo convierte la lista en
+             una pared roja y el asesor deja de mirar el color también donde sí
+             importa. De paso es el único número que contesta «¿qué tan rápido
+             nos pagan?», que es con lo que algún día se calibra el 3. #}
+          <span style="color:var(--text-muted);">pagó {% if a.tardo == 0 %}el mismo día{% else %}en {{ a.tardo }} día{{ '' if a.tardo == 1 else 's' }}{% endif %}</span>
+          {% else %}
+          {# Cancelado, vencido o fallido: es historia, no cola de trabajo. #}
+          <span style="color:var(--text-muted);">hace {{ a.dias }} día{{ '' if a.dias == 1 else 's' }}</span>
+          {% endif %}
+        </small></td>
       </tr>
       {% endfor %}
     </tbody>

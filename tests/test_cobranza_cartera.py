@@ -14,6 +14,8 @@ Lo que se defiende aquí son tres cosas que se rompen en silencio:
    que un día no cuadran, y ahí nadie sabe cuál miente.
 """
 
+from datetime import timedelta
+
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
@@ -24,7 +26,7 @@ import app.db as db
 from app import cobranza, cobranza_panel
 from app.config import settings
 from app.main import app
-from app.models import Cobro, Ticket, TicketStatus, User
+from app.models import Cobro, Ticket, TicketStatus, User, utcnow
 
 CLAVE = "contrasena-larga-123"
 HASH_CLAVE = bcrypt.hashpw(CLAVE.encode(), bcrypt.gensalt()).decode()
@@ -311,6 +313,155 @@ def test_lo_confirmado_por_el_asesor_se_reporta_pero_no_se_descuenta(entorno):
     assert contexto["totales"]["pendiente"]["n"] == 2
     assert contexto["totales"]["pendiente"]["pedido"] == 100_000
     assert contexto["total_n"] == 2
+
+
+# ---------------------------------------------------------------------------
+# La antigüedad, en las DOS vistas
+# ---------------------------------------------------------------------------
+
+
+def test_la_antiguedad_sale_en_las_dos_vistas(entorno):
+    """El punto entero del parcial compartido.
+
+    Si la antigüedad viajara por contexto en vez de ser un global de Jinja,
+    olvidarla en una de las dos rutas dejaría la celda VACÍA sin un solo error
+    —Jinja usa Undefined permisivo— y la vista mutilada sería la del
+    colaborador, que es justo quien menos lo reporta. Esta prueba pide las dos.
+    """
+    with Session(entorno) as s:
+        _cobro(s, 200, creado_por=ANA, ticket_id=None, pedido=90_000)
+        viejo = s.get(Cobro, 200)
+        viejo.created_at = utcnow() - timedelta(days=5)
+        s.add(viejo)
+        s.commit()
+
+    assert "5 días sin pagar" in _cliente(ANA).get("/my/cobros").text
+    assert "5 días sin pagar" in _cliente(JEFA).get("/cobros").text
+
+
+def test_un_cobro_reciente_no_se_marca(entorno):
+    """El silencio de los primeros días es lo que le da valor al tercero."""
+    with Session(entorno) as s:
+        _cobro(s, 201, creado_por=ANA, ticket_id=None, pedido=90_000)
+        s.commit()
+
+    texto = _cliente(ANA).get("/my/cobros").text
+    assert "sin pagar" not in texto
+    assert "hoy" in texto
+
+
+def test_la_tarjeta_de_atrasados_no_es_de_la_pagina(entorno):
+    """La razón de ser de la tarjeta, y lo que la columna sola NO resuelve.
+
+    La lista va por created_at DESC y pagina de 100 en 100: la página 1 es por
+    definición lo más nuevo, así que los cobros viejos —los únicos por los que
+    se pidió ver la antigüedad— caen en la última página, donde nadie mira. Se
+    siembran 100 recientes que llenan la página 1 y 3 viejos que no salen en
+    ella, y la tarjeta tiene que contar los 3 igual.
+    """
+    with Session(entorno) as s:
+        for i in range(100):
+            _cobro(s, 300 + i, creado_por=ANA, ticket_id=None, pedido=1_000)
+        for i in range(3):
+            c = _cobro(s, 500 + i, creado_por=ANA, ticket_id=None, pedido=40_000)
+            c.created_at = utcnow() - timedelta(days=10)
+        s.commit()
+
+    respuesta = _cliente(JEFA).get("/cobros")
+    contexto = respuesta.context
+    assert len(contexto["cobros"]) == 100, "la página 1 dejó de estar llena"
+    ids_visibles = {c.id for c in contexto["cobros"]}
+    assert not ids_visibles & {500, 501, 502}, (
+        "los viejos salieron en la página 1; la prueba dejó de probar lo suyo"
+    )
+    assert contexto["viejos"]["n"] == 3
+    assert contexto["viejos"]["centavos"] == 120_000
+    assert "Con más de 3 días" in respuesta.text
+
+
+def test_la_tarjeta_de_atrasados_cuenta_lo_mismo_que_la_lista(entorno):
+    """Si contara una población distinta de la que se ve, sería la primera
+    cifra que se deja de creer. Un cobro viejo de OTRA oficina no suma."""
+    with Session(entorno) as s:
+        c = _cobro(s, 600, creado_por=ANA, ticket_id=None, pedido=50_000,
+                   office_id=OFICINA_B)
+        c.created_at = utcnow() - timedelta(days=9)
+        propio = _cobro(s, 601, creado_por=ANA, ticket_id=None, pedido=30_000)
+        propio.created_at = utcnow() - timedelta(days=9)
+        s.commit()
+
+    # ANA es de la oficina A: solo tiene que ver el suyo.
+    contexto = _cliente(ANA).get("/my/cobros").context
+    assert contexto["viejos"]["n"] == 1
+    assert contexto["viejos"]["centavos"] == 30_000
+
+
+def test_lo_ya_pagado_no_cuenta_como_atrasado(entorno):
+    """Solo escalan los ESTADOS_VIVOS — la MISMA población que suma en
+    `en_la_calle`, así que la tarjeta y las filas marcadas hablan del mismo
+    dinero. Un pagado de hace un año no es cartera atrasada."""
+    with Session(entorno) as s:
+        c = _cobro(s, 700, creado_por=ANA, ticket_id=None, estado="pagado",
+                   pedido=80_000, recibido=80_000)
+        c.created_at = utcnow() - timedelta(days=365)
+        c.pagado_at = utcnow() - timedelta(days=363)
+        s.commit()
+
+    respuesta = _cliente(ANA).get("/my/cobros")
+    assert respuesta.context["viejos"]["n"] == 0
+    assert "Con más de" not in respuesta.text
+    # Y en la fila dice cuánto TARDÓ, no su edad.
+    assert "pagó en 2 días" in respuesta.text
+    assert "365" not in respuesta.text
+
+
+def test_la_tarjeta_descuenta_lo_ya_recibido(entorno):
+    """Mismo criterio que `en_la_calle`: un SPEI parcial dejó dinero adentro y
+    lo que falta es la diferencia, no el pedido entero."""
+    with Session(entorno) as s:
+        c = _cobro(s, 800, creado_por=ANA, ticket_id=None,
+                   pedido=100_000, recibido=40_000)
+        c.created_at = utcnow() - timedelta(days=6)
+        s.commit()
+
+    assert _cliente(ANA).get("/my/cobros").context["viejos"]["centavos"] == 60_000
+
+
+def test_una_ficha_vencida_pide_regenerar_en_vez_de_insistir(entorno):
+    """La mentira más cara que puede contar esta celda: decirle «5 días sin
+    pagar» a un link que ya no abre manda al asesor a gastar llamadas en un
+    pago que es imposible."""
+    with Session(entorno) as s:
+        c = _cobro(s, 900, creado_por=ANA, ticket_id=None, pedido=70_000)
+        c.created_at = utcnow() - timedelta(days=5)
+        c.voucher_expira_at = utcnow() - timedelta(days=1)
+        s.commit()
+
+    texto = _cliente(ANA).get("/my/cobros").text
+    assert "ficha vencida" in texto
+
+
+def test_la_tabla_no_queda_chueca(entorno):
+    """Barata y para el futuro: hoy pasa trivialmente porque la antigüedad
+    entró DENTRO de la celda «Creado» y no como décima columna. Existe para que
+    el día que alguien sí agregue una y olvide el <th>, los encabezados
+    corridos se vean en rojo aquí y no en producción.
+
+    Se cuenta con regex que acepta atributos —no con text.count("<td>")— que es
+    justo lo que vuelve inútil a un assert de este tipo.
+    """
+    import re
+    with Session(entorno) as s:
+        _cobro(s, 950, creado_por=ANA, ticket_id=None, pedido=10_000)
+        s.commit()
+
+    for cliente, ruta in ((_cliente(JEFA), "/cobros"), (_cliente(ANA), "/my/cobros")):
+        html = cliente.get(ruta).text
+        thead = re.search(r"<thead>(.*?)</thead>", html, re.S).group(1)
+        primera = re.search(r"<tbody>\s*<tr[^>]*>(.*?)</tr>", html, re.S).group(1)
+        assert len(re.findall(r"<th[\s>]", thead)) == len(re.findall(r"<td[\s>]", primera)), (
+            f"{ruta}: el <thead> y la primera fila no tienen el mismo número de celdas"
+        )
 
 
 # ---------------------------------------------------------------------------
