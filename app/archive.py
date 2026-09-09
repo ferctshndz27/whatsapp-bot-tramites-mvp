@@ -1649,10 +1649,23 @@ def backfill() -> None:
     # son upserts por source_id (UPDATE y, si no hay fila, INSERT): reprocesar
     # lo ya espejado no duplica ni rompe el UNIQUE(source_id). Antes se
     # excluían y una caída de MSSQL dejaba huecos permanentes (bug B3).
+    # Hasta dónde llegó, para el mensaje de fallo. Un único `try` envuelve los
+    # 31 bucles, así que una caída de MSSQL a media corrida deja las tablas de
+    # arriba espejadas y las de abajo no, y el log decía solo "incompleto":
+    # /system mostraba conteos que no cuadran sin decir por qué. No se marca
+    # tabla por tabla —serían 31 líneas de ruido— sino por etapa, que es la
+    # granularidad con la que uno mira /system.
+    #
+    # Y NO se convierte en una tabla de (modelo, función) recorrida por un
+    # bucle, que sería más corto: tests/test_mirror_consistency.py analiza el
+    # AST de esta función y solo reconoce llamadas por `ast.Name`. Con
+    # `fn(objeto)` el candado de los cinco lugares quedaría VERDE EN VACÍO.
+    etapa = "inicio"
     try:
         if not _ready:
             init()
         with get_session() as session:
+            etapa = "clientes y colaboradores"
             for c in session.exec(select(Client)).all():
                 sync_client_name(c)
             for u in session.exec(select(User)).all():
@@ -1663,6 +1676,7 @@ def backfill() -> None:
                 archive_activity(a)
             for i in session.exec(select(Invitation)).all():
                 archive_invitation(i)
+            etapa = "conversaciones y bitácora"
             for conv in session.exec(select(Conversation)).all():
                 archive_conversation(conv)
             for aa in session.exec(select(AdminAudit)).all():
@@ -1677,6 +1691,7 @@ def backfill() -> None:
                 archive_login_event(e)
             for w in session.exec(select(WebSession)).all():
                 archive_web_session(w)
+            etapa = "catálogo"
             for cc in session.exec(select(CatalogCategory)).all():
                 archive_catalog_category(cc)
             for cs in session.exec(select(CatalogService)).all():
@@ -1695,6 +1710,7 @@ def backfill() -> None:
                 archive_synonym_proposal(sp)
             for al in session.exec(select(Alert)).all():
                 archive_alert(al)
+            etapa = "cobranza"
             for co in session.exec(select(Cobro)).all():
                 archive_cobro(co)
             for ic in session.exec(select(IntentoCobro)).all():
@@ -1711,13 +1727,17 @@ def backfill() -> None:
                 archive_label(lb)
             for tl in session.exec(select(TicketLabel)).all():
                 archive_ticket_label(tl)
+            etapa = "mensajes"
             for m in session.exec(select(Message)).all():
                 sync_wa_message(m)
             for tm in session.exec(select(TeamMessage)).all():
                 sync_team_message(tm)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
-        logger.warning("Backfill de MSSQL incompleto: %s", exc)
+        # La etapa es la mitad del mensaje: sin ella, "incompleto" obliga a
+        # comparar los conteos de /system tabla por tabla para adivinar dónde
+        # se cortó.
+        logger.warning("Backfill de MSSQL incompleto en la etapa '%s': %s", etapa, exc)
 
 
 def _register_listeners() -> None:

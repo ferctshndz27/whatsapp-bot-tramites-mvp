@@ -5,9 +5,11 @@ from sqlalchemy import create_engine, text
 from sqlmodel import Session, SQLModel
 
 import app.archive as archive
+import app.db as db
 from app.config import settings
 from app.models import (
     Client,
+    Cobro,
     Direction,
     Invitation,
     Message,
@@ -672,3 +674,36 @@ def test_office_id_viaja_en_la_copia_diferida_de_cobro(mirror):
     archive.archive_cobro(archive._instantanea(cobro))
     with mirror.connect() as conn:
         assert conn.execute(text("SELECT office_id FROM cobros WHERE source_id = 1")).scalar() == 2
+
+
+def test_el_backfill_dice_en_que_etapa_se_cortó(mirror, monkeypatch, caplog):
+    """REGLA: un backfill a medias tiene que decir DÓNDE se cortó.
+
+    Los 31 bucles viven bajo un solo `try`, así que una caída de MSSQL a media
+    corrida deja las primeras tablas espejadas y las últimas no. El log decía
+    solo «incompleto», y a partir de ahí tocaba comparar los conteos de /system
+    tabla por tabla para adivinar por dónde iba. La etapa no arregla el corte
+    —el backfill es idempotente y el siguiente arranque lo retoma— pero convierte
+    media hora de diagnóstico en una línea.
+    """
+    import logging
+
+    def _revienta(_cobro):
+        raise RuntimeError("MSSQL se cayó a media corrida")
+
+    # Falla en cobranza: hay etapas antes (que sí completaron) y después.
+    monkeypatch.setattr(archive, "archive_cobro", _revienta)
+
+    # El Cobro va en la base OPERATIVA: backfill() lee de ahí y escribe al espejo.
+    with Session(db.engine) as s:
+        s.add(Cobro(phone="5215500000000", concepto="acta", monto_centavos=1000,
+                    estado="borrador", token_verificacion="tok", creado_por="ana"))
+        s.commit()
+
+    with caplog.at_level(logging.WARNING, logger="app.archive"):
+        archive.backfill()
+
+    assert "incompleto" in caplog.text
+    assert "cobranza" in caplog.text, (
+        f"el log no dice en qué etapa se cortó: {caplog.text[-300:]}"
+    )

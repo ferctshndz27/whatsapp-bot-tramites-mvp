@@ -109,15 +109,16 @@ repite:
   así que espiar una función global después no alcanza a una plantilla ya cacheada. El test limpia
   `env.cache` para que el espía entre.
 
-### Fase 2 — Con dueño y disparador (cuando se toque el área)
+### Fase 2 — Con dueño y disparador ✅ CERRADA
 
-No se agendan solas; se hacen montadas sobre el próximo trabajo que ya toque ese archivo.
+Cuatro se hicieron, una se descartó con el dato en la mano y una queda en manos del operador porque
+es una decisión de producto, no un arreglo. Ninguna quedó pendiente por olvido.
 
 | # | Qué | Disparador |
 |---|---|---|
 | ~~2.1~~ | ✅ **HECHA** — `tests/test_authz.py` enumera el router y exige que ningún anónimo reciba 200 fuera de `PUBLICAS` | Cerró el §2.2 del informe sin tocar `app/`. Detalle abajo |
 | ~~2.2~~ | ✅ **HECHA** — el barrido de huérfanos cuenta `fallidos` aparte de `sin_resolver` | Su disparador se cumplió solo: separar la excepción del "aún no empareja" **es** lo que faltaba, y `errores()` ya reconocía esa clave |
-| 2.3 | `backfill()`: reportar hasta dónde llegó | Al agregar la siguiente tabla al espejo. Un `try` único envuelve las ~70 líneas y devuelve `None` |
+| ~~2.3~~ | ✅ **HECHA** — el fallo del backfill nombra la etapa donde se cortó | Se adelantó a su disparador: el defecto era real y autocontenido. **No** se refactorizaron los 31 bucles a una tabla de funciones, aunque sería más corto: `test_mirror_consistency.py` analiza el AST de `backfill()` y solo reconoce llamadas por `ast.Name` — con `fn(objeto)` el candado de los cinco lugares quedaría verde en vacío |
 | ~~2.4~~ | ✅ **HECHA** — `lifespan` reemplaza a `@app.on_event`, `on_startup()` conserva nombre y cuerpo | La deprecación era real (el warning apuntaba a `main.py:197`) |
 | 2.5 | ❌ **NO SE HACE hoy** — la base tiene **21 mensajes** | `performance-senior` prohíbe optimizar sin medición, y el ponytail de `inbox.py` ya fija el umbral en decenas de miles. Reabrir con ese dato, no antes |
 | 2.6 | `intentos_proceso` se escribe y nadie lo lee | Confirmado: se escribe en `cobranza_jobs.py:66` y `stripe_webhook.py:179`, se espeja a MSSQL, y **ninguna decisión lo consulta**. Convertirlo en tope de reintentos es una decisión de producto (¿cuántos antes de rendirse?), no un arreglo — queda para el operador |
