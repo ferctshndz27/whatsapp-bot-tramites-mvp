@@ -16,7 +16,12 @@
       <div class="brand"><span class="star" aria-hidden="true">✳️</span> Trámites</div>
       <nav aria-label="Principal">
         <span class="nav-label">Operación</span>
-        <a href="/my" {% if request.url.path.startswith('/my') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🗓️</span>Mi día</a>
+        {# `== '/my'` y no `startswith`: con /my/cobros al lado, un prefijo dejaba
+           las DOS entradas marcadas como activas a la vez. #}
+        <a href="/my" {% if request.url.path == '/my' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🗓️</span>Mi día</a>
+        {# Va en Operación y NO bajo Administración: la cartera es del asesor.
+           /cobros (admin) es la vista de toda la oficina; esta es la suya. #}
+        <a href="/my/cobros" {% if request.url.path.startswith('/my/cobros') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💰</span>Mi cartera</a>
         {# El detalle de folio vive bajo /tickets/ y el chat bajo /inbox/: sin
            estas ramas, entrar a un folio o a una conversación dejaba el sidebar
            entero sin ítem activo. Ambos se alcanzan desde Solicitudes, que ya

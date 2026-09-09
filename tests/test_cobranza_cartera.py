@@ -195,6 +195,24 @@ def test_my_cobros_no_cruza_oficinas(entorno):
     assert "999" not in texto, "un cobro de otra oficina se coló en la cartera"
 
 
+def test_el_colaborador_encuentra_su_cartera_en_el_menu(entorno):
+    """La vista existía y funcionaba, y aun así el dueño no la encontró: la
+    única puerta era una tarjeta dentro de /my. Una ruta que funciona pero a la
+    que nadie llega vale lo mismo que una que no existe.
+
+    Va en «Operación» y no bajo «Administración», así que tiene que salirle a
+    un colaborador — que es justo quien no puede ver /cobros.
+    """
+    cliente = _cliente(ANA)
+    menu = cliente.get("/my").text
+    assert 'href="/my/cobros"' in menu, "la cartera no aparece en el menú lateral"
+    assert 'href="/cobros"' not in menu, (
+        "el menú le ofrece /cobros a un colaborador, que va a rebotar a /"
+    )
+    # Y el ítem activo es UNO solo: con `startswith('/my')` se marcaban los dos.
+    assert cliente.get("/my/cobros").text.count('aria-current="page"') == 1
+
+
 def test_my_cobros_le_pide_login_al_anonimo(entorno):
     respuesta = TestClient(app, base_url="https://testserver").get(
         "/my/cobros", follow_redirects=False

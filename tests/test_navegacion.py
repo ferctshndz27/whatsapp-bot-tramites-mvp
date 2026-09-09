@@ -140,12 +140,22 @@ def test_la_bandeja_ya_no_es_una_entrada_del_menu(http):
     assert ">Bandeja<" not in _sidebar(http.get("/").text)
 
 
-@pytest.mark.parametrize("url", ["/", "/?conv=pausadas", f"/inbox/{PHONE}", "/clients"])
-def test_el_sidebar_siempre_marca_un_item_activo(http, url):
+@pytest.mark.parametrize("url,activo", [
+    ("/", "/"),
+    ("/?conv=pausadas", "/"),
+    (f"/inbox/{PHONE}", "/"),
+    ("/clients", "/clients"),
+    # «Mi día» y «Mi cartera» comparten prefijo: con un `startswith('/my')` se
+    # marcaban las DOS a la vez, que es peor que no marcar ninguna — el menú
+    # deja de decirte dónde estás parado.
+    ("/my", "/my"),
+    ("/my/cobros", "/my/cobros"),
+])
+def test_el_sidebar_siempre_marca_un_item_activo(http, url, activo):
     """Quitar la Bandeja no puede dejar el chat sin nada resaltado en el menú:
     el chat se alcanza desde Solicitudes, así que ese es su ítem."""
     activos = re.findall(r'<a href="([^"]+)"[^>]*aria-current="page"', _sidebar(http.get(url).text))
-    assert activos == ["/clients" if url == "/clients" else "/"]
+    assert activos == [activo]
 
 
 def _boton_volver(html: str) -> str:
