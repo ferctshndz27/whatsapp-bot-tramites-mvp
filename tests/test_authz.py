@@ -24,6 +24,7 @@ función del router: así el path forma parte del contrato probado.
 
 import inspect
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Callable
@@ -483,6 +484,13 @@ def _sesion_de(username: str) -> TestClient:
     return cliente
 
 
+@pytest.fixture()
+def cliente_anonimo():
+    """Sin login: es el punto de la prueba. base_url https por el flag Secure."""
+    with TestClient(app, base_url="https://testserver") as cliente:
+        yield cliente
+
+
 def _pedir(cliente: TestClient, ruta: Ruta):
     if ruta.metodo == "GET":
         return cliente.get(ruta.path, follow_redirects=False)
@@ -592,3 +600,95 @@ def test_la_tabla_cubre_toda_ruta_con_guard_de_admin():
     assert con_guard, "la detección de guards dejó de encontrar rutas"
     faltantes = sorted(f"{m} {p}" for m, p in con_guard - cubiertas - fuera_de_tabla)
     assert faltantes == [], f"rutas admin sin fila en RUTAS: {faltantes}"
+
+
+# ---------------------------------------------------------------------------
+# El anónimo: la puerta de la calle
+# ---------------------------------------------------------------------------
+# Todo lo de arriba compara colaborador contra admin — dos personas que YA
+# entraron. Falta la puerta de afuera, y es el riesgo que nadie vigila: una
+# ruta nueva a la que se le olvide `_current_user(request)` nace PÚBLICA, y
+# ninguna de las pruebas anteriores lo notaría porque ambas llegan con sesión.
+# Se enumera el router en vez de mantener otra tabla a mano: una ruta que se
+# agregue mañana entra sola a esta prueba.
+
+# Públicas POR DISEÑO, cada una con su razón. La lista es corta a propósito:
+# crecerla es una decisión de seguridad, no un trámite para poner algo en verde.
+PUBLICAS: dict[tuple[str, str], str] = {
+    ("GET", "/health"): "lo consulta deploy/pull-deploy.sh para decidir el rollback",
+    ("GET", "/login"): "la puerta",
+    ("POST", "/login"): "la puerta",
+    ("GET", "/register"): "alta con código de invitación; sin él no registra",
+    ("POST", "/register"): "alta con código de invitación; sin él no registra",
+    # Webhooks: su autenticación es la FIRMA (HMAC), no la cookie. Sin firma
+    # válida contestan 403 — verificado abajo, no asumido.
+    ("GET", "/webhook"): "verificación de Meta (hub.challenge)",
+    ("POST", "/webhook"): "entrante de Meta, firma HMAC",
+    ("POST", "/webhook/twilio"): "entrante de Twilio, firma propia",
+    ("POST", "/webhook/twilio/status"): "acuses de Twilio, firma propia",
+    ("POST", "/webhooks/stripe"): "eventos de Stripe, firma propia (ruta legada)",
+    ("POST", "/webhooks/stripe/{slug}"): "eventos de Stripe por oficina, firma propia",
+    # El cliente que acaba de pagar vuelve del checkout de Stripe SIN sesión del
+    # panel: si estas pidieran login, vería la pantalla de acceso al asesor.
+    ("GET", "/cobros/gracias"): "retorno del checkout de Stripe",
+    ("GET", "/cobros/cancelado"): "retorno del checkout de Stripe",
+    # Adjunto servido por nombre aleatorio para que el cliente lo abra desde
+    # WhatsApp; el secreto es la URL. Su gemela /media/{name} SÍ pide sesión.
+    ("GET", "/media/publico/{name}"): "adjunto de cliente, URL no adivinable",
+}
+
+
+def _rutas_del_router() -> list[tuple[str, str]]:
+    return sorted(
+        (metodo, ruta.path)
+        for ruta in app.routes
+        if hasattr(ruta, "methods") and hasattr(ruta, "path")
+        for metodo in ruta.methods & {"GET", "POST"}
+    )
+
+
+@pytest.mark.parametrize(("metodo", "path"), _rutas_del_router())
+def test_ninguna_ruta_del_panel_le_contesta_a_un_anonimo(cliente_anonimo, metodo, path):
+    """REGLA: sin sesión, ninguna ruta del panel devuelve 200.
+
+    Lo que se afirma es la ausencia de CONTENIDO, no un código concreto: 303 a
+    /login, 403 y 422 son todos rechazos válidos. El 422 aparece porque FastAPI
+    valida el `Form(...)` antes de que el handler llegue a su guard — la
+    petición muere igual, pero conviene saber que en esas rutas el orden es
+    ese y no al revés.
+    """
+    respuesta = cliente_anonimo.request(
+        metodo, re.sub(r"\{[^}]+\}", "1", path), follow_redirects=False
+    )
+    razon = PUBLICAS.get((metodo, path))
+    if razon:
+        assert respuesta.status_code != 500, f"{metodo} {path} es pública ({razon}) y revienta"
+        return
+
+    assert respuesta.status_code != 200, (
+        f"{metodo} {path} le contestó 200 a un anónimo. Si es pública a propósito, "
+        "agrégala a PUBLICAS con su razón; si no, le falta el guard de sesión."
+    )
+
+
+def test_la_lista_de_rutas_publicas_no_tiene_entradas_muertas():
+    """Una entrada que ya no corresponde a ninguna ruta es un permiso que
+    sobrevive a la ruta que lo justificaba: el día que alguien reuse ese path,
+    nace público sin que nadie lo decida."""
+    fantasmas = sorted(f"{m} {p}" for m, p in PUBLICAS if (m, p) not in _rutas_del_router())
+    assert fantasmas == [], f"PUBLICAS nombra rutas que ya no existen: {fantasmas}"
+
+
+@pytest.mark.parametrize(("metodo", "path"), [
+    (m, p) for (m, p) in PUBLICAS if "/webhook" in p
+])
+def test_los_webhooks_publicos_rechazan_sin_firma(cliente_anonimo, metodo, path):
+    """Los webhooks están en PUBLICAS porque su autenticación es la firma, no la
+    cookie. Eso solo es aceptable si la firma DE VERDAD cierra: un webhook que
+    aceptara sin firma sería una ruta pública de escritura."""
+    respuesta = cliente_anonimo.request(
+        metodo, re.sub(r"\{[^}]+\}", "1", path), follow_redirects=False
+    )
+    assert respuesta.status_code == 403, (
+        f"{metodo} {path} contestó {respuesta.status_code} sin firma; debe ser 403"
+    )

@@ -91,6 +91,14 @@ change from silently opening one of them.
   goes only to `authlog`. Lockout is 5 attempts / 300 s, in-memory per process (`dashboard.py:40-45`).
 
 ## Common mistakes
+- **Testing authorization only between logged-in roles.** `tests/test_authz.py` compares colaborador
+  against admin route by route — both already through the door. The gap that leaves is the front
+  door itself: a new route that forgets `_current_user(request)` is born public and neither side of
+  that comparison notices. The enumeration test at the end of that file closes it by walking
+  `app.routes` and asserting no anonymous request gets a 200 outside an explicit `PUBLICAS` map, so
+  a route added tomorrow is covered without anyone remembering to add it. Note it asserts *no
+  content* rather than a specific code: 33 routes answer **422**, because FastAPI validates
+  `Form(...)` before the handler reaches its guard.
 - **Assuming the middlewares authenticate.** The four in `app/main.py` add session state, nav
   context and security headers — **none of them is a guard**. Anything FastAPI mounts on its own
   is therefore public: `/docs`, `/redoc` and `/openapi.json` served the ERP's full route map (98

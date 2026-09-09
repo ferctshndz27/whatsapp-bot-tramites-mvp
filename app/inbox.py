@@ -78,6 +78,12 @@ def filter_conversations(items: list[dict], filtro: str | None) -> list[dict]:
 def build_conversation_items(session) -> list[dict]:
     # ponytail: carga todos los mensajes y agrupa en Python — sobra a este
     # volumen; pasar a una consulta agregada si el historial crece a decenas de miles.
+    # Una auditoría pidió reescribirlo ya con ROW_NUMBER() OVER (PARTITION BY...)
+    # y se rechazó (septiembre de 2026, docs/PLAN-CORRECCION-AUDITORIA.md): sin
+    # una medición, y con el volumen de hoy, cambia una función legible por una
+    # consulta que solo entiende quien la escribió. Cuando toque, el primer paso
+    # NO es la función de ventana sino dejar de hidratar entidades ORM: aquí se
+    # usan cuatro columnas de Message y se traen todas.
     messages = session.exec(
         select(Message).where(Message.habilitado.is_(True)).order_by(Message.created_at.desc())
     ).all()

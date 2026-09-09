@@ -13,6 +13,22 @@ load_dotenv()
 CLAUDE_HABILITADO = False
 
 
+# ponytail: lectura del entorno a mano y clamps explícitos, en vez de
+# pydantic-settings. Una auditoría propuso migrarlo y se rechazó (septiembre de
+# 2026, docs/PLAN-CORRECCION-AUDITORIA.md) por dos razones:
+#
+# 1. El patrón que este archivo sostiene es que un secreto ausente deja la
+#    función INERTE y nunca levanta al importar —backend-senior lo exige—,
+#    mientras que un `Field(ge=..., le=...)` de pydantic valida al construir, o
+#    sea al arrancar el contenedor.
+# 2. tests/test_credenciales_inventario.py audita este archivo como TEXTO,
+#    reconociendo la forma exacta de cada lectura del entorno; la migración lo
+#    dejaría ciego. Y es literal en serio: la primera versión de este comentario
+#    traía un ejemplo de esa forma entre comillas y el escáner lo contó como una
+#    credencial de verdad, con el test en rojo. No escribir aquí la expresión que
+#    busca — describirla, como se hace arriba.
+#
+# Reabrir solo con un plan para esas dos cosas, no por el tipado.
 class Settings:
     def __init__(self):
         self.whatsapp_token = os.environ.get("WHATSAPP_TOKEN", "")

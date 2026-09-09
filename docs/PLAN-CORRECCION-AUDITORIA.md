@@ -115,14 +115,48 @@ No se agendan solas; se hacen montadas sobre el próximo trabajo que ya toque es
 
 | # | Qué | Disparador |
 |---|---|---|
-| 2.1 | **Test de autorización por enumeración de rutas**: recorrer `app.routes` y exigir 303 a `/login` en toda ruta fuera de una lista blanca explícita | Es el valor real del §2.2 del informe: cierra el riesgo de "endpoint público por omisión" **sin** el refactor a `Depends`. ~30 líneas, no toca `app/` |
-| 2.2 | `errores()` del cron: cubrir también `sin_resolver` | Cuando el barrido de huérfanos distinga excepción de "aún no empareja" (hoy los mezcla y contarlo alarmaría cada noche) |
+| ~~2.1~~ | ✅ **HECHA** — `tests/test_authz.py` enumera el router y exige que ningún anónimo reciba 200 fuera de `PUBLICAS` | Cerró el §2.2 del informe sin tocar `app/`. Detalle abajo |
+| ~~2.2~~ | ✅ **HECHA** — el barrido de huérfanos cuenta `fallidos` aparte de `sin_resolver` | Su disparador se cumplió solo: separar la excepción del "aún no empareja" **es** lo que faltaba, y `errores()` ya reconocía esa clave |
 | 2.3 | `backfill()`: reportar hasta dónde llegó | Al agregar la siguiente tabla al espejo. Un `try` único envuelve las ~70 líneas y devuelve `None` |
-| 2.4 | Migrar a `lifespan` conservando el nombre `on_startup()` | Al próximo cambio en el arranque. El nombre es carga documental: `devops-senior` lo cita siete veces |
-| 2.5 | `inbox`: pedir cuatro columnas en vez de hidratar entidades ORM | Cuando la bandeja se sienta lenta **con una medición en mano** |
-| 2.6 | `intentos_proceso` se escribe y nadie lo lee | Al tocar la cobranza: un contador de reintentos que no acota nada |
+| ~~2.4~~ | ✅ **HECHA** — `lifespan` reemplaza a `@app.on_event`, `on_startup()` conserva nombre y cuerpo | La deprecación era real (el warning apuntaba a `main.py:197`) |
+| 2.5 | ❌ **NO SE HACE hoy** — la base tiene **21 mensajes** | `performance-senior` prohíbe optimizar sin medición, y el ponytail de `inbox.py` ya fija el umbral en decenas de miles. Reabrir con ese dato, no antes |
+| 2.6 | `intentos_proceso` se escribe y nadie lo lee | Confirmado: se escribe en `cobranza_jobs.py:66` y `stripe_webhook.py:179`, se espeja a MSSQL, y **ninguna decisión lo consulta**. Convertirlo en tope de reintentos es una decisión de producto (¿cuántos antes de rendirse?), no un arreglo — queda para el operador |
 
-### Fase 3 — Rechazado, por escrito
+**Lo que reveló el barrido de la 2.1.** Se pidieron las 108 rutas del router sin sesión, una por
+una. Resultado: **ninguna filtra datos**. 62 redirigen a `/login`, 6 webhooks contestan 403 sin
+firma —fail-closed, como debe ser— y las 5 que devuelven 200 son públicas a propósito: `/health`
+(lo consulta `pull-deploy.sh`), `/login`, `/register`, y `/cobros/gracias` + `/cobros/cancelado`,
+que son el retorno del checkout de Stripe: el cliente que acaba de pagar no tiene sesión del panel,
+y pedirle login ahí sería mostrarle la puerta del asesor.
+
+Un matiz que conviene conocer: **33 rutas contestan 422 en vez de redirigir**, porque FastAPI valida
+el `Form(...)` *antes* de que el handler llegue a su guard. La petición muere igual y no filtra
+nada, pero el orden es ese y no al revés — por eso el test afirma "no 200" en vez de exigir un
+código concreto.
+
+El test enumera el router, así que una ruta que se agregue mañana entra sola. Verificado con la
+mutación que de verdad importa: se añadió un endpoint sin guard y la suite se puso roja.
+
+### Fase 3 — Rechazado, por escrito ✅ HECHA
+
+Los rechazos ya no viven solo en este documento: cada uno bajó al código como `# ponytail:` con su
+**condición de reapertura**, que es el formato que el repo usa para una simplificación deliberada.
+Ocho marcadores, en `app/archive.py`, `app/conversation.py`, `app/main.py` (dos: routers y
+middleware), `app/config.py`, `app/auth.py`, `app/inbox.py` y `app/whatsapp_client.py`.
+
+Dos cosas que aparecieron al escribirlos:
+
+- **`app/inbox.py` ya tenía el suyo desde antes.** El §3.4 del informe pedía reescribir con
+  `ROW_NUMBER()` algo que el código ya declaraba como decisión consciente, con su umbral escrito
+  ("si el historial crece a decenas de miles"). Solo se le añadió la referencia y cuál es el primer
+  paso real cuando llegue el momento: dejar de hidratar entidades ORM, no la función de ventana.
+- **El comentario de `config.py` rompió un test, y tenía razón.** Ese ponytail explica que
+  `tests/test_credenciales_inventario.py` audita el archivo como TEXTO; la primera versión incluía
+  un ejemplo literal de la forma que el escáner busca, y el escáner lo contó como una credencial de
+  verdad. Rojo inmediato. Quedó reescrito describiendo la forma en vez de citarla, con la anécdota
+  dentro — enseña más que la explicación.
+
+
 
 Un "no" sin registrar se reabre en la siguiente auditoría. Estos se anotan como `# ponytail:` con su
 condición de reapertura, que es el formato que el repo ya usa.
@@ -136,9 +170,20 @@ condición de reapertura, que es el formato que el repo ya usa.
 | **`run_in_threadpool` en `_nav_context`** (§3.2) | Contradice una decisión ya medida y escrita: `app/stripe_webhook.py:119-121` documenta que el salto a threadpool cuesta más que el SELECT que ahorra |
 | **Migrar a `pydantic-settings`** (§3.7) | `backend-senior:147` manda que un secreto ausente deje la función inerte y **nunca levante al importar**; el snippet del informe hace lo contrario. Además `tests/test_credenciales_inventario.py` lee `config.py` como texto y se rompería |
 | **`ROW_NUMBER()` en `/inbox`** (§3.4) | Hay un `# ponytail:` vigente en `dashboard.py:414` sobre paginación en memoria. La versión mínima (Fase 2.5) captura el valor sin reescribir la consulta |
-| **Jerarquía estricta de capas** (§2.3) | Los imports diferidos que se revisaron no son parches de ciclo: varios llevan su propio `ponytail` con el techo escrito |
+| **Jerarquía estricta de capas** (§2.3) | Se rechaza la **solución**, no el diagnóstico — ver abajo |
 
 ---
+
+**El único punto donde el informe queda por delante: §2.3, los imports diferidos.** Su solución
+—rediseñar el repo en capas unidireccionales— es desproporcionada y se rechaza. Su diagnóstico no:
+al contarlos salieron **60**, más que los 50 que reporta, y **solo 15 llevan un comentario que
+explique por qué están dentro de la función**. Los 45 restantes pueden ser deliberados o pueden ser
+ciclos tapados; hoy nadie puede distinguirlo leyendo el código, que es exactamente la clase de
+ambigüedad que este repo resuelve con un `# ponytail:`.
+
+No se anota como rechazo porque no lo es. Queda como trabajo pendiente sin fecha: cuando alguien
+toque un módulo, que justifique ahí mismo sus imports diferidos o los suba. Convertirlo en una
+tarea de barrido de 45 sitios no aportaría nada verificable.
 
 ## 5. Cómo se verifica cada fase
 

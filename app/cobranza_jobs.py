@@ -215,13 +215,20 @@ def intentos_huerfanos() -> dict:
             ).all()
         ]
 
-    resueltos = sin_resolver = irresolubles = 0
+    resueltos = sin_resolver = irresolubles = fallidos = 0
     for intento_id in ids:
         try:
             estado = _resolver_intento(intento_id, ahora)
         except Exception:
+            # Cuenta APARTE, no como "sin-resolver". Antes una excepción tomaba
+            # ese mismo valor y quedaba indistinguible de un intento que
+            # simplemente todavía no empareja —una noche perfectamente normal—,
+            # así que el resumen no podía decir si algo se había roto. Con su
+            # propia clave, `jobs.errores()` lo ve: `fallidos` es la convención
+            # que ya usan los otros cuatro barridos y el cron sale con 1.
             logger.exception("Barrido de huérfanos falló en el intento id=%s", intento_id)
-            estado = "sin-resolver"
+            fallidos += 1
+            continue
         if estado == "resuelto":
             resueltos += 1
         elif estado == "irresoluble":
@@ -229,7 +236,8 @@ def intentos_huerfanos() -> dict:
         else:
             sin_resolver += 1
     return {"huerfanos": len(ids), "resueltos": resueltos,
-            "sin_resolver": sin_resolver, "irresolubles": irresolubles}
+            "sin_resolver": sin_resolver, "irresolubles": irresolubles,
+            "fallidos": fallidos}
 
 
 # ---------------------------------------------------------------------------

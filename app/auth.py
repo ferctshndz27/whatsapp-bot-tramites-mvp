@@ -3,6 +3,16 @@
 `is_admin` gatea las secciones de administración. `alcance` responde la otra
 pregunta —QUÉ FILAS puede ver— y existe para que esa decisión viva en UN lugar
 y no repetida en cada vista (docs/SPEC-MULTI-OFICINA.md §5).
+
+ponytail: los routers resuelven la sesión con su propio `_current_user` en vez
+de un `Depends(get_current_user)`. Una auditoría pidió centralizarlo y se
+rechazó en esa forma (septiembre de 2026, docs/PLAN-CORRECCION-AUDITORIA.md):
+lo que de verdad protegía —que una ruta nueva no naciera pública— ya lo cierra
+la enumeración del router en tests/test_authz.py, que cubre las rutas de hoy y
+las de mañana sin tocar `app/`. Y la técnica propuesta, `HTTPException(303,
+headers={"Location": ...})`, no es la forma idiomática de redirigir en FastAPI.
+Reabrir si la duplicación empieza a divergir de verdad —cuerpos distintos, no
+copias— y entonces con `RedirectResponse`, no con excepciones.
 """
 
 from typing import NamedTuple

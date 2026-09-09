@@ -99,8 +99,11 @@ def test_35_intento_reciente_reintenta_con_la_misma_clave(monkeypatch):
 
     resultado = jobs.intentos_huerfanos()
 
+    # `fallidos` se separó de `sin_resolver`: antes una excepción se contaba como
+    # "todavía no empareja" y el resumen no distinguía un fallo de una noche
+    # normal. Es la clave que jobs.errores() reconoce para sacar al cron con 1.
     assert resultado == {"huerfanos": 1, "resueltos": 1,
-                         "sin_resolver": 0, "irresolubles": 0}
+                         "sin_resolver": 0, "irresolubles": 0, "fallidos": 0}
     assert len(llamadas) == 1
     assert llamadas[0]["clave_idempotencia"] == f"cobro:{cobro_id}:1"
 
@@ -483,3 +486,36 @@ def test_barrer_todo_corre_los_cinco():
 
     assert set(resultado) == {b.__name__ for b in jobs.BARRIDOS}
     assert all("error" not in r for r in resultado.values())
+
+
+def test_41_una_excepcion_por_intento_no_se_disfraza_de_sin_resolver(monkeypatch):
+    """REGLA: el barrido de huérfanos sobrevive a un intento que revienta —eso ya
+    estaba— pero tiene que DECIRLO por un canal que el cron pueda leer.
+
+    Antes la excepción se contaba como `sin_resolver`, el mismo casillero que un
+    intento que simplemente todavía no empareja: una noche normal. Con las dos
+    cosas en un solo número, ni el resumen ni `jobs.errores()` podían distinguir
+    "no había nada que hacer" de "no pude hacerlo", y el cron salía 0 con el
+    barrido roto.
+    """
+    import app.jobs as app_jobs
+
+    with Session(db.engine) as s:
+        cobro = _cobro(s)
+        _intento(s, cobro, solicitado_at=cobranza.naive_utc(utcnow() - timedelta(minutes=5)))
+
+    def _revienta(*_a, **_k):
+        raise RuntimeError("MSSQL caído a media resolución")
+
+    monkeypatch.setattr(jobs, "_resolver_intento", _revienta)
+
+    resultado = jobs.intentos_huerfanos()
+
+    assert resultado["fallidos"] == 1, "la excepción no se contó como fallo"
+    assert resultado["sin_resolver"] == 0, (
+        "la excepción se disfrazó de «todavía no empareja»: es el bug que este arreglo quita"
+    )
+    # Y lo que de verdad importa: que el cron pueda verlo.
+    assert app_jobs.errores({"cobranza": {"intentos_huerfanos": resultado}}) == [
+        "cobranza.intentos_huerfanos"
+    ], "el fallo no llega al código de salida del cron"

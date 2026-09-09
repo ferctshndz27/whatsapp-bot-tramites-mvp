@@ -13,6 +13,19 @@ hechos mientras MSSQL estaba caído).
 Se activa definiendo MSSQL_HOST y MSSQL_SA_PASSWORD (ver .env).
 """
 
+# ponytail: monolito A PROPÓSITO, revisado y rechazado en septiembre de 2026
+# (docs/PLAN-CORRECCION-AUDITORIA.md). Partirlo en schema/upsert/listeners/sync
+# suena bien y sale caro: la regla de los CINCO lugares —el footgun que AGENTS.md
+# nombra así— pasaría a ser cinco lugares en cinco archivos, y hoy los cuatro
+# primeros se ven de un `grep <tabla> app/archive.py`. Además
+# tests/test_mirror_consistency.py lee el AST de UN archivo: como paquete revienta
+# al recolectar, y su detector de llamadas solo entiende `ast.Name`, así que en
+# cuanto backfill() llamara a `upsert.archive_x(...)` el candado quedaría VERDE EN
+# VACÍO — que es la falla que ese test existe para evitar. Dos tercios de estas
+# líneas son _SCHEMA_DDL y mapeo columna-a-columna, no lógica.
+# Reabrir SOLO si entran dos autores en paralelo o el DDL deja de caber en una
+# lectura; y entonces el candado se reescribe ANTES de mover una sola función.
+
 import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace

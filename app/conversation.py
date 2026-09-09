@@ -465,6 +465,14 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
     }:
         return [FAREWELL_REPLY]
 
+    # ponytail: la FSM vive en este dict y no en un submódulo propio. Una
+    # auditoría pidió extraerla (septiembre de 2026,
+    # docs/PLAN-CORRECCION-AUDITORIA.md) describiendo el archivo como un bloque
+    # indivisible; en la práctica ya está desacoplada aquí —un estado es una
+    # entrada y una función— y el archivo son 63 funciones sueltas, no una
+    # madeja. Reabrir cuando un estado necesite datos que no quepan en la firma
+    # `(session, client, conv, text, normalized)`, que es la señal real de que
+    # la máquina pide su propio módulo.
     handlers = {
         "inicio": _handle_inicio,
         "esperando_nombre": _handle_esperando_nombre,

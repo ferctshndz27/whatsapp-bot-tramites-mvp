@@ -27,7 +27,18 @@ CAPTION_MAX = 1024
 
 
 def _send(to_phone: str, payload: dict) -> str | None:
-    """POST a /messages con reintentos y backoff. Devuelve el wamid o None."""
+    """POST a /messages con reintentos y backoff. Devuelve el wamid o None.
+
+    ponytail: `httpx.post` suelto, sin cliente compartido con pool. Una
+    auditoría pidió el singleton y se rechazó (septiembre de 2026,
+    docs/PLAN-CORRECCION-AUDITORIA.md): el handshake ronda los 24 ms contra un
+    presupuesto de segundos —la cascada NLU sola mide p90 en unidades de
+    segundo—, y con el ritmo de mensajes de este bot el `keepalive_expiry` de 5 s
+    dejaría el pool frío entre uno y otro, o sea el mismo handshake más un
+    cliente global que hay que cerrar y que se comparte entre pruebas.
+    Reabrir con una medición, y el disparador natural es una difusión masiva:
+    ahí sí hay ráfaga que amortice el pool.
+    """
     # ponytail: office_id fijo a Tlaxcala — este adaptador no tiene la oficina
     # en su alcance. El PR 4 la baja por el túnel que ya transporta `provider`
     # (webhook.handle_inbound -> _deliver -> messaging.send_*).

@@ -1,5 +1,6 @@
 import logging
 import secrets
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -40,6 +41,21 @@ logger = logging.getLogger(__name__)
 # volver a iniciar sesión.
 SESSION_MAX_AGE = 12 * 60 * 60
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Reemplaza a `@app.on_event("startup")`, deprecado en FastAPI/Starlette.
+
+    El cuerpo del arranque NO se movió aquí a propósito: sigue en `on_startup()`
+    (abajo), que es el nombre que citan la skill de devops y el procedimiento de
+    deploy. Este envoltorio solo dice cuándo llamarlo. Sin `try` alrededor: si el
+    arranque falla, el proceso no debe atender tráfico — `pull-deploy.sh` cuenta
+    con que `/health` no responda para disparar el rollback.
+    """
+    on_startup()
+    yield
+
+
 # Sin `/docs`, `/redoc` ni `/openapi.json`: los tres nacen abiertos en FastAPI y
 # no hay guard de sesión que los cubra —los middlewares de abajo agregan
 # cabeceras y contexto, no autenticación—, así que publicaban el mapa completo
@@ -54,6 +70,7 @@ SESSION_MAX_AGE = 12 * 60 * 60
 # generar un cliente, no debe reabrir Swagger y ReDoc de paso sin notarlo.
 app = FastAPI(
     title="Bot de trámites — MVP",
+    lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -108,6 +125,15 @@ async def _nav_context(request, call_next):
     # línea cada uno de esos pedía también el COUNT. La comparación de prefijo
     # cuesta nada y es segura por construcción — lo que se monta en /static/ no
     # pasa por una plantilla.
+    #
+    # ponytail: el COUNT corre en el event loop y NO se manda a threadpool, pese
+    # a que una auditoría lo pidió (rechazado en septiembre de 2026,
+    # docs/PLAN-CORRECCION-AUDITORIA.md). Ya está medido en el repo y en el otro
+    # sentido: stripe_webhook.py documenta que el salto a threadpool cuesta más
+    # que el SELECT que ahorraría. Además esto solo corre con sesión iniciada —
+    # el webhook de WhatsApp, que es el camino con presión real, nunca lo toca.
+    # Reabrir con una medición del loop bajo carga concurrente del panel, no
+    # antes.
     if request.url.path.startswith("/static/"):
         return await call_next(request)
     try:
@@ -142,6 +168,14 @@ app.add_middleware(
     max_age=SESSION_MAX_AGE,             # la sesión caduca (no vive para siempre)
 )
 app.middleware("http")(_security_headers)
+
+# ponytail: routers SIN `prefix` ni `tags`, cada archivo con sus rutas absolutas.
+# Una auditoría pidió agregarlos y se rechazó (septiembre de 2026,
+# docs/PLAN-CORRECCION-AUDITORIA.md): `prefix` cambia las URLs, y estas están
+# cableadas en las plantillas Jinja y —lo caro— en los webhooks ya configurados
+# del lado de Meta, Twilio y Stripe, donde un cambio no se despliega, se
+# reconfigura a mano. El beneficio que se buscaba era ordenar /docs, que arriba
+# quedó cerrado. Reabrir solo si algún día se publica el esquema.
 app.include_router(webhook.router)
 app.include_router(stripe_webhook.router)
 app.include_router(dashboard.router)
@@ -177,8 +211,15 @@ def _aplicar_eventos_pendientes() -> None:
         logger.exception("No se pudieron aplicar los eventos de Stripe pendientes")
 
 
-@app.on_event("startup")
 def on_startup() -> None:
+    """Todo lo que corre una vez, antes de atender el primer request.
+
+    Sigue llamándose así —y sigue siendo síncrona— aunque ahora la invoque el
+    `lifespan` de abajo: el nombre es carga documental (`devops-senior` lo cita
+    siete veces, y `deploy/pull-deploy.sh` depende de que termine dentro del
+    presupuesto de 60 s del health check). Lo que cambió es QUIÉN la llama, no
+    qué hace ni en qué orden.
+    """
     init_db()
     # Overrides del Estudio del Agente (/agente): lo guardado en la base pisa
     # el .env ANTES de atender el primer mensaje.
