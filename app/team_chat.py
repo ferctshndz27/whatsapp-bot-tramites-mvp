@@ -8,7 +8,7 @@ from sqlmodel import select
 from app.auth import is_admin
 from app.db import get_session
 from app.media_store import save_upload
-from app.models import TeamMessage
+from app.models import TeamMessage, User
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +29,15 @@ def team_chat(request: Request, err: str | None = None):
         return RedirectResponse("/login", status_code=303)
 
     with get_session() as session:
+        user_obj = session.exec(select(User).where(User.username == user)).first()
+        if not user_obj:
+            return RedirectResponse("/login", status_code=303)
+
         # ponytail: últimos N y reversa en memoria; paginar si el canal crece mucho.
         recent = session.exec(
             select(TeamMessage)
             .where(TeamMessage.habilitado.is_(True))
+            .where(TeamMessage.office_id == user_obj.office_id)
             .order_by(TeamMessage.created_at.desc())
             .limit(MAX_MESSAGES_SHOWN)
         ).all()
@@ -57,8 +62,10 @@ def team_send(request: Request, body: str = Form(...)):
     body = body.strip()
     if body:
         with get_session() as session:
-            session.add(TeamMessage(author=user, body=body[:MAX_BODY_LENGTH]))
-            session.commit()
+            user_obj = session.exec(select(User).where(User.username == user)).first()
+            if user_obj:
+                session.add(TeamMessage(author=user, body=body[:MAX_BODY_LENGTH], office_id=user_obj.office_id))
+                session.commit()
     return RedirectResponse("/team", status_code=303)
 
 
@@ -73,14 +80,17 @@ def team_send_media(request: Request, file: UploadFile, caption: str = Form(""))
         return RedirectResponse(f"/team?err={error}", status_code=303)
 
     with get_session() as session:
-        session.add(
-            TeamMessage(
-                author=user,
-                body=caption.strip()[:MAX_BODY_LENGTH] or f"[archivo: {file.filename}]",
-                media_path=web_path,
+        user_obj = session.exec(select(User).where(User.username == user)).first()
+        if user_obj:
+            session.add(
+                TeamMessage(
+                    author=user,
+                    body=caption.strip()[:MAX_BODY_LENGTH] or f"[archivo: {file.filename}]",
+                    media_path=web_path,
+                    office_id=user_obj.office_id,
+                )
             )
-        )
-        session.commit()
+            session.commit()
     return RedirectResponse("/team", status_code=303)
 
 
