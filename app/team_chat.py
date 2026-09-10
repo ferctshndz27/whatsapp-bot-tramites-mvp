@@ -37,7 +37,7 @@ def _mensaje_visible(session, message_id: int, user: str) -> TeamMessage | None:
     ).first()
 
 @router.get("/team")
-def team_chat(request: Request, err: str | None = None):
+def team_chat(request: Request, err: str | None = None, room: int | None = None):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -97,6 +97,12 @@ def team_chat(request: Request, err: str | None = None):
         users_query = select(User).where(User.habilitado == True, User.username != user)
         office_users = session.exec(vista.filtrar(users_query, User.office_id)).all()
 
+    # `?room=` abre esa sala en vez de la general: a él redirige crear una sala
+    # (o pedir un DM que ya existe) y ahí lo deja la auto-recarga de 20 s. Solo
+    # se honra si es una de SUS salas — si no, cae a la general sin avisar.
+    mis_salas = {r["id"] for r in rooms_out}
+    sala_inicial = room if room in mis_salas else general_room.id
+
     return templates.TemplateResponse(
         "team_chat.html",
         {
@@ -105,7 +111,8 @@ def team_chat(request: Request, err: str | None = None):
             "rooms": rooms_out,
             "office_users": office_users,
             "error": err,
-            "general_room_id": general_room.id
+            "general_room_id": general_room.id,
+            "sala_inicial": sala_inicial,
         },
     )
 
@@ -197,7 +204,8 @@ def create_room(request: Request, room_type: str = Form(...), name: str = Form("
             if my_dms:
                 existing = session.exec(select(ChatMember.room_id).where(ChatMember.room_id.in_(my_dms), ChatMember.username == other_user)).first()
                 if existing:
-                    return RedirectResponse(f"/team", status_code=303)
+                    # Lo lleva a la conversación que ya tiene, no a la general.
+                    return RedirectResponse(f"/team?room={existing}", status_code=303)
                     
         room = ChatRoom(room_type=actual_type, name=name.strip() if not is_dm else None)
         session.add(room)
@@ -209,8 +217,9 @@ def create_room(request: Request, room_type: str = Form(...), name: str = Form("
             if m != user:
                 session.add(ChatMember(room_id=room.id, username=m))
         session.commit()
+        room_id = room.id
 
-    return RedirectResponse(f"/team", status_code=303)
+    return RedirectResponse(f"/team?room={room_id}", status_code=303)
 
 @router.post("/team/rooms/{room_id}/send")
 def team_send(request: Request, room_id: int, body: str = Form(...)):

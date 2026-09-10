@@ -8,7 +8,13 @@ function loadRoom(roomId) {
     
     document.querySelectorAll('.room-item').forEach(el => el.classList.remove('active'));
     document.querySelector(`[data-room-id="${roomId}"]`).classList.add('active');
-    
+
+    // La sala abierta vive en la URL: la auto-recarga de 20 s (estado-vista.js)
+    // hace location.reload() y, sin esto, lo regresaba a la Oficina General.
+    const url = new URL(location.href);
+    url.searchParams.set('room', roomId);
+    history.replaceState(null, '', url);
+
     fetchRoomContent();
     
     if (pollInterval) clearInterval(pollInterval);
@@ -84,8 +90,9 @@ document.addEventListener("DOMContentLoaded", () => {
         Notification.requestPermission();
     }
     
-    if (window.TEAM_GENERAL_ROOM_ID) {
-        loadRoom(window.TEAM_GENERAL_ROOM_ID);
+    const inicial = window.TEAM_SALA_INICIAL || window.TEAM_GENERAL_ROOM_ID;
+    if (inicial) {
+        loadRoom(inicial);
     }
     
     remindersInterval = setInterval(checkReminders, 30000); // Check every 30s

@@ -9,9 +9,10 @@ from sqlmodel import select
 
 import app.db as db
 from app.media_store import save_upload
-from app.models import ChatMember, ChatRoom, MessageReminder, TeamMessage
+from app.models import ChatMember, ChatRoom, MessageReminder, TeamMessage, User
 from app.team_chat import (
-    active_reminders, team_chat, team_delete_message, team_remind, team_send, team_send_media,
+    active_reminders, create_room, team_chat, team_delete_message, team_remind,
+    team_room_messages, team_send, team_send_media,
 )
 
 
@@ -201,3 +202,75 @@ def test_al_entregar_se_vuelve_a_comprobar_el_acceso(monkeypatch, session, caso)
     session.commit()
 
     assert json.loads(active_reminders(_request(quien)).body) == []
+
+
+def _colaboradores(session, *nombres):
+    for n in nombres:
+        session.add(User(username=n, password_hash="x", office_id=1))
+    session.commit()
+
+
+def _pedir_dm(de: str, con: str):
+    return create_room(_request(de), room_type="group", name="", members=[con])
+
+
+def _sala_de_la_url(respuesta) -> int:
+    ubicacion = respuesta.headers["location"]
+    assert ubicacion.startswith("/team?room="), f"no lleva a una sala: {ubicacion}"
+    return int(ubicacion.split("=", 1)[1])
+
+
+def test_pedir_un_dm_que_ya_existe_lleva_a_esa_conversacion(monkeypatch, session):
+    """Si ana vuelve a pedir el DM con beto, o beto se lo pide a ella, no nace
+    otra sala: los mensajes quedarían partidos en dos conversaciones. Y lo deja
+    DENTRO de la que ya existe; mandarlo a la general lo obligaba a buscarla."""
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _colaboradores(session, "ana", "beto")
+
+    primera = _sala_de_la_url(_pedir_dm("ana", "beto"))
+    otra_vez = _sala_de_la_url(_pedir_dm("ana", "beto"))
+    al_reves = _sala_de_la_url(_pedir_dm("beto", "ana"))
+
+    session.expire_all()
+    directos = session.exec(select(ChatRoom).where(ChatRoom.room_type == "direct")).all()
+    assert [r.id for r in directos] == [primera], "se duplicó el DM"
+    assert otra_vez == primera and al_reves == primera, "no lo llevó al DM que ya tenía"
+
+
+def test_crear_un_grupo_lleva_a_la_sala_nueva(monkeypatch, session):
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _colaboradores(session, "ana", "beto", "carla")
+
+    sala = _sala_de_la_url(
+        create_room(_request("ana"), room_type="group", name="Actas", members=["beto", "carla"])
+    )
+
+    session.expire_all()
+    assert session.get(ChatRoom, sala).name == "Actas"
+
+
+def test_el_dm_se_llama_como_la_otra_persona(monkeypatch, session):
+    """Cada quien ve el DM con el nombre del otro, como en WhatsApp; con un
+    "Chat Privado" genérico no se distinguen dos DMs en la lista."""
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _colaboradores(session, "ana", "beto")
+    sala = _sala_de_la_url(_pedir_dm("ana", "beto"))
+
+    assert team_room_messages(_request("ana"), sala).context["room_display_name"] == "beto"
+    assert team_room_messages(_request("beto"), sala).context["room_display_name"] == "ana"
+    lista = {r["id"]: r["display_name"] for r in team_chat(_request("ana")).context["rooms"]}
+    assert lista[sala] == "beto"
+
+
+def test_la_url_abre_la_sala_pedida_solo_si_es_suya(monkeypatch, session):
+    """`?room=` es lo que conserva el DM abierto tras la auto-recarga. Con el id
+    de una sala ajena la página no la abre: cae a la general."""
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _colaboradores(session, "ana", "beto", "carla")
+    sala = _sala_de_la_url(_pedir_dm("ana", "beto"))
+
+    assert team_chat(_request("ana"), room=sala).context["sala_inicial"] == sala
+    ajena = team_chat(_request("carla"), room=sala).context
+    assert ajena["sala_inicial"] == ajena["general_room_id"]
+    sin_sala = team_chat(_request("ana")).context
+    assert sin_sala["sala_inicial"] == sin_sala["general_room_id"]
