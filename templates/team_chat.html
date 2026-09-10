@@ -15,7 +15,7 @@
         <ul class="room-list">
             {% for r in rooms %}
             <li class="room-item" data-room-id="{{ r.id }}" onclick="loadRoom({{ r.id }})">
-                <div class="room-name">{{ r.name or 'Chat Privado' }}</div>
+                <div class="room-name">{{ r.display_name }}</div>
             </li>
             {% endfor %}
         </ul>

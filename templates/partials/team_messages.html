@@ -1,5 +1,5 @@
 <div class="chat-header">
-    <h3>{{ room.name or 'Chat Privado' }}</h3>
+    <h3>{{ room_display_name }}</h3>
     <form method="post" action="/team/rooms/{{ room.id }}/mute" style="display:inline;">
         <input type="hidden" name="mute" value="{{ 'false' if is_muted else 'true' }}">
         <button type="submit" class="btn-sm">{{ 'Desilenciar' if is_muted else 'Silenciar 🔕' }}</button>

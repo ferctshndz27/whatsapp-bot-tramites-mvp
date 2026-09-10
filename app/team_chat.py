@@ -70,9 +70,16 @@ def team_chat(request: Request, err: str | None = None):
         my_memberships = session.exec(select(ChatMember).where(ChatMember.username == user, ChatMember.habilitado == True)).all()
         room_ids = [m.room_id for m in my_memberships]
         
-        rooms = []
+        rooms_out = []
         if room_ids:
-            rooms = session.exec(select(ChatRoom).where(ChatRoom.id.in_(room_ids), ChatRoom.habilitado == True)).all()
+            rooms_db = session.exec(select(ChatRoom).where(ChatRoom.id.in_(room_ids), ChatRoom.habilitado == True)).all()
+            for r in rooms_db:
+                if r.room_type == "direct":
+                    other = session.exec(select(ChatMember.username).where(ChatMember.room_id == r.id, ChatMember.username != user)).first()
+                    disp = other if other else "Chat Privado"
+                else:
+                    disp = r.name or "Grupo"
+                rooms_out.append({"id": r.id, "display_name": disp})
             
         # Get users in the same office for DM/Group creation
         users_query = select(User).where(User.habilitado == True, User.username != user)
@@ -87,7 +94,7 @@ def team_chat(request: Request, err: str | None = None):
         {
             "request": request,
             "user": user,
-            "rooms": rooms,
+            "rooms": rooms_out,
             "office_users": office_users,
             "error": err,
             "general_room_id": general_room.id
@@ -114,6 +121,12 @@ def team_room_messages(request: Request, room_id: int):
             .limit(MAX_MESSAGES_SHOWN)
         ).all()
         
+        if room.room_type == "direct":
+            other = session.exec(select(ChatMember.username).where(ChatMember.room_id == room_id, ChatMember.username != user)).first()
+            display_name = other if other else "Chat Privado"
+        else:
+            display_name = room.name or "Grupo"
+        
         messages = list(reversed(recent))
         
         # Get reactions
@@ -130,6 +143,7 @@ def team_room_messages(request: Request, room_id: int):
             "request": request,
             "user": user,
             "room": room,
+            "room_display_name": display_name,
             "messages": messages,
             "reactions": reactions,
             "is_muted": membership.is_muted
@@ -144,14 +158,28 @@ def create_room(request: Request, room_type: str = Form(...), name: str = Form("
 
     vista = alcance(user)
     with get_session() as session:
-        room = ChatRoom(room_type=room_type, name=name)
+        is_dm = len(members) == 1 and not name.strip()
+        actual_type = "direct" if is_dm else "group"
+        
+        if is_dm:
+            other_user = members[0]
+            # Check if a DM with this user already exists
+            my_dms = session.exec(
+                select(ChatMember.room_id)
+                .join(ChatRoom, ChatRoom.id == ChatMember.room_id)
+                .where(ChatMember.username == user, ChatRoom.room_type == "direct")
+            ).all()
+            if my_dms:
+                existing = session.exec(select(ChatMember.room_id).where(ChatMember.room_id.in_(my_dms), ChatMember.username == other_user)).first()
+                if existing:
+                    return RedirectResponse(f"/team", status_code=303)
+                    
+        room = ChatRoom(room_type=actual_type, name=name.strip() if not is_dm else None)
         session.add(room)
         session.commit()
         session.refresh(room)
         
-        # Add creator
         session.add(ChatMember(room_id=room.id, username=user))
-        # Add other members
         for m in members:
             if m != user:
                 session.add(ChatMember(room_id=room.id, username=m))
