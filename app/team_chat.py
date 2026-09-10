@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 from app.templating import templates
 from sqlmodel import select
 
-from app.auth import is_admin
+from app.auth import is_admin, alcance
 from app.db import get_session
 from app.media_store import save_upload
 from app.models import TeamMessage, User
@@ -28,17 +28,15 @@ def team_chat(request: Request, err: str | None = None):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
-        user_obj = session.exec(select(User).where(User.username == user)).first()
-        if not user_obj:
-            return RedirectResponse("/login", status_code=303)
-
         # ponytail: últimos N y reversa en memoria; paginar si el canal crece mucho.
+        query = select(TeamMessage).where(TeamMessage.habilitado.is_(True))
+        if not vista.ve_todas:
+            query = query.where(TeamMessage.office_id == vista.office_id)
+        
         recent = session.exec(
-            select(TeamMessage)
-            .where(TeamMessage.habilitado.is_(True))
-            .where(TeamMessage.office_id == user_obj.office_id)
-            .order_by(TeamMessage.created_at.desc())
+            query.order_by(TeamMessage.created_at.desc())
             .limit(MAX_MESSAGES_SHOWN)
         ).all()
 
@@ -61,11 +59,10 @@ def team_send(request: Request, body: str = Form(...)):
 
     body = body.strip()
     if body:
+        vista = alcance(user)
         with get_session() as session:
-            user_obj = session.exec(select(User).where(User.username == user)).first()
-            if user_obj:
-                session.add(TeamMessage(author=user, body=body[:MAX_BODY_LENGTH], office_id=user_obj.office_id))
-                session.commit()
+            session.add(TeamMessage(author=user, body=body[:MAX_BODY_LENGTH], office_id=vista.office_id))
+            session.commit()
     return RedirectResponse("/team", status_code=303)
 
 
@@ -79,18 +76,17 @@ def team_send_media(request: Request, file: UploadFile, caption: str = Form(""))
     if error:
         return RedirectResponse(f"/team?err={error}", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
-        user_obj = session.exec(select(User).where(User.username == user)).first()
-        if user_obj:
-            session.add(
-                TeamMessage(
-                    author=user,
-                    body=caption.strip()[:MAX_BODY_LENGTH] or f"[archivo: {file.filename}]",
-                    media_path=web_path,
-                    office_id=user_obj.office_id,
-                )
+        session.add(
+            TeamMessage(
+                author=user,
+                body=caption.strip()[:MAX_BODY_LENGTH] or f"[archivo: {file.filename}]",
+                media_path=web_path,
+                office_id=vista.office_id,
             )
-            session.commit()
+        )
+        session.commit()
     return RedirectResponse("/team", status_code=303)
 
 
