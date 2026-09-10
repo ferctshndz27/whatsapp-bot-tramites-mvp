@@ -577,6 +577,16 @@ def _filtro_modo(todos: int):
     return or_(Cobro.livemode.is_(None), Cobro.livemode == real)  # type: ignore[union-attr]
 
 
+def _visibles(consulta):
+    """Solo los cobros que no se ocultaron (soft delete, `habilitado=False`:
+    p. ej. los de prueba antes de arrancar). Es un filtro de las VISTAS —
+    listados, totales, cartera, CSV—, no de la lógica de cobro: el candado
+    `ux_cobro_vivo`, el webhook y los barridos siguen viéndolos, porque un
+    evento real de Stripe siempre se aplica. Los payouts tampoco lo usan: la
+    suma tiene que cuadrar con el depósito que Stripe hizo de verdad."""
+    return consulta.where(Cobro.habilitado == True)  # noqa: E712
+
+
 def _agregado(*extra):
     """El SELECT de totales por (estado, confirmado). `extra` antepone columnas
     para abrir otra dimensión —hoy el asesor— sin duplicar las cuatro sumas,
@@ -712,7 +722,7 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
     # porque un filtro global también taparía al bot, al cron y al espejo.
     vista = alcance(admin)
     with get_session() as session:
-        consulta = vista.filtrar(select(Cobro), Cobro.office_id)
+        consulta = _visibles(vista.filtrar(select(Cobro), Cobro.office_id))
         # Un solo agregado, abierto por (asesor, estado, confirmado). Por
         # asesor se agrupa por
         # `creado_por` y NO por `assigned_to`, que es la columna que la cartera
@@ -720,8 +730,8 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
         # reasigna, así que un corte por él pierde filas y le cambia el pasado
         # a un mes ya cerrado. `creado_por` es permanente y NOT NULL — cada
         # cobro cae en exactamente un asesor y la suma cuadra.
-        por_asesor = vista.filtrar(_agregado(Cobro.creado_por), Cobro.office_id)
-        atrasados = vista.filtrar(_agregado_viejos(), Cobro.office_id)
+        por_asesor = _visibles(vista.filtrar(_agregado(Cobro.creado_por), Cobro.office_id))
+        atrasados = _visibles(vista.filtrar(_agregado_viejos(), Cobro.office_id))
         if filtro is not None:
             consulta = consulta.where(filtro)
             por_asesor = por_asesor.where(filtro)
@@ -798,7 +808,7 @@ def cartera_de(user: str) -> tuple[int, int]:
     """
     filtro = _filtro_modo(0)
     vista = alcance(user)
-    consulta = cobranza.mios(vista.filtrar(_agregado(), Cobro.office_id), user)
+    consulta = _visibles(cobranza.mios(vista.filtrar(_agregado(), Cobro.office_id), user))
     if filtro is not None:
         consulta = consulta.where(filtro)
     with get_session() as session:
@@ -840,12 +850,12 @@ def mis_cobros(request: Request, tareas: BackgroundTasks,
         # contra la PK de Ticket, así que cada cobro casa con un renglón o con
         # ninguno — y con ninguno es justo el voucher de OXXO cuyo folio ya
         # cerró, que tiene que seguir apareciéndole a quien lo generó.
-        consulta = cobranza.mios(vista.filtrar(select(Cobro), Cobro.office_id), user)
-        agregado = cobranza.mios(vista.filtrar(_agregado(), Cobro.office_id), user)
+        consulta = _visibles(cobranza.mios(vista.filtrar(select(Cobro), Cobro.office_id), user))
+        agregado = _visibles(cobranza.mios(vista.filtrar(_agregado(), Cobro.office_id), user))
         # Mismo `mios`: la tarjeta de atrasados tiene que contar la cartera del
         # asesor, no la de la oficina, o le reclama dinero de otro.
-        atrasados = cobranza.mios(
-            vista.filtrar(_agregado_viejos(), Cobro.office_id), user)
+        atrasados = _visibles(cobranza.mios(
+            vista.filtrar(_agregado_viejos(), Cobro.office_id), user))
         if filtro is not None:
             consulta = consulta.where(filtro)
             agregado = agregado.where(filtro)
@@ -916,7 +926,7 @@ def export_cobros(request: Request):
     def _filas():
         with get_session() as session:
             for c in session.exec(
-                vista.filtrar(select(Cobro), Cobro.office_id)
+                _visibles(vista.filtrar(select(Cobro), Cobro.office_id))
                 .order_by(Cobro.created_at)  # type: ignore[arg-type]
             ).yield_per(CSV_LOTE):
                 yield [
@@ -963,7 +973,7 @@ def export_conciliacion(request: Request):
     def _filas():
         with get_session() as session:
             consulta = (
-                vista.filtrar(select(Cobro), Cobro.office_id)
+                _visibles(vista.filtrar(select(Cobro), Cobro.office_id))
                 .where(
                     or_(
                         Cobro.estado.in_(("pagado", "reembolsado")),  # type: ignore[union-attr]
