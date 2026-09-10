@@ -296,14 +296,52 @@ class SavedReply(SQLModel, table=True):
     office_id: int = _office_id_field()
 
 
+class ChatRoom(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str | None = None
+    # "direct" o "group"
+    room_type: str = "direct"
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+    office_id: int = _office_id_field()
+
+
+class ChatMember(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    room_id: int = Field(index=True)
+    username: str = Field(index=True)
+    is_muted: bool = False
+    joined_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
 class TeamMessage(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
+    room_id: int | None = Field(default=None, index=True)
     author: str = Field(index=True)
     body: str
     media_path: str | None = None
     created_at: datetime = Field(default_factory=utcnow, index=True)
     habilitado: bool = True
     office_id: int = _office_id_field()
+
+
+class MessageReaction(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    message_id: int = Field(index=True)
+    username: str = Field(index=True)
+    reaction: str
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class MessageReminder(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    message_id: int = Field(index=True)
+    username: str = Field(index=True)
+    remind_at: datetime
+    note: str | None = None
+    is_dismissed: bool = False
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class TicketActivity(SQLModel, table=True):

@@ -1,64 +1,56 @@
 {% extends "base.html" %}
 {% block title %}Chat de equipo{% endblock %}
-{% block head %}<meta name="auto-recarga" content="20">{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/css/team.css">
+<script src="/static/js/team.js" defer></script>
+<!-- Not using auto-recarga here to avoid full page reloads, using JS polling for messages and notifications instead -->
+{% endblock %}
 {% block content %}
-<h1>Chat de equipo</h1>
-
-<div class="card">
-  {% if messages %}
-  {# id: sin llave, estado-vista.js no puede preservar su scroll, y esta vista
-     se refresca sola cada 20 s — quien estuviera leyendo hacia atrás volvía al
-     tope en cada refresco. Aquí el tope es lo MÁS NUEVO (created_at.desc), así
-     que no lleva el anclaje al fondo de inbox_chat: estar arriba es lo
-     correcto y ese caso se preserva solo (un scroll en 0 no se guarda). #}
-  <div class="chat" id="chat">
-    {% for m in messages %}
-    <div class="bubble {{ 'out' if m.author == user else 'in' }}">
-      {{ m.body }}
-      {% if m.media_path %}
-        {% if m.media_path.endswith('.jpg') or m.media_path.endswith('.png') or m.media_path.endswith('.webp') %}
-        <a href="{{ m.media_path }}" target="_blank" rel="noopener"><img src="{{ m.media_path }}" alt="Imagen compartida por {{ m.author }}"></a>
-        {% else %}
-        <a href="{{ m.media_path }}" target="_blank" rel="noopener">📄 Ver archivo</a>
-        {% endif %}
-      {% endif %}
-      <span class="meta">
-        {{ m.author }} · {{ m.created_at | local }}
-        {% if m.author == user %}
-        · <form method="post" action="/team/{{ m.id }}/delete" style="display:inline;" onsubmit="return confirm('¿Eliminar este mensaje?');">
-            <button type="submit" style="background:none; border:none; padding:0; min-height:auto; color:inherit; text-decoration:underline; cursor:pointer; font-size:inherit;">eliminar</button>
-          </form>
-        {% endif %}
-      </span>
+<div class="chat-container">
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>Salas</h2>
+            <button onclick="document.getElementById('new-room-modal').style.display='block'">+ Nuevo</button>
+        </div>
+        <ul class="room-list">
+            {% for r in rooms %}
+            <li class="room-item" data-room-id="{{ r.id }}" onclick="loadRoom({{ r.id }})">
+                <div class="room-name">{{ r.name or 'Chat Privado' }}</div>
+            </li>
+            {% endfor %}
+        </ul>
     </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <p class="empty">Aún no hay mensajes. ¡Escribe el primero!</p>
-  {% endif %}
-
-  <div class="composer">
-    {% if error == 'tipo' %}
-    <p class="error" role="alert">Tipo de archivo no permitido. Solo JPG, PNG, WebP, PDF, DOCX o XLSX.</p>
-    {% elif error == 'peso' %}
-    <p class="error" role="alert">Archivo demasiado grande (máx. 5 MB imágenes, 16 MB documentos).</p>
-    {% endif %}
-
-    <form method="post" action="/team/send">
-      <label for="body" style="position:absolute; left:-9999px;">Mensaje</label>
-      <textarea id="body" name="body" placeholder="Mensaje para el equipo…" required></textarea>
-      <div class="row">
-        <button type="submit">Enviar</button>
-      </div>
-    </form>
-    <form method="post" action="/team/send-media" enctype="multipart/form-data" style="margin-top:.75rem;">
-      <div class="row">
-        <label for="file" style="margin:0;">Adjuntar:</label>
-        <input type="file" id="file" name="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.docx,.xlsx" required>
-        <input type="text" name="caption" placeholder="Texto opcional" style="max-width:220px;">
-        <button type="submit" class="btn-sm">Enviar archivo</button>
-      </div>
-    </form>
-  </div>
+    
+    <div class="main-chat" id="main-chat">
+        <div class="no-room-selected">
+            Selecciona una sala para comenzar a chatear.
+        </div>
+    </div>
 </div>
+
+<div id="new-room-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <h3>Crear Sala</h3>
+        <form method="post" action="/team/rooms">
+            <label>Nombre del Grupo (vacío para DM):</label>
+            <input type="text" name="name">
+            <input type="hidden" name="room_type" value="group">
+            
+            <label>Integrantes:</label>
+            <select name="members" multiple required>
+                {% for ou in office_users %}
+                <option value="{{ ou.username }}">{{ ou.username }}</option>
+                {% endfor %}
+            </select>
+            
+            <button type="submit">Crear</button>
+            <button type="button" onclick="document.getElementById('new-room-modal').style.display='none'">Cancelar</button>
+        </form>
+    </div>
+</div>
+
+<script>
+    // Config values for JS
+    window.TEAM_GENERAL_ROOM_ID = {{ general_room_id }};
+</script>
 {% endblock %}

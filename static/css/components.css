@@ -136,6 +136,7 @@
       /* border-radius aquí y no solo en `button`: la clase también viste
          <a> y <summary> (p.ej. "Restablecer contraseña" en /users), que sin
          esto salían con esquinas cuadradas. */
+      display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
       border-radius: 999px;
       padding: .35rem 1rem; font-size: .82rem; min-height: 36px;
       background: var(--card-bg); color: var(--text); box-shadow: var(--shadow);

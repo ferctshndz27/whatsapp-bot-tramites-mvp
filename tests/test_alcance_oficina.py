@@ -140,7 +140,7 @@ def test_el_alcance_de_cobros_existe_pero_hoy_es_inerte():
 # "arregle" sin leer esto.
 SIN_ACOTAR = {
     "activity.py", "authlog.py", "catalog_admin.py", "clients.py",
-    "inbox.py", "kb.py", "my.py", "replies.py", "synonym_miner.py", "system.py",
+    "kb.py", "replies.py", "synonym_miner.py", "system.py",
     "users.py",  # a propósito: ver arriba
     # /oficinas ES la vista de todas las oficinas: acotarla sería impedirle al
     # admin administrar la que no es la suya, que es su función entera.

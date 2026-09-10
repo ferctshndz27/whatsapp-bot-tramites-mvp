@@ -107,7 +107,8 @@ def test_items_flag_waiting_and_expired_window(session):
     session.add(Conversation(phone="222", state="inicio"))
     session.commit()
 
-    items = {i["phone"]: i for i in build_conversation_items(session)}
+    from app.auth import Alcance
+    items = {i["phone"]: i for i in build_conversation_items(session, Alcance(office_id=1, ve_todas=True))}
 
     assert items["111"]["waiting"] is True
     assert items["111"]["window_open"] is False

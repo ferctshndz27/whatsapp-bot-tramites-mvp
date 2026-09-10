@@ -1,0 +1,51 @@
+<div class="chat-header">
+    <h3>{{ room.name or 'Chat Privado' }}</h3>
+    <form method="post" action="/team/rooms/{{ room.id }}/mute" style="display:inline;">
+        <input type="hidden" name="mute" value="{{ 'false' if is_muted else 'true' }}">
+        <button type="submit">{{ 'Desilenciar' if is_muted else 'Silenciar 🔕' }}</button>
+    </form>
+</div>
+
+<div class="chat-messages" id="chat-messages">
+    {% for m in messages %}
+    <div class="bubble {{ 'out' if m.author == user else 'in' }}">
+        <div class="author">{{ m.author }}</div>
+        <div class="body">{{ m.body }}</div>
+        
+        {% if m.media_path %}
+            {% if m.media_path.endswith('.jpg') or m.media_path.endswith('.png') or m.media_path.endswith('.webp') %}
+            <a href="{{ m.media_path }}" target="_blank" rel="noopener"><img src="{{ m.media_path }}" alt="Imagen compartida por {{ m.author }}"></a>
+            {% else %}
+            <a href="{{ m.media_path }}" target="_blank" rel="noopener">📄 Ver archivo</a>
+            {% endif %}
+        {% endif %}
+        
+        <div class="meta">{{ m.created_at | local }}</div>
+        
+        <div class="reactions">
+            {% for r in reactions.get(m.id, []) %}
+                <span title="{{ r.username }}">{{ r.reaction }}</span>
+            {% endfor %}
+        </div>
+        
+        <div class="actions">
+            <form class="react-form" method="post" action="/team/messages/{{ m.id }}/react">
+                <input type="hidden" name="reaction" value="👍">
+                <button type="submit" class="action-btn">👍</button>
+            </form>
+            <form class="react-form" method="post" action="/team/messages/{{ m.id }}/react">
+                <input type="hidden" name="reaction" value="❤️">
+                <button type="submit" class="action-btn">❤️</button>
+            </form>
+            <button class="action-btn remind-btn" onclick="setReminder({{ m.id }})">⏰ Recordar</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="chat-input">
+    <form class="send-msg-form" method="post" action="/team/rooms/{{ room.id }}/send">
+        <input type="text" name="body" placeholder="Escribe un mensaje..." required autocomplete="off">
+        <button type="submit">Enviar</button>
+    </form>
+</div>

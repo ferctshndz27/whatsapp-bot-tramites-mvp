@@ -227,6 +227,7 @@ def test_la_bandeja_marca_el_canal_de_cada_conversacion():
     # REGLA: la ventana de 24 h se cuenta por número, así que el asesor tiene
     # que ver en qué cuenta está parado antes de decidir si aún puede escribir.
     from app.inbox import build_conversation_items
+    from app.auth import Alcance
 
     with Session(db.engine) as s:
         s.add(Client(phone=CANONICO, name="Ana"))
@@ -236,7 +237,7 @@ def test_la_bandeja_marca_el_canal_de_cada_conversacion():
         s.add(Conversation(phone="525511112222", provider=PROVIDER_META))
         s.add(Message(phone="525511112222", direction=Direction.IN, body="hola"))
         s.commit()
-        items = {i["phone"]: i for i in build_conversation_items(s)}
+        items = {i["phone"]: i for i in build_conversation_items(s, Alcance(office_id=1, ve_todas=True))}
 
     assert items[CANONICO]["provider"] == PROVIDER_TWILIO
     assert items["525511112222"]["provider"] == PROVIDER_META
@@ -245,11 +246,12 @@ def test_la_bandeja_marca_el_canal_de_cada_conversacion():
 def test_una_conversacion_sin_registro_se_muestra_como_meta():
     # REGLA: no puede quedar en blanco. Meta es la cuenta que existía primero.
     from app.inbox import build_conversation_items
+    from app.auth import Alcance
 
     with Session(db.engine) as s:
         s.add(Client(phone=CANONICO, name="Ana"))
         s.add(Message(phone=CANONICO, direction=Direction.IN, body="hola"))
         s.commit()
-        items = build_conversation_items(s)
+        items = build_conversation_items(s, Alcance(office_id=1, ve_todas=True))
 
     assert items[0]["provider"] == PROVIDER_META

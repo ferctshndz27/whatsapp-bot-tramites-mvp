@@ -11,7 +11,7 @@ from sqlmodel import select
 from app import messaging, ventana
 from app.audit import log_admin
 from app.utils import ruta_interna
-from app.auth import is_admin
+from app.auth import is_admin, alcance
 from app.config import settings
 from app import asignacion
 from app.conversation import _latest_open_ticket, _log_message
@@ -40,6 +40,20 @@ QUICK_REPLIES = json.loads((Path(__file__).parent / "quick_replies.json").read_t
 
 def _current_user(request: Request) -> str | None:
     return request.session.get("user")
+
+
+def _verificar_acceso_oficina(session, phone: str, vista, user: str) -> bool:
+    """True si la oficina del usuario puede ver la conversación de este número."""
+    if vista.ve_todas:
+        return True
+    
+    # La oficina de una conversación la dicta el Client (y la tabla Conversation).
+    # Como los mensajes pueden llegar antes que un Ticket, Client es la fuente segura.
+    client = session.get(Client, phone)
+    if client and client.office_id != vista.office_id:
+        logger.warning("%s intentó acceder a la bandeja %s de otra oficina", user, phone)
+        return False
+    return True
 
 
 def _time_ago(dt: datetime) -> str:
@@ -75,7 +89,7 @@ def filter_conversations(items: list[dict], filtro: str | None) -> list[dict]:
     return [i for i in items if pred(i)] if pred else items
 
 
-def build_conversation_items(session) -> list[dict]:
+def build_conversation_items(session, vista) -> list[dict]:
     # ponytail: carga todos los mensajes y agrupa en Python — sobra a este
     # volumen; pasar a una consulta agregada si el historial crece a decenas de miles.
     # Una auditoría pidió reescribirlo ya con ROW_NUMBER() OVER (PARTITION BY...)
@@ -84,11 +98,22 @@ def build_conversation_items(session) -> list[dict]:
     # consulta que solo entiende quien la escribió. Cuando toque, el primer paso
     # NO es la función de ventana sino dejar de hidratar entidades ORM: aquí se
     # usan cuatro columnas de Message y se traen todas.
-    messages = session.exec(
-        select(Message).where(Message.habilitado.is_(True)).order_by(Message.created_at.desc())
-    ).all()
+    
+    # Acotamos primero los teléfonos que puede ver esta oficina
+    query_conv = select(Conversation)
+    if not vista.ve_todas:
+        query_conv = query_conv.where(Conversation.office_id == vista.office_id)
+    convs = {c.phone: c for c in session.exec(query_conv).all()}
+    
+    if not vista.ve_todas and not convs:
+        return []
+
+    # Se traen todos los mensajes habilitados (o solo de los teléfonos permitidos si está acotado)
+    query_msg = select(Message).where(Message.habilitado.is_(True)).order_by(Message.created_at.desc())
+    if not vista.ve_todas:
+        query_msg = query_msg.where(Message.phone.in_(convs.keys()))
+    messages = session.exec(query_msg).all()
     clients = {c.phone: c for c in session.exec(select(Client)).all()}
-    convs = {c.phone: c for c in session.exec(select(Conversation)).all()}
     tickets: dict[str, Ticket] = {}
     for t in session.exec(select(Ticket).order_by(Ticket.created_at.desc())).all():
         tickets.setdefault(t.phone, t)
@@ -135,8 +160,9 @@ def inbox_list(request: Request, filter: str | None = None):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
-        items = build_conversation_items(session)
+        items = build_conversation_items(session, vista)
 
     counts = conversation_counts(items)
     items = filter_conversations(items, filter)
@@ -209,7 +235,11 @@ def inbox_chat(
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
+        if not _verificar_acceso_oficina(session, phone, vista, user):
+            return RedirectResponse("/", status_code=303)
+            
         historial = session.exec(
             select(Message)
             .where(Message.phone == phone)
@@ -380,7 +410,11 @@ def inbox_send(
     if not body and adjunto is None:
         return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
+        if not _verificar_acceso_oficina(session, phone, vista, user):
+            return RedirectResponse("/", status_code=303)
+            
         if not ventana.abierta_para(session, phone):
             return RedirectResponse(f"/inbox/{phone}?err=window", status_code=303)
 
@@ -450,7 +484,11 @@ def inbox_delete_message(request: Request, phone: str, message_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
+        if not _verificar_acceso_oficina(session, phone, vista, user):
+            return RedirectResponse("/", status_code=303)
+            
         message = session.get(Message, message_id)
         # Solo se puede ocultar un mensaje que el propio asesor envió desde el
         # panel — nunca las palabras del cliente, que son evidencia de la
@@ -471,7 +509,11 @@ def inbox_toggle_block(request: Request, phone: str):
     if not is_admin(user):
         return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
+        if not _verificar_acceso_oficina(session, phone, vista, user):
+            return RedirectResponse("/", status_code=303)
+            
         client = session.get(Client, phone)
         if client is not None:
             client.habilitado = not client.habilitado
@@ -489,7 +531,11 @@ def inbox_bot_on(request: Request, phone: str):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
+        if not _verificar_acceso_oficina(session, phone, vista, user):
+            return RedirectResponse("/", status_code=303)
+            
         conv = session.get(Conversation, phone)
         if conv and conv.state == "escalado":
             conv.state = "inicio"

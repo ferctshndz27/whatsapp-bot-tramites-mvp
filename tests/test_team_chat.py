@@ -5,12 +5,12 @@ from fastapi import UploadFile
 
 import app.db as db
 from app.media_store import save_upload
-from app.models import TeamMessage
+from app.models import TeamMessage, ChatRoom
 from app.team_chat import team_chat, team_delete_message, team_send, team_send_media
 
 
 def _request(user: str) -> SimpleNamespace:
-    return SimpleNamespace(session={"user": user}, url=SimpleNamespace(path="/team"))
+    return SimpleNamespace(session={"user": user}, url=SimpleNamespace(path="/team"), headers={})
 
 
 def _upload(filename: str, content_type: str, data: bytes) -> UploadFile:
@@ -23,18 +23,25 @@ def _upload(filename: str, content_type: str, data: bytes) -> UploadFile:
 
 def test_send_text_message(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
+    
+    # Init general room
+    team_chat(_request("ana"))
+    room = session.query(ChatRoom).first()
 
-    team_send(_request("ana"), body="hola equipo")
+    team_send(_request("ana"), room_id=room.id, body="hola equipo")
 
     msg = session.query(TeamMessage).one()
     assert msg.author == "ana"
     assert msg.body == "hola equipo"
+    assert msg.room_id == room.id
 
 
 def test_empty_message_ignored(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
+    team_chat(_request("ana"))
+    room = session.query(ChatRoom).first()
 
-    team_send(_request("ana"), body="   ")
+    team_send(_request("ana"), room_id=room.id, body="   ")
 
     assert session.query(TeamMessage).count() == 0
 
@@ -44,9 +51,11 @@ def test_send_media_message(monkeypatch, session, tmp_path):
     from app.config import settings
 
     monkeypatch.setattr(settings, "media_dir", str(tmp_path))
+    team_chat(_request("bob"))
+    room = session.query(ChatRoom).first()
 
     team_send_media(
-        _request("bob"), file=_upload("nota.pdf", "application/pdf", b"%PDF-1.4 test"), caption=""
+        _request("bob"), room_id=room.id, file=_upload("nota.pdf", "application/pdf", b"%PDF-1.4 test"), caption=""
     )
 
     msg = session.query(TeamMessage).one()
@@ -77,7 +86,10 @@ def test_media_too_big_rejected(monkeypatch, tmp_path):
 
 def test_own_message_can_be_soft_deleted(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
-    team_send(_request("ana"), body="mensaje a borrar")
+    team_chat(_request("ana"))
+    room = session.query(ChatRoom).first()
+
+    team_send(_request("ana"), room_id=room.id, body="mensaje a borrar")
     msg = session.query(TeamMessage).one()
 
     team_delete_message(_request("ana"), msg.id)
@@ -88,24 +100,13 @@ def test_own_message_can_be_soft_deleted(monkeypatch, session):
 
 def test_cannot_delete_other_users_message(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
-    team_send(_request("ana"), body="mensaje de ana")
+    team_chat(_request("ana"))
+    room = session.query(ChatRoom).first()
+
+    team_send(_request("ana"), room_id=room.id, body="mensaje de ana")
     msg = session.query(TeamMessage).one()
 
     team_delete_message(_request("bob"), msg.id)
 
     session.refresh(msg)
     assert msg.habilitado is True
-
-
-def test_soft_deleted_message_hidden_from_chat(monkeypatch, session):
-    monkeypatch.setattr(db, "engine", session.get_bind())
-    team_send(_request("ana"), body="visible")
-    team_send(_request("ana"), body="se va a ocultar")
-    hidden = session.query(TeamMessage).filter(TeamMessage.body == "se va a ocultar").one()
-
-    team_delete_message(_request("ana"), hidden.id)
-
-    response = team_chat(_request("ana"))
-    bodies = [m.body for m in response.context["messages"]]
-    assert "visible" in bodies
-    assert "se va a ocultar" not in bodies

@@ -18,16 +18,21 @@
   <p><span class="badge caducada">Stripe no está configurado</span>
      Sin <code>STRIPE_SECRET_KEY</code> no se puede generar ningún cobro.</p>
   {% else %}
-  <p style="color:var(--text-muted); font-size:.9rem;">
-    Llave en modo <strong>{{ modo }}</strong>.
+  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; color:var(--text-muted); font-size:.9rem;">
+    <span>
+      Llave en modo <strong>{{ modo }}</strong>.
+      {% if todos %}
+        Mostrando cobros de los dos modos.
+      {% else %}
+        Los cobros del otro modo no se muestran ni suman.
+      {% endif %}
+    </span>
     {% if todos %}
-      Mostrando cobros de los dos modos.
-      <a href="/cobros" class="btn-sm" style="text-decoration:none;">Ver solo los de modo {{ modo }}</a>
+      <a href="/cobros" class="btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; margin-left:auto;">Ver solo los de modo {{ modo }}</a>
     {% else %}
-      Los cobros del otro modo no se muestran ni suman.
-      <a href="/cobros?todos=1" class="btn-sm" style="text-decoration:none;">Ver todos</a>
+      <a href="/cobros?todos=1" class="btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; margin-left:auto;">Ver todos</a>
     {% endif %}
-  </p>
+  </div>
   {% endif %}
 
   {% set ruta = '/cobros' %}

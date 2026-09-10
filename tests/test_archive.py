@@ -37,10 +37,22 @@ ARCHIVE_DDL = [
         created_at TIMESTAMP)""",
     "CREATE TABLE team_users (username TEXT PRIMARY KEY)",
     """CREATE TABLE team_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE, room_id INTEGER,
         author TEXT REFERENCES team_users(username), body TEXT,
         media_path TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP,
         office_id INTEGER DEFAULT 1)""",
+    """CREATE TABLE chat_rooms (
+        source_id INTEGER PRIMARY KEY, name TEXT, room_type TEXT,
+        habilitado INTEGER DEFAULT 1, office_id INTEGER, created_at TIMESTAMP)""",
+    """CREATE TABLE chat_members (
+        source_id INTEGER PRIMARY KEY, room_id INTEGER, username TEXT,
+        is_muted INTEGER DEFAULT 0, habilitado INTEGER DEFAULT 1, joined_at TIMESTAMP)""",
+    """CREATE TABLE message_reactions (
+        source_id INTEGER PRIMARY KEY, message_id INTEGER, username TEXT,
+        reaction TEXT, created_at TIMESTAMP)""",
+    """CREATE TABLE message_reminders (
+        source_id INTEGER PRIMARY KEY, message_id INTEGER, username TEXT,
+        remind_at TIMESTAMP, note TEXT, is_dismissed INTEGER DEFAULT 0, created_at TIMESTAMP)""",
     """CREATE TABLE app_users (
         source_id INTEGER PRIMARY KEY, username TEXT UNIQUE,
         password_hash TEXT, is_admin INTEGER DEFAULT 0,

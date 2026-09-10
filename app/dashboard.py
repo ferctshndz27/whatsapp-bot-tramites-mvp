@@ -414,7 +414,7 @@ def ticket_list(
         # ponytail: recorre todos los mensajes en cada carga de «/», que además
         # se auto-refresca cada 30 s; pasar a una consulta agregada si el
         # historial crece a decenas de miles.
-        conversaciones = build_conversation_items(session)
+        conversaciones = build_conversation_items(session, vista)
         nombres_etiquetas = session.exec(
             select(Label.nombre).where(Label.habilitado == True).order_by(Label.nombre)  # noqa: E712
         ).all()

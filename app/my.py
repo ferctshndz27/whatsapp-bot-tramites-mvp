@@ -15,7 +15,7 @@ from app.templating import templates
 from sqlmodel import select
 
 from app import cobranza_panel
-from app.auth import is_admin
+from app.auth import is_admin, alcance
 from app.db import get_session
 from app.inbox import build_conversation_items
 from app.ventana import WINDOW_HOURS, horas_restantes
@@ -45,6 +45,7 @@ def my_day(request: Request):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     now = utcnow()
     with get_session() as session:
         tickets = session.exec(
@@ -57,7 +58,7 @@ def my_day(request: Request):
 
         waiting = [
             {**item, "hours_left": _hours_left(item["last_at"])}
-            for item in build_conversation_items(session)
+            for item in build_conversation_items(session, vista)
             if item["waiting"] and item["assigned_to"] == user
         ]
         waiting.sort(key=lambda i: i["hours_left"])

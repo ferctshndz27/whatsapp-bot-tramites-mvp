@@ -87,10 +87,12 @@ _SCHEMA_DDL = [
     CREATE TABLE team_messages (
         id         BIGINT IDENTITY(1,1) PRIMARY KEY,
         source_id  BIGINT        NOT NULL UNIQUE,
+        room_id    BIGINT        NULL,
         author     NVARCHAR(64)  NOT NULL,
         body       NVARCHAR(MAX) NOT NULL,
         media_path NVARCHAR(300) NULL,
         habilitado BIT           NOT NULL DEFAULT 1,
+        office_id  INT           NOT NULL DEFAULT 1,
         created_at DATETIME2     NOT NULL,
         CONSTRAINT fk_team_messages_user
             FOREIGN KEY (author) REFERENCES team_users(username)
@@ -132,6 +134,50 @@ _SCHEMA_DDL = [
         body       NVARCHAR(MAX) NOT NULL,
         habilitado BIT           NOT NULL DEFAULT 1,
         created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('chat_rooms', 'U') IS NULL
+    CREATE TABLE chat_rooms (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        name       NVARCHAR(100) NULL,
+        room_type  NVARCHAR(20)  NOT NULL,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        office_id  INT           NOT NULL,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('chat_members', 'U') IS NULL
+    CREATE TABLE chat_members (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        room_id    BIGINT        NOT NULL,
+        username   NVARCHAR(64)  NOT NULL,
+        is_muted   BIT           NOT NULL DEFAULT 0,
+        habilitado BIT           NOT NULL DEFAULT 1,
+        joined_at  DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('message_reactions', 'U') IS NULL
+    CREATE TABLE message_reactions (
+        source_id  BIGINT        NOT NULL PRIMARY KEY,
+        message_id BIGINT        NOT NULL,
+        username   NVARCHAR(64)  NOT NULL,
+        reaction   NVARCHAR(20)  NOT NULL,
+        created_at DATETIME2     NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('message_reminders', 'U') IS NULL
+    CREATE TABLE message_reminders (
+        source_id    BIGINT        NOT NULL PRIMARY KEY,
+        message_id   BIGINT        NOT NULL,
+        username     NVARCHAR(64)  NOT NULL,
+        remind_at    DATETIME2     NOT NULL,
+        note         NVARCHAR(500) NULL,
+        is_dismissed BIT           NOT NULL DEFAULT 0,
+        created_at   DATETIME2     NOT NULL
     )
     """,
     """
@@ -589,7 +635,7 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "pricing_type": "NVARCHAR(40) NULL",
         "pricing_billable": "BIT NULL",
     },
-    "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL},
+    "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL, "room_id": "BIGINT NULL"},
     "wa_clients": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         # Ficha CRM (fase 1) — mismos campos que Client en models.py.
@@ -821,11 +867,12 @@ def archive_team_message(m) -> None:
         conn.execute(
             text(
                 "INSERT INTO team_messages"
-                " (source_id, author, body, media_path, habilitado, created_at, office_id)"
-                " VALUES (:sid, :a, :b, :mp, :hab, :c, :off)"
+                " (source_id, room_id, author, body, media_path, habilitado, created_at, office_id)"
+                " VALUES (:sid, :rid, :a, :b, :mp, :hab, :c, :off)"
             ),
             {
                 "sid": m.id,
+                "rid": m.room_id,
                 "a": m.author,
                 "b": m.body,
                 "mp": m.media_path,
@@ -833,6 +880,115 @@ def archive_team_message(m) -> None:
                 "c": _naive_utc(m.created_at),
                 "off": m.office_id,
             },
+        )
+
+
+def archive_chat_room(r) -> None:
+    with _get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO chat_rooms"
+                " (source_id, name, room_type, habilitado, office_id, created_at)"
+                " VALUES (:sid, :n, :rt, :hab, :off, :c)"
+            ),
+            {
+                "sid": r.id,
+                "n": r.name,
+                "rt": r.room_type,
+                "hab": r.habilitado,
+                "off": r.office_id,
+                "c": _naive_utc(r.created_at),
+            },
+        )
+
+
+def sync_chat_room(r) -> None:
+    with _get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE chat_rooms SET name = :n, room_type = :rt, habilitado = :hab, office_id = :off"
+                " WHERE source_id = :sid"
+            ),
+            {"sid": r.id, "n": r.name, "rt": r.room_type, "hab": r.habilitado, "off": r.office_id},
+        )
+
+
+def archive_chat_member(cm) -> None:
+    with _get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO chat_members"
+                " (source_id, room_id, username, is_muted, habilitado, joined_at)"
+                " VALUES (:sid, :rid, :u, :mut, :hab, :c)"
+            ),
+            {
+                "sid": cm.id,
+                "rid": cm.room_id,
+                "u": cm.username,
+                "mut": cm.is_muted,
+                "hab": cm.habilitado,
+                "c": _naive_utc(cm.joined_at),
+            },
+        )
+
+
+def sync_chat_member(cm) -> None:
+    with _get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE chat_members SET is_muted = :mut, habilitado = :hab"
+                " WHERE source_id = :sid"
+            ),
+            {"sid": cm.id, "mut": cm.is_muted, "hab": cm.habilitado},
+        )
+
+
+def archive_message_reaction(mr) -> None:
+    with _get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO message_reactions"
+                " (source_id, message_id, username, reaction, created_at)"
+                " VALUES (:sid, :mid, :u, :r, :c)"
+            ),
+            {
+                "sid": mr.id,
+                "mid": mr.message_id,
+                "u": mr.username,
+                "r": mr.reaction,
+                "c": _naive_utc(mr.created_at),
+            },
+        )
+
+
+def archive_message_reminder(rem) -> None:
+    with _get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO message_reminders"
+                " (source_id, message_id, username, remind_at, note, is_dismissed, created_at)"
+                " VALUES (:sid, :mid, :u, :rat, :n, :dism, :c)"
+            ),
+            {
+                "sid": rem.id,
+                "mid": rem.message_id,
+                "u": rem.username,
+                "rat": _naive_utc(rem.remind_at),
+                "n": rem.note,
+                "dism": rem.is_dismissed,
+                "c": _naive_utc(rem.created_at),
+            },
+        )
+
+
+def sync_message_reminder(rem) -> None:
+    with _get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE message_reminders SET is_dismissed = :dism, note = :n, remind_at = :rat"
+                " WHERE source_id = :sid"
+            ),
+            {"sid": rem.id, "dism": rem.is_dismissed, "n": rem.note, "rat": _naive_utc(rem.remind_at)},
         )
 
 
@@ -1628,6 +1784,10 @@ def backfill() -> None:
         LoginEvent,
         Message,
         TeamMessage,
+        ChatRoom,
+        ChatMember,
+        MessageReaction,
+        MessageReminder,
         AgentConfig,
         InfoDoc,
         NluEvent,
@@ -1732,6 +1892,15 @@ def backfill() -> None:
                 sync_wa_message(m)
             for tm in session.exec(select(TeamMessage)).all():
                 sync_team_message(tm)
+            etapa = "chat_rooms"
+            for cr in session.exec(select(ChatRoom)).all():
+                sync_chat_room(cr)
+            for cm in session.exec(select(ChatMember)).all():
+                sync_chat_member(cm)
+            for mr in session.exec(select(MessageReaction)).all():
+                archive_message_reaction(mr)
+            for mrem in session.exec(select(MessageReminder)).all():
+                sync_message_reminder(mrem)
         logger.info("Backfill de MSSQL completado")
     except Exception as exc:
         # La etapa es la mitad del mensaje: sin ella, "incompleto" obliga a
@@ -1770,6 +1939,10 @@ def _register_listeners() -> None:
         SavedReply,
         SynonymProposal,
         TeamMessage,
+        ChatRoom,
+        ChatMember,
+        MessageReaction,
+        MessageReminder,
         Ticket,
         TicketActivity,
         Label,
@@ -1793,6 +1966,34 @@ def _register_listeners() -> None:
     @event.listens_for(TeamMessage, "after_update")
     def _team_update(mapper, connection, target):
         _safe(sync_team_message, target)
+
+    @event.listens_for(ChatRoom, "after_insert")
+    def _chatroom_insert(mapper, connection, target):
+        _safe(archive_chat_room, target)
+
+    @event.listens_for(ChatRoom, "after_update")
+    def _chatroom_update(mapper, connection, target):
+        _safe(sync_chat_room, target)
+
+    @event.listens_for(ChatMember, "after_insert")
+    def _chatmember_insert(mapper, connection, target):
+        _safe(archive_chat_member, target)
+
+    @event.listens_for(ChatMember, "after_update")
+    def _chatmember_update(mapper, connection, target):
+        _safe(sync_chat_member, target)
+
+    @event.listens_for(MessageReaction, "after_insert")
+    def _reaction_insert(mapper, connection, target):
+        _safe(archive_message_reaction, target)
+
+    @event.listens_for(MessageReminder, "after_insert")
+    def _reminder_insert(mapper, connection, target):
+        _safe(archive_message_reminder, target)
+
+    @event.listens_for(MessageReminder, "after_update")
+    def _reminder_update(mapper, connection, target):
+        _safe(sync_message_reminder, target)
 
     @event.listens_for(Client, "after_insert")
     @event.listens_for(Client, "after_update")

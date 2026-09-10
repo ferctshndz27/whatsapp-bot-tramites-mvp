@@ -54,6 +54,10 @@ from app.models import (
     SavedReply,
     SynonymProposal,
     TeamMessage,
+    ChatRoom,
+    ChatMember,
+    MessageReaction,
+    MessageReminder,
     Ticket,
     TicketActivity,
     TicketLabel,
@@ -90,6 +94,10 @@ MIRROR_TABLES = [
     (SynonymProposal, "synonym_proposals"),
     (Alert, "alerts"),
     (Plantilla, "message_templates"),
+    (ChatRoom, "chat_rooms"),
+    (ChatMember, "chat_members"),
+    (MessageReaction, "message_reactions"),
+    (MessageReminder, "message_reminders"),
     # Estas tres ya se espejaban (DDL + archive_* + listener + backfill) pero
     # faltaban aquí, así que /system las daba por buenas sin contarlas: una
     # divergencia en las notas del cliente era invisible. Ver los CINCO lugares
