@@ -22,8 +22,8 @@ graphify-out/
 # Configuración y permisos locales del agente Claude
 .claude/settings.local.json
 
-# Informes y documentos de auditoría internos
-docs/INFORME-AUDITORIA-APP.md
+# Documentos e informes (toda la carpeta)
+docs/
 
 # `.agents/` es la raíz de personalización que escanean Antigravity y Gemini
 # CLI, y es del OPERADOR: sus propias skills viven ahí y no son de este repo
