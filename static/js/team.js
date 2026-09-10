@@ -58,7 +58,7 @@ function setReminder(messageId) {
         fetch(`/team/messages/${messageId}/remind`, {
             method: 'POST',
             body: fd
-        }).then(() => alert("Recordatorio guardado."));
+        }).then(res => alert(res.ok ? "Recordatorio guardado." : "No se pudo guardar el recordatorio."));
     }
 }
 

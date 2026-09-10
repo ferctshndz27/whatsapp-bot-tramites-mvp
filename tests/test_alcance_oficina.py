@@ -22,7 +22,7 @@ import app.db as db
 from app.auth import alcance
 from app.config import settings
 from app.main import app
-from app.models import Cobro, Office, Ticket, TicketStatus, User
+from app.models import ChatMember, ChatRoom, Cobro, Office, Ticket, TicketStatus, User
 
 CLAVE = "clave-de-prueba"
 HASH = bcrypt.hashpw(CLAVE.encode(), bcrypt.gensalt(rounds=4)).decode()
@@ -486,3 +486,49 @@ def test_la_lista_de_invitaciones_muestra_su_oficina():
     jefa.post("/invitations", data={"office_id": 2})
     html = jefa.get("/invitations").text
     assert "Puebla" in html, "la lista no dice a qué oficina invita cada código"
+
+
+# --- /team: el chat interno es por oficina (§2.3) --------------------------
+
+def _salas_de(quien: str) -> set[int]:
+    with Session(db.engine) as s:
+        return set(s.exec(select(ChatMember.room_id).where(ChatMember.username == quien)).all())
+
+
+def test_el_chat_de_equipo_solo_ofrece_gente_de_tu_oficina():
+    """§2.3: «el chat interno es por oficina». La lista para abrir un DM o un
+    grupo es por donde se cruza esa línea: si ofrece a todas, un colaborador de
+    Tlaxcala le abre un chat a uno de Puebla."""
+    html = _sesion("colab1").get("/team").text
+    assert '<option value="jefa1">' in html, "ni a su propia oficina le ofrece"
+    assert '<option value="colab2">' not in html, "le ofrece gente de otra oficina"
+
+
+def test_un_admin_ve_a_la_gente_de_todas_las_oficinas_en_el_chat():
+    """§5: un admin ve todas. Es además el control positivo del de arriba: un
+    filtro fijo por oficina lo pasaría en verde y dejaría al admin sin poder
+    escribirle a Puebla."""
+    html = _sesion("jefa1").get("/team").text
+    assert '<option value="colab1">' in html and '<option value="colab2">' in html
+
+
+@pytest.mark.parametrize("integrantes", [["colab2"], ["jefa1", "colab2"], ["fantasma"]])
+def test_un_post_armado_no_mete_a_nadie_ajeno_a_una_sala(integrantes):
+    """Acotar la lista es la mitad: `members` lo manda el navegador y un POST
+    hecho a mano no pasa por ella. Con uno solo que no sea elegible no se crea
+    nada — la sala a medias tampoco es la que se pidió."""
+    _sesion("colab1").post("/team/rooms", data={"room_type": "group", "name": "",
+                                                "members": integrantes})
+    with Session(db.engine) as s:
+        salas = s.exec(select(ChatRoom).where(ChatRoom.room_type != "general")).all()
+    assert salas == [], f"se creó una sala con {integrantes}"
+
+
+@pytest.mark.parametrize("quien, con", [("colab1", "jefa1"), ("jefa1", "colab2")])
+def test_con_alguien_elegible_la_sala_si_se_crea(quien, con):
+    """Control positivo: una validación que lo rechazara TODO pasaría en verde
+    el candado de arriba y nadie podría abrir un chat. La segunda fila es §5:
+    un admin sí abre sala con otra oficina."""
+    _sesion(quien).post("/team/rooms", data={"room_type": "group", "name": "",
+                                             "members": [con]})
+    assert _salas_de(quien) & _salas_de(con), f"{quien} no pudo abrir sala con {con}"

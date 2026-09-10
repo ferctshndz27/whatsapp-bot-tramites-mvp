@@ -21,9 +21,20 @@ router = APIRouter()
 
 MAX_MESSAGES_SHOWN = 100
 MAX_BODY_LENGTH = 4000
+MAX_REMIND_MINUTES = 7 * 24 * 60
 
 def _current_user(request: Request) -> str | None:
     return request.session.get("user")
+
+def _mensaje_visible(session, message_id: int, user: str) -> TeamMessage | None:
+    """El mensaje, solo si sigue visible y `user` es miembro activo de su sala."""
+    return session.exec(
+        select(TeamMessage)
+        .join(ChatMember, and_(ChatMember.room_id == TeamMessage.room_id,
+                               ChatMember.username == user))
+        .where(TeamMessage.id == message_id, TeamMessage.habilitado == True,
+               ChatMember.habilitado == True)
+    ).first()
 
 @router.get("/team")
 def team_chat(request: Request, err: str | None = None):
@@ -81,13 +92,10 @@ def team_chat(request: Request, err: str | None = None):
                     disp = r.name or "Grupo"
                 rooms_out.append({"id": r.id, "display_name": disp})
             
-        # Get users in the same office for DM/Group creation
+        # Con quién puede abrir un DM o un grupo: la gente de su oficina, o la
+        # de todas si es admin (§5), igual que en el resto del panel.
         users_query = select(User).where(User.habilitado == True, User.username != user)
-        if not vista.ve_todas:
-            # Note: User model does not have office_id directly, but typically they are filtered or we assume they belong to the office.
-            # We will list all enabled users, but ideally this would be office scoped.
-            pass
-        office_users = session.exec(users_query).all()
+        office_users = session.exec(vista.filtrar(users_query, User.office_id)).all()
 
     return templates.TemplateResponse(
         "team_chat.html",
@@ -158,6 +166,23 @@ def create_room(request: Request, room_type: str = Form(...), name: str = Form("
 
     vista = alcance(user)
     with get_session() as session:
+        # La lista del formulario ya viene acotada, pero `members` lo arma el
+        # navegador: sin volver a acotarlo aquí, un POST hecho a mano mete a
+        # alguien de otra oficina a la sala. Con uno solo que no sea elegible
+        # no se crea nada — una sala a medias tampoco es la que se pidió.
+        pedidos = {m for m in members if m != user}
+        if pedidos:
+            elegibles = select(User.username).where(
+                User.username.in_(sorted(pedidos)), User.habilitado == True
+            )
+            fuera = pedidos - set(session.exec(vista.filtrar(elegibles, User.office_id)).all())
+            if fuera:
+                logger.warning(
+                    "Sala de equipo rechazada: %s pidió integrantes fuera de su alcance: %s",
+                    user, sorted(fuera),
+                )
+                return RedirectResponse("/team", status_code=303)
+
         is_dm = len(members) == 1 and not name.strip()
         actual_type = "direct" if is_dm else "group"
         
@@ -272,12 +297,22 @@ def team_react(request: Request, message_id: int, reaction: str = Form(...)):
 def team_remind(request: Request, message_id: int, remind_in_minutes: int = Form(...)):
     user = _current_user(request)
     if not user: return Response(status_code=403)
-    
+
+    # Un minuto negativo o cero vence al instante: era la forma de leer un
+    # mensaje ajeno sin esperar. El tope es una semana.
+    if not 1 <= remind_in_minutes <= MAX_REMIND_MINUTES:
+        return JSONResponse({"status": "error"}, status_code=422)
+
     import datetime
     remind_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=remind_in_minutes)
     remind_at = remind_at.replace(tzinfo=None)
 
     with get_session() as session:
+        # El recordatorio devuelve el texto del mensaje: sin esta comprobación,
+        # cualquiera leía un DM de otra sala —de otra oficina incluso— con solo
+        # adivinar el id. Mismo 404 si no existe o no es suyo: no confirma cuál.
+        if _mensaje_visible(session, message_id, user) is None:
+            return JSONResponse({"status": "error"}, status_code=404)
         session.add(MessageReminder(message_id=message_id, username=user, remind_at=remind_at, note=""))
         session.commit()
         
@@ -290,10 +325,17 @@ def active_reminders(request: Request):
 
     with get_session() as session:
         now = datetime.utcnow()
+        # La membresía se vuelve a comprobar al entregar, no solo al crear: así
+        # no sale nada de un recordatorio creado antes del candado, ni de una
+        # sala de la que ya lo sacaron, ni de un mensaje que su autor ocultó.
         reminders = session.exec(
             select(MessageReminder, TeamMessage)
             .join(TeamMessage, MessageReminder.message_id == TeamMessage.id)
-            .where(MessageReminder.username == user, MessageReminder.is_dismissed == False, MessageReminder.remind_at <= now)
+            .join(ChatMember, and_(ChatMember.room_id == TeamMessage.room_id,
+                                   ChatMember.username == MessageReminder.username))
+            .where(MessageReminder.username == user, MessageReminder.is_dismissed == False,
+                   MessageReminder.remind_at <= now, ChatMember.habilitado == True,
+                   TeamMessage.habilitado == True)
         ).all()
         
         results = []
