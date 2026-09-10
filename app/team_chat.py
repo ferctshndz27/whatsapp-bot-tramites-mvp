@@ -34,9 +34,10 @@ def team_chat(request: Request, err: str | None = None):
     vista = alcance(user)
     with get_session() as session:
         # Check if user has a general office room
+        general_name = f"Oficina General #{vista.office_id}" if not vista.ve_todas else "Oficina General"
         general_room = session.exec(
             select(ChatRoom).where(
-                ChatRoom.office_id == vista.office_id,
+                ChatRoom.name == general_name,
                 ChatRoom.room_type == "general",
                 ChatRoom.habilitado == True
             )
@@ -45,9 +46,8 @@ def team_chat(request: Request, err: str | None = None):
         if not general_room:
             # Create a general room for the office
             general_room = ChatRoom(
-                name="Oficina General",
+                name=general_name,
                 room_type="general",
-                office_id=vista.office_id
             )
             session.add(general_room)
             session.commit()
@@ -144,7 +144,7 @@ def create_room(request: Request, room_type: str = Form(...), name: str = Form("
 
     vista = alcance(user)
     with get_session() as session:
-        room = ChatRoom(room_type=room_type, name=name, office_id=vista.office_id)
+        room = ChatRoom(room_type=room_type, name=name)
         session.add(room)
         session.commit()
         session.refresh(room)

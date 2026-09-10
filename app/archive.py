@@ -143,7 +143,6 @@ _SCHEMA_DDL = [
         name       NVARCHAR(100) NULL,
         room_type  NVARCHAR(20)  NOT NULL,
         habilitado BIT           NOT NULL DEFAULT 1,
-        office_id  INT           NOT NULL,
         created_at DATETIME2     NOT NULL
     )
     """,
@@ -888,15 +887,14 @@ def archive_chat_room(r) -> None:
         conn.execute(
             text(
                 "INSERT INTO chat_rooms"
-                " (source_id, name, room_type, habilitado, office_id, created_at)"
-                " VALUES (:sid, :n, :rt, :hab, :off, :c)"
+                " (source_id, name, room_type, habilitado, created_at)"
+                " VALUES (:sid, :n, :rt, :hab, :c)"
             ),
             {
                 "sid": r.id,
                 "n": r.name,
                 "rt": r.room_type,
                 "hab": r.habilitado,
-                "off": r.office_id,
                 "c": _naive_utc(r.created_at),
             },
         )
@@ -906,10 +904,10 @@ def sync_chat_room(r) -> None:
     with _get_engine().begin() as conn:
         conn.execute(
             text(
-                "UPDATE chat_rooms SET name = :n, room_type = :rt, habilitado = :hab, office_id = :off"
+                "UPDATE chat_rooms SET name = :n, room_type = :rt, habilitado = :hab"
                 " WHERE source_id = :sid"
             ),
-            {"sid": r.id, "n": r.name, "rt": r.room_type, "hab": r.habilitado, "off": r.office_id},
+            {"sid": r.id, "n": r.name, "rt": r.room_type, "hab": r.habilitado},
         )
 
 

@@ -43,7 +43,7 @@ ARCHIVE_DDL = [
         office_id INTEGER DEFAULT 1)""",
     """CREATE TABLE chat_rooms (
         source_id INTEGER PRIMARY KEY, name TEXT, room_type TEXT,
-        habilitado INTEGER DEFAULT 1, office_id INTEGER, created_at TIMESTAMP)""",
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
     """CREATE TABLE chat_members (
         source_id INTEGER PRIMARY KEY, room_id INTEGER, username TEXT,
         is_muted INTEGER DEFAULT 0, habilitado INTEGER DEFAULT 1, joined_at TIMESTAMP)""",

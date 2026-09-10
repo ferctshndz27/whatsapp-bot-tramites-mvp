@@ -303,7 +303,6 @@ class ChatRoom(SQLModel, table=True):
     room_type: str = "direct"
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
-    office_id: int = _office_id_field()
 
 
 class ChatMember(SQLModel, table=True):

@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Chat de equipo{% endblock %}
 {% block head %}
+<meta name="auto-recarga" content="20">
 <link rel="stylesheet" href="/static/css/team.css">
 <script src="/static/js/team.js" defer></script>
-<!-- Not using auto-recarga here to avoid full page reloads, using JS polling for messages and notifications instead -->
 {% endblock %}
 {% block content %}
-<div class="chat-container">
-    <div class="sidebar">
-        <div class="sidebar-header">
+<div class="chat-container" id="chat">
+    <div class="rooms-sidebar">
+        <div class="rooms-sidebar-header">
             <h2>Salas</h2>
-            <button onclick="document.getElementById('new-room-modal').style.display='block'">+ Nuevo</button>
+            <button class="btn-sm" onclick="document.getElementById('new-room-modal').style.display='block'">+ Nuevo</button>
         </div>
         <ul class="room-list">
             {% for r in rooms %}
@@ -43,8 +43,10 @@
                 {% endfor %}
             </select>
             
-            <button type="submit">Crear</button>
-            <button type="button" onclick="document.getElementById('new-room-modal').style.display='none'">Cancelar</button>
+            <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                <button type="submit" class="btn-approve">Crear</button>
+                <button type="button" class="btn-ignore" onclick="document.getElementById('new-room-modal').style.display='none'">Cancelar</button>
+            </div>
         </form>
     </div>
 </div>

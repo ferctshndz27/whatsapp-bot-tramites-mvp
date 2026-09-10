@@ -214,7 +214,7 @@ _COLUMNAS_QUE_AGREGA_LA_MIGRACION = {
         "habilitado",
         "provider",
     ),
-    "teammessage": ("habilitado", "office_id"),
+    "teammessage": ("habilitado", "office_id", "room_id"),
     "user": ("is_admin", "habilitado", "estado", "phone", "office_id"),
     "ticket": ("agent_active", "habilitado", "requirements_json", "provider", "office_id"),
     "client": ("habilitado", "office_id"),
@@ -575,6 +575,10 @@ _ESQUEMA_DESPLEGADO = {
         "ended_at",
         "habilitado",
     ),
+    "chatroom": ("id", "name", "room_type", "habilitado", "created_at"),
+    "chatmember": ("id", "room_id", "username", "is_muted", "habilitado", "joined_at"),
+    "messagereaction": ("id", "message_id", "username", "reaction", "created_at"),
+    "messagereminder": ("id", "message_id", "username", "remind_at", "note", "is_dismissed", "created_at"),
 }
 
 # Espeja las llamadas a _add_missing_columns() dentro de init_db(): sirve para
