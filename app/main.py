@@ -80,6 +80,11 @@ app = FastAPI(
 # middleware: no altera el orden de los cuatro middlewares de abajo.
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# El landing estático queda separado del ERP y se sirve desde la misma API
+# principal para asegurar que la carpeta landing/ y sus recursos CSS/JS
+# sean accesibles con una ruta pública estable.
+app.mount("/landing", StaticFiles(directory="landing"), name="landing")
+
 session_secret = settings.session_secret
 if not session_secret:
     session_secret = secrets.token_urlsafe(32)

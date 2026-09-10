@@ -1,0 +1,109 @@
+:root {
+  --black: #0b0b0d;
+  --gold: #c9a227;
+  --gold-2: #e9c767;
+  --text: #eae7e0;
+  --muted: #a7a29a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+  line-height: 1.7;
+  font-size: 16px;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background-color: var(--black);
+  background-image:
+    radial-gradient(circle at 78% 2%, rgba(201, 162, 39, 0.12), transparent 16%),
+    radial-gradient(circle at 14% 78%, rgba(233, 199, 103, 0.08), transparent 18%),
+    radial-gradient(circle at 58% 45%, rgba(201, 162, 39, 0.03), transparent 30%),
+    linear-gradient(135deg, var(--black), #131316);
+  background-attachment: fixed;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -10%;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(201, 162, 39, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201, 162, 39, 0.055) 1px, transparent 1px),
+    radial-gradient(rgba(243, 223, 160, 0.055) 1px, transparent 1px);
+  background-size: 56px 56px, 56px 56px, 30px 30px;
+  background-position: center;
+  transform: perspective(1200px) rotateX(4deg) scale(1.03);
+  opacity: 0.95;
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 100%);
+  mask-image: linear-gradient(180deg, #000, transparent 100%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: -2%;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255,255,240,0.045) 1px, transparent 1px);
+  background-size: 31px 31px;
+  opacity: 0.75;
+  transform: translateY(2%);
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 100%);
+  mask-image: linear-gradient(180deg, #000, transparent 100%);
+}
+
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 3rem 1.25rem 4rem;
+}
+
+a {
+  color: var(--gold-2);
+}
+
+a:focus-visible {
+  outline: 3px solid var(--gold-2);
+  outline-offset: 3px;
+}
+
+h1 {
+  font-size: 1.9rem;
+  line-height: 1.2;
+  margin: 0 0 .3rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin: 2rem 0 .5rem;
+  color: var(--gold-2);
+}
+
+.updated {
+  color: var(--muted);
+  font-size: .85rem;
+  margin-bottom: 2rem;
+}
+
+p, li {
+  color: #d6d3cc;
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: 2rem;
+  text-decoration: none;
+  font-size: .9rem;
+}
+
+ol li {
+  margin: .5rem 0;
+}
+

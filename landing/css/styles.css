@@ -1,0 +1,696 @@
+:root {
+  --black: #0b0b0d;
+  --slate: #131316;
+  --card: #1a1a1f;
+  --gold: #c9a227;
+  --gold-2: #e9c767;
+  --gold-soft: #f3dfa0;
+  --text: #eae7e0;
+  --muted: #a7a29a;
+  --line: rgba(201, 162, 39, .28);
+  --radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  /* La cabecera es sticky y mide 72px. Puesto en la raíz, el navegador deja ese
+     hueco al saltar a cualquier ancla sin que los destinos tengan que declarar nada. */
+  scroll-padding-top: 84px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: "Montserrat", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background-color: var(--black);
+  background-image:
+    radial-gradient(circle at 78% 2%, rgba(201, 162, 39, 0.12), transparent 16%),
+    radial-gradient(circle at 14% 78%, rgba(233, 199, 103, 0.08), transparent 18%),
+    radial-gradient(circle at 58% 45%, rgba(201, 162, 39, 0.03), transparent 30%),
+    linear-gradient(135deg, var(--black), var(--slate));
+  background-attachment: fixed;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -10%;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(201, 162, 39, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201, 162, 39, 0.055) 1px, transparent 1px),
+    radial-gradient(rgba(243, 223, 160, 0.055) 1px, transparent 1px);
+  background-size: 56px 56px, 56px 56px, 30px 30px;
+  background-position: center;
+  transform: perspective(1200px) rotateX(4deg) scale(1.03);
+  opacity: 0.95;
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 100%);
+  mask-image: linear-gradient(180deg, #000, transparent 100%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: -2%;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255,255,240,0.045) 1px, transparent 1px);
+  background-size: 31px 31px;
+  opacity: 0.75;
+  transform: translateY(2%);
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 100%);
+  mask-image: linear-gradient(180deg, #000, transparent 100%);
+}
+
+/* ---- Fondo Velaris ---- */
+/* z-index negativo: el lienzo se pinta sobre el color de fondo propagado del
+   body y por debajo de todo el contenido. Así ningún elemento de la página
+   necesita declarar posición ni capa para quedar encima. */
+#velaris-bg {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+  /* Cristal ahumado. El shader queda intacto —mismas formas, mismo movimiento,
+     mismos colores— y solo se ve más tenue. Es el único ajuste de brillo, y va
+     aquí y no en el shader a propósito.
+     El valor está medido, no elegido a ojo: el shader de Velaris llega a picos
+     de luminancia L 0.72 y a plena intensidad el párrafo del hero se queda en
+     1.87:1. Sobre el negro del body, esta opacidad lo sube a 4.85:1, por encima
+     del mínimo AA de 4.5. Subirla a 0.26 ya lo baja a 4.0. */
+  opacity: .4;
+}
+
+/* La clase la pone main.js solo cuando WebGL arrancó de verdad. Sin ella manda
+   el degradado del body de siempre y el lienzo ni se muestra. */
+html:not(.velaris) #velaris-bg {
+  display: none;
+}
+
+/* Con el lienzo vivo, la rejilla dorada y el grano del CSS quedan fijos por
+   encima de él (z-index 0 contra -1) y le ensucian el degradado. */
+html.velaris body::before,
+html.velaris body::after {
+  display: none;
+}
+
+/* El degradado del body compite con el lienzo. No es solo estético: medido,
+   con ese degradado debajo el párrafo del hero se queda en 3.53:1 aunque se
+   baje el lienzo al 20%, porque el propio degradado ya aporta luminancia.
+   Sobre el negro plano llega a 4.85:1. Si alguien lo devuelve para dar
+   profundidad, hay que volver a medir. */
+html.velaris body {
+  background-image: none;
+  background-attachment: initial;
+}
+
+h1, h2, h3 {
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-weight: 600;
+  line-height: 1.15;
+  margin: 0;
+}
+
+a {
+  color: var(--gold-2);
+}
+
+/* El anillo oscuro interior garantiza que el dorado del foco se vea aunque debajo
+   pase una mancha clara del lienzo. */
+a:focus-visible,
+button:focus-visible {
+  outline: 3px solid var(--gold-soft);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px rgba(11, 11, 13, .9);
+  border-radius: 4px;
+}
+
+img {
+  max-width: 100%;
+}
+
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+.eyebrow {
+  display: inline-block;
+  letter-spacing: .35em;
+  text-transform: uppercase;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--gold-2);
+  margin-bottom: 1rem;
+}
+
+.gold-text {
+  background: linear-gradient(120deg, #f6e27a 0%, #c9a227 45%, #8a6a12 70%, #e9c767 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---- Header ---- */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(11, 11, 13, .86);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  min-height: 72px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.monogram {
+  font-family: "Cormorant Garamond", serif;
+  font-weight: 700;
+  font-size: 1.7rem;
+  line-height: 1;
+  letter-spacing: -.05em;
+}
+
+.brand small {
+  display: block;
+  font-size: .62rem;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+nav.menu {
+  margin-left: auto;
+  display: flex;
+  gap: 1.4rem;
+}
+
+nav.menu a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .85rem;
+  font-weight: 500;
+  letter-spacing: .05em;
+  padding: .5rem 0;
+  transition: color .15s;
+}
+
+nav.menu a:hover {
+  color: var(--gold-2);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  text-decoration: none;
+  cursor: pointer;
+  background: linear-gradient(120deg, var(--gold-2), var(--gold));
+  color: #171204;
+  font-weight: 700;
+  font-size: .9rem;
+  letter-spacing: .03em;
+  padding: .8rem 1.6rem;
+  border: 0;
+  border-radius: 999px;
+  min-height: 44px;
+  transition: transform .15s, box-shadow .15s;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(201, 162, 39, .35);
+}
+
+.btn.ghost {
+  /* Ya no hay superficie opaca detrás: el relleno tenue y el borde más marcado
+     mantienen el botón legible sobre cualquier zona del lienzo. */
+  background: rgba(11, 11, 13, .45);
+  color: var(--gold-soft);
+  border: 1px solid rgba(201, 162, 39, .55);
+}
+
+.btn.ghost:hover {
+  border-color: var(--gold-2);
+  box-shadow: none;
+}
+
+/* ---- Hero ---- */
+/* Sin fondo propio ni borde inferior: ese borde era la línea que partía la página
+   en dos. El hero es ahora una zona de texto sobre el fondo común. */
+.hero {
+  position: relative;
+  padding: 6.5rem 0 5.5rem;
+}
+
+.hero .wrap {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1.25fr .75fr;
+  gap: 3rem;
+  align-items: center;
+}
+
+.hero h1 {
+  font-size: clamp(2.4rem, 5.2vw, 4rem);
+  margin: .25rem 0 1.25rem;
+}
+
+.hero p.lead {
+  color: var(--text);
+  font-size: 1.08rem;
+  max-width: 34rem;
+  margin: 0 0 2rem;
+}
+
+.hero .cta-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.hero-badge {
+  justify-self: center;
+  width: min(300px, 80%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border: 1px solid var(--line);
+  /* Translúcido: opaco se leía como un agujero recortado sobre el fondo vivo. */
+  background: radial-gradient(circle at 30% 25%, rgba(30, 30, 36, .55), rgba(16, 16, 19, .78) 70%);
+  box-shadow: inset 0 0 60px rgba(201, 162, 39, .07), 0 30px 60px rgba(0, 0, 0, .5);
+}
+
+.hero-badge .monogram {
+  font-size: 5.2rem;
+}
+
+.hero-badge span {
+  letter-spacing: .3em;
+  font-size: .6rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: .6rem;
+}
+
+/* ---- Sections ---- */
+/* Cada sección traía dos pares de radiales dorados propios: eso dibujaba un halo por
+   bloque y era lo que hacía leer la página como bandas apiladas. El fondo lo pone
+   ahora el lienzo, una sola vez. */
+section {
+  position: relative;
+  padding: 5rem 0;
+}
+
+section .wrap,
+.hero .wrap,
+footer .wrap {
+  position: relative;
+  z-index: 1;
+}
+
+.section-head {
+  text-align: center;
+  max-width: 620px;
+  margin: 0 auto 3rem;
+}
+
+.section-head h2 {
+  font-size: clamp(1.9rem, 3.6vw, 2.7rem);
+}
+
+.section-head p {
+  color: var(--muted);
+  margin: .9rem 0 0;
+}
+
+/* ---- Servicios ---- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.1rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid rgba(255, 255, 255, .05);
+  border-radius: var(--radius);
+  padding: 1.7rem 1.4rem;
+  text-align: center;
+  transition: border-color .2s, transform .2s;
+}
+
+.card:hover {
+  border-color: var(--line);
+  transform: translateY(-3px);
+}
+
+.card .icon {
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 1rem;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(201, 162, 39, .1);
+  border: 1px solid var(--line);
+}
+
+.card .icon svg {
+  width: 26px;
+  height: 26px;
+  stroke: var(--gold-2);
+  fill: none;
+  stroke-width: 1.6;
+}
+
+.card h3 {
+  font-family: "Montserrat", sans-serif;
+  font-size: .95rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
+.card p {
+  color: var(--muted);
+  font-size: .82rem;
+  margin: .5rem 0 0;
+}
+
+/* ---- Banda CTA ---- */
+.cta-band {
+  background: linear-gradient(115deg, #e9c767 0%, #c9a227 55%, #a37f16 100%);
+  border-radius: calc(var(--radius) + 4px);
+  color: #171204;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  flex-wrap: wrap;
+  padding: 2rem 2.5rem;
+  /* Halo reducido: sobre un fondo dorado vivo, una sombra dorada de 60px se sumaba
+     al lienzo y difuminaba el borde de la banda en vez de separarla. */
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .45);
+}
+
+.cta-band .phone {
+  font-size: 1.7rem;
+  font-weight: 700;
+  font-family: "Montserrat", sans-serif;
+  white-space: nowrap;
+}
+
+.cta-band small {
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: .2em;
+  font-size: .65rem;
+  font-weight: 700;
+  opacity: .75;
+}
+
+.cta-band p {
+  margin: 0;
+  flex: 1;
+  min-width: 220px;
+  font-size: .95rem;
+  font-weight: 500;
+}
+
+.cta-band .btn {
+  background: #171204;
+  color: var(--gold-soft);
+}
+
+/* ---- Proceso ---- */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  counter-reset: paso;
+}
+
+.step {
+  position: relative;
+  text-align: center;
+  padding: 2.4rem 1.5rem 1.8rem;
+  border: 1px solid rgba(255, 255, 255, .06);
+  border-radius: var(--radius);
+  background: var(--slate);
+}
+
+.step::before {
+  counter-increment: paso;
+  content: "0" counter(paso);
+  position: absolute;
+  top: -1.1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(120deg, var(--gold-2), var(--gold));
+  color: #171204;
+  font-weight: 700;
+  font-size: .85rem;
+  padding: .35rem .85rem;
+  border-radius: 999px;
+}
+
+.step h3 {
+  font-family: "Montserrat", sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.step p {
+  color: var(--muted);
+  font-size: .88rem;
+  margin: .6rem 0 0;
+}
+
+/* ---- Footer ---- */
+footer {
+  border-top: 1px solid var(--line);
+  background: var(--slate);
+  padding: 3.5rem 0 2rem;
+}
+
+.foot {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 2.5rem;
+}
+
+.foot h3 {
+  font-family: "Montserrat", sans-serif;
+  font-size: .8rem;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--gold-2);
+}
+
+.foot ul {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.foot li {
+  margin: .55rem 0;
+  color: var(--muted);
+  font-size: .9rem;
+}
+
+.foot a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.foot a:hover {
+  color: var(--gold-2);
+}
+
+.foot-desc {
+  color: var(--muted);
+  font-size: .88rem;
+  margin-top: 1rem;
+  max-width: 26rem;
+}
+
+.copy {
+  margin-top: 2.6rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid rgba(255, 255, 255, .06);
+  color: var(--muted);
+  font-size: .78rem;
+  text-align: center;
+  letter-spacing: .04em;
+}
+
+/* ---- WhatsApp flotante ---- */
+.wa-float {
+  position: fixed;
+  right: 1.2rem;
+  bottom: 1.2rem;
+  z-index: 30;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #25d366;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .45);
+}
+
+.wa-float svg {
+  width: 30px;
+  height: 30px;
+  fill: #fff;
+}
+
+@media (max-width: 900px) {
+  .hero .wrap {
+    grid-template-columns: 1fr;
+  }
+  .hero-badge {
+    display: none;
+  }
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .steps {
+    grid-template-columns: 1fr;
+  }
+  .foot {
+    grid-template-columns: 1fr;
+  }
+  nav.menu {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Efecto restaurado: glow de cursor e inclinación 3D aplicado SOLO a tarjetas de servicios */
+.card > *:not(.velaris-glow) {
+  position: relative;
+  z-index: 1;
+}
+
+.velaris-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: radial-gradient(
+    600px circle at var(--mouse-x, 0) var(--mouse-y, 0),
+    rgba(255, 255, 255, 0.03),
+    transparent 40%
+  );
+}
+
+.grid:hover .velaris-glow {
+  opacity: 1;
+}
+
+.velaris-glow::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: radial-gradient(
+    400px circle at var(--mouse-x, 0) var(--mouse-y, 0),
+    rgba(233, 199, 103, 0.4),
+    transparent 40%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+}
+
+.card {
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  transform: perspective(1000px) rotateX(var(--tilt-y)) rotateY(var(--tilt-x));
+  transition: border-color .2s, transform 0.15s ease-out;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.card:hover {
+  transform: perspective(1000px) rotateX(var(--tilt-y)) rotateY(var(--tilt-x)) translateY(-3px) scale3d(1.02, 1.02, 1.02);
+  z-index: 10;
+}
+
+
+/* ===== Hero Shader Animation ===== */
+.hero {
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.hero > *:not(.hero-canvas) {
+  position: relative;
+  z-index: 1;
+}
