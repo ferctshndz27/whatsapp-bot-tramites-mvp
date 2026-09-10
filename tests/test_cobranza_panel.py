@@ -330,6 +330,33 @@ def test_49_conciliacion_incluye_a_los_confirmados_por_asesor(entorno):
     assert "pendiente" in cuerpo
 
 
+def test_un_cobro_oculto_no_sale_en_listados_totales_cartera_ni_csv(entorno):
+    """Soft delete de cobros (habilitado=False), p. ej. los de prueba antes de
+    arrancar. Si esto se pone rojo, los totales de producción siguen sumando
+    dinero que alguien ya decidió ocultar — y los CSV se lo pasan a
+    contabilidad."""
+    with Session(entorno) as s:
+        s.add(Cobro(phone=PHONE, concepto="VISIBLE", monto_centavos=80000, estado="pendiente",
+                    creado_por=ASESOR, livemode=False, token_verificacion="tok-visible"))
+        s.add(Cobro(phone=PHONE, concepto="OCULTO-VIVO", monto_centavos=5000000, estado="pendiente",
+                    creado_por=ASESOR, livemode=False, token_verificacion="tok-oculto-vivo",
+                    habilitado=False))
+        s.add(Cobro(phone=PHONE, concepto="OCULTO-PAGADO", monto_centavos=5000000, estado="pagado",
+                    monto_pagado_centavos=5000000, creado_por=ASESOR, livemode=False,
+                    token_verificacion="tok-oculto-pagado", habilitado=False))
+        s.commit()
+    admin = _cliente(ADMIN)
+
+    for ruta in ("/cobros", "/cobros?todos=1", "/export/cobros.csv", "/export/conciliacion.csv"):
+        assert "OCULTO" not in admin.get(ruta).text, f"un cobro oculto sale en {ruta}"
+    listado = admin.get("/cobros").text
+    assert "VISIBLE" in listado, "el filtro también se llevó al cobro visible"
+    assert "$50,000.00" not in listado, "el cobro oculto suma en los totales"
+    mios = _cliente(ASESOR).get("/my/cobros").text
+    assert "VISIBLE" in mios and "OCULTO" not in mios
+    assert panel.cartera_de(ASESOR)[0] == 1, "la cartera del asesor cuenta un cobro oculto"
+
+
 def test_33b_cancelar_con_intento_en_vuelo_no_libera_el_candado(entorno, stripe_doble,
                                                                 monkeypatch):
     """Sin pi y sin cs PERO con un intento en "enviando", "nunca existió
