@@ -26,7 +26,10 @@ def test_ninguna_vista_usa_la_recarga_incancelable_del_navegador():
 
 def test_las_vistas_que_se_actualizan_solas_usan_la_recarga_controlada():
     con_meta = {p.name for p in _plantillas() if 'name="auto-recarga"' in p.read_text()}
-    assert con_meta == {"inbox_list.html", "team_chat.html", "tickets_list.html"}
+    # team_chat.html salió de aquí a propósito: recargar la página entera cada
+    # 20 s era el parpadeo visible del chat. Ahora static/js/team.js actualiza
+    # el hilo y la lista de salas en su lugar, sin recargar.
+    assert con_meta == {"inbox_list.html", "tickets_list.html"}
 
 
 def test_todas_las_vistas_heredan_el_modulo_de_preservacion():
@@ -77,7 +80,7 @@ def test_el_hilo_pegado_al_fondo_vuelve_al_fondo_NUEVO():
 
 
 def test_los_hilos_de_chat_tienen_llave_para_preservarse():
-    # Sin id no hay nada que preservar; team_chat se refresca sola cada 20 s.
+    # Sin id no hay nada que preservar tras un POST que recarga la página.
     for nombre in ("inbox_chat.html", "team_chat.html"):
         assert 'id="chat"' in (TEMPLATES / nombre).read_text(), nombre
 

@@ -312,6 +312,9 @@ class ChatMember(SQLModel, table=True):
     is_muted: bool = False
     joined_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
+    # «Eliminar chat» solo para él (como WhatsApp): desde este momento deja de
+    # ver lo anterior. None = nunca lo eliminó. Soft delete: no se borra nada.
+    borrado_at: datetime | None = None
 
 
 class TeamMessage(SQLModel, table=True):
