@@ -1,33 +1,50 @@
 <div class="chat-header">
     <h3>{{ room_display_name }}</h3>
-    <form method="post" action="/team/rooms/{{ room.id }}/mute" style="display:inline;">
-        <input type="hidden" name="mute" value="{{ 'false' if is_muted else 'true' }}">
-        <button type="submit" class="btn-sm">{{ 'Desilenciar' if is_muted else 'Silenciar 🔕' }}</button>
-    </form>
+    <div class="chat-header-acciones">
+        <form method="post" action="/team/rooms/{{ room.id }}/mute" class="form-en-linea">
+            <input type="hidden" name="mute" value="{{ 'false' if is_muted else 'true' }}">
+            <button type="submit" class="btn-sm">{{ 'Desilenciar' if is_muted else 'Silenciar 🔕' }}</button>
+        </form>
+        {% if room.room_type != "general" %}
+        <form method="post" action="/team/rooms/{{ room.id }}/delete" class="form-en-linea form-eliminar-chat">
+            <button type="submit" class="btn-sm">Eliminar chat</button>
+        </form>
+        {% endif %}
+    </div>
 </div>
 
 <div class="chat-messages" id="chat-messages">
     {% for m in messages %}
+    {% set ext = m.media_path.rsplit('.', 1)[-1] if m.media_path else '' %}
+    {# Sin pie de foto el cuerpo es "[archivo: nombre]": se usa como nombre del
+       documento y no se repite como texto, como en WhatsApp. #}
+    {% set sin_texto = m.media_path and m.body.startswith('[archivo: ') and m.body.endswith(']') %}
     <div class="bubble {{ 'out' if m.author == user else 'in' }}">
         <div class="author">{{ m.author }}</div>
-        <div class="body">{{ m.body }}</div>
-        
+
         {% if m.media_path %}
-            {% if m.media_path.endswith('.jpg') or m.media_path.endswith('.png') or m.media_path.endswith('.webp') %}
-            <a href="{{ m.media_path }}" target="_blank" rel="noopener"><img src="{{ m.media_path }}" alt="Imagen compartida por {{ m.author }}"></a>
+            {% if ext in ('jpg', 'png', 'webp') %}
+            <a href="{{ m.media_path }}" target="_blank" rel="noopener"><img src="{{ m.media_path }}" alt="Imagen compartida por {{ m.author }}" loading="lazy"></a>
             {% else %}
-            <a href="{{ m.media_path }}" target="_blank" rel="noopener">📄 Ver archivo</a>
+            <a class="doc-adjunto" href="{{ m.media_path }}" target="_blank" rel="noopener">
+                <span class="doc-icono" aria-hidden="true">📄</span>
+                <span class="doc-nombre">{{ m.body[10:-1] if sin_texto else {'pdf': 'Documento PDF', 'docx': 'Documento Word', 'xlsx': 'Hoja de Excel'}.get(ext, 'Archivo') }}</span>
+            </a>
             {% endif %}
         {% endif %}
-        
+
+        {% if not sin_texto %}
+        <div class="body">{{ m.body }}</div>
+        {% endif %}
+
         <div class="meta">{{ m.created_at | local }}</div>
-        
+
         <div class="reactions">
             {% for r in reactions.get(m.id, []) %}
                 <span title="{{ r.username }}">{{ r.reaction }}</span>
             {% endfor %}
         </div>
-        
+
         <div class="actions">
             <form class="react-form" method="post" action="/team/messages/{{ m.id }}/react">
                 <input type="hidden" name="reaction" value="👍">
@@ -37,15 +54,28 @@
                 <input type="hidden" name="reaction" value="❤️">
                 <button type="submit" class="action-btn">❤️</button>
             </form>
-            <button class="action-btn remind-btn" onclick="setReminder({{ m.id }})">⏰ Recordar</button>
+            <button type="button" class="action-btn" data-accion="recordar" data-mensaje="{{ m.id }}">⏰ Recordar</button>
         </div>
     </div>
     {% endfor %}
 </div>
 
 <div class="chat-input">
-    <form class="send-msg-form" method="post" action="/team/rooms/{{ room.id }}/send">
-        <input type="text" name="body" placeholder="Escribe un mensaje..." required autocomplete="off">
+    <div class="adjunto-previo" hidden>
+        <img class="adjunto-miniatura" alt="Vista previa del adjunto" hidden>
+        <span class="doc-icono adjunto-doc" aria-hidden="true" hidden>📄</span>
+        <span class="adjunto-nombre"></span>
+        <button type="button" class="action-btn" data-accion="quitar-adjunto" aria-label="Quitar adjunto">✕</button>
+    </div>
+    <form class="send-msg-form" method="post" action="/team/rooms/{{ room.id }}/send"
+          data-adjunto-action="/team/rooms/{{ room.id }}/send-media">
+        <label class="btn-adjuntar" title="Adjuntar imagen o documento">
+            <span aria-hidden="true">📎</span>
+            <span class="sr-only">Adjuntar imagen o documento</span>
+            <input type="file" class="adjunto-input sr-only"
+                   accept="image/jpeg,image/png,image/webp,application/pdf,.docx,.xlsx">
+        </label>
+        <input type="text" name="body" placeholder="Escribe un mensaje, pega una captura o arrastra un archivo…" required autocomplete="off">
         <button type="submit" class="btn-send">Enviar</button>
     </form>
 </div>

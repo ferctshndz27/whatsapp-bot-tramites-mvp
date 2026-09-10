@@ -17,6 +17,7 @@ from app import asignacion
 from app.conversation import _latest_open_ticket, _log_message
 from app.db import get_session
 from app.media_store import MEDIA_NAME_RE, save_upload, verify_media_token
+from app.team_chat import archivo_de_chat_visible
 from app.models import (
     PROVIDER_META,
     Client,
@@ -586,4 +587,9 @@ def media_file(request: Request, name: str):
     if not path.is_file():
         # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
         return RedirectResponse("/", status_code=303)
+    # Adjunto del chat de equipo: solo lo abre quien ve el mensaje que lo trae.
+    # Misma respuesta que «no existe», para no confirmarle a nadie qué hay.
+    with get_session() as session:
+        if archivo_de_chat_visible(session, f"/media/{name}", user) is False:
+            return RedirectResponse("/", status_code=303)
     return FileResponse(path)

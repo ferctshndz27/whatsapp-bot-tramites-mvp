@@ -635,6 +635,8 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "pricing_billable": "BIT NULL",
     },
     "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL, "room_id": "BIGINT NULL"},
+    # «Eliminar chat» solo para él. NULL = nunca lo eliminó (igual que db.py).
+    "chat_members": {"borrado_at": "DATETIME2 NULL"},
     "wa_clients": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         # Ficha CRM (fase 1) — mismos campos que Client en models.py.
@@ -916,8 +918,8 @@ def archive_chat_member(cm) -> None:
         conn.execute(
             text(
                 "INSERT INTO chat_members"
-                " (source_id, room_id, username, is_muted, habilitado, joined_at)"
-                " VALUES (:sid, :rid, :u, :mut, :hab, :c)"
+                " (source_id, room_id, username, is_muted, habilitado, joined_at, borrado_at)"
+                " VALUES (:sid, :rid, :u, :mut, :hab, :c, :bor)"
             ),
             {
                 "sid": cm.id,
@@ -926,6 +928,7 @@ def archive_chat_member(cm) -> None:
                 "mut": cm.is_muted,
                 "hab": cm.habilitado,
                 "c": _naive_utc(cm.joined_at),
+                "bor": _naive_utc(cm.borrado_at) if cm.borrado_at else None,
             },
         )
 
@@ -934,10 +937,15 @@ def sync_chat_member(cm) -> None:
     with _get_engine().begin() as conn:
         conn.execute(
             text(
-                "UPDATE chat_members SET is_muted = :mut, habilitado = :hab"
+                "UPDATE chat_members SET is_muted = :mut, habilitado = :hab, borrado_at = :bor"
                 " WHERE source_id = :sid"
             ),
-            {"sid": cm.id, "mut": cm.is_muted, "hab": cm.habilitado},
+            {
+                "sid": cm.id,
+                "mut": cm.is_muted,
+                "hab": cm.habilitado,
+                "bor": _naive_utc(cm.borrado_at) if cm.borrado_at else None,
+            },
         )
 
 

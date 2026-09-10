@@ -115,14 +115,107 @@
     padding: 2px;
 }
 
+.chat-header-acciones {
+    display: flex;
+    gap: .5rem;
+}
+
+.form-en-linea {
+    display: inline;
+}
+
+/* Documento dentro de la burbuja: tarjeta con icono y nombre, como WhatsApp. */
+.doc-adjunto {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-top: .3rem;
+    padding: .6rem .8rem;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, .05);
+    color: var(--text);
+    text-decoration: none;
+}
+
+.doc-icono {
+    font-size: 1.4rem;
+}
+
+.doc-nombre {
+    overflow-wrap: anywhere;
+}
+
 .chat-input {
     padding: 1rem 1.5rem;
     background: #f9fafb;
     border-top: 1px solid var(--border);
 }
 
+/* Vista previa del adjunto antes de enviarlo. */
+.adjunto-previo {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    margin-bottom: .6rem;
+    padding: .5rem .7rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card-bg);
+}
+
+/* Estas reglas llevan `display`, que le gana al [hidden] del navegador. */
+.adjunto-previo[hidden],
+.adjunto-miniatura[hidden],
+.adjunto-doc[hidden] {
+    display: none;
+}
+
+.adjunto-miniatura {
+    max-width: 96px;
+    max-height: 64px;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+.adjunto-nombre {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: .9rem;
+}
+
+/* El clip: el input de archivo va oculto a la vista (.sr-only) pero no al
+   teclado, así que el foco se ve en la etiqueta. */
+.btn-adjuntar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 50%;
+    font-size: 1.2rem;
+    cursor: pointer;
+}
+
+.btn-adjuntar:hover {
+    background: #eef0ea;
+}
+
+.btn-adjuntar:focus-within {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
+}
+
+/* Soltar un archivo sobre la conversación. */
+.main-chat.arrastrando {
+    outline: 3px dashed #9bb33a;
+    outline-offset: -8px;
+}
+
 .send-msg-form {
     display: flex;
+    align-items: center;
     gap: 10px;
 }
 
@@ -137,8 +230,16 @@
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.5); z-index: 1000;
 }
+/* Se abre y cierra con el atributo `hidden` (static/js/team.js). Explícito para
+   que una regla futura con `display` en .modal no le gane al [hidden]. */
+.modal[hidden] { display: none; }
 .modal-content {
     background: var(--card-bg); width: 320px; margin: 100px auto;
     padding: 1.5rem; border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
+}
+.modal-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
 }

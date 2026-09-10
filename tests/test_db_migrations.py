@@ -601,6 +601,11 @@ _DICTS_DE_MIGRACION = {
 # sobre lo que ya recibía cada tabla para no perder de vista ningún dict.
 for _tabla in db._TABLES_NEEDING_OFFICE:
     _DICTS_DE_MIGRACION[_tabla] = {**_DICTS_DE_MIGRACION.get(_tabla, {}), **db._OFFICE_COLUMN}
+# chatmember («Eliminar chat», borrado_at): fusionado por si la tabla también
+# recibe alguno de los dicts compartidos de arriba.
+_DICTS_DE_MIGRACION["chatmember"] = {
+    **_DICTS_DE_MIGRACION.get("chatmember", {}), **db._CHATMEMBER_COLUMNS_ADDED_AFTER_LAUNCH,
+}
 
 
 # ---------------------------------------------------------------------------

@@ -91,6 +91,18 @@ Before editing, answer these against the actual files:
 - **CSP (`app/main.py:67`)** allows `'unsafe-inline'` for style and script but no external hosts:
   vendored libs live in `static/vendor/` (`joint.min.js` is local, not a CDN), and per-page
   `<style>` / `<script>` blocks in `activity.html` / `agente.html` are legitimate, not a smell.
+- **DRY and separated concerns — the operator's rule.** Don't rewrite markup, styles or
+  behaviour a second time: structure new UI as modular pieces. Markup repeated across views
+  becomes a partial in `templates/partials/` (`{% include %}`) or a Jinja macro; a template
+  extends `base.html` instead of copying its shell. CSS lives in `static/css/` files (a
+  page-specific sheet like `static/css/team.css`, shared rules in `components.css`, values in
+  `tokens.css`); JavaScript lives in `static/js/` files (`static/js/team.js`,
+  `static/js/estado-vista.js`) loaded with `defer`. A template only passes data to JS
+  (`window.X = {{ valor }}`), it does not carry the logic. No new inline `style="…"`, no new
+  `onclick="…"` wiring when a listener in the page's JS file can do it, and no copy of a helper
+  that already exists in another file — import it or move it somewhere both can reach. The
+  existing inline blocks (`activity.html`, `agente.html`, old `style=` attributes) are legacy:
+  CSP-legal, not a pattern to extend; move them out when you are already editing that code.
 
 ## Common mistakes
 
@@ -161,6 +173,9 @@ Before editing, answer these against the actual files:
 - `joint.min.js` is the only vendored library and only `/agente` loads it. Do not add it to `base.html`.
 
 ## Definition of done
+
+- [ ] No markup, CSS or JS duplicated: repeated markup is a partial/macro, styles are in
+      `static/css/`, behaviour is in `static/js/`, and the template only hands data over.
 
 - [ ] Rendered at ≥ 1400 px and ≤ 900 px; no horizontal body scroll.
 - [ ] Every new color meaning has a second channel (dash, glyph or text).

@@ -54,6 +54,11 @@ _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
     "room_id": "INTEGER",
 }
+# «Eliminar chat» solo para él (como WhatsApp). Nullable sin default a
+# propósito: NULL es «nunca lo eliminó»; un default inventaría una fecha.
+_CHATMEMBER_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "borrado_at": "DATETIME",
+}
 _USER_COLUMNS_ADDED_AFTER_LAUNCH = {
     "is_admin": "BOOLEAN NOT NULL DEFAULT 0",
     "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
@@ -152,6 +157,7 @@ def init_db() -> None:
     _seed_office_tlaxcala()
     _add_missing_columns("message", _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("teammessage", _TEAMMESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
+    _add_missing_columns("chatmember", _CHATMEMBER_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("user", _USER_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("ticket", _TICKET_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("conversation", _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH)

@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Chat de equipo{% endblock %}
 {% block head %}
-<meta name="auto-recarga" content="20">
 <link rel="stylesheet" href="/static/css/team.css">
 <script src="/static/js/team.js" defer></script>
 {% endblock %}
@@ -10,11 +9,11 @@
     <div class="rooms-sidebar">
         <div class="rooms-sidebar-header">
             <h2>Salas</h2>
-            <button class="btn-sm" onclick="document.getElementById('new-room-modal').style.display='block'">+ Nuevo</button>
+            <button type="button" class="btn-sm" data-accion="abrir-nueva-sala">+ Nuevo</button>
         </div>
         <ul class="room-list">
             {% for r in rooms %}
-            <li class="room-item" data-room-id="{{ r.id }}" onclick="loadRoom({{ r.id }})">
+            <li class="room-item" data-room-id="{{ r.id }}">
                 <div class="room-name">{{ r.display_name }}</div>
             </li>
             {% endfor %}
@@ -28,7 +27,7 @@
     </div>
 </div>
 
-<div id="new-room-modal" class="modal" style="display:none;">
+<div id="new-room-modal" class="modal" hidden>
     <div class="modal-content">
         <h3>Crear Sala</h3>
         <form method="post" action="/team/rooms">
@@ -38,14 +37,15 @@
             
             <label>Integrantes:</label>
             <select name="members" multiple required>
+                <option value="{{ user }}">{{ user }} (tú)</option>
                 {% for ou in office_users %}
                 <option value="{{ ou.username }}">{{ ou.username }}</option>
                 {% endfor %}
             </select>
             
-            <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+            <div class="modal-actions">
                 <button type="submit" class="btn-approve">Crear</button>
-                <button type="button" class="btn-ignore" onclick="document.getElementById('new-room-modal').style.display='none'">Cancelar</button>
+                <button type="button" class="btn-ignore" data-accion="cerrar-nueva-sala">Cancelar</button>
             </div>
         </form>
     </div>
