@@ -153,6 +153,10 @@ _TABLAS_CON_TELEFONO_COMO_PK = ("client", "conversation")
 
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    # Antes de la siembra: con la columna retirada todavía NOT NULL, hasta el
+    # INSERT de Tlaxcala revienta.
+    for table, columns in _COLUMNS_RETIRED.items():
+        _drop_retired_columns(table, columns)
     # SPEC §7: la oficina 1 existe ANTES de que ninguna tabla reciba office_id.
     _seed_office_tlaxcala()
     _add_missing_columns("message", _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH)
@@ -315,6 +319,27 @@ def _add_missing_columns(table: str, columns: dict[str, str]) -> None:
         for name, col_type in columns.items():
             if name not in existing:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"))
+
+
+# Columnas que se quitaron de un modelo pero que la base ya desplegada conserva.
+# NO son huérfanas inofensivas: create_all() las creó NOT NULL y SIN DEFAULT
+# (el default vivía en Python), así que todo INSERT del modelo —que ya no las
+# llena— revienta. office.zona_horaria (PR 1 multi-oficina, retirada en el PR 4)
+# dejó /oficinas sin poder dar de alta nada. DROP COLUMN existe desde SQLite
+# 3.35; la imagen python:3.12-slim trae 3.40. No sirve para una columna con
+# índice, UNIQUE o PK: esa necesita reconstruir la tabla.
+_COLUMNS_RETIRED = {
+    "office": ("zona_horaria",),
+}
+
+
+def _drop_retired_columns(table: str, columns: tuple[str, ...]) -> None:
+    with engine.begin() as conn:
+        existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+        for name in columns:
+            if name in existing:
+                logger.warning("Quitando la columna retirada %s.%s", table, name)
+                conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
 
 
 def get_session() -> Session:

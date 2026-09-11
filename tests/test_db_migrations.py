@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlmodel import SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import app.db as db
 
@@ -933,26 +933,14 @@ def test_los_dicts_de_migracion_no_declaran_columnas_fantasma():
 # 4. Base nueva vs. base migrada: no pueden divergir
 # ---------------------------------------------------------------------------
 
-# Excepción CONOCIDA y deliberada a la regla de convergencia de abajo: este repo
-# no tiene DROP COLUMN, solo ADD (ver docstring de _ESQUEMA_DESPLEGADO). Cuando
-# se retira un campo de app/models.py, una base NUEVA deja de crear esa columna,
-# pero la base YA desplegada en el VPS la conserva para siempre como huérfana
-# inofensiva (SQLAlchemy Core selecciona por columna declarada, nunca SELECT *).
-# `office.zona_horaria` fue el primer caso: se quitó del modelo porque nunca
-# alimentó templating.BUSINESS_TZ (spec §2.1). Si algún día se hace un DROP
-# COLUMN manual en el VPS, borra la entrada de aquí.
-_COLUMNAS_RETIRADAS_QUE_QUEDAN_HUERFANAS_EN_LA_BASE_MIGRADA = {
-    "office": {"zona_horaria"},
-}
-
-
 def test_la_base_migrada_y_una_base_nueva_terminan_con_las_mismas_columnas(
     bd_migrada, tmp_path, monkeypatch
 ):
     # REGLA: el VPS migra una base con años de datos; los entornos nuevos (y
     # estas pruebas) nacen de create_all(). Si los dos caminos no convergen al
-    # mismo esquema (más allá de las excepciones ya conocidas de arriba), aparece
-    # un bug que SOLO se ve en producción.
+    # mismo esquema, aparece un bug que SOLO se ve en producción. Sin
+    # excepciones: una columna retirada del modelo se quita también de la base
+    # migrada (_COLUMNS_RETIRED de app/db.py), ver la prueba de abajo.
     ruta_nueva = tmp_path / "nueva.db"
     engine_nuevo = _engine_de_archivo(ruta_nueva)
     monkeypatch.setattr(db, "engine", engine_nuevo)
@@ -960,8 +948,7 @@ def test_la_base_migrada_y_una_base_nueva_terminan_con_las_mismas_columnas(
 
     diferencias: dict[str, dict[str, list[str]]] = {}
     for tabla in _ESQUEMA_DESPLEGADO:
-        huerfanas = _COLUMNAS_RETIRADAS_QUE_QUEDAN_HUERFANAS_EN_LA_BASE_MIGRADA.get(tabla, set())
-        en_migrada = set(_columnas(bd_migrada, tabla)) - huerfanas
+        en_migrada = set(_columnas(bd_migrada, tabla))
         en_nueva = set(_columnas(engine_nuevo, tabla))
         if en_migrada != en_nueva:
             diferencias[tabla] = {
@@ -969,6 +956,63 @@ def test_la_base_migrada_y_una_base_nueva_terminan_con_las_mismas_columnas(
                 "solo_en_nueva": sorted(en_nueva - en_migrada),
             }
     assert not diferencias, f"el esquema migrado y el nuevo divergen: {diferencias}"
+
+
+# DDL LITERAL de `office` tal como lo dejó create_all() en el VPS con el PR 1 de
+# multi-oficina, cuando el modelo aún declaraba `zona_horaria: str = ...`. El
+# default vivía en Python, así que la columna nació NOT NULL y SIN DEFAULT en el
+# motor. _DDL_DE_LANZAMIENTO no sirve para esto: sus columnas no llevan tipos ni
+# NOT NULL, y ahí la columna retirada sí parecía inofensiva.
+_OFFICE_DEL_PR1 = (
+    """
+    CREATE TABLE office (
+        id INTEGER NOT NULL,
+        nombre VARCHAR NOT NULL,
+        slug VARCHAR NOT NULL,
+        ciudad VARCHAR NOT NULL,
+        zona_horaria VARCHAR NOT NULL,
+        habilitado BOOLEAN NOT NULL,
+        created_at DATETIME NOT NULL,
+        PRIMARY KEY (id)
+    )
+    """,
+    "CREATE UNIQUE INDEX ix_office_nombre ON office (nombre)",
+    "CREATE UNIQUE INDEX ix_office_slug ON office (slug)",
+    "INSERT INTO office VALUES (1, 'Tlaxcala', 'tlaxcala', 'Tlaxcala', "
+    "'America/Mexico_City', 1, '2026-09-07 17:17:34')",
+)
+
+
+def test_la_base_del_pr1_puede_dar_de_alta_oficinas_tras_init_db(tmp_path, monkeypatch):
+    """Si esto se pone rojo, /oficinas deja de crear oficinas en producción:
+    cada alta revienta con `NOT NULL constraint failed: office.zona_horaria` y
+    el panel la reporta como «Ya existe una oficina con ese nombre o slug»,
+    aunque no exista. Retirar un campo del modelo NO basta: la columna sigue en
+    la base desplegada y el INSERT del modelo ya no la llena."""
+    ruta = tmp_path / "pr1.db"
+    con = sqlite3.connect(ruta)
+    try:
+        for sql in _OFFICE_DEL_PR1:
+            con.execute(sql)
+        con.commit()
+    finally:
+        con.close()
+    engine = _engine_de_archivo(ruta)
+    monkeypatch.setattr(db, "engine", engine)
+
+    db.init_db()
+    db.init_db()  # idempotente: la segunda vuelta no encuentra qué quitar
+
+    with Session(engine) as s:
+        s.add(models.Office(nombre="Puebla", slug="puebla", ciudad="Puebla"))
+        s.commit()
+
+    assert "zona_horaria" not in _columnas(engine, "office")
+    with engine.connect() as conn:
+        filas = conn.exec_driver_sql("SELECT id, nombre, slug FROM office ORDER BY id").fetchall()
+    assert filas == [(1, "Tlaxcala", "tlaxcala"), (2, "Puebla", "puebla")], (
+        "quitar la columna no puede perder ni renumerar a Tlaxcala (office_id=1 del histórico)"
+    )
 
 
 def test_una_base_nueva_tambien_queda_con_el_indice_unico_de_wamid(tmp_path, monkeypatch):
