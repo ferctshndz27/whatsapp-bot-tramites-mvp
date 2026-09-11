@@ -542,13 +542,17 @@ def ticket_detail(
         # no basta. Sin esto, teclear el id de un folio de otra oficina lo abre
         # entero —teléfono del cliente, historial, notas—. Misma respuesta que
         # «no existe»: distinguirlas confirmaría qué ids están ocupados.
-        if not vista.ve_todas and ticket.office_id != vista.office_id:
+        if not vista.alcanza(ticket.office_id):
             logger.warning("%s intentó abrir el folio %s de otra oficina", user, ticket_id)
             return RedirectResponse("/", status_code=303)
+        # A quién se puede transferir: gente de la oficina DEL FOLIO (no la de
+        # quien mira: un admin ve todas). Mismo criterio que reassign_ticket.
         teammates = [
             (u.username, u.estado)
             for u in session.exec(
-                select(User).where(User.habilitado == True).order_by(User.username)  # noqa: E712
+                select(User)
+                .where(User.habilitado == True, User.office_id == ticket.office_id)  # noqa: E712
+                .order_by(User.username)
             ).all()
             if u.username != user
         ]
@@ -675,11 +679,14 @@ def claim_ticket(request: Request, ticket_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         # Claim atómico: solo asigna si nadie la tiene — dos asesores no
-        # pueden tomar la misma solicitud aunque hagan clic a la vez.
+        # pueden tomar la misma solicitud aunque hagan clic a la vez. La
+        # oficina va DENTRO del WHERE: sin ella, teclear el id de un folio sin
+        # dueño de otra oficina lo tomaba, y ser dueño abre todo lo demás.
         result = session.exec(
-            update(Ticket)
+            vista.filtrar(update(Ticket), Ticket.office_id)
             .where(
                 Ticket.id == ticket_id,
                 Ticket.assigned_to.is_(None),
@@ -729,11 +736,12 @@ def release_ticket(request: Request, ticket_id: int):
     if not admin:
         condicion.append(Ticket.assigned_to == user)
 
+    vista = alcance(user)
     with get_session() as session:
         anterior = session.get(Ticket, ticket_id)
         dueno_anterior = anterior.assigned_to if anterior else None
         result = session.exec(
-            update(Ticket)
+            vista.filtrar(update(Ticket), Ticket.office_id)
             .where(*condicion, Ticket.assigned_to.is_not(None))
             # agent_active=True: al soltar, el bot vuelve a cubrir al cliente —
             # nunca debe quedar un chat sin asesor Y con el agente apagado.
@@ -802,11 +810,13 @@ def finish_ticket(request: Request, ticket_id: int, confirm: str = Form("")):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
         # Puede terminar el asignado o un admin; un ticket cerrado no se re-cierra.
         allowed = (
             ticket is not None
+            and vista.alcanza(ticket.office_id)
             and ticket.status != TicketStatus.CERRADO
             and (ticket.assigned_to == user or is_admin(user))
         )
@@ -974,9 +984,10 @@ def toggle_ticket_agent(request: Request, ticket_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
-        if ticket is not None and ticket.assigned_to == user:
+        if ticket is not None and vista.alcanza(ticket.office_id) and ticket.assigned_to == user:
             ticket.agent_active = not ticket.agent_active
             ticket.updated_at = utcnow()
             session.add(ticket)
@@ -1006,10 +1017,16 @@ def reassign_ticket(
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
         target = session.exec(select(User).where(User.username == to_user)).first()
-        if ticket is not None and target is not None and ticket.assigned_to == user:
+        # El destino tiene que ser de la oficina DEL FOLIO: pasárselo a alguien
+        # de otra lo deja con un dueño que no puede abrirlo.
+        if (ticket is not None and target is not None
+                and vista.alcanza(ticket.office_id)
+                and target.office_id == ticket.office_id
+                and ticket.assigned_to == user):
             ticket.assigned_to = to_user
             # Transferir ES trabajo humano: saca el folio de NUEVO para que
             # deje de contar como «dueño provisional» (asignacion.provisional).
@@ -1040,9 +1057,11 @@ def add_ticket_note(request: Request, ticket_id: int, note: str = Form(...)):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
-        if ticket is not None and ticket.assigned_to == user and note.strip():
+        if (ticket is not None and vista.alcanza(ticket.office_id)
+                and ticket.assigned_to == user and note.strip()):
             _append_note(ticket, user, note)
             ticket.updated_at = utcnow()
             session.add(ticket)
@@ -1061,8 +1080,10 @@ def add_ticket_label(request: Request, ticket_id: int, nombre: str = Form(...)):
     limpio = nombre.strip().lower()[:80]
     if not limpio:
         return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+    vista = alcance(user)
     with get_session() as session:
-        if session.get(Ticket, ticket_id) is None:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is None or not vista.alcanza(ticket.office_id):
             return RedirectResponse("/", status_code=303)
         try:
             label = session.exec(select(Label).where(Label.nombre == limpio)).first()
@@ -1100,7 +1121,11 @@ def remove_ticket_label(request: Request, ticket_id: int, label_id: int):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    vista = alcance(user)
     with get_session() as session:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is None or not vista.alcanza(ticket.office_id):
+            return RedirectResponse("/", status_code=303)
         vinculo = session.exec(
             select(TicketLabel).where(
                 TicketLabel.ticket_id == ticket_id,
@@ -1121,9 +1146,10 @@ def update_ticket_status(request: Request, ticket_id: int, status: str = Form(..
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
-        if ticket is not None and ticket.assigned_to == user:
+        if ticket is not None and vista.alcanza(ticket.office_id) and ticket.assigned_to == user:
             logger.info(
                 "Ticket #%s: %s -> %s (por %s)", ticket_id, ticket.status.value, status, user
             )

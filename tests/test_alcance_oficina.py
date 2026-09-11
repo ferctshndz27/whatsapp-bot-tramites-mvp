@@ -139,7 +139,7 @@ def test_el_alcance_de_cobros_existe_pero_hoy_es_inerte():
 # los colaboradores por oficina. No se acota; se deja anotado para que nadie lo
 # "arregle" sin leer esto.
 SIN_ACOTAR = {
-    "activity.py", "authlog.py", "catalog_admin.py", "clients.py",
+    "activity.py", "authlog.py", "catalog_admin.py",
     "kb.py", "replies.py", "synonym_miner.py", "system.py",
     "users.py",  # a propósito: ver arriba
     # /oficinas ES la vista de todas las oficinas: acotarla sería impedirle al
@@ -532,3 +532,266 @@ def test_con_alguien_elegible_la_sala_si_se_crea(quien, con):
     _sesion(quien).post("/team/rooms", data={"room_type": "group", "name": "",
                                              "members": [con]})
     assert _salas_de(quien) & _salas_de(con), f"{quien} no pudo abrir sala con {con}"
+
+
+# --- Referencias directas: el id viaja en la URL ---------------------------
+#
+# Acotar los LISTADOS no cierra nada si la ruta recibe el id: basta teclearlo.
+# Cada prueba de aquí tiene su control positivo (la misma petición sobre la
+# oficina propia SÍ surte efecto), porque un guardia que lo rechazara todo
+# pasaría en verde el candado y dejaría a Tlaxcala sin poder trabajar.
+
+from urllib.parse import unquote  # noqa: E402
+
+from app import asignacion  # noqa: E402
+from app.models import Client, ClientNote, FollowUp, TicketLabel  # noqa: E402
+
+TEL_1, TEL_2 = "525500000001", "525500000002"
+
+
+def _ticket(ticket_id: int) -> Ticket:
+    with Session(db.engine) as s:
+        return s.get(Ticket, ticket_id)
+
+
+def _asignar(ticket_id: int, a: str, status=TicketStatus.TOMADO) -> None:
+    with Session(db.engine) as s:
+        t = s.get(Ticket, ticket_id)
+        t.assigned_to, t.status = a, status
+        s.add(t)
+        s.commit()
+
+
+def test_un_colaborador_no_toma_un_folio_sin_dueno_de_otra_oficina():
+    """Si esto se pone rojo, cualquiera se queda con los folios de otra oficina
+    tecleando su número, y ser dueño abre todo lo demás (estado, notas, cobro).
+    Era el hueco más ancho: el claim atómico solo miraba que no tuviera dueño."""
+    _sesion("colab1").post("/tickets/2/claim")
+    assert _ticket(2).assigned_to is None, "tomó un folio de Puebla desde Tlaxcala"
+    _sesion("colab2").post("/tickets/2/claim")
+    assert _ticket(2).assigned_to == "colab2", "ni su propia oficina puede tomarlo"
+
+
+def _huella_folio(ticket_id: int) -> tuple:
+    with Session(db.engine) as s:
+        t = s.get(Ticket, ticket_id)
+        etiquetas = s.exec(select(TicketLabel.label_id, TicketLabel.habilitado)
+                           .where(TicketLabel.ticket_id == ticket_id)).all()
+        seguimientos = s.exec(select(FollowUp.id).where(FollowUp.ticket_id == ticket_id)).all()
+        return (t.assigned_to, t.status, t.agent_active, t.notes, sorted(etiquetas),
+                len(seguimientos))
+
+
+ACCIONES_DE_FOLIO = [
+    ("release", {}),
+    ("finish", {"confirm": "1"}),
+    ("agent-toggle", {}),
+    ("notes", {"note": "intruso"}),
+    ("labels", {"nombre": "intrusa"}),
+    ("status", {"status": "en_proceso"}),
+    ("followup", {"days": "1", "note": "intruso"}),
+]
+
+
+@pytest.mark.parametrize("accion, datos", ACCIONES_DE_FOLIO, ids=[a for a, _ in ACCIONES_DE_FOLIO])
+def test_ser_dueno_no_basta_para_operar_un_folio_de_otra_oficina(accion, datos):
+    """Un folio de Puebla con dueño de Tlaxcala existe: el reparto no miraba la
+    oficina hasta este cambio. Ese dueño no puede abrirlo (el detalle lo
+    rechaza), así que tampoco puede cerrarlo, cambiarle el estado ni etiquetarlo
+    a ciegas por POST."""
+    _asignar(2, "colab1")
+    antes = _huella_folio(2)
+    _sesion("colab1").post(f"/tickets/2/{accion}", data=datos)
+    assert _huella_folio(2) == antes, f"{accion} modificó un folio de otra oficina"
+
+
+@pytest.mark.parametrize("accion, datos", ACCIONES_DE_FOLIO, ids=[a for a, _ in ACCIONES_DE_FOLIO])
+def test_el_dueno_si_opera_el_folio_de_su_oficina(accion, datos):
+    _asignar(1, "colab1")
+    antes = _huella_folio(1)
+    _sesion("colab1").post(f"/tickets/1/{accion}", data=datos)
+    assert _huella_folio(1) != antes, f"{accion} ya no funciona ni en su propia oficina"
+
+
+def test_quitar_una_etiqueta_de_un_folio_ajeno_no_hace_nada():
+    """Esta ruta no pedía ni ser dueño: con el id del folio y el de la etiqueta
+    bastaba. La etiqueta se siembra a mano para no depender de la otra ruta."""
+    from app.models import Label
+
+    with Session(db.engine) as s:
+        etiqueta = Label(nombre="urgente", office_id=2)
+        s.add(etiqueta)
+        s.commit()
+        s.add(TicketLabel(ticket_id=2, label_id=etiqueta.id))
+        s.commit()
+        label_id = etiqueta.id
+    _sesion("colab1").post(f"/tickets/2/labels/{label_id}/remove")
+    with Session(db.engine) as s:
+        assert s.exec(select(TicketLabel.habilitado)).one() is True, "le quitó la etiqueta"
+    _sesion("colab2").post(f"/tickets/2/labels/{label_id}/remove")
+    with Session(db.engine) as s:
+        assert s.exec(select(TicketLabel.habilitado)).one() is False, "control positivo"
+
+
+def test_un_folio_solo_se_transfiere_a_alguien_de_su_oficina():
+    """Pasárselo a otra oficina lo deja con un dueño que no puede abrirlo. La
+    lista del detalle ya no lo ofrece; el POST armado a mano tampoco pasa."""
+    _asignar(1, "colab1")
+    html = _sesion("colab1").get("/tickets/1").text
+    assert 'value="colab2"' not in html, "el detalle ofrece transferir a otra oficina"
+    _sesion("colab1").post("/tickets/1/reassign", data={"to_user": "colab2"})
+    assert _ticket(1).assigned_to == "colab1", "transfirió a otra oficina"
+    _sesion("colab1").post("/tickets/1/reassign", data={"to_user": "jefa1"})
+    assert _ticket(1).assigned_to == "jefa1", "control positivo: dentro de su oficina sí"
+
+
+def test_el_reparto_solo_elige_gente_de_la_oficina_del_folio(monkeypatch):
+    """Si esto se pone rojo, el bot le reparte a un asesor de Tlaxcala el
+    folio de un cliente de Puebla: nadie de Puebla lo ve en su cola y el dueño
+    no puede abrirlo. Trabajo congelado sin que nadie sospeche."""
+    monkeypatch.setattr(settings, "reparto_automatico", True)
+    with Session(db.engine) as s:
+        s.add(Client(phone=TEL_2, name="Cliente de Puebla", office_id=2))
+        s.add(Client(phone=TEL_1, name="Cliente de Tlaxcala", office_id=1))
+        s.commit()
+        # colab1 y jefa1 llevan cero carga, colab2 también: sin el filtro el
+        # desempate alfabético le daría el de Puebla a «colab1».
+        assert asignacion.elegir(s, TEL_2)[0] == "colab2"
+        assert asignacion.elegir(s, TEL_1)[0] in {"colab1", "jefa1"}
+
+
+def test_la_pegajosa_no_cruza_de_oficina(monkeypatch):
+    """El último que atendió el teléfono gana, pero solo si es de la oficina
+    del folio. Sin esto, un folio viejo mal repartido se volvería a pegar."""
+    monkeypatch.setattr(settings, "reparto_automatico", True)
+    _asignar(2, "colab1", TicketStatus.CERRADO)
+    with Session(db.engine) as s:
+        s.add(Client(phone=TEL_2, name="Cliente de Puebla", office_id=2))
+        s.commit()
+        assert asignacion.elegir(s, TEL_2) == ("colab2", "reparto")
+
+
+def test_mi_dia_no_lista_folios_de_otra_oficina_aunque_sean_suyos():
+    """Listarlo es mandarlo a una puerta cerrada: el detalle lo rechaza."""
+    _asignar(1, "colab1")
+    _asignar(2, "colab1")
+    html = _sesion("colab1").get("/my").text
+    assert "folio de Tlaxcala" in html, "no ve ni los suyos"
+    assert "folio de Puebla" not in html
+
+
+# --- Clientes ----------------------------------------------------------------
+
+@pytest.fixture()
+def clientes():
+    with Session(db.engine) as s:
+        s.add(Client(phone=TEL_1, name="Cliente de Tlaxcala", office_id=1))
+        s.add(Client(phone=TEL_2, name="Cliente de Puebla", office_id=2))
+        s.add(ClientNote(phone=TEL_2, author="colab2", body="nota de Puebla"))
+        s.commit()
+
+
+def _cliente(phone: str) -> Client:
+    with Session(db.engine) as s:
+        return s.get(Client, phone)
+
+
+def test_el_directorio_solo_muestra_clientes_de_su_oficina(clientes):
+    """Si esto se pone rojo, cada colaborador ve nombre y teléfono de todos los
+    clientes de todas las oficinas: datos personales fuera de su alcance."""
+    html = _sesion("colab1").get("/clients").text
+    assert "Cliente de Tlaxcala" in html, "no ve ni sus clientes"
+    assert "Cliente de Puebla" not in html and TEL_2 not in html
+    busqueda = _sesion("colab1").get(f"/clients?q={TEL_2}").text
+    assert "Cliente de Puebla" not in busqueda, "la búsqueda por teléfono lo destapa"
+
+
+def test_un_admin_ve_el_directorio_de_todas(clientes):
+    html = _sesion("jefa1").get("/clients").text
+    assert "Cliente de Tlaxcala" in html and "Cliente de Puebla" in html
+
+
+def test_la_ficha_de_otra_oficina_responde_como_si_no_existiera(clientes):
+    ajena = _sesion("colab1").get(f"/clients/{TEL_2}", follow_redirects=False)
+    assert ajena.status_code == 303 and ajena.headers["location"] == "/"
+    assert "nota de Puebla" not in ajena.text
+    propia = _sesion("colab1").get(f"/clients/{TEL_1}", follow_redirects=False)
+    assert propia.status_code == 200, "el filtro se llevó también su propia ficha"
+
+
+ESCRITURAS_DE_FICHA = [
+    ("update", {"email": "intruso@x.com", "idioma": "en"}),
+    ("consentimiento", {"accion": "opt_out"}),
+    ("notes", {"body": "intruso"}),
+]
+
+
+def _huella_cliente(phone: str) -> tuple:
+    with Session(db.engine) as s:
+        c = s.get(Client, phone)
+        notas = s.exec(select(ClientNote.body, ClientNote.habilitado)
+                       .where(ClientNote.phone == phone)).all()
+        return (c.name, c.email, c.idioma, c.opt_out_at, sorted(notas))
+
+
+@pytest.mark.parametrize("accion, datos", ESCRITURAS_DE_FICHA,
+                         ids=[a for a, _ in ESCRITURAS_DE_FICHA])
+def test_no_se_escribe_la_ficha_de_un_cliente_de_otra_oficina(clientes, accion, datos):
+    antes = _huella_cliente(TEL_2)
+    _sesion("colab1").post(f"/clients/{TEL_2}/{accion}", data=datos)
+    assert _huella_cliente(TEL_2) == antes, f"{accion} escribió en un cliente ajeno"
+    _sesion("colab2").post(f"/clients/{TEL_2}/{accion}", data=datos)
+    assert _huella_cliente(TEL_2) != antes, f"control positivo: {accion} no funciona en su oficina"
+
+
+def test_no_se_borra_una_nota_de_un_cliente_de_otra_oficina(clientes):
+    """El autor de la nota cambió de oficina: la nota sigue siendo suya, pero
+    el cliente ya no está a su alcance, y borrar es escribir en su ficha."""
+    with Session(db.engine) as s:
+        nota = s.exec(select(ClientNote)).one()
+        nota.author = "colab1"
+        s.add(nota)
+        s.commit()
+        nota_id = nota.id
+    _sesion("colab1").post(f"/clients/{TEL_2}/notes/{nota_id}/delete")
+    with Session(db.engine) as s:
+        assert s.get(ClientNote, nota_id).habilitado is True
+
+
+def test_el_alta_no_renombra_un_cliente_de_otra_oficina(clientes):
+    """El teléfono es la llave: renombrarlo desde otra oficina cambiaría la
+    ficha y los folios de esa oficina."""
+    r = _sesion("colab1").post("/clients", data={"phone": TEL_2, "name": "Renombrado"},
+                               follow_redirects=False)
+    assert "otra oficina" in unquote(r.headers["location"])
+    assert _cliente(TEL_2).name == "Cliente de Puebla"
+    assert _ticket(2).client_name == "folio de Puebla", "propagó el nombre a sus folios"
+
+
+def test_el_alta_nace_en_la_oficina_de_quien_la_hace():
+    """Con el default de la columna (Tlaxcala) el cliente que da de alta un
+    colaborador de Puebla le desaparecía de su propio directorio."""
+    _sesion("colab2").post("/clients", data={"phone": "5522223333", "name": "Nuevo"})
+    assert _cliente("525522223333").office_id == 2
+    assert "Nuevo" in _sesion("colab2").get("/clients").text
+
+
+# --- Cobros --------------------------------------------------------------------
+
+def test_quien_creo_un_cobro_no_lo_opera_si_ya_no_es_su_oficina():
+    """`creado_por` sobrevive a que su autor cambie de oficina (mover suelta
+    folios, no cobros). Sin la oficina en el guardia, seguiría confirmando o
+    cancelando cobros de la oficina que dejó."""
+    with Session(db.engine) as s:
+        for cobro in s.exec(select(Cobro)).all():
+            cobro.creado_por = "colab1"
+            cobro.estado = "enviado"
+            s.add(cobro)
+        s.commit()
+        ajeno = s.exec(select(Cobro.id).where(Cobro.office_id == 2)).one()
+        propio = s.exec(select(Cobro.id).where(Cobro.office_id == 1)).one()
+    _sesion("colab1").post(f"/cobros/{ajeno}/confirmar", data={"referencia": "x"})
+    _sesion("colab1").post(f"/cobros/{propio}/confirmar", data={"referencia": "x"})
+    with Session(db.engine) as s:
+        assert s.get(Cobro, ajeno).confirmado_por_asesor is False, "operó un cobro ajeno"
+        assert s.get(Cobro, propio).confirmado_por_asesor is True, "control positivo"

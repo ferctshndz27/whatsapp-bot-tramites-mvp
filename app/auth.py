@@ -46,6 +46,11 @@ class Alcance(NamedTuple):
         """
         return consulta if self.ve_todas else consulta.where(columna == self.office_id)
 
+    def alcanza(self, office_id: int) -> bool:
+        """¿Puede ver u operar una fila de esa oficina? Para las rutas que
+        reciben el id por URL: acotar el LISTADO no basta, el id se teclea."""
+        return self.ve_todas or office_id == self.office_id
+
 
 def alcance(username: str | None) -> Alcance:
     """El alcance del usuario en sesión — UN SELECT, la misma fila que is_admin.

@@ -113,9 +113,13 @@ def generar_cobro(
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
-        if ticket is None:
+        # Otra oficina responde igual que «no existe». puede_cobrar no acota
+        # por oficina y no puede (vive en cobranza.py, que corre sin sesión):
+        # la oficina se compone aquí, antes.
+        if ticket is None or not vista.alcanza(ticket.office_id):
             return RedirectResponse("/", status_code=303)
         if not cobranza.puede_cobrar(user, ticket, None):
             # No-op silencioso, como el resto del panel: se registra y se
@@ -303,12 +307,16 @@ def _cargar_para_accion(request: Request, cobro_id: int) -> tuple[str, int | Non
     user = _current_user(request)
     if not user:
         return "", None, False
+    vista = alcance(user)
     with get_session() as session:
         cobro = session.get(Cobro, cobro_id)
         if cobro is None:
             return user, None, False
         ticket = session.get(Ticket, cobro.ticket_id) if cobro.ticket_id else None
-        permitido = cobranza.puede_cobrar(user, ticket, cobro)
+        # La oficina primero: `creado_por` sobrevive a que su autor cambie de
+        # oficina (mover_de_oficina suelta folios, no cobros), y sin esto
+        # seguiría cancelando o reenviando cobros de la oficina que dejó.
+        permitido = vista.alcanza(cobro.office_id) and cobranza.puede_cobrar(user, ticket, cobro)
         if not permitido:
             logger.warning("Acción de cobro %s rechazada para %s", cobro_id, user)
         return user, cobro.ticket_id, permitido

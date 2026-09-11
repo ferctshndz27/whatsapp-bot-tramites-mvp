@@ -48,8 +48,11 @@ def my_day(request: Request):
     vista = alcance(user)
     now = utcnow()
     with get_session() as session:
+        # Acotado aunque sean SUYOS: un folio de otra oficina con su nombre
+        # (repartido antes de que asignacion respetara la oficina) no se puede
+        # abrir, y listarlo aquí sería mandarlo a una puerta cerrada.
         tickets = session.exec(
-            select(Ticket)
+            vista.filtrar(select(Ticket), Ticket.office_id)
             .where(Ticket.assigned_to == user)
             .where(Ticket.status != TicketStatus.CERRADO)
             .where(Ticket.habilitado == True)  # noqa: E712
@@ -103,8 +106,11 @@ def create_followup(
         return RedirectResponse("/login", status_code=303)
 
     days = max(0, min(days, 60))  # hoy mismo hasta 2 meses
+    vista = alcance(user)
     with get_session() as session:
-        if session.get(Ticket, ticket_id) is None:
+        ticket = session.get(Ticket, ticket_id)
+        # Un folio de otra oficina responde igual que uno que no existe.
+        if ticket is None or not vista.alcanza(ticket.office_id):
             return RedirectResponse("/", status_code=303)
         session.add(
             FollowUp(
