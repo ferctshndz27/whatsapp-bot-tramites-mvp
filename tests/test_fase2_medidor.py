@@ -55,6 +55,14 @@ from app.config import settings
 from app.models import Direction, Message
 from app.webhook import _process_status
 
+# El espejo MSSQL de estas pruebas es SQLite: archive.py le pasa datetimes
+# crudos por text(), que en producción recibe pymssql sin aviso, y aquí caen en
+# el adaptador por defecto de sqlite3 (obsoleto desde Python 3.12). Es del
+# doble, no del código: se calla solo en los archivos que usan ese doble.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:The default datetime adapter is deprecated:DeprecationWarning"
+)
+
 TELEFONO = "5215500001234"
 
 # Periodos de reporte fijos: nada aquí depende de qué día se corran las pruebas.
