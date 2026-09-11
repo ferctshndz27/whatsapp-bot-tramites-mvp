@@ -20,6 +20,14 @@ from app.models import (
     User,
 )
 
+# El espejo MSSQL de estas pruebas es SQLite: archive.py le pasa datetimes
+# crudos por text(), que en producción recibe pymssql sin aviso, y aquí caen en
+# el adaptador por defecto de sqlite3 (obsoleto desde Python 3.12). Es del
+# doble, no del código: se calla solo en los archivos que usan ese doble.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:The default datetime adapter is deprecated:DeprecationWarning"
+)
+
 ARCHIVE_DDL = [
     """CREATE TABLE wa_clients (
         phone TEXT PRIMARY KEY, name TEXT,
