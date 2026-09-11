@@ -80,7 +80,7 @@ def my_day(request: Request):
 
     naive_now = now.replace(tzinfo=None)
     return templates.TemplateResponse(
-        "my.html",
+        request, "my.html",
         {
             "request": request,
             "user": user,

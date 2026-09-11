@@ -275,7 +275,7 @@ def system_view(request: Request):
         "credenciales_ilegibles": _credenciales_ilegibles(),
     }
     return templates.TemplateResponse(
-        "system.html",
+        request, "system.html",
         {
             "request": request,
             "user": admin,
@@ -307,7 +307,7 @@ def audit_view(request: Request, limit: int = 200):
             select(AdminAudit).order_by(AdminAudit.created_at.desc()).limit(min(limit, 1000))
         ).all()
     return templates.TemplateResponse(
-        "audit.html", {"request": request, "user": admin, "entries": entries}
+        request, "audit.html", {"request": request, "user": admin, "entries": entries}
     )
 
 

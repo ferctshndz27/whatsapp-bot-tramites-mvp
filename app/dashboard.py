@@ -90,7 +90,7 @@ def _current_user(request: Request) -> str | None:
 
 @router.get("/login")
 def login_form(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    return templates.TemplateResponse(request, "login.html", {"request": request, "error": None})
 
 
 @router.post("/login")
@@ -99,7 +99,7 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
         logger.warning("Login bloqueado por intentos fallidos: %s", username)
         authlog.record_login(request, username, success=False, reason=authlog.REASON_LOCKED)
         return templates.TemplateResponse(
-            "login.html",
+            request, "login.html",
             {"request": request, "error": "Demasiados intentos fallidos. Intenta de nuevo en unos minutos."},
         )
 
@@ -126,7 +126,7 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
     _record_failed_login(username)
     logger.warning("Login fallido: %s", username)
     return templates.TemplateResponse(
-        "login.html", {"request": request, "error": "Usuario o contraseña incorrectos"}
+        request, "login.html", {"request": request, "error": "Usuario o contraseña incorrectos"}
     )
 
 
@@ -172,7 +172,7 @@ def _code_grants_registration(session, code: str) -> tuple[bool, Invitation | No
 
 @router.get("/register")
 def register_form(request: Request):
-    return templates.TemplateResponse("register.html", {"request": request, "error": None})
+    return templates.TemplateResponse(request, "register.html", {"request": request, "error": None})
 
 
 @router.post("/register")
@@ -188,7 +188,7 @@ def register_submit(
     # fuerza bruta del código de invitación; pasar a llave por-IP si hace falta.
     if _is_login_locked("__register__"):
         return templates.TemplateResponse(
-            "register.html",
+            request, "register.html",
             {"request": request, "error": "Demasiados intentos. Espera unos minutos."},
         )
 
@@ -196,14 +196,14 @@ def register_submit(
     if error:
         _record_failed_login("__register__")
         logger.warning("Registro rechazado para %s: %s", username, error)
-        return templates.TemplateResponse("register.html", {"request": request, "error": error})
+        return templates.TemplateResponse(request, "register.html", {"request": request, "error": error})
 
     normalized_phone = _normalize_mx_phone(phone)
     if normalized_phone is None:
         _record_failed_login("__register__")
         logger.warning("Registro rechazado para %s: celular inválido", username)
         return templates.TemplateResponse(
-            "register.html",
+            request, "register.html",
             {"request": request, "error": "Celular inválido: escribe los 10 dígitos (ej. 3312345678)."},
         )
 
@@ -213,7 +213,7 @@ def register_submit(
             _record_failed_login("__register__")
             logger.warning("Registro rechazado para %s: código inválido", username)
             return templates.TemplateResponse(
-                "register.html",
+                request, "register.html",
                 {
                     "request": request,
                     "error": "Código de invitación incorrecto, ya utilizado, o el registro está deshabilitado.",
@@ -222,7 +222,7 @@ def register_submit(
 
         if session.exec(select(User).where(User.username == username)).first():
             return templates.TemplateResponse(
-                "register.html", {"request": request, "error": "Ese usuario ya existe."}
+                request, "register.html", {"request": request, "error": "Ese usuario ya existe."}
             )
 
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
@@ -279,7 +279,7 @@ def invitations_list(request: Request):
         oficinas, nombres = _oficinas_para_invitar(session, vista)
 
     return templates.TemplateResponse(
-        "invitations.html",
+        request, "invitations.html",
         {"request": request, "user": user, "invitations": invitations,
          "oficinas": oficinas, "nombres_oficina": nombres},
     )
@@ -361,7 +361,7 @@ def invitations_create(request: Request, office_id: int = Form(OFICINA_TLAXCALA_
             invitations = _invitaciones_visibles(session, vista)
             oficinas, nombres = _oficinas_para_invitar(session, vista)
             return templates.TemplateResponse(
-                "invitations.html",
+                request, "invitations.html",
                 {"request": request, "user": user, "invitations": invitations,
                  "oficinas": oficinas, "nombres_oficina": nombres,
                  "error": "Esa oficina no existe o está dada de baja."},
@@ -373,7 +373,7 @@ def invitations_create(request: Request, office_id: int = Form(OFICINA_TLAXCALA_
 
     logger.info("Invitación generada por %s para la oficina %s", user, office_id)
     return templates.TemplateResponse(
-        "invitations.html",
+        request, "invitations.html",
         {
             "request": request,
             "user": user,
@@ -492,7 +492,7 @@ def ticket_list(
     page_numbers = list(range(inicio_ventana, min(pages, inicio_ventana + 4) + 1))
 
     return templates.TemplateResponse(
-        "tickets_list.html",
+        request, "tickets_list.html",
         {
             "request": request,
             "user": user,
@@ -602,7 +602,7 @@ def ticket_detail(
     service = catalog.service_by_id(ticket.service_id)
     requisitos = requisitos_del_ticket(ticket.requirements_json)
     return templates.TemplateResponse(
-        "ticket_detail.html",
+        request, "ticket_detail.html",
         {
             "request": request,
             "user": user,

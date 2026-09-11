@@ -207,7 +207,7 @@ def team_chat(request: Request, err: str | None = None, room: int | None = None)
     sala_inicial = room if room in mis_salas else general_room.id
 
     return templates.TemplateResponse(
-        "team_chat.html",
+        request, "team_chat.html",
         {
             "request": request,
             "user": user,
@@ -252,7 +252,7 @@ def team_room_messages(request: Request, room_id: int):
                 reactions.setdefault(rx.message_id, []).append(rx)
 
     return templates.TemplateResponse(
-        "partials/team_messages.html",
+        request, "partials/team_messages.html",
         {
             "request": request,
             "user": user,
@@ -461,7 +461,8 @@ def active_reminders(request: Request):
     if not user: return Response(status_code=403)
 
     with get_session() as session:
-        now = datetime.utcnow()
+        # Naive: remind_at vuelve de SQLite sin zona y se compara contra esto.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         # La membresía se vuelve a comprobar al entregar, no solo al crear: así
         # no sale nada de un recordatorio creado antes del candado, ni de una
         # sala de la que ya lo sacaron, ni de un mensaje que su autor ocultó.

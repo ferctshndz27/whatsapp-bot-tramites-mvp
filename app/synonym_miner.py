@@ -372,7 +372,7 @@ def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
     names = {s.id: s.name for c in catalog.categories for s in c.services}
     services = [(s.id, s.name) for c in catalog.categories for s in c.services]
     return templates.TemplateResponse(
-        "unmatched.html",
+        request, "unmatched.html",
         {
             "request": request,
             "user": admin,

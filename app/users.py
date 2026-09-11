@@ -125,7 +125,7 @@ def _render_list(request: Request, admin: str, error: str | None = None, ok: str
         ).all()
         nombres = {o.id: o.nombre for o in session.exec(select(Office)).all()}
     return templates.TemplateResponse(
-        "users.html",
+        request, "users.html",
         {"request": request, "user": admin, "users": users, "oficinas": oficinas,
          "nombres_oficina": nombres, "admin_global": vista.ve_todas,
          "gestionables": {u.username for u in users if _gestionable(vista, u)},

@@ -93,7 +93,7 @@ def _render_lista(request: Request, admin: str, error=None, ok=None):
             "ausentes": sum(1 for l in llaves if l["estado"] == credenciales.AUSENTE),
         })
     return templates.TemplateResponse(
-        "oficinas.html",
+        request, "oficinas.html",
         {"request": request, "user": admin, "resumen": resumen, "error": error, "ok": ok},
     )
 
@@ -121,7 +121,7 @@ def _render_detalle(request: Request, admin: str, office_id: int, error=None, ok
             .order_by(User.username)
         ).all()
     return templates.TemplateResponse(
-        "oficina.html",
+        request, "oficina.html",
         {"request": request, "user": admin, "oficina": oficina, "usuarios": usuarios,
          "otros": otros, "llaves": _llaves_de(office_id),
          "hay_llave_maestra": bool(credenciales.settings.credentials_key),

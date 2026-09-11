@@ -22,5 +22,5 @@ def knowledge_base(request: Request):
         return RedirectResponse("/login", status_code=303)
     catalog._maybe_reload()
     return templates.TemplateResponse(
-        "kb.html", {"request": request, "user": user, "categories": catalog.categories}
+        request, "kb.html", {"request": request, "user": user, "categories": catalog.categories}
     )

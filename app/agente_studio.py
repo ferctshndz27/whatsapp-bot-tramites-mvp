@@ -315,7 +315,7 @@ def estudio(request: Request):
     with Session(db.engine) as session:
         estado = _estado(session)
     return templates.TemplateResponse(
-        "agente.html", {"request": request, "user": user, "estado": estado}
+        request, "agente.html", {"request": request, "user": user, "estado": estado}
     )
 
 
