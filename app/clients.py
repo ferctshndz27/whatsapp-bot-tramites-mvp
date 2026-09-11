@@ -13,7 +13,7 @@ from app.templating import templates
 from sqlmodel import or_, select
 
 from app.audit import log_admin
-from app.auth import is_admin
+from app.auth import alcance, is_admin
 from app.db import get_session
 from app.codigos import EMAIL_RE
 from app.models import Client, ClientNote, Ticket, utcnow
@@ -35,6 +35,21 @@ LIMITE_LISTA = 300
 
 def _current_user(request: Request) -> str | None:
     return request.session.get("user")
+
+
+def _cliente_visible(session, phone: str, user: str) -> Client | None:
+    """El cliente, si existe Y es de una oficina que este usuario alcanza.
+
+    El teléfono viene en la URL: acotar el LISTADO no basta. De otra oficina
+    responde igual que «no existe» —distinguirlas confirmaría qué teléfonos
+    son clientes—, y eso vale para leer la ficha y para escribirle.
+    """
+    client = session.get(Client, phone)
+    if client is None or not alcance(user).alcanza(client.office_id):
+        if client is not None:
+            logger.warning("%s intentó abrir un cliente de otra oficina", user)
+        return None
+    return client
 
 
 def _propagar_nombre(session, phone: str, nombre: str) -> int:
@@ -64,8 +79,11 @@ def clients_list(request: Request, q: str = "", alta: str = "", error: str = "")
         return RedirectResponse("/login", status_code=303)
 
     termino = q.strip()
+    vista = alcance(user)
     with get_session() as session:
-        consulta = select(Client).where(Client.habilitado == True)  # noqa: E712
+        consulta = vista.filtrar(select(Client), Client.office_id).where(
+            Client.habilitado == True  # noqa: E712
+        )
         if termino:
             # Se busca por nombre y por teléfono. El teléfono se normaliza para
             # que buscar "+52 155 0000 0000" encuentre al cliente guardado como
@@ -118,10 +136,21 @@ def clients_upsert(request: Request, phone: str = Form(...), name: str = Form(""
     if not nombre:
         return RedirectResponse("/clients?error=El nombre es obligatorio.", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         cliente = session.get(Client, canonico)
+        if cliente is not None and not vista.alcanza(cliente.office_id):
+            # El teléfono es la llave: un cliente es de UNA oficina. Renombrarlo
+            # desde otra cambiaría la ficha y los folios de esa oficina. Aquí sí
+            # se dice que existe: el alta no puede fingir que lo creó.
+            return RedirectResponse(
+                "/clients?error=Ese teléfono ya es cliente de otra oficina.", status_code=303
+            )
         if cliente is None:
-            session.add(Client(phone=canonico, name=nombre))
+            # Nace en la oficina de quien lo da de alta: con el default de la
+            # columna (Tlaxcala) el alta de un colaborador de otra oficina le
+            # desaparecía de su propia lista.
+            session.add(Client(phone=canonico, name=nombre, office_id=vista.office_id))
             accion, resultado = "cliente:alta", "alta"
         elif cliente.name == nombre:
             accion, resultado = None, "sin-cambio"
@@ -152,7 +181,7 @@ def client_profile(request: Request, phone: str, volver: str = ""):
         return RedirectResponse("/login", status_code=303)
 
     with get_session() as session:
-        client = session.get(Client, phone)
+        client = _cliente_visible(session, phone, user)
         if client is None:
             # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
             return RedirectResponse("/", status_code=303)
@@ -197,7 +226,7 @@ def update_client(
         return RedirectResponse("/login", status_code=303)
 
     with get_session() as session:
-        client = session.get(Client, phone)
+        client = _cliente_visible(session, phone, user)
         if client is None:
             return RedirectResponse("/", status_code=303)
         nuevo_email = email.strip().lower()[:200]
@@ -235,7 +264,7 @@ def set_consent(request: Request, phone: str, accion: str = Form(...), fuente: s
         return RedirectResponse(f"/clients/{phone}", status_code=303)
 
     with get_session() as session:
-        client = session.get(Client, phone)
+        client = _cliente_visible(session, phone, user)
         if client is None:
             return RedirectResponse("/", status_code=303)
         if accion == "opt_in":
@@ -259,7 +288,7 @@ def add_client_note(request: Request, phone: str, body: str = Form(...)):
 
     cleaned = body.strip()
     with get_session() as session:
-        if session.get(Client, phone) is None:
+        if _cliente_visible(session, phone, user) is None:
             # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
             return RedirectResponse("/", status_code=303)
         if cleaned:
@@ -276,6 +305,8 @@ def delete_client_note(request: Request, phone: str, note_id: int):
         return RedirectResponse("/login", status_code=303)
 
     with get_session() as session:
+        if _cliente_visible(session, phone, user) is None:
+            return RedirectResponse("/", status_code=303)
         note = session.get(ClientNote, note_id)
         # Soft-delete: solo el autor o un admin pueden ocultar una nota.
         if note is not None and note.phone == phone and (note.author == user or is_admin(user)):

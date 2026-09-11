@@ -11,8 +11,8 @@ Dos reglas, en este orden:
 
 Lo que este módulo NO hace, a propósito:
 
-- **No inventa un catálogo de asesores.** El pool es `User.habilitado`, la
-  misma pregunta que ya contestaba la lista de transferencia
+- **No inventa un catálogo de asesores.** El pool es `User.habilitado` de la
+  oficina del folio, la misma pregunta que contesta la lista de transferencia
   (`dashboard.py`). El código no distingue hoy «asesor» de «usuario dado de
   alta», y fabricar aquí esa distinción sería una regla nueva escondida en un
   módulo de reparto.
@@ -38,7 +38,7 @@ from sqlmodel import Session, select
 from app import horario
 from app.activity import carga_abierta
 from app.config import settings
-from app.models import Ticket, TicketActivity, TicketStatus, User
+from app.models import OFICINA_TLAXCALA_ID, Client, Ticket, TicketActivity, TicketStatus, User
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +47,23 @@ logger = logging.getLogger(__name__)
 ACTOR = "sistema"
 
 
-def _elegibles(session: Session) -> list[str]:
+def _elegibles(session: Session, office_id: int | None = None) -> list[str]:
     """Usuarios que pueden recibir trabajo. Mismo criterio que la lista de
-    transferencia del panel: dados de alta, sin distinguir admin."""
-    return list(
-        session.exec(
-            select(User.username)
-            .where(User.habilitado == True)  # noqa: E712
-            .order_by(User.username)
-        ).all()
-    )
+    transferencia del panel: dados de alta, sin distinguir admin, y de la
+    oficina del folio. Sin ese filtro un folio de Tlaxcala le caía a alguien de
+    otra oficina que después no lo podía abrir (el detalle lo rechaza): trabajo
+    congelado con dueño. `None` = todas, solo para contar en el Estudio."""
+    consulta = select(User.username).where(User.habilitado == True)  # noqa: E712
+    if office_id is not None:
+        consulta = consulta.where(User.office_id == office_id)
+    return list(session.exec(consulta.order_by(User.username)).all())
+
+
+def _oficina_del_telefono(session: Session, phone: str) -> int:
+    """La oficina en la que nace el folio: la del cliente, igual que la toma
+    conversation al crear el Ticket (`office_id=client.office_id`)."""
+    client = session.get(Client, phone)
+    return client.office_id if client is not None else OFICINA_TLAXCALA_ID
 
 
 def _pegajoso(session: Session, phone: str, elegibles: set[str]) -> str | None:
@@ -121,7 +128,7 @@ def elegir(session: Session, phone: str) -> tuple[str | None, str]:
         # de la fase 3b: nadie se entera de que este módulo existe.
         return None, "apagado"
 
-    elegibles = _elegibles(session)
+    elegibles = _elegibles(session, _oficina_del_telefono(session, phone))
     if not elegibles:
         return None, "sin-asesores"
 
