@@ -782,7 +782,7 @@ def _upsert_client(
                 " VALUES (:p, :n, :hab, :c)"
             ),
             {"p": phone, "n": name, "hab": habilitado if habilitado is not None else True,
-             "c": datetime.utcnow()},
+             "c": datetime.now(timezone.utc).replace(tzinfo=None)},
         )
         return
     updates = {}
@@ -1613,7 +1613,8 @@ def _safe(fn, target) -> None:
     global _ready, _PROXIMO_INIT
     try:
         if not _ready:
-            ahora = datetime.utcnow()
+            # Naive a propósito: _PROXIMO_INIT se compara con esta misma hora.
+            ahora = datetime.now(timezone.utc).replace(tzinfo=None)
             if _PROXIMO_INIT and ahora < _PROXIMO_INIT:
                 return  # MSSQL caído hace <60 s: se salta el espejo, backfill repara
             init()

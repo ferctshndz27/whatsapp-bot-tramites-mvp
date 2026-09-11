@@ -40,7 +40,7 @@ def _render(request: Request, user: str, error: str | None = None):
     with get_session() as session:
         replies = personal_replies(session, user)
     return templates.TemplateResponse(
-        "replies.html",
+        request, "replies.html",
         {"request": request, "user": user, "replies": replies, "error": error},
     )
 

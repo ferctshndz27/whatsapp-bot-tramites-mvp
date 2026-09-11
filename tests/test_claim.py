@@ -220,7 +220,7 @@ def test_finish_closes_ticket_resets_flow_and_notifies(monkeypatch, session):
     assert len(sent) == 1 and "terminada" in sent[0] and "folio #" in sent[0]
     actions = {
         a.action
-        for a in session.query(TicketActivity).filter(TicketActivity.ticket_id == ticket.id)
+        for a in session.exec(select(TicketActivity).where(TicketActivity.ticket_id == ticket.id))
     }
     assert "cerrado" in actions
 
@@ -264,9 +264,9 @@ def test_duplicate_webhook_message_ignored(session):
 
     assert replies_first
     assert replies_second == []
-    stored = session.query(Message).filter(
+    stored = session.exec(select(Message).where(
         Message.wa_message_id == "wamid.DUP1", Message.direction == Direction.IN
-    ).all()
+    )).all()
     assert len(stored) == 1
 
 
@@ -303,9 +303,9 @@ def test_el_aviso_y_la_encuesta_se_guardan(monkeypatch, session):
     finish_ticket(_request("bob"), ticket.id)
 
     session.expire_all()
-    salientes = session.query(Message).filter(
+    salientes = session.exec(select(Message).where(
         Message.phone == ticket.phone, Message.direction == Direction.OUT
-    ).all()
+    )).all()
     cuerpos = [m.body for m in salientes]
     assert len(salientes) == 2, (
         f"se perdió un mensaje saliente al cerrar el folio: {cuerpos}"

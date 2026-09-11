@@ -169,7 +169,7 @@ def inbox_list(request: Request, filter: str | None = None):
     items = filter_conversations(items, filter)
 
     return templates.TemplateResponse(
-        "inbox_list.html",
+        request, "inbox_list.html",
         {
             "request": request,
             "user": user,
@@ -295,7 +295,7 @@ def inbox_chat(
     window_open = ventana.abierta(last_in)
     horas_restantes = ventana.horas_restantes(last_in)
     return templates.TemplateResponse(
-        "inbox_chat.html",
+        request, "inbox_chat.html",
         {
             "request": request,
             "user": user,

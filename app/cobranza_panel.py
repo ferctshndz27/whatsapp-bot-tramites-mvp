@@ -526,7 +526,7 @@ def avisar_pago(request: Request, cobro_id: int, volver: str = Form("")):
 @router.get("/cobros/gracias")
 def retorno_exito(request: Request):
     return templates.TemplateResponse(
-        "cobro_retorno.html",
+        request, "cobro_retorno.html",
         {
             "request": request,
             "icono": "✅",
@@ -542,7 +542,7 @@ def retorno_exito(request: Request):
 @router.get("/cobros/cancelado")
 def retorno_cancelado(request: Request):
     return templates.TemplateResponse(
-        "cobro_retorno.html",
+        request, "cobro_retorno.html",
         {
             "request": request,
             "icono": "↩️",
@@ -779,7 +779,7 @@ def listado_cobros(request: Request, tareas: BackgroundTasks,
 
     tareas.add_task(_drenar_eventos)
     return templates.TemplateResponse(
-        "cobros.html",
+        request, "cobros.html",
         {
             "request": request, "user": admin, "cobros": cobros, "totales": totales,
             "todos": todos, "modo": "real" if _modo_real() else "prueba",
@@ -883,7 +883,7 @@ def mis_cobros(request: Request, tareas: BackgroundTasks,
 
     tareas.add_task(_drenar_eventos)
     return templates.TemplateResponse(
-        "mis_cobros.html",
+        request, "mis_cobros.html",
         {
             "request": request, "user": user, "cobros": cobros, "totales": totales,
             "todos": todos, "modo": "real" if _modo_real() else "prueba",
@@ -1067,7 +1067,7 @@ def vista_payouts(request: Request, dias: int = PAYOUTS_DIAS):
             grupo["neto"] += cobro.neto_centavos or 0
 
         return templates.TemplateResponse(
-            "payouts.html",
+            request, "payouts.html",
             {
                 "request": request, "user": admin,
                 "grupos": sorted(grupos.values(), key=lambda g: g["payout_id"]),

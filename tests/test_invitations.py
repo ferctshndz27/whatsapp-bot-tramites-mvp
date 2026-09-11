@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+from sqlmodel import select
+
 import app.db as db
 from app.dashboard import invitations_create, invitations_list
 from app.models import OFICINA_TLAXCALA_ID, Invitation, Office, User, utcnow
@@ -36,7 +38,7 @@ def test_creates_single_use_code_without_phone(monkeypatch, session):
 
     response = invitations_create(_request("ana"), office_id=OFICINA_TLAXCALA_ID)
 
-    invitation = session.query(Invitation).one()
+    invitation = session.exec(select(Invitation)).one()
     assert invitation.created_by == "ana"
     assert invitation.phone is None
     assert invitation.used_at is None
@@ -82,7 +84,7 @@ def test_non_admin_cannot_create_invitations(monkeypatch, session):
 
     assert response.status_code == 303
     assert response.headers["location"] == "/"
-    assert session.query(Invitation).count() == 0
+    assert len(session.exec(select(Invitation)).all()) == 0
 
 
 def test_unknown_user_cannot_access_invitations(monkeypatch, session):

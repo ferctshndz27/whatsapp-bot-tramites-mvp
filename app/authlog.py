@@ -347,7 +347,7 @@ def logins_view(request: Request, result: str | None = None):
         shown = [e for e in shown if not e.success]
 
     return templates.TemplateResponse(
-        "logins.html",
+        request, "logins.html",
         {
             "request": request,
             "user": admin,

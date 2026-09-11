@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 import app.db as db
 from app import media_store, twilio_client, whatsapp_client
@@ -47,7 +47,7 @@ def test_manual_reply_auto_claims_and_pauses_agent(monkeypatch, session):
     assert ticket.agent_active is False  # y el agente se apaga solo
     actions = {
         a.action
-        for a in session.query(TicketActivity).filter(TicketActivity.ticket_id == ticket.id)
+        for a in session.exec(select(TicketActivity).where(TicketActivity.ticket_id == ticket.id))
     }
     assert {"tomado", "agente:pausado-auto"} <= actions
 
@@ -66,9 +66,9 @@ def test_manual_reply_pauses_agent_without_stealing_assigned_ticket(monkeypatch,
     session.refresh(ticket)
     assert ticket.assigned_to == "bob"  # el dueño no cambia
     assert ticket.agent_active is False
-    entry = session.query(TicketActivity).filter(
+    entry = session.exec(select(TicketActivity).where(
         TicketActivity.action == "agente:pausado-auto"
-    ).one()
+    )).one()
     assert entry.username == "ana"  # queda registrado quién lo apagó
 
 
@@ -84,9 +84,9 @@ def test_bot_reactivation_also_resumes_ticket_agent(monkeypatch, session):
 
     session.refresh(ticket)
     assert ticket.agent_active is True
-    entry = session.query(TicketActivity).filter(
+    entry = session.exec(select(TicketActivity).where(
         TicketActivity.action == "agente:reanudado"
-    ).one()
+    )).one()
     assert entry.username == "ana"
 
 
@@ -127,9 +127,9 @@ def test_send_logs_message_and_pauses_bot(monkeypatch, session):
 
     inbox_send(_request("ana"), "333", body="¿En qué puedo ayudarte?")
 
-    sent = session.query(Message).filter(
+    sent = session.exec(select(Message).where(
         Message.phone == "333", Message.direction == Direction.OUT
-    ).one()
+    )).one()
     assert sent.wa_message_id == "wamid.SENT1"
     assert sent.sent_by == "ana"
     conv = session.get(Conversation, "333")
@@ -159,9 +159,9 @@ def test_la_respuesta_manual_sale_y_se_registra_por_el_canal_del_cliente(monkeyp
     assert por_twilio == ["voy con tu acta"]
     assert por_meta == [], "la respuesta manual salió por la cuenta equivocada"
     session.expire_all()
-    sent = session.query(Message).filter(
+    sent = session.exec(select(Message).where(
         Message.phone == "555", Message.direction == Direction.OUT
-    ).one()
+    )).one()
     assert sent.provider == PROVIDER_TWILIO
     assert sent.wa_message_id == "SMX1"
 
@@ -196,9 +196,9 @@ def test_composer_envia_archivo_con_el_texto_como_pie(monkeypatch, session, tmp_
 
     inbox_send(_request("ana"), "777", body="aquí está tu acta", file=_upload())
 
-    sent = session.query(Message).filter(
+    sent = session.exec(select(Message).where(
         Message.phone == "777", Message.direction == Direction.OUT
-    ).one()
+    )).one()
     assert sent.body == "aquí está tu acta"       # el pie queda como cuerpo
     assert sent.media_path is not None            # y el archivo queda ligado
     assert sent.wa_message_id == "wamid.MEDIA1"
@@ -214,9 +214,9 @@ def test_composer_sin_texto_registra_el_tipo_de_archivo(monkeypatch, session, tm
 
     inbox_send(_request("ana"), "778", body="", file=_upload("foto.png", "image/png", b"\x89PNG.."))
 
-    sent = session.query(Message).filter(
+    sent = session.exec(select(Message).where(
         Message.phone == "778", Message.direction == Direction.OUT
-    ).one()
+    )).one()
     assert sent.body == "[imagen: foto.png]"
 
 
@@ -233,9 +233,9 @@ def test_composer_ignora_el_input_de_archivo_vacio(monkeypatch, session):
         file=_upload("", "application/octet-stream", b""),
     )
 
-    sent = session.query(Message).filter(
+    sent = session.exec(select(Message).where(
         Message.phone == "779", Message.direction == Direction.OUT
-    ).one()
+    )).one()
     assert sent.body == "solo texto"
     assert sent.media_path is None
 
@@ -251,9 +251,9 @@ def test_composer_vacio_no_envia_nada(monkeypatch, session):
 
     inbox_send(_request("ana"), "780", body="   ")
 
-    assert session.query(Message).filter(
+    assert session.exec(select(Message).where(
         Message.phone == "780", Message.direction == Direction.OUT
-    ).all() == []
+    )).all() == []
 
 
 def test_composer_manda_el_adjunto_por_http_real(monkeypatch, tmp_path):
@@ -313,9 +313,9 @@ def test_composer_manda_el_adjunto_por_http_real(monkeypatch, tmp_path):
     assert enviados, "send_media nunca se llamó: el adjunto se perdió en el camino"
     assert enviados[0][3] == "aquí está tu acta"  # el texto viaja como pie
     with Session(engine) as s:
-        sent = s.query(Message).filter(
+        sent = s.exec(select(Message).where(
             Message.phone == "900", Message.direction == Direction.OUT
-        ).one()
+        )).one()
     assert sent.media_path is not None
     assert sent.wa_message_id == "wamid.HTTP1"
 
@@ -331,9 +331,9 @@ def test_send_blocked_when_window_expired(monkeypatch, session):
 
     assert called == []
     assert "err=window" in response.headers["location"]
-    out = session.query(Message).filter(
+    out = session.exec(select(Message).where(
         Message.phone == "444", Message.direction == Direction.OUT
-    ).all()
+    )).all()
     assert out == []
 
 
@@ -355,9 +355,9 @@ def test_advisor_can_soft_delete_own_sent_message(monkeypatch, session):
     session.add(_msg("666", Direction.IN, "hola", hours_ago=1))
     session.commit()
     inbox_send(_request("ana"), "666", body="mensaje a borrar")
-    sent = session.query(Message).filter(
+    sent = session.exec(select(Message).where(
         Message.phone == "666", Message.direction == Direction.OUT
-    ).one()
+    )).one()
 
     inbox_delete_message(_request("ana"), "666", sent.id)
 
@@ -369,7 +369,7 @@ def test_advisor_cannot_delete_client_message(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     session.add(_msg("777", Direction.IN, "palabras del cliente", hours_ago=1))
     session.commit()
-    client_msg = session.query(Message).filter(Message.phone == "777").one()
+    client_msg = session.exec(select(Message).where(Message.phone == "777")).one()
 
     inbox_delete_message(_request("ana"), "777", client_msg.id)
 
@@ -383,9 +383,9 @@ def test_soft_deleted_message_hidden_from_inbox_chat(monkeypatch, session):
     session.add(_msg("888", Direction.IN, "hola", hours_ago=1))
     session.commit()
     inbox_send(_request("ana"), "888", body="respuesta a ocultar")
-    sent = session.query(Message).filter(
+    sent = session.exec(select(Message).where(
         Message.phone == "888", Message.direction == Direction.OUT
-    ).one()
+    )).one()
 
     inbox_delete_message(_request("ana"), "888", sent.id)
 

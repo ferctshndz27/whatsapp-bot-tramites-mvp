@@ -686,7 +686,7 @@ def activity_view(
     }
     mine = counts.get(viewing, {"day": 0, "week": 0, "month": 0, "total": 0})
     return templates.TemplateResponse(
-        "activity.html",
+        request, "activity.html",
         {
             "request": request,
             "user": me,

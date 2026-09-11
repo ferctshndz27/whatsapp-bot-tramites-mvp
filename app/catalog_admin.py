@@ -34,7 +34,7 @@ def _admin_or_redirect(request: Request):
 
 def _render(request: Request, admin: str, error: str | None = None):
     return templates.TemplateResponse(
-        "catalog.html",
+        request, "catalog.html",
         {
             "request": request,
             "user": admin,

@@ -1,6 +1,6 @@
 import io
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import bcrypt
@@ -43,11 +43,11 @@ def test_send_text_message(monkeypatch, session):
     
     # Init general room
     team_chat(_request("ana"))
-    room = session.query(ChatRoom).first()
+    room = session.exec(select(ChatRoom)).first()
 
     team_send(_request("ana"), room_id=room.id, body="hola equipo")
 
-    msg = session.query(TeamMessage).one()
+    msg = session.exec(select(TeamMessage)).one()
     assert msg.author == "ana"
     assert msg.body == "hola equipo"
     assert msg.room_id == room.id
@@ -56,11 +56,11 @@ def test_send_text_message(monkeypatch, session):
 def test_empty_message_ignored(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     team_chat(_request("ana"))
-    room = session.query(ChatRoom).first()
+    room = session.exec(select(ChatRoom)).first()
 
     team_send(_request("ana"), room_id=room.id, body="   ")
 
-    assert session.query(TeamMessage).count() == 0
+    assert len(session.exec(select(TeamMessage)).all()) == 0
 
 
 def test_send_media_message(monkeypatch, session, tmp_path):
@@ -69,13 +69,13 @@ def test_send_media_message(monkeypatch, session, tmp_path):
 
     monkeypatch.setattr(settings, "media_dir", str(tmp_path))
     team_chat(_request("bob"))
-    room = session.query(ChatRoom).first()
+    room = session.exec(select(ChatRoom)).first()
 
     team_send_media(
         _request("bob"), room_id=room.id, file=_upload("nota.pdf", "application/pdf", b"%PDF-1.4 test"), caption=""
     )
 
-    msg = session.query(TeamMessage).one()
+    msg = session.exec(select(TeamMessage)).one()
     assert msg.author == "bob"
     assert msg.body == "[archivo: nota.pdf]"
     assert msg.media_path.startswith("/media/") and msg.media_path.endswith(".pdf")
@@ -104,10 +104,10 @@ def test_media_too_big_rejected(monkeypatch, tmp_path):
 def test_own_message_can_be_soft_deleted(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     team_chat(_request("ana"))
-    room = session.query(ChatRoom).first()
+    room = session.exec(select(ChatRoom)).first()
 
     team_send(_request("ana"), room_id=room.id, body="mensaje a borrar")
-    msg = session.query(TeamMessage).one()
+    msg = session.exec(select(TeamMessage)).one()
 
     team_delete_message(_request("ana"), msg.id)
 
@@ -118,10 +118,10 @@ def test_own_message_can_be_soft_deleted(monkeypatch, session):
 def test_cannot_delete_other_users_message(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     team_chat(_request("ana"))
-    room = session.query(ChatRoom).first()
+    room = session.exec(select(ChatRoom)).first()
 
     team_send(_request("ana"), room_id=room.id, body="mensaje de ana")
-    msg = session.query(TeamMessage).one()
+    msg = session.exec(select(TeamMessage)).one()
 
     team_delete_message(_request("bob"), msg.id)
 
@@ -184,7 +184,7 @@ def test_un_miembro_si_pone_su_recordatorio_y_le_llega(monkeypatch, session):
 
     assert team_remind(_request("ana"), msg.id, remind_in_minutes=1).status_code == 200
     (rem,) = _recordatorios_de(session, "ana")
-    rem.remind_at = datetime.utcnow() - timedelta(minutes=1)
+    rem.remind_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
     session.add(rem)
     session.commit()
 
@@ -208,7 +208,7 @@ def test_al_entregar_se_vuelve_a_comprobar_el_acceso(monkeypatch, session, caso)
         msg.habilitado = False
         session.add(msg)
     session.add(MessageReminder(message_id=msg.id, username=quien,
-                                remind_at=datetime.utcnow() - timedelta(minutes=1)))
+                                remind_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)))
     session.commit()
 
     assert json.loads(active_reminders(_request(quien)).body) == []
@@ -615,7 +615,7 @@ def test_lo_anterior_al_borrado_ya_no_se_toca_ni_se_recuerda(dm_de_ana_y_beto):
     ana = _entrar("ana")
     with Session(dm.engine) as s:
         s.add(MessageReminder(message_id=dm.mensaje, username="ana",
-                              remind_at=datetime.utcnow() - timedelta(minutes=1)))
+                              remind_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)))
         s.commit()
     ana.post(f"/team/rooms/{dm.sala}/delete")
 

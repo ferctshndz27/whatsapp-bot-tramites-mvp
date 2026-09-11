@@ -1,3 +1,5 @@
+from sqlmodel import select
+
 import app.db as db
 from app.auth import is_admin
 from app.config import settings
@@ -38,7 +40,7 @@ def test_seed_dashboard_user_creates_admin(monkeypatch, session):
 
     seed_dashboard_user(settings)
 
-    user = session.query(User).filter(User.username == "admin").one()
+    user = session.exec(select(User).where(User.username == "admin")).one()
     assert user.is_admin is True
 
 
@@ -51,6 +53,6 @@ def test_seed_dashboard_user_promotes_existing_user(monkeypatch, session):
 
     seed_dashboard_user(settings)
 
-    user = session.query(User).filter(User.username == "admin").one()
+    user = session.exec(select(User).where(User.username == "admin")).one()
     assert user.is_admin is True
     assert user.password_hash == "hash-viejo"  # no se toca la contraseña ya existente

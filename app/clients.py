@@ -100,7 +100,7 @@ def clients_list(request: Request, q: str = "", alta: str = "", error: str = "")
         ).all()
 
     return templates.TemplateResponse(
-        "clients_list.html",
+        request, "clients_list.html",
         {
             "request": request,
             "user": user,
@@ -196,7 +196,7 @@ def client_profile(request: Request, phone: str, volver: str = ""):
         ).all()
 
     return templates.TemplateResponse(
-        "client.html",
+        request, "client.html",
         {
             "request": request,
             "user": user,
