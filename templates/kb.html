@@ -4,7 +4,7 @@
 <h1>Guía de trámites</h1>
 <p style="color:var(--text-muted); margin-top:-.75rem;">
   Requisitos y precios oficiales — para que todo el equipo dé la misma información.
-  {% if is_admin(user) %}Se editan desde <a href="/catalog">Catálogo</a>.{% endif %}
+  {% if is_admin_global(user) %}Se editan desde <a href="/catalog">Catálogo</a>.{% endif %}
 </p>
 
 {% for cat in categories %}

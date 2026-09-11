@@ -57,7 +57,7 @@ ARCHIVE_DDL = [
         source_id INTEGER PRIMARY KEY, username TEXT UNIQUE,
         password_hash TEXT, is_admin INTEGER DEFAULT 0,
         habilitado INTEGER DEFAULT 1, estado TEXT DEFAULT 'disponible',
-        phone TEXT, office_id INTEGER DEFAULT 1)""",
+        phone TEXT, office_id INTEGER DEFAULT 1, solo_su_oficina INTEGER DEFAULT 0)""",
     """CREATE TABLE followups (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT, note TEXT,
         due_at TIMESTAMP, done_at TIMESTAMP, habilitado INTEGER DEFAULT 1,

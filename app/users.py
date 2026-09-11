@@ -3,6 +3,12 @@
 Alta, reset de contraseña, cambio de rol y habilitar/deshabilitar
 (soft-delete; nunca DELETE físico). Un admin no puede deshabilitarse ni
 quitarse el rol a sí mismo, para no dejar el panel sin administrador.
+
+Dos niveles de admin (auth.is_admin_global): el GLOBAL gestiona a todos; el de
+OFICINA (`solo_su_oficina`) solo a la gente de su oficina y nunca a un admin
+global —si pudiera, se quitaba el techo degradando a quien se lo puso—. Lo que
+el de oficina da de alta o nombra admin nace admin de oficina, y mover gente
+entre oficinas o quitarle/ponerle el techo a un admin es solo del global.
 """
 
 import logging
@@ -14,7 +20,7 @@ from app.templating import templates
 from sqlmodel import select
 
 from app.audit import log_admin
-from app.auth import is_admin
+from app.auth import alcance, is_admin, is_admin_global
 from app.dashboard import PASSWORD_MIN, _validate_registration
 from app.db import get_session
 from app.models import OFICINA_TLAXCALA_ID, Office, User
@@ -81,19 +87,48 @@ def _admin_or_redirect(request: Request):
     return user, None
 
 
+def _global_or_redirect(request: Request):
+    """Como _admin_or_redirect, pero solo el admin GLOBAL: lo de todas las
+    oficinas (mover gente entre oficinas, /oficinas y sus llaves)."""
+    user = request.session.get("user")
+    if not user:
+        return None, RedirectResponse("/login", status_code=303)
+    if not is_admin_global(user):
+        return None, RedirectResponse("/", status_code=303)
+    return user, None
+
+
+def _es_admin_global(u: User) -> bool:
+    return u.is_admin and not u.solo_su_oficina
+
+
+def _gestionable(vista, objetivo: User) -> bool:
+    """¿Puede un admin con este alcance tocar la cuenta de `objetivo`? El
+    global, a todos; el de oficina, a los de su oficina que no sean admin
+    global. Recibe el alcance ya resuelto: la lista lo pregunta por fila."""
+    if vista.ve_todas:
+        return True
+    return objetivo.office_id == vista.office_id and not _es_admin_global(objetivo)
+
+
 def _render_list(request: Request, admin: str, error: str | None = None, ok: str | None = None):
+    vista = alcance(admin)
     with get_session() as session:
-        users = session.exec(select(User).order_by(User.username)).all()
+        users = session.exec(vista.filtrar(select(User), User.office_id).order_by(User.username)).all()
         # Solo las habilitadas como destino: asignar a alguien a una oficina
         # dada de baja lo deja sin ver nada —su ruteo de entrada está cortado—
-        # y el síntoma («no me aparecen folios») no apunta a la causa.
+        # y el síntoma («no me aparecen folios») no apunta a la causa. El
+        # admin de oficina solo ve la suya: es la única en la que puede dar altas.
         oficinas = session.exec(
-            select(Office).where(Office.habilitado == True).order_by(Office.id)  # noqa: E712
+            vista.filtrar(select(Office), Office.id)
+            .where(Office.habilitado == True).order_by(Office.id)  # noqa: E712
         ).all()
+        nombres = {o.id: o.nombre for o in session.exec(select(Office)).all()}
     return templates.TemplateResponse(
         "users.html",
         {"request": request, "user": admin, "users": users, "oficinas": oficinas,
-         "nombres_oficina": {o.id: o.nombre for o in oficinas},
+         "nombres_oficina": nombres, "admin_global": vista.ve_todas,
+         "gestionables": {u.username for u in users if _gestionable(vista, u)},
          "error": error, "ok": ok},
     )
 
@@ -122,6 +157,14 @@ def users_create(
     error = _validate_registration(username, password)
     if error:
         return _render_list(request, admin, error=error)
+    vista = alcance(admin)
+    if not vista.ve_todas:
+        # El de oficina da altas SOLO en la suya y nunca de admin global: el
+        # formulario ya no lo ofrece, pero el POST lo arma el navegador.
+        if office_id != vista.office_id:
+            return _render_list(request, admin, error="Solo puedes dar de alta gente de tu oficina.")
+        if role == "admin":
+            return _render_list(request, admin, error="Solo un admin global crea admins globales.")
 
     with get_session() as session:
         if session.exec(select(User).where(User.username == username)).first():
@@ -132,7 +175,9 @@ def users_create(
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
         session.add(
             User(username=username, password_hash=hashed.decode(),
-                 is_admin=role == "admin", office_id=office_id)
+                 # Un rol desconocido cae en colaborador, el menos privilegiado.
+                 is_admin=role in ("admin", "admin_oficina"),
+                 solo_su_oficina=role == "admin_oficina", office_id=office_id)
         )
         session.commit()
 
@@ -155,7 +200,8 @@ def users_reset_password(request: Request, username: str, password: str = Form(.
 
     with get_session() as session:
         target = session.exec(select(User).where(User.username == username)).first()
-        if target is None:
+        # Fuera de su alcance responde igual que «no existe».
+        if target is None or not _gestionable(alcance(admin), target):
             return _render_list(request, admin, error="Usuario no encontrado.")
         target.password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         session.add(target)
@@ -176,9 +222,13 @@ def users_toggle_role(request: Request, username: str):
 
     with get_session() as session:
         target = session.exec(select(User).where(User.username == username)).first()
-        if target is None:
+        if target is None or not _gestionable(alcance(admin), target):
             return _render_list(request, admin, error="Usuario no encontrado.")
         target.is_admin = not target.is_admin
+        if target.is_admin and not alcance(admin).ve_todas:
+            # Un admin nombrado por un admin de oficina nace con su mismo techo:
+            # sin esto, «Hacer admin» fabricaba un admin GLOBAL desde abajo.
+            target.solo_su_oficina = True
         session.add(target)
         session.commit()
         new_role = "admin" if target.is_admin else "colaborador"
@@ -199,7 +249,7 @@ def users_toggle_enabled(request: Request, username: str):
 
     with get_session() as session:
         target = session.exec(select(User).where(User.username == username)).first()
-        if target is None:
+        if target is None or not _gestionable(alcance(admin), target):
             return _render_list(request, admin, error="Usuario no encontrado.")
         target.habilitado = not target.habilitado
         session.add(target)
@@ -219,8 +269,11 @@ def users_cambiar_oficina(request: Request, username: str, office_id: int = Form
     Los dos existen porque son dos flujos reales («¿de qué oficina es Ana?» y
     «¿a quién le pongo en Puebla?»), pero comparten `offices.mover_de_oficina`:
     una sola regla, incluida la de soltar los folios que quedan del otro lado.
+
+    Solo el admin global: mover a alguien es sacarlo de una oficina y meterlo
+    en otra, y el de oficina no alcanza la de destino.
     """
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
 
@@ -239,3 +292,33 @@ def users_cambiar_oficina(request: Request, username: str, office_id: int = Form
     log_admin(admin, "usuario:oficina", f"{username} -> oficina={office_id}")
     logger.info("Usuario %s movido a la oficina %s por %s", username, office_id, admin)
     return _render_list(request, admin, ok=aviso.replace("de esta oficina", f"de {nombre_oficina}"))
+
+
+@router.post("/users/{username}/solo-oficina")
+def users_toggle_solo_oficina(request: Request, username: str):
+    """Pone o quita el techo de un admin: admin global <-> admin de oficina.
+
+    Solo el global. Un admin de oficina no puede quitárselo a nadie —ni a sí
+    mismo—: sería salirse de su oficina por la puerta de este formulario.
+    """
+    admin, redirect = _global_or_redirect(request)
+    if redirect:
+        return redirect
+    if username == admin:
+        # El último global que se limita a sí mismo deja el panel sin nadie
+        # que administre oficinas y llaves.
+        return _render_list(request, admin, error="No puedes cambiar tu propio alcance.")
+
+    with get_session() as session:
+        target = session.exec(select(User).where(User.username == username)).first()
+        if target is None or not target.is_admin:
+            return _render_list(request, admin, error="Solo un admin puede limitarse a su oficina.")
+        target.solo_su_oficina = not target.solo_su_oficina
+        session.add(target)
+        session.commit()
+        target_limitado = target.solo_su_oficina
+        alcance_nuevo = "de oficina" if target_limitado else "global"
+
+    log_admin(admin, "usuario:admin-oficina" if target_limitado else "usuario:admin-global", username)
+    logger.info("%s ahora es admin %s (por %s)", username, alcance_nuevo, admin)
+    return _render_list(request, admin, ok=f"{username} ahora es admin {alcance_nuevo}.")

@@ -14,7 +14,7 @@ from fastapi.responses import RedirectResponse
 from app.templating import templates
 
 from app.audit import log_admin
-from app.auth import is_admin
+from app.auth import is_admin_global
 from app.catalog import catalog
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,8 @@ def _admin_or_redirect(request: Request):
     user = request.session.get("user")
     if not user:
         return None, RedirectResponse("/login", status_code=303)
-    if not is_admin(user):
+    # Solo el admin GLOBAL: es de todas las oficinas (auth.is_admin_global).
+    if not is_admin_global(user):
         return None, RedirectResponse("/", status_code=303)
     return user, None
 

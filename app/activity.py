@@ -18,7 +18,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app import medidor
-from app.auth import is_admin
+from app.auth import is_admin_global
 from app.db import get_session
 from app.models import (
     Feedback,
@@ -605,7 +605,10 @@ def activity_view(
     if not me:
         return RedirectResponse("/login", status_code=303)
 
-    admin = is_admin(me)
+    # Vista de EQUIPO solo para el admin global: activity.py aún no acota por
+    # oficina (SIN_ACOTAR), y al admin de oficina le enseñaría a todas. Hasta
+    # la parte 2 ve su vista personal, como un colaborador.
+    admin = is_admin_global(me)
     viewing = user if (user and admin) else me
 
     # Rango de la gráfica: por defecto el día actual (horario de negocio).

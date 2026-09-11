@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi.templating import Jinja2Templates
 
-from app.auth import is_admin
+from app.auth import is_admin, is_admin_global
 from app.cobranza import antiguedad
 from app.dinero import formato_monto
 from app.models import ZONA_HORARIA_DEFAULT
@@ -35,6 +35,7 @@ def local_dt(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["is_admin"] = is_admin
+templates.env.globals["is_admin_global"] = is_admin_global
 templates.env.globals["formato_monto"] = formato_monto
 # Global y NO variable de contexto: Jinja2Templates usa Undefined permisivo, así
 # que una clave olvidada en una de las dos rutas que comparten la tabla de

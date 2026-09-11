@@ -64,6 +64,7 @@ _USER_COLUMNS_ADDED_AFTER_LAUNCH = {
     "habilitado": "BOOLEAN NOT NULL DEFAULT 1",
     "estado": "VARCHAR NOT NULL DEFAULT 'disponible'",
     "phone": "VARCHAR",
+    "solo_su_oficina": "BOOLEAN NOT NULL DEFAULT 0",
 }
 # Tablas que ya existían antes de agregar el campo "habilitado" (soft delete);
 # message/teammessage/user ya lo tienen en sus dicts propios de arriba.

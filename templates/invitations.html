@@ -26,7 +26,11 @@
       {% endif %}
     </p>
     <div style="display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap;">
-      {% if oficinas | length > 1 %}
+      {% if oficinas | length == 1 %}
+      {# Sin selector el POST igual dice cuál: el default del formulario es
+         Tlaxcala, y un admin de otra oficina invitaría gente allá. #}
+      <input type="hidden" name="office_id" value="{{ oficinas[0].id }}">
+      {% elif oficinas | length > 1 %}
       <div>
         <label for="office_id">Oficina</label>
         <select name="office_id" id="office_id">

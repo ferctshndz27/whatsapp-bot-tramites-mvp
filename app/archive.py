@@ -656,6 +656,7 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "estado": "NVARCHAR(20) NOT NULL DEFAULT 'disponible'",
         "phone": "NVARCHAR(20) NULL",
         "office_id": _OFFICE_ID_MSSQL,
+        "solo_su_oficina": "BIT NOT NULL DEFAULT 0",
     },
     "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL},
     "tickets": {
@@ -1067,6 +1068,7 @@ def archive_user(u) -> None:
             "estado": u.estado,
             "phone": u.phone,
             "office_id": u.office_id,
+            "solo_su_oficina": u.solo_su_oficina,
         },
     )
 

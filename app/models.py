@@ -225,6 +225,13 @@ class User(SQLModel, table=True):
     username: str = Field(unique=True, index=True)
     password_hash: str
     is_admin: bool = False
+    # Admin DE OFICINA: con is_admin=True administra solo su oficina (alcance()
+    # le quita `ve_todas`) y no entra a lo global (oficinas y llaves, /system,
+    # catálogo, sinónimos, Estudio). Revierte lo que SPEC-MULTI-OFICINA §5
+    # decidió, a pedido del operador (2026-09-11). Se guarda como bandera
+    # NEGATIVA a propósito: DEFAULT 0 deja a todo admin existente como global,
+    # sin reescribir una sola fila (un UPDATE crudo no llegaría al espejo).
+    solo_su_oficina: bool = Field(default=False, sa_column_kwargs={"server_default": text("0")})
     habilitado: bool = True
     office_id: int = _office_id_field()
     # Disponibilidad visible al equipo: disponible | ocupado | ausente

@@ -24,10 +24,15 @@
         <label for="role">Rol</label>
         <select name="role" id="role">
           <option value="colaborador" selected>colaborador</option>
-          <option value="admin">admin</option>
+          <option value="admin_oficina">admin de oficina</option>
+          {% if admin_global %}<option value="admin">admin global</option>{% endif %}
         </select>
       </div>
-      {% if oficinas | length > 1 %}
+      {% if oficinas | length == 1 %}
+      {# Sin selector: el POST igual tiene que decir cuál. El default del
+         formulario es Tlaxcala, y un admin de otra oficina daría altas allá. #}
+      <input type="hidden" name="office_id" value="{{ oficinas[0].id }}">
+      {% elif oficinas | length > 1 %}
       <div>
         <label for="office_id">Oficina</label>
         <select name="office_id" id="office_id">
@@ -58,14 +63,16 @@
           <td>{{ u.username }}{% if u.username == user %} <span style="color:var(--text-muted); font-size:.85rem;">(tú)</span>{% endif %}</td>
           <td>{{ u.phone or '—' }}</td>
           <td>
-            {% if u.is_admin %}
-            <span class="badge asignada">admin</span>
+            {% if u.is_admin and u.solo_su_oficina %}
+            <span class="badge asignada">admin de oficina</span>
+            {% elif u.is_admin %}
+            <span class="badge asignada">admin global</span>
             {% else %}
             colaborador
             {% endif %}
           </td>
           <td>
-            {% if oficinas | length > 1 %}
+            {% if admin_global and oficinas | length > 1 %}
             <form method="post" action="/users/{{ u.username }}/oficina"
               style="display:flex; gap:.35rem; align-items:center;">
               <label class="sr-only" for="of-{{ u.username }}">Oficina de {{ u.username }}</label>
@@ -88,6 +95,9 @@
             {% endif %}
           </td>
           <td>
+            {# Solo sobre quien este admin puede gestionar (users._gestionable):
+               el de oficina no toca a un admin global. #}
+            {% if u.username in gestionables %}
             <details id="pass-{{ u.username }}" style="display:inline-block; margin-right:.5rem;">
               <summary class="btn-sm" style="cursor:pointer; display:inline-block;">Restablecer contraseña</summary>
               <form method="post" action="/users/{{ u.username }}/password"
@@ -111,6 +121,15 @@
                 {{ 'Deshabilitar' if u.habilitado else 'Habilitar' }}
               </button>
             </form>
+            {% if admin_global and u.is_admin %}
+            <form method="post" action="/users/{{ u.username }}/solo-oficina" style="display:inline;"
+              onsubmit="return confirm('¿Cambiar a {{ u.username }} a admin {{ 'global' if u.solo_su_oficina else 'de oficina' }}?');">
+              <button type="submit" class="btn-sm">
+                {{ 'Hacer admin global' if u.solo_su_oficina else 'Limitar a su oficina' }}
+              </button>
+            </form>
+            {% endif %}
+            {% endif %}
             {% endif %}
           </td>
         </tr>

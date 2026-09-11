@@ -21,7 +21,7 @@ from sqlmodel import select
 
 from app import archive
 from app.audit import log_admin
-from app.auth import is_admin
+from app.auth import is_admin_global
 from app.config import CREDENCIALES, settings
 from app import credenciales
 from app.credenciales import CredencialIlegible, credencial
@@ -121,7 +121,8 @@ def _admin_or_redirect(request: Request):
     user = request.session.get("user")
     if not user:
         return None, RedirectResponse("/login", status_code=303)
-    if not is_admin(user):
+    # Solo el admin GLOBAL: es de todas las oficinas (auth.is_admin_global).
+    if not is_admin_global(user):
         return None, RedirectResponse("/", status_code=303)
     return user, None
 
