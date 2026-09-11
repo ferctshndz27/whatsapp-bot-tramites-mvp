@@ -273,9 +273,10 @@ def invitations_list(request: Request):
     if not is_admin(user):
         return RedirectResponse("/", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
-        invitations = session.exec(select(Invitation).order_by(Invitation.created_at.desc())).all()
-        oficinas, nombres = _oficinas_para_invitar(session)
+        invitations = _invitaciones_visibles(session, vista)
+        oficinas, nombres = _oficinas_para_invitar(session, vista)
 
     return templates.TemplateResponse(
         "invitations.html",
@@ -292,11 +293,14 @@ def invitations_toggle(request: Request, invitation_id: int):
     if not is_admin(user):
         return RedirectResponse("/", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         invitation = session.get(Invitation, invitation_id)
         # Solo tiene sentido cancelar/reactivar invitaciones sin usar — una ya
         # canjeada no debe poder revocarse desde aquí (el usuario ya existe).
-        if invitation is not None and invitation.used_at is None:
+        # Y solo las de su oficina: el admin de oficina no revoca las ajenas.
+        if (invitation is not None and invitation.used_at is None
+                and vista.alcanza(invitation.office_id)):
             invitation.habilitado = not invitation.habilitado
             session.add(invitation)
             session.commit()
@@ -306,8 +310,18 @@ def invitations_toggle(request: Request, invitation_id: int):
     return RedirectResponse("/invitations", status_code=303)
 
 
-def _oficinas_para_invitar(session):
-    """(oficinas habilitadas, {id: nombre}).
+def _invitaciones_visibles(session, vista):
+    return session.exec(
+        vista.filtrar(select(Invitation), Invitation.office_id)
+        .order_by(Invitation.created_at.desc())
+    ).all()
+
+
+def _oficinas_para_invitar(session, vista):
+    """(oficinas habilitadas a las que puede invitar, {id: nombre}).
+
+    El admin de oficina solo invita a la suya: un código para otra oficina
+    sería meter gente donde él no administra.
 
     Solo las habilitadas: invitar a alguien a una oficina dada de baja lo dejaría
     sin ver nada al entrar —su ruteo está cortado— y el síntoma no apunta a la
@@ -315,7 +329,8 @@ def _oficinas_para_invitar(session):
     los de una oficina que se dio de baja después.
     """
     oficinas = session.exec(
-        select(Office).where(Office.habilitado == True).order_by(Office.id)  # noqa: E712
+        vista.filtrar(select(Office), Office.id)
+        .where(Office.habilitado == True).order_by(Office.id)  # noqa: E712
     ).all()
     nombres = {o.id: o.nombre for o in session.exec(select(Office)).all()}
     return oficinas, nombres
@@ -337,13 +352,14 @@ def invitations_create(request: Request, office_id: int = Form(OFICINA_TLAXCALA_
         return RedirectResponse("/", status_code=303)
 
     token = secrets.token_urlsafe(9)
+    vista = alcance(user)
     with get_session() as session:
         oficina = session.get(Office, office_id)
-        if oficina is None or not oficina.habilitado:
-            invitations = session.exec(
-                select(Invitation).order_by(Invitation.created_at.desc())
-            ).all()
-            oficinas, nombres = _oficinas_para_invitar(session)
+        # Otra oficina, para el admin de oficina, responde como una que no
+        # existe: el formulario no se la ofrece, pero el POST lo arma cualquiera.
+        if oficina is None or not oficina.habilitado or not vista.alcanza(office_id):
+            invitations = _invitaciones_visibles(session, vista)
+            oficinas, nombres = _oficinas_para_invitar(session, vista)
             return templates.TemplateResponse(
                 "invitations.html",
                 {"request": request, "user": user, "invitations": invitations,
@@ -352,10 +368,8 @@ def invitations_create(request: Request, office_id: int = Form(OFICINA_TLAXCALA_
             )
         session.add(Invitation(token=token, phone=None, created_by=user, office_id=office_id))
         session.commit()
-        invitations = session.exec(
-            select(Invitation).order_by(Invitation.created_at.desc())
-        ).all()
-        oficinas, nombres = _oficinas_para_invitar(session)
+        invitations = _invitaciones_visibles(session, vista)
+        oficinas, nombres = _oficinas_para_invitar(session, vista)
 
     logger.info("Invitación generada por %s para la oficina %s", user, office_id)
     return templates.TemplateResponse(
@@ -960,9 +974,10 @@ def delete_ticket(request: Request, ticket_id: int):
     if not is_admin(user):
         return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
+    vista = alcance(user)
     with get_session() as session:
         ticket = session.get(Ticket, ticket_id)
-        if ticket is not None:
+        if ticket is not None and vista.alcanza(ticket.office_id):
             ticket.habilitado = not ticket.habilitado
             ticket.updated_at = utcnow()
             session.add(ticket)

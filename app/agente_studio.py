@@ -24,7 +24,7 @@ from sqlmodel import Session, func, select
 import app.db as db
 from app import agent_settings, rag
 from app.audit import log_admin
-from app.auth import alcance, is_admin
+from app.auth import alcance, is_admin_global
 from app.config import settings
 from app.models import InfoDoc, NluEvent, utcnow
 from app.templating import templates
@@ -41,14 +41,15 @@ def _admin_or_redirect(request: Request):
     user = request.session.get("user")
     if not user:
         return None, RedirectResponse("/login", status_code=303)
-    if not is_admin(user):
+    # Solo el admin GLOBAL: es de todas las oficinas (auth.is_admin_global).
+    if not is_admin_global(user):
         return None, RedirectResponse("/", status_code=303)
     return user, None
 
 
 def _admin_or_403(request: Request) -> str | None:
     user = request.session.get("user")
-    return user if user and is_admin(user) else None
+    return user if user and is_admin_global(user) else None
 
 
 def _motivo_rechazo(texto: str) -> str | None:

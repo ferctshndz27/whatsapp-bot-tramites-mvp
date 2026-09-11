@@ -31,6 +31,19 @@ def is_admin(username: str | None) -> bool:
         return bool(user and user.is_admin)
 
 
+def is_admin_global(username: str | None) -> bool:
+    """Admin sin `solo_su_oficina`: la puerta de lo que es de TODAS las
+    oficinas —oficinas y sus llaves, /system, catálogo, sinónimos, Estudio— y
+    de lo que todavía no acota por oficina (tests/test_alcance_oficina.py,
+    SIN_ACOTAR). Abrirle al admin de oficina una sección sin acotar sería
+    enseñarle las demás oficinas por la puerta de atrás."""
+    if not username:
+        return False
+    with get_session() as session:
+        user = session.exec(select(User).where(User.username == username)).first()
+        return bool(user and user.is_admin and not user.solo_su_oficina)
+
+
 class Alcance(NamedTuple):
     """Qué oficina ve este usuario. `ve_todas` gana sobre `office_id`."""
 
@@ -55,9 +68,10 @@ class Alcance(NamedTuple):
 def alcance(username: str | None) -> Alcance:
     """El alcance del usuario en sesión — UN SELECT, la misma fila que is_admin.
 
-    Un admin ve todas las oficinas: §5 lo decidió así al descartar el segundo
-    sistema de roles (admin global / admin de oficina), y /oficinas ya asume esa
-    consecuencia. Un colaborador ve la suya.
+    Un admin global ve todas las oficinas; un admin de oficina
+    (`solo_su_oficina`) y un colaborador ven la suya. §5 había descartado el
+    admin de oficina; el operador lo pidió el 2026-09-11 y vive aquí, en el
+    único lugar que decide qué filas ve cada quien.
 
     Sin usuario —o con uno que ya no existe— devuelve Tlaxcala SIN ver todas:
     el caso solo se alcanza con una sesión huérfana, y ahí lo seguro es el
@@ -69,4 +83,4 @@ def alcance(username: str | None) -> Alcance:
         user = session.exec(select(User).where(User.username == username)).first()
     if user is None:
         return Alcance(OFICINA_TLAXCALA_ID, False)
-    return Alcance(user.office_id, user.is_admin)
+    return Alcance(user.office_id, user.is_admin and not user.solo_su_oficina)

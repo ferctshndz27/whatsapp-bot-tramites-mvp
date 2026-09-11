@@ -1,4 +1,4 @@
-"""Panel de oficinas — docs/SPEC-MULTI-OFICINA.md §5. Solo administradores.
+"""Panel de oficinas — docs/SPEC-MULTI-OFICINA.md §5. Solo el admin global.
 
 Alta de oficinas, CRUD de sus credenciales y movimiento de colaboradores. Dos
 reglas que este router NO puede relajar:
@@ -37,7 +37,8 @@ from app.config import CREDENCIALES
 from app.db import get_session
 from app.models import OFICINA_TLAXCALA_ID, Office, User
 from app.templating import templates
-from app.users import _admin_or_redirect, mover_de_oficina
+# El GLOBAL: una oficina y sus llaves son de todas (auth.is_admin_global).
+from app.users import _global_or_redirect, mover_de_oficina
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ def _normalizar(nombre: str, slug: str, ciudad: str):
 
 @router.get("/oficinas")
 def oficinas_lista(request: Request):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
     return _render_lista(request, admin)
@@ -161,7 +162,7 @@ def oficinas_crear(
     slug: str = Form(...),
     ciudad: str = Form(...),
 ):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
 
@@ -185,7 +186,7 @@ def oficinas_crear(
 
 @router.get("/oficinas/{office_id}")
 def oficina_detalle(request: Request, office_id: int):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
     respuesta = _detalle_o_lista(request, admin, office_id)
@@ -208,7 +209,7 @@ def oficina_editar(
     impide —renombrar una oficina es legítimo— pero el aviso lo dice con todas
     sus letras, porque es dinero.
     """
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
 
@@ -261,7 +262,7 @@ def oficina_baja(request: Request, office_id: int):
     de producción con un clic. Mismo criterio que impide a un admin
     deshabilitarse a sí mismo (app/users.py).
     """
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
 
@@ -300,7 +301,7 @@ def oficina_baja(request: Request, office_id: int):
 
 @router.post("/oficinas/{office_id}/llaves")
 def llave_guardar(request: Request, office_id: int, clave: str = Form(...), valor: str = Form(...)):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
 
@@ -342,7 +343,7 @@ def llave_guardar(request: Request, office_id: int, clave: str = Form(...), valo
 
 @router.post("/oficinas/{office_id}/llaves/{clave}/baja")
 def llave_baja(request: Request, office_id: int, clave: str):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
     if clave not in CREDENCIALES:
@@ -359,7 +360,7 @@ def llave_baja(request: Request, office_id: int, clave: str):
 
 @router.post("/oficinas/{office_id}/usuarios")
 def usuario_mover(request: Request, office_id: int, username: str = Form(...)):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
 

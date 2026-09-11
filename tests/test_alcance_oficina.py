@@ -38,9 +38,9 @@ def _base(monkeypatch):
     monkeypatch.setattr(settings, "geoip_enabled", False)
     with Session(engine) as s:
         s.add(Office(id=2, nombre="Puebla", slug="puebla", ciudad="Puebla"))
-        # Dos admins, uno por oficina: §5 decidió que CUALQUIER admin administra
-        # todo, así que ambos ven las dos carteras. La distinción la hace el
-        # colaborador.
+        # jefa1 es admin GLOBAL (sin solo_su_oficina): ve las dos carteras. La
+        # distinción aquí la hace el colaborador; el admin de oficina tiene su
+        # propio archivo, tests/test_admin_oficina.py.
         s.add(User(username="jefa1", password_hash=HASH, is_admin=True, office_id=1))
         s.add(User(username="colab1", password_hash=HASH, is_admin=False, office_id=1))
         s.add(User(username="colab2", password_hash=HASH, is_admin=False, office_id=2))
@@ -101,7 +101,7 @@ def test_un_folio_de_la_oficina_2_no_aparece_para_un_colaborador_de_la_1():
 
 
 def test_un_admin_ve_los_folios_de_todas():
-    """Consecuencia asumida de §5 al descartar el rol de admin-de-oficina."""
+    """Un admin GLOBAL ve todas. El de oficina: tests/test_admin_oficina.py."""
     texto = _sesion("jefa1").get("/").text
     assert "folio de Tlaxcala" in texto and "folio de Puebla" in texto
 
@@ -134,14 +134,13 @@ def test_el_alcance_de_cobros_existe_pero_hoy_es_inerte():
 # operando ninguno de estos filtros se nota, así que la deuda se asevera en vez
 # de recordarse. Acotar uno = quitarlo de aquí, en el mismo commit.
 #
-# `users.py` está en la lista pero es un CASO APARTE y deliberado: acotarlo
-# contradiría a §5 —cualquier admin administra todo— y /oficinas/{id} ya lista
-# los colaboradores por oficina. No se acota; se deja anotado para que nadie lo
-# "arregle" sin leer esto.
+# Desde el admin de oficina, lo que está aquí y es de administración queda SOLO
+# para el admin global (auth.is_admin_global): abrírselo al de oficina sería
+# enseñarle las demás. Lo asevera test_lo_global_no_se_le_abre_al_admin_de_oficina.
+# `users.py` salió de la lista: acota desde que existe el admin de oficina.
 SIN_ACOTAR = {
     "activity.py", "authlog.py", "catalog_admin.py",
     "kb.py", "replies.py", "synonym_miner.py", "system.py",
-    "users.py",  # a propósito: ver arriba
     # /oficinas ES la vista de todas las oficinas: acotarla sería impedirle al
     # admin administrar la que no es la suya, que es su función entera.
     "offices.py",
