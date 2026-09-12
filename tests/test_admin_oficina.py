@@ -15,6 +15,7 @@ propia: un guardia que lo rechazara todo pasaría el candado en verde y dejaría
 al admin de oficina sin poder trabajar, o a Tlaxcala sin su admin.
 """
 
+import re
 import sqlite3
 
 import bcrypt
@@ -113,19 +114,19 @@ def test_los_usuarios_que_lista_son_solo_los_de_su_oficina():
 
 # --- Lo global se le cierra ---------------------------------------------------
 
+# Bitácora, accesos y reportes CSV salieron de aquí en la parte 2: ya acotan
+# por oficina (ver la sección de abajo). Lo que queda es de TODAS las oficinas.
 GLOBALES = [
-    "/oficinas", "/oficinas/1", "/system", "/audit", "/logins", "/export/logins.csv",
-    "/export/tickets.csv", "/export/activity.csv", "/unmatched",
+    "/oficinas", "/oficinas/1", "/system", "/unmatched",
     "/export/no-entendidos.csv", "/catalog", "/agente",
 ]
 
 
 @pytest.mark.parametrize("ruta", GLOBALES)
 def test_lo_global_no_se_le_abre_al_admin_de_oficina(ruta):
-    """Estas secciones son de TODAS las oficinas (llaves, catálogo, sinónimos,
-    Estudio) o todavía no acotan (bitácora, accesos, reportes): abrírselas al de
-    oficina es enseñarle las demás por la puerta de atrás. El control positivo
-    es el global, que tiene que seguir entrando."""
+    """Estas secciones son de TODAS las oficinas (llaves, /system, catálogo,
+    sinónimos, Estudio): abrírselas al de oficina es enseñarle las demás por la
+    puerta de atrás. El control positivo es el global, que sigue entrando."""
     r = _sesion("jefe2").get(ruta, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/", f"{ruta} se le abrió"
     assert _sesion("jefa1").get(ruta, follow_redirects=False).status_code == 200, (
@@ -142,11 +143,12 @@ def test_no_da_de_alta_oficinas():
         assert s.exec(select(Office).where(Office.slug == "cdmx")).first() is not None
 
 
-def test_la_actividad_del_equipo_es_del_global_hasta_que_acote():
-    """activity.py no acota por oficina todavía: la vista de equipo (ver a
-    otro con ?user=) le enseñaría a todas. El de oficina ve la suya."""
-    suyo = _sesion("jefe2").get("/activity?user=colab1").text
-    assert "Histórico de jefe2" in suyo and "Histórico de colab1" not in suyo
+def test_ver_a_alguien_de_otra_oficina_en_actividad_cae_a_la_propia():
+    """?user= de otra oficina no abre su historial: cae a la vista propia sin
+    avisar. Con alguien de su oficina sí abre, y el global abre a cualquiera."""
+    ajeno = _sesion("jefe2").get("/activity?user=colab1").text
+    assert "Histórico de jefe2" in ajeno and "Histórico de colab1" not in ajeno
+    assert "Histórico de colab2" in _sesion("jefe2").get("/activity?user=colab2").text
     assert "Histórico de colab1" in _sesion("jefa1").get("/activity?user=colab1").text
 
 
@@ -314,3 +316,140 @@ def test_los_admins_que_ya_existen_siguen_siendo_globales(tmp_path, monkeypatch)
     monkeypatch.setattr(db, "engine", engine)
     db.init_db()
     assert alcance("admin").ve_todas and is_admin_global("admin")
+
+
+# --- Parte 2: actividad, bitácora, accesos y reportes, acotados ------------------
+
+from app import activity  # noqa: E402
+from app.audit import log_admin  # noqa: E402
+from app.models import LoginEvent, SavedReply, TicketActivity  # noqa: E402
+
+
+def _folio(oficina: int) -> int:
+    with Session(db.engine) as s:
+        return s.exec(select(Ticket.id).where(Ticket.office_id == oficina)).one()
+
+
+def _cierres_de_cada_oficina() -> None:
+    with Session(db.engine) as s:
+        s.add(TicketActivity(ticket_id=_folio(1), username="colab1", action="cerrado"))
+        s.add(TicketActivity(ticket_id=_folio(2), username="colab2", action="cerrado"))
+        s.commit()
+
+
+def test_el_tablero_de_equipo_del_admin_de_oficina_es_su_gente():
+    """Parte 2: el admin de oficina ya tiene la vista de equipo, acotada. Si
+    esto se pone rojo, o no la tiene, o ve a la gente de otra oficina."""
+    html = _sesion("jefe2").get("/activity").text
+    assert "colab2" in html, "no ve a su propia gente en el tablero"
+    assert "colab1" not in html and "jefa1" not in html, "ve gente de otra oficina"
+    todo = _sesion("jefa1").get("/activity").text
+    assert "colab1" in todo and "colab2" in todo, "el global dejó de ver a todos"
+
+
+def test_la_mensajeria_sigue_siendo_del_global():
+    """`message` no lleva oficina: el costo de Meta no se puede partir todavía."""
+    assert "Mensajería y costo" not in _sesion("jefe2").get("/activity").text
+    assert "Mensajería y costo" in _sesion("jefa1").get("/activity").text
+
+
+def test_los_numeros_del_tablero_son_de_los_folios_de_su_oficina():
+    """Cada agregado cuenta la oficina del FOLIO. `None` sigue siendo todas:
+    es lo que usa el reparto (asignacion) y lo que ve el global."""
+    _cierres_de_cada_oficina()
+    starts = activity._period_starts_utc()
+    with Session(db.engine) as s:
+        assert set(activity.dispatch_counts(s, starts, office_id=2)) == {"colab2"}
+        assert set(activity.dispatch_counts(s, starts)) == {"colab1", "colab2"}
+        assert activity.carga_abierta(s, 2).get(None) == 1, "sin dueño de otra oficina"
+        assert activity.carga_abierta(s).get(None) == 2
+        embudo = dict(activity.operacion_stats(s, 2)["embudo"])
+        assert sum(embudo.values()) == 1, "el embudo cuenta folios de otra oficina"
+
+
+def test_la_bitacora_del_admin_de_oficina_es_la_de_su_gente():
+    for quien in ("colab1", "colab2", "jefa1"):
+        log_admin(quien, "prueba:bitacora", f"hecho-por-{quien}")
+    suyo = _sesion("jefe2").get("/audit").text
+    assert "hecho-por-colab2" in suyo, "no ve lo de su oficina"
+    assert "hecho-por-colab1" not in suyo, "ve acciones de otra oficina"
+    assert "hecho-por-jefa1" not in suyo, "ve acciones del admin global"
+    todo = _sesion("jefa1").get("/audit").text
+    assert all(f"hecho-por-{q}" in todo for q in ("colab1", "colab2", "jefa1"))
+
+
+def test_los_accesos_del_admin_de_oficina_son_los_de_su_gente():
+    """Un intento con un usuario inexistente no es de ninguna oficina: la
+    fuerza bruta contra el panel la ve el global, no el de oficina."""
+    with Session(db.engine) as s:
+        for quien, ok in (("colab1", True), ("colab2", True), ("fantasma", False)):
+            s.add(LoginEvent(username=quien, success=ok))
+        s.commit()
+    for ruta in ("/logins", "/export/logins.csv"):
+        suyo = _sesion("jefe2").get(ruta).text
+        assert "colab2" in suyo, f"{ruta}: no ve los de su oficina"
+        assert "colab1" not in suyo and "fantasma" not in suyo, f"{ruta}: ve ajenos"
+        todo = _sesion("jefa1").get(ruta).text
+        assert "colab1" in todo and "fantasma" in todo, f"{ruta}: el global dejó de ver todo"
+
+
+def test_el_menu_le_ofrece_accesos():
+    assert 'href="/logins"' in _sesion("jefe2").get("/users").text
+
+
+@pytest.mark.parametrize("ruta, de_puebla, de_tlaxcala", [
+    ("/export/tickets.csv", "folio de Puebla", "folio de Tlaxcala"),
+    ("/export/activity.csv", "colab2", "colab1"),
+])
+def test_los_reportes_csv_son_de_su_oficina(ruta, de_puebla, de_tlaxcala):
+    _cierres_de_cada_oficina()
+    # Sin seguir redirecciones: el dashboard al que manda un 303 también dice
+    # «folio de Puebla», y la prueba pasaría con la ruta cerrada.
+    r = _sesion("jefe2").get(ruta, follow_redirects=False)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv"), (
+        f"{ruta} no se le abre al admin de oficina"
+    )
+    suyo = r.text
+    assert de_puebla in suyo and de_tlaxcala not in suyo, f"{ruta} no acota"
+    todo = _sesion("jefa1").get(ruta).text
+    assert de_puebla in todo and de_tlaxcala in todo, f"{ruta}: el global dejó de ver todo"
+
+
+def test_actividad_le_da_los_reportes_al_admin_de_oficina():
+    """No entra a /system, que es de donde se enlazaban: sin esto, las rutas
+    acotadas existirían pero nadie de oficina las encontraría."""
+    html = _sesion("jefe2").get("/activity").text
+    for ruta in ("/export/tickets.csv", "/export/activity.csv", "/audit"):
+        assert f'href="{ruta}"' in html, f"Actividad no enlaza {ruta}"
+
+
+def test_una_respuesta_guardada_nace_en_la_oficina_de_quien_la_guarda():
+    _sesion("colab2").post("/replies", data={"title": "saludo", "body": "Hola"})
+    with Session(db.engine) as s:
+        assert s.exec(select(SavedReply.office_id)).one() == 2
+
+
+def _total_de(html: str, quien: str) -> int:
+    """El TOTAL de cierres en la fila de `quien` del tablero de equipo."""
+    fila = re.search(rf'<th scope="row">{quien}.*?</tr>', html, re.S).group(0)
+    return int(re.findall(r"<td>(\d+)</td>", fila)[3])  # día, semana, mes, TOTAL
+
+
+def test_la_pagina_de_actividad_pinta_los_numeros_de_su_oficina():
+    """Las funciones acotan (prueba de arriba), pero la VISTA tiene que
+    pasarles la oficina. colab2 cerró también un folio de Tlaxcala (de antes de
+    cambiarse de oficina): en el tablero de Puebla cuenta solo el de Puebla."""
+    _cierres_de_cada_oficina()
+    with Session(db.engine) as s:
+        s.add(TicketActivity(ticket_id=_folio(1), username="colab2", action="cerrado"))
+        s.commit()
+
+    suyo = _sesion("jefe2").get("/activity").text
+    plano = " ".join(suyo.split())  # la plantilla parte la frase en dos renglones
+    assert "Hay <strong>1</strong> folio vivo" in plano, "cuenta sin dueño de otra oficina"
+    assert 'aria-label="nuevo: 1 folios"' in suyo, "el embudo cuenta folios de otra oficina"
+    assert _total_de(suyo, "colab2") == 1, "el tablero cuenta cierres en folios de otra oficina"
+
+    todo = _sesion("jefa1").get("/activity").text
+    assert "Hay <strong>2</strong> folios vivos" in " ".join(todo.split())
+    assert _total_de(todo, "colab2") == 2

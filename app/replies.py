@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse
 from app.templating import templates
 from sqlmodel import select
 
-from app.auth import is_admin
+from app.auth import alcance
 from app.db import get_session
 from app.models import SavedReply
 
@@ -68,7 +68,11 @@ def replies_create(request: Request, title: str = Form(...), body: str = Form(..
             return _render(
                 request, user, error=f"Máximo {MAX_REPLIES} respuestas guardadas — elimina alguna."
             )
-        session.add(SavedReply(username=user, title=title, body=body))
+        # Nacen en la oficina de quien las guarda. Se LEEN por usuario (más
+        # estrecho que la oficina), pero con el DEFAULT de la columna una
+        # respuesta de Puebla quedaba archivada como de Tlaxcala en el espejo.
+        session.add(SavedReply(username=user, title=title, body=body,
+                               office_id=alcance(user).office_id))
         session.commit()
     logger.info("Respuesta guardada '%s' creada por %s", title, user)
     return RedirectResponse("/replies", status_code=303)

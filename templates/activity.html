@@ -131,6 +131,20 @@
   {% endif %}
 </div>
 
+{% if team is not none %}
+<div class="card">
+  <h2>Reportes</h2>
+  {# Los mismos enlaces que /system, aquí porque el admin de oficina no entra a
+     /system. Cada uno ya viene acotado a la oficina de quien lo pide. #}
+  <p style="display:flex; gap:.5rem; flex-wrap:wrap; margin:0;">
+    <a href="/export/tickets.csv" class="btn-sm" style="text-decoration:none;">⬇ Solicitudes (CSV)</a>
+    <a href="/export/activity.csv" class="btn-sm" style="text-decoration:none;">⬇ Actividad (CSV)</a>
+    <a href="/export/logins.csv" class="btn-sm" style="text-decoration:none;">⬇ Accesos (CSV)</a>
+    <a href="/audit" class="btn-sm" style="text-decoration:none;">Bitácora de acciones admin</a>
+  </p>
+</div>
+{% endif %}
+
 {% if operacion %}
 <div class="card">
   <h2>Operación — primera respuesta y embudo</h2>
