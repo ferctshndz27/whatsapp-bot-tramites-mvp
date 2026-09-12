@@ -5,7 +5,7 @@ from sqlmodel import select
 
 import app.db as db
 import app.synonym_miner as miner
-from app import nlu
+from app import nlu, rag
 from app.catalog import Catalog
 from app.config import settings
 from app.conversation import NOT_RECOGNIZED_HINT
@@ -111,6 +111,35 @@ def test_mine_usa_ollama_cuando_esta_configurado(monkeypatch):
     assert proposals == [
         {"service_id": svc.id, "service_name": svc.name, "synonym": "papelito azul"}
     ]
+
+
+def test_la_mineria_con_ollama_no_hereda_el_timeout_ni_el_contexto_del_clasificador(monkeypatch):
+    """La minería manda el catálogo completo más hasta 100 mensajes: en el peor
+    caso ~7,800 tokens contando la salida. Con el contexto default de Ollama
+    (4096) ese prompt se TRUNCA en silencio, y con el timeout del clasificador
+    (12-25 s) la CPU de labs no alcanza a contestar: el 2026-09-12 los logs de
+    Ollama mostraron un 500 a los 25 s justo a las 03:30. Si esto se pone rojo,
+    la minería nocturna vuelve a morir cada noche sin una sola propuesta, y
+    nadie se entera: el job solo deja un warning."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+    capturado = {}
+
+    def _ollama_falso(messages, **kw):
+        capturado.update(kw)
+        return {"content": json.dumps({"proposals": []})}
+
+    monkeypatch.setattr(nlu, "ollama_chat", _ollama_falso)
+
+    miner.mine_synonyms(["mensaje de prueba"])
+
+    assert capturado.get("num_ctx") == rag.OLLAMA_NUM_CTX, "sin num_ctx Ollama trunca el prompt"
+    assert capturado.get("timeout") == miner.OLLAMA_TIMEOUT_MINERIA, (
+        "la minería heredó el timeout corto del clasificador"
+    )
+    # OLLAMA_TIMEOUT tope 60 s (app/config.py, app/agent_settings.py): la
+    # minería no puede depender de que alguien suba esa perilla.
+    assert miner.OLLAMA_TIMEOUT_MINERIA > 60.0, "el techo de la minería cabe en la perilla del clasificador"
 
 
 def test_mine_with_no_texts_skips_api(monkeypatch):

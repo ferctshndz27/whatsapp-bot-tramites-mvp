@@ -19,7 +19,7 @@ from app.templating import templates
 from rapidfuzz import fuzz
 from sqlmodel import Session, select
 
-from app import nlu
+from app import nlu, rag
 from app.audit import log_admin
 from app.auth import is_admin
 from app.catalog import catalog
@@ -35,6 +35,15 @@ router = APIRouter()
 
 DAYS_BACK = 30
 MAX_MESSAGES = 100
+
+# La minería corre de noche (cron de las 03:30) y nadie espera la respuesta: su
+# techo es el peor caso del prompt, no la paciencia de un cliente. Con
+# MAX_MESSAGES mensajes de 200 caracteres el prompt ronda 6,800 tokens (catálogo
+# de 58 servicios incluido); en la CPU de labs eso son ~90 s de prefill, más
+# hasta 1024 tokens de salida a ~10 tok/s. El timeout del clasificador (12-25 s)
+# la cortaba a media respuesta: 500 a los 25 s en los logs de Ollama a las 03:30
+# del 2026-09-12. Contexto: rag.OLLAMA_NUM_CTX, el mismo runner del nodo agéntico.
+OLLAMA_TIMEOUT_MINERIA = 240.0
 
 # Se busca por el fragmento estable del aviso, no por su inicio: así los
 # mensajes ya enviados siguen contando aunque se retoque la cortesía inicial.
@@ -137,6 +146,8 @@ def mine_synonyms(texts: list[str]) -> list[dict]:
             ],
             format=_MINE_SCHEMA,
             num_predict=1024,
+            num_ctx=rag.OLLAMA_NUM_CTX,
+            timeout=OLLAMA_TIMEOUT_MINERIA,
         )
         data = json.loads(message["content"])
     else:
