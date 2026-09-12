@@ -293,15 +293,15 @@ async def session_activity_middleware(request: Request, call_next):
 # ---- Vistas de administración ------------------------------------------------
 
 
-def active_sessions(now: datetime | None = None) -> list[dict]:
-    """Sesiones con actividad dentro de ACTIVE_WINDOW, con minutos de inactividad."""
+def active_sessions(now: datetime | None = None, usuarios: set[str] | None = None) -> list[dict]:
+    """Sesiones con actividad dentro de ACTIVE_WINDOW, con minutos de inactividad.
+    `usuarios` acota a esas personas (`None` = todas)."""
     now = now or utcnow()
     with get_session() as session:
-        rows = session.exec(
-            select(WebSession)
-            .where(WebSession.ended_at.is_(None))
-            .order_by(WebSession.last_seen_at.desc())
-        ).all()
+        consulta = select(WebSession).where(WebSession.ended_at.is_(None))
+        if usuarios is not None:
+            consulta = consulta.where(WebSession.username.in_(sorted(usuarios)))
+        rows = session.exec(consulta.order_by(WebSession.last_seen_at.desc())).all()
     active = []
     for ws in rows:
         idle = now - _as_utc(ws.last_seen_at)
@@ -312,20 +312,26 @@ def active_sessions(now: datetime | None = None) -> list[dict]:
 
 @router.get("/logins")
 def logins_view(request: Request, result: str | None = None):
-    from app.system import _admin_or_redirect
+    from app.system import _cualquier_admin_or_redirect, usuarios_de_su_alcance
 
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _cualquier_admin_or_redirect(request)
     if redirect:
         return redirect
 
+    # El de oficina ve los accesos de SU gente. Un intento con un usuario que
+    # no existe no es de ninguna oficina: solo lo ve el global.
+    quienes = usuarios_de_su_alcance(admin)
     now = utcnow()
     with get_session() as session:
         # ponytail: stats calculadas en Python sobre los últimos 1000 intentos —
         # a este volumen sobra; pasar a agregados SQL si crece a decenas de miles.
+        consulta = select(LoginEvent)
+        if quienes is not None:
+            consulta = consulta.where(LoginEvent.username.in_(sorted(quienes)))
         events = session.exec(
-            select(LoginEvent).order_by(LoginEvent.created_at.desc()).limit(1000)
+            consulta.order_by(LoginEvent.created_at.desc()).limit(1000)
         ).all()
-    active = active_sessions(now)
+    active = active_sessions(now, quienes)
 
     today = now.date()
     stats = {
@@ -362,13 +368,17 @@ def logins_view(request: Request, result: str | None = None):
 
 @router.get("/export/logins.csv")
 def export_logins(request: Request):
-    from app.system import _admin_or_redirect, _csv_response
+    from app.system import _csv_response, _cualquier_admin_or_redirect, usuarios_de_su_alcance
 
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _cualquier_admin_or_redirect(request)
     if redirect:
         return redirect
+    quienes = usuarios_de_su_alcance(admin)
     with get_session() as session:
-        events = session.exec(select(LoginEvent).order_by(LoginEvent.created_at)).all()
+        consulta = select(LoginEvent)
+        if quienes is not None:
+            consulta = consulta.where(LoginEvent.username.in_(sorted(quienes)))
+        events = session.exec(consulta.order_by(LoginEvent.created_at)).all()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     return _csv_response(
         f"accesos-{stamp}.csv",

@@ -137,10 +137,12 @@ def test_el_alcance_de_cobros_existe_pero_hoy_es_inerte():
 # Desde el admin de oficina, lo que está aquí y es de administración queda SOLO
 # para el admin global (auth.is_admin_global): abrírselo al de oficina sería
 # enseñarle las demás. Lo asevera test_lo_global_no_se_le_abre_al_admin_de_oficina.
-# `users.py` salió de la lista: acota desde que existe el admin de oficina.
+# Salieron al acotarse: users.py (parte 1); activity.py, authlog.py, system.py
+# y replies.py (parte 2). Lo que queda NO es deuda, es decisión:
 SIN_ACOTAR = {
-    "activity.py", "authlog.py", "catalog_admin.py",
-    "kb.py", "replies.py", "synonym_miner.py", "system.py",
+    # El catálogo es COMPARTIDO por decisión (SPEC §11.3, operador 2026-09-03):
+    # editarlo y consultarlo es igual para todas; los sinónimos van detrás.
+    "catalog_admin.py", "kb.py", "synonym_miner.py",
     # /oficinas ES la vista de todas las oficinas: acotarla sería impedirle al
     # admin administrar la que no es la suya, que es su función entera.
     "offices.py",

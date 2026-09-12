@@ -21,7 +21,7 @@ from sqlmodel import select
 
 from app import archive
 from app.audit import log_admin
-from app.auth import is_admin_global
+from app.auth import alcance, is_admin, is_admin_global
 from app.config import CREDENCIALES, settings
 from app import credenciales
 from app.credenciales import CredencialIlegible, credencial
@@ -125,6 +125,32 @@ def _admin_or_redirect(request: Request):
     if not is_admin_global(user):
         return None, RedirectResponse("/", status_code=303)
     return user, None
+
+
+def _cualquier_admin_or_redirect(request: Request):
+    """Global o de oficina: para lo que YA acota por oficina (bitácora, accesos
+    y reportes CSV). Quien la use responde por acotar lo que pinta."""
+    user = request.session.get("user")
+    if not user:
+        return None, RedirectResponse("/login", status_code=303)
+    if not is_admin(user):
+        return None, RedirectResponse("/", status_code=303)
+    return user, None
+
+
+def usuarios_de_su_alcance(admin: str) -> set[str] | None:
+    """Los usuarios cuyas acciones y accesos puede ver este admin; `None` =
+    todos (admin global). Para tablas que solo tienen un USERNAME, sin oficina
+    (AdminAudit, LoginEvent, WebSession): lo que hizo alguien que no es de su
+    oficina —un admin global, el sistema, un usuario inexistente que intentó
+    entrar— no se le puede atribuir, y queda para el global."""
+    vista = alcance(admin)
+    if vista.ve_todas:
+        return None
+    with get_session() as session:
+        return set(session.exec(
+            select(User.username).where(User.office_id == vista.office_id)
+        ).all())
 
 
 def mirror_status() -> list[dict]:
@@ -299,12 +325,16 @@ def system_sync(request: Request):
 
 @router.get("/audit")
 def audit_view(request: Request, limit: int = 200):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _cualquier_admin_or_redirect(request)
     if redirect:
         return redirect
+    quienes = usuarios_de_su_alcance(admin)
     with get_session() as session:
+        consulta = select(AdminAudit)
+        if quienes is not None:
+            consulta = consulta.where(AdminAudit.admin.in_(sorted(quienes)))
         entries = session.exec(
-            select(AdminAudit).order_by(AdminAudit.created_at.desc()).limit(min(limit, 1000))
+            consulta.order_by(AdminAudit.created_at.desc()).limit(min(limit, 1000))
         ).all()
     return templates.TemplateResponse(
         request, "audit.html", {"request": request, "user": admin, "entries": entries}
@@ -337,15 +367,22 @@ def _csv_response(filename: str, header: list[str], rows) -> Response:
 
 @router.get("/export/tickets.csv")
 def export_tickets(request: Request):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _cualquier_admin_or_redirect(request)
     if redirect:
         return redirect
+    vista = alcance(admin)
     with get_session() as session:
-        tickets = session.exec(select(Ticket).order_by(Ticket.created_at)).all()
+        tickets = session.exec(
+            vista.filtrar(select(Ticket), Ticket.office_id).order_by(Ticket.created_at)
+        ).all()
         # Etiquetas por folio en un solo viaje (no una consulta por fila).
         pares = session.exec(
-            select(TicketLabel.ticket_id, Label.nombre)
-            .join(Label, Label.id == TicketLabel.label_id)
+            vista.filtrar(
+                select(TicketLabel.ticket_id, Label.nombre)
+                .join(Label, Label.id == TicketLabel.label_id)
+                .join(Ticket, Ticket.id == TicketLabel.ticket_id),
+                Ticket.office_id,
+            )
             .where(TicketLabel.habilitado == True, Label.habilitado == True)  # noqa: E712
         ).all()
     etiquetas: dict[int, list[str]] = {}
@@ -374,11 +411,18 @@ def export_tickets(request: Request):
 
 @router.get("/export/activity.csv")
 def export_activity(request: Request):
-    admin, redirect = _admin_or_redirect(request)
+    admin, redirect = _cualquier_admin_or_redirect(request)
     if redirect:
         return redirect
+    vista = alcance(admin)
     with get_session() as session:
-        acts = session.exec(select(TicketActivity).order_by(TicketActivity.created_at)).all()
+        # La oficina del FOLIO, igual que el tablero de /activity.
+        acts = session.exec(
+            vista.filtrar(
+                select(TicketActivity).join(Ticket, Ticket.id == TicketActivity.ticket_id),
+                Ticket.office_id,
+            ).order_by(TicketActivity.created_at)
+        ).all()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     return _csv_response(
         f"actividad-{stamp}.csv",

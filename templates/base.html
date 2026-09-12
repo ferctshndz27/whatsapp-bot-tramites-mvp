@@ -45,8 +45,8 @@
         {% endif %}
         <a href="/users" {% if request.url.path.startswith('/users') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👥</span>Usuarios</a>
         <a href="/cobros" {% if request.url.path.startswith('/cobros') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💳</span>Cobros</a>
-        {% if admin_global %}
         <a href="/logins" {% if request.url.path.startswith('/logins') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🔐</span>Accesos</a>
+        {% if admin_global %}
         <a href="/catalog" {% if request.url.path.startswith('/catalog') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🗂️</span>Catálogo</a>
         {% set st = request.state | default(none) %}{% set pp = (st.pending_proposals | default(0)) if st else 0 %}
         <a href="/unmatched" {% if request.url.path.startswith('/unmatched') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🤖</span>Agente WhatsApp{% if pp %}<span class="nav-badge" aria-label="{{ pp }} propuestas por revisar">{{ pp }}</span>{% endif %}</a>

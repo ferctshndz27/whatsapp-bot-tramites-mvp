@@ -18,7 +18,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app import medidor
-from app.auth import is_admin_global
+from app.auth import alcance, is_admin
 from app.db import get_session
 from app.models import (
     Feedback,
@@ -129,11 +129,27 @@ def _as_naive_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
 
 
-def dispatch_counts(session, starts: dict[str, datetime]) -> dict[str, dict[str, int]]:
+def _cierres(office_id: int | None):
+    """Los cierres, de UNA oficina o de todas (`None`).
+
+    La oficina es la del FOLIO, no la de quien lo cerró: un asesor que cambia de
+    oficina no se lleva su historial a la nueva, y los números de cada oficina
+    cuadran con sus propios folios. Mismo `None` = todas que las métricas del
+    NLU (SPEC-MULTI-OFICINA §11.3).
+    """
+    query = select(TicketActivity).where(TicketActivity.action == "cerrado")
+    if office_id is not None:
+        query = query.join(Ticket, Ticket.id == TicketActivity.ticket_id).where(
+            Ticket.office_id == office_id
+        )
+    return query
+
+
+def dispatch_counts(
+    session, starts: dict[str, datetime], office_id: int | None = None
+) -> dict[str, dict[str, int]]:
     """{usuario: {day: n, week: n, month: n, total: n}} de solicitudes cerradas."""
-    closures = session.exec(
-        select(TicketActivity).where(TicketActivity.action == "cerrado")
-    ).all()
+    closures = session.exec(_cierres(office_id)).all()
 
     counts: dict[str, dict[str, int]] = {}
     for act in closures:
@@ -157,14 +173,15 @@ def _parse_date(value: str | None, fallback: date) -> date:
 
 
 def daily_dispatches(
-    session, start: date, end: date, username: str | None = None
+    session, start: date, end: date, username: str | None = None,
+    office_id: int | None = None,
 ) -> list[dict]:
     """Cierres por día (horario de negocio) entre start y end inclusive.
 
     Devuelve un item por CADA día del rango (con total 0 si no hubo), para
     que la gráfica no tenga huecos: [{"date", "total", "by_user": {user: n}}].
     """
-    query = select(TicketActivity).where(TicketActivity.action == "cerrado")
+    query = _cierres(office_id)
     if username:
         query = query.where(TicketActivity.username == username)
     # ponytail: filtrado en Python igual que dispatch_counts — son cientos de
@@ -201,7 +218,9 @@ def _mediana(valores: list[float]) -> float | None:
     return (ordenados[n // 2 - 1] + ordenados[n // 2]) / 2
 
 
-def primera_respuesta_diaria(session, start: date, end: date) -> list[dict]:
+def primera_respuesta_diaria(
+    session, start: date, end: date, office_id: int | None = None
+) -> list[dict]:
     """Mediana (minutos) de primera respuesta humana, por día de creación.
 
     Solo cuenta folios con first_response_at: los NULL previos a la migración
@@ -212,7 +231,7 @@ def primera_respuesta_diaria(session, start: date, end: date) -> list[dict]:
     # ponytail: filtrado en Python igual que daily_dispatches — mismas
     # magnitudes, mismo upgrade path (WHERE por rango si crece).
     tickets = session.exec(
-        select(Ticket).where(
+        _de_oficina(select(Ticket), office_id).where(
             Ticket.first_response_at.is_not(None),  # type: ignore[union-attr]
             # Misma población que operacion_stats: la tarjeta y la gráfica del
             # tablero deben contar lo mismo o los números no cuadran entre sí.
@@ -242,10 +261,16 @@ def primera_respuesta_diaria(session, start: date, end: date) -> list[dict]:
     return out
 
 
-def operacion_stats(session) -> dict:
-    """Resumen de operación (fase 1): medianas globales, embudo y etiquetas."""
+def _de_oficina(query, office_id: int | None):
+    """La consulta sobre Ticket acotada a una oficina, o intacta con `None`."""
+    return query if office_id is None else query.where(Ticket.office_id == office_id)
+
+
+def operacion_stats(session, office_id: int | None = None) -> dict:
+    """Resumen de operación (fase 1): medianas, embudo y etiquetas, de una
+    oficina o de todas (`None`)."""
     tickets = session.exec(
-        select(Ticket).where(Ticket.habilitado == True)  # noqa: E712
+        _de_oficina(select(Ticket), office_id).where(Ticket.habilitado == True)  # noqa: E712
     ).all()
     espera_min = [
         (_as_naive_utc(t.first_response_at) - _as_naive_utc(t.created_at)).total_seconds() / 60
@@ -259,8 +284,12 @@ def operacion_stats(session) -> dict:
     ]
     conteo = Counter(t.status.value for t in tickets)
     top_etiquetas = session.exec(
-        select(Label.nombre, func.count(TicketLabel.id))
-        .join(TicketLabel, TicketLabel.label_id == Label.id)
+        _de_oficina(
+            select(Label.nombre, func.count(TicketLabel.id))
+            .join(TicketLabel, TicketLabel.label_id == Label.id)
+            .join(Ticket, Ticket.id == TicketLabel.ticket_id),
+            office_id,
+        )
         .where(
             TicketLabel.habilitado == True,  # noqa: E712
             Label.habilitado == True,  # noqa: E712
@@ -310,7 +339,7 @@ def _rango_utc(start: date, end: date) -> tuple[datetime, datetime]:
     )
 
 
-def carga_abierta(session) -> dict[str | None, int]:
+def carga_abierta(session, office_id: int | None = None) -> dict[str | None, int]:
     """Folios VIVOS por asesor. La clave `None` es el trabajo sin dueño.
 
     «Vivo» = no cerrado y no oculto. No mide esfuerzo ni antigüedad: cuenta
@@ -324,9 +353,12 @@ def carga_abierta(session) -> dict[str | None, int]:
 
     Un asesor sin folios vivos NO aparece en el resultado: quien la use para
     pintar una tabla debe partir de la lista de usuarios, no de estas llaves.
+
+    `office_id` acota a los folios de una oficina (`None` = todas); la clave
+    `None` pasa a ser el trabajo sin dueño DE ESA oficina.
     """
     filas = session.exec(
-        select(Ticket.assigned_to, func.count(Ticket.id))
+        _de_oficina(select(Ticket.assigned_to, func.count(Ticket.id)), office_id)
         .where(
             Ticket.status != TicketStatus.CERRADO,
             Ticket.habilitado == True,  # noqa: E712
@@ -549,11 +581,12 @@ def build_donut(chart: list[dict], colors: dict[str, str]) -> dict:
     return {"total": total, "segments": segments}
 
 
-def feedback_counts(session) -> dict[str, dict[str, int]]:
+def feedback_counts(session, office_id: int | None = None) -> dict[str, dict[str, int]]:
     """{colaborador: {"up": n, "down": n}} — opiniones 👍/👎 de clientes sobre
-    tickets atendidos por cada quien (botones del aviso de cierre)."""
+    tickets atendidos por cada quien (botones del aviso de cierre), de los
+    folios de una oficina o de todas (`None`)."""
     rows = session.exec(
-        select(Feedback, Ticket).where(Feedback.ticket_id == Ticket.id)
+        _de_oficina(select(Feedback, Ticket).where(Feedback.ticket_id == Ticket.id), office_id)
     ).all()
     counts: dict[str, dict[str, int]] = {}
     for fb, ticket in rows:
@@ -605,11 +638,19 @@ def activity_view(
     if not me:
         return RedirectResponse("/login", status_code=303)
 
-    # Vista de EQUIPO solo para el admin global: activity.py aún no acota por
-    # oficina (SIN_ACOTAR), y al admin de oficina le enseñaría a todas. Hasta
-    # la parte 2 ve su vista personal, como un colaborador.
-    admin = is_admin_global(me)
-    viewing = user if (user and admin) else me
+    # Vista de EQUIPO para todo admin; el de oficina, acotada a la suya: su
+    # gente en la tabla y los folios de su oficina en cada número. `oficina`
+    # None = todas (admin global).
+    admin = is_admin(me)
+    vista = alcance(me)
+    oficina = None if vista.ve_todas else vista.office_id
+    with get_session() as session:
+        de_su_alcance = {
+            u.username for u in session.exec(vista.filtrar(select(User), User.office_id)).all()
+        }
+    # ?user= de otra oficina cae a su propia vista sin avisar, como /team con
+    # una sala ajena: distinguirlo confirmaría quién existe.
+    viewing = user if (user and admin and user in de_su_alcance) else me
 
     # Rango de la gráfica: por defecto el día actual (horario de negocio).
     today_local = datetime.now(BUSINESS_TZ).date()
@@ -622,11 +663,14 @@ def activity_view(
 
     starts = _period_starts_utc()
     with get_session() as session:
-        counts = dispatch_counts(session, starts)
+        # Un colaborador ve sus cierres de TODAS las oficinas (son suyos); el
+        # tablero de equipo, los de la oficina que el admin alcanza.
+        counts = dispatch_counts(session, starts, office_id=oficina if admin else None)
         # Admin ve la gráfica del equipo completo (apilada por colaborador);
         # un colaborador solo la suya.
         chart = daily_dispatches(
-            session, chart_start, chart_end, username=None if admin else viewing
+            session, chart_start, chart_end, username=None if admin else viewing,
+            office_id=oficina if admin else None,
         )
         recent = session.exec(
             select(TicketActivity)
@@ -644,15 +688,17 @@ def activity_view(
         sin_asignar = 0
         sin_quien = 0
         if admin:
-            usernames = [u.username for u in session.exec(select(User)).all()]
-            fb = feedback_counts(session)
-            carga = carga_abierta(session)
+            usernames = sorted(de_su_alcance)
+            fb = feedback_counts(session, oficina)
+            carga = carga_abierta(session, oficina)
             # Un asesor deshabilitado no puede entrar (dashboard rechaza su
             # login), así que sus folios vivos no los va a mover nadie. Contarlos
             # como «cubiertos» es exactamente el bug del espejo que se declaraba
             # al día: trabajo huérfano presentado como atendido.
             inhabilitados = {
-                u.username for u in session.exec(select(User)).all() if not u.habilitado
+                u.username
+                for u in session.exec(vista.filtrar(select(User), User.office_id)).all()
+                if not u.habilitado
             }
             sin_quien = sum(n for a, n in carga.items() if a in inhabilitados)
             team = [
@@ -671,11 +717,15 @@ def activity_view(
             ]
             sin_asignar = carga.get(None, 0)
             # Métricas de operación (fase 1) — vista de equipo, solo admin.
-            operacion = operacion_stats(session)
-            # Mensajería y costo: mismo rango que la gráfica de despachos, misma
-            # puerta de admin que el resto de las métricas de equipo.
-            mensajeria = mensajeria_stats(session, chart_start, chart_end)
-            pr_diaria = primera_respuesta_diaria(session, chart_start, chart_end)
+            operacion = operacion_stats(session, oficina)
+            # Mensajería y costo: solo el admin GLOBAL. `message` no lleva
+            # office_id a propósito (db.py), y el costo lo factura Meta por
+            # cuenta; acotarlo exige unir message->client por teléfono y
+            # decidir de quién es un mensaje sin cliente. Queda para cuando
+            # alguien lo pida con su oficina operando.
+            if oficina is None:
+                mensajeria = mensajeria_stats(session, chart_start, chart_end)
+            pr_diaria = primera_respuesta_diaria(session, chart_start, chart_end, oficina)
             pr_dias_con_dato = sum(1 for d in pr_diaria if d["n"])
             if pr_dias_con_dato:
                 pr_chart = build_line_chart(pr_diaria, {"mediana": "#0ea5e9"})
