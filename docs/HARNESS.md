@@ -269,6 +269,27 @@ relleno en medio. Los `examples/` de las diecinueve son el mismo `print("Hello, 
 byte. Hay un `SKILL.md.backup` versionado. Falla las cuatro preguntas; la revisión completa costó
 menos que escribir este párrafo, y ese es justamente el punto de dejarlo escrito.
 
+**Caso resuelto (septiembre 2026): `github/spec-kit`, adoptado como segunda población.** No es una
+colección de roles sino una herramienta de proceso (Spec-Driven Development), y bajo Claude Code sus
+diez comandos llegan como skills en `.claude/skills/speckit-*`. Por la vara de arriba fallaría las
+preguntas 1 y 3 —no citan este repo, no traen las once secciones—, pero esa vara se escribió para
+roles de dominio importados, y aplicarla aquí sería la regla correcta en el caso equivocado.
+
+Medido en una copia del repo: instalarlo sin tocar el harness ponía **5 de 33 pruebas en rojo**
+(biyección tabla ↔ disco, forma de skill, 22 citas huérfanas porque `_CITA` casa `scripts/…` dentro
+de `.specify/scripts/…`, enlaces de `.agents/skills/` y líneas de `.gitignore`). La salida no fue
+adaptar sus `SKILL.md` —`specify upgrade` las regenera— sino darle al directorio dos contratos:
+`_skills_en_disco()` excluye el prefijo `speckit-`, y dos pruebas propias exigen que estén los diez
+con `name:` correcto y que ninguna fila de `AGENTS.md` los rutee como roles. Con eso: verde, y el
+`skip` deja inerte el contrato en un clone sin spec-kit.
+
+Quedan fuera la extensión `git` (commitea sola), las extensiones con eventos (escriben en
+`.claude/settings.json`) y la constitución de spec-kit (duplicaría `AGENTS.md`). Antigravity queda a
+medias a propósito: `.agents/skills/` está en `deny` y en `.gitignore`, así que ahí cada máquina
+corre `specify init --integration agy` por su cuenta. La evaluación completa, con el método para
+repetir la medición, está en `docs/EVALUACION-SPEC-KIT.md` (versionada con `git add -f`: `docs/`
+está en `.gitignore`).
+
 ## No-objetivos
 
 - **No se replica la estructura de byo.** No hay `internal/provider/` ni `CompactionStrategy` porque

@@ -104,8 +104,30 @@ _SECCIONES_SKILL = (
 _H2 = re.compile(r"^##\s+(.+?)\s*$", re.M)
 
 
+# `.claude/skills/` tiene dos poblaciones. Las trece de este repo son roles de
+# dominio y cargan el contrato completo. Las `speckit-*` las instala y regenera
+# `specify init` / `specify upgrade` (GitHub Spec Kit): son comandos de proceso,
+# genéricos por diseño, así que exigirles filas de ruteo, las once secciones o
+# citas resolubles sería pelear con una herramienta externa que las reescribe en
+# cada upgrade. Tienen su propio contrato más abajo. docs/EVALUACION-SPEC-KIT.md
+# tiene la medición.
+_PREFIJO_SPEC_KIT = "speckit-"
+
+
+def _skills_de_spec_kit() -> set[str]:
+    return {
+        d.name
+        for d in SKILLS.iterdir()
+        if d.name.startswith(_PREFIJO_SPEC_KIT) and (d / "SKILL.md").is_file()
+    }
+
+
 def _skills_en_disco() -> set[str]:
-    return {d.name for d in SKILLS.iterdir() if (d / "SKILL.md").is_file()}
+    return {
+        d.name
+        for d in SKILLS.iterdir()
+        if (d / "SKILL.md").is_file() and not d.name.startswith(_PREFIJO_SPEC_KIT)
+    }
 
 
 def _skills_en_tabla() -> set[str]:
@@ -121,7 +143,8 @@ def _documentos() -> list[Path]:
     rojo el CI —y con él el deploy del bot— por un archivo que el repo decidió
     no versionar. Mismo criterio que `_LOCALES` con `scripts/ship.sh`."""
     portadas = [p for p in (CLAUDE_MD, GEMINI_MD) if p.is_file()]
-    return [AGENTS_MD, *portadas, *sorted(SKILLS.glob("*/SKILL.md"))]
+    propias = sorted(SKILLS / nombre / "SKILL.md" for nombre in _skills_en_disco())
+    return [AGENTS_MD, *portadas, *propias]
 
 
 def _citas(doc: Path) -> list[tuple[str, str]]:
@@ -132,7 +155,7 @@ def test_cada_skill_declara_el_nombre_de_su_carpeta():
     """El `name:` del frontmatter es con lo que se invoca la skill. Si no
     coincide con la carpeta, la tabla rutea a un nombre que no existe y la
     skill jamás carga — falla en silencio, que es la peor manera de fallar."""
-    for carpeta in sorted(SKILLS.iterdir()):
+    for carpeta in sorted(SKILLS / nombre for nombre in _skills_en_disco()):
         skill = carpeta / "SKILL.md"
         if not skill.is_file():
             continue
@@ -222,7 +245,7 @@ def test_cada_skill_conserva_la_forma_del_harness():
     distintos. Una skill sin `description:` existe pero no la elige nadie; una sin
     `When NOT to use` deja que una tarea de dos líneas cargue cuatro roles. Las dos
     fallan tan calladas como una skill mal nombrada, así que se verifican igual."""
-    for carpeta in sorted(SKILLS.iterdir()):
+    for carpeta in sorted(SKILLS / nombre for nombre in _skills_en_disco()):
         skill = carpeta / "SKILL.md"
         if not skill.is_file():
             continue
@@ -484,3 +507,58 @@ def test_el_hook_de_gemini_no_revienta_con_basura():
         assert proceso.returncode == 0 and proceso.stdout.strip() == "", (
             basura, proceso.stdout, proceso.stderr,
         )
+
+
+# ---------------------------------------------------------------------------
+# La segunda población de .claude/skills/: los comandos de GitHub Spec Kit
+# ---------------------------------------------------------------------------
+
+_COMANDOS_SPEC_KIT = frozenset(
+    f"{_PREFIJO_SPEC_KIT}{comando}"
+    for comando in (
+        "analyze", "checklist", "clarify", "constitution", "converge",
+        "implement", "plan", "specify", "tasks", "taskstoissues",
+    )
+)
+
+
+def test_los_comandos_de_spec_kit_estan_completos():
+    """No se les exige la forma de una skill de dominio —no lo son—, pero sí que
+    estén los diez y que su `name:` case con la carpeta: media instalación es un
+    /speckit-tasks que no resuelve, y eso falla en silencio.
+
+    `skip` si spec-kit no está instalado, mismo criterio que `_LOCALES`: un clone
+    sin la herramienta no debe poner rojo el CI, que gatea el deploy del bot. Solo
+    se exige que falten ninguno, no que sobren: una versión nueva del upstream
+    puede traer un comando más sin que eso sea una instalación rota."""
+    instalados = _skills_de_spec_kit()
+    if not instalados:
+        pytest.skip("spec-kit no está instalado en este clone")
+    faltan = _COMANDOS_SPEC_KIT - instalados
+    assert not faltan, (
+        f"instalación de spec-kit incompleta, faltan: {sorted(faltan)}. "
+        "Repite `specify init --here --integration claude` en vez de copiarlos a mano."
+    )
+    for nombre in sorted(instalados):
+        declarado = ""
+        for linea in (SKILLS / nombre / "SKILL.md").read_text(encoding="utf-8").splitlines()[:10]:
+            if linea.startswith("name:"):
+                # spec-kit entrecomilla el valor del frontmatter; las trece no.
+                declarado = linea.split(":", 1)[1].strip().strip("\"'")
+                break
+        assert declarado == nombre, (
+            f".claude/skills/{nombre}/SKILL.md declara name: {declarado!r}; "
+            "la skill se invoca por el nombre de su carpeta"
+        )
+
+
+def test_la_tabla_de_ruteo_no_rutea_comandos_de_spec_kit():
+    """Las dos poblaciones no se mezclan en ninguna dirección. Una fila que rutea
+    a `speckit-plan` convierte un comando de proceso en un rol, y la biyección
+    tabla ↔ disco dejaría de verla porque `_skills_en_disco()` la excluye: el
+    agente cargaría un comando genérico creyendo que es el experto del dominio."""
+    ruteadas = {s for s in _skills_en_tabla() if s.startswith(_PREFIJO_SPEC_KIT)}
+    assert not ruteadas, (
+        f"AGENTS.md rutea comandos de spec-kit como si fueran roles: {sorted(ruteadas)}. "
+        "Los comandos se invocan a mano (/speckit-…), no por ruteo."
+    )
