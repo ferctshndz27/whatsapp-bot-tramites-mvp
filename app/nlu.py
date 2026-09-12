@@ -49,6 +49,31 @@ def limpiar_fallo_ollama() -> str | None:
     return motivo
 
 
+# Bandera aparte de _FALLO_OLLAMA porque aquella se CONSUME al escribir la fila
+# de nluevent, y después ya nadie puede saber que el servidor sigue caído. Esta
+# dura todo el mensaje y la consultan las capas de prompt largo antes de marcar
+# el mismo número muerto: el 2026-09-10 un Ollama en timeout dejó a un cliente
+# esperando 70 s —los 12 s del clasificador MÁS los 45 s de piso de la capa
+# informativa— para terminar en "un asesor te contactará".
+_BACKEND_CAIDO: ContextVar[bool] = ContextVar("backend_caido", default=False)
+
+
+def backend_degradado() -> bool:
+    """¿Ollama ya falló en este mensaje? Entonces no vale reintentar con un
+    prompt más largo y un timeout más holgado: el cliente paga la espera."""
+    return _BACKEND_CAIDO.get()
+
+
+def reiniciar_turno() -> None:
+    """Arranca limpio el estado por mensaje (motivo del fallo + degradación).
+
+    El cron procesa muchos mensajes en el MISMO contexto: sin esto, un fallo
+    de hace dos mensajes se registraría —y degradaría las capas— como si
+    fuera de este."""
+    _FALLO_OLLAMA.set(None)
+    _BACKEND_CAIDO.set(False)
+
+
 def _clasificar_fallo(exc: Exception) -> str:
     """Motivo corto y accionable para el panel: no es el texto del error, es
     qué tiene que ir a revisar el admin."""
@@ -112,6 +137,10 @@ _VAGO_RE = re.compile(
     r"\balgo (?:de|sobre|para)\b"
     r"|\b(?:informacion|info|informes|datos)\s+(?:de|sobre|acerca)\b"
     r"|\bque (?:tienen|manejan|ofrecen|hacen)\b"
+    # "que tramites hay?" es una pregunta por el catálogo, no un pedido: el
+    # 2026-09-11 el modelo la resolvió como la categoría "Otros servicios" y le
+    # contestó al cliente con buró de crédito y pensiones.
+    r"|\b(?:que|cuales|cuantos)\s+(?:tramites?|servicios?)\b"
     r"|\b(?:los |sus )?servicios\s+(?:de|del|para)\b"
     r"|\bme interesan?\s+(?:los |sus )?servicios\b"
     r"|\bquiero saber\s+(?:de|sobre)\b"
@@ -121,6 +150,50 @@ _VAGO_RE = re.compile(
 def es_vago(text: str) -> bool:
     """¿El mensaje nombra un TEMA en vez de pedir un trámite concreto?"""
     return _VAGO_RE.search(_norm(text)) is not None
+
+
+# Palabras que no dicen QUÉ trámite es. Se descuentan antes de medir si el
+# cliente nombró un servicio a medias: "quiero alta medica" pide lo mismo que
+# "alta medica".
+_RELLENO_PEDIDO = frozenset({
+    "quiero", "queria", "necesito", "necesitaba", "ocupo", "ocupa", "ocupaba",
+    "me", "mi", "mis", "el", "la", "lo", "los", "las", "un", "una", "unos",
+    "unas", "de", "del", "para", "por", "favor", "porfa", "porfavor", "con",
+    "sacar", "saca", "tramitar", "hacer", "solicitar", "pedir", "urgente",
+    "ayuda", "ayudame", "info", "sobre", "que", "como", "donde", "cuanto",
+})
+
+
+def familia_ambigua(text: str, service: Service) -> bool:
+    """¿El cliente nombró un trámite A MEDIAS, y varios lo completan?
+
+    Hermano de es_vago() y con el mismo destino —descartar el service_id del
+    LLM— pero por otra causa. Aquí el mensaje no es un tema ("algo de
+    pensiones"): es un nombre incompleto. "alta medica" cabe dentro de 'Alta
+    médica básica' y de 'Alta médica semiestable', y no dice cuál. El
+    2026-09-11 el modelo eligió 'básica' a ciegas y el cliente acabó
+    confirmando dos trámites, uno de los cuales nunca pidió.
+
+    OJO con la frontera: esto NO es "hay varios parecidos". Un empate por
+    sinónimo compartido —"necesito el papel ese"— sí es trabajo del LLM, que
+    lee el contexto y por eso corre antes que el difuso. La condición es más
+    estrecha: cada palabra con contenido del mensaje es palabra del nombre del
+    servicio, y al nombre le sobran palabras que el cliente no dijo. Eso es un
+    nombre truncado, no una descripción ambigua.
+
+    Con el service_id descartado decide la cascada barata, que para este mismo
+    texto ya ofrece el mini-menú de las cinco altas — la respuesta honesta."""
+    pedidas = {
+        w for w in _norm(text).split()
+        if len(w) >= 3 and w not in _RELLENO_PEDIDO
+    }
+    if not pedidas:
+        return False
+    completan = [
+        s for s, _terms in _service_terms()
+        if pedidas < set(_norm(s.name).split())  # subconjunto ESTRICTO
+    ]
+    return len(completan) >= 2 and any(s.id == service.id for s in completan)
 
 
 def deduce(text: str) -> tuple[Service | None, Category | None]:
@@ -157,6 +230,12 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
                 # Tema, no trámite: la categoría del servicio que eligió es la
                 # respuesta honesta; si no la hay, decide la cascada barata.
                 service, category = None, _categoria_de(service)
+            elif service is not None and familia_ambigua(cleaned, service):
+                # Nombre incompleto: ni servicio ni categoría. La categoría
+                # tampoco sirve aquí —mandaría al submenú de los 8 servicios
+                # del IMSS cuando las candidatas son 5 altas— y la cascada
+                # barata ya sabe ofrecer exactamente esas cinco.
+                service = None
             if service is not None or category is not None:
                 return service, category, "ollama", None
             # Un "no sé" no detiene la cadena (misma regla que la capa Claude):
@@ -172,6 +251,10 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
                 # Tema, no trámite: la categoría del servicio que eligió es la
                 # respuesta honesta; si no la hay, decide la cascada barata.
                 service, category = None, _categoria_de(service)
+            elif service is not None and familia_ambigua(cleaned, service):
+                # Mismo veto que en la capa de arriba: un nombre incompleto no
+                # lo desambigua el modelo, lo desambigua el cliente.
+                service = None
             if service is not None or category is not None:
                 return service, category, "llm", None
             # Ambos null ya NO es veredicto final: las capas literales/fuzzy
@@ -377,6 +460,10 @@ def ollama_chat(
         return response.json()["message"]
     except Exception as exc:
         _FALLO_OLLAMA.set(_clasificar_fallo(exc))
+        # Se marca aquí, en el embudo, por la misma razón que el motivo: las
+        # cuatro capas que hablan con Ollama pasan por este punto, y basta que
+        # UNA falle para que reintentar con las otras solo alargue la espera.
+        _BACKEND_CAIDO.set(True)
         raise
 
 

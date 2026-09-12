@@ -117,6 +117,14 @@ IDENTITY_KEYWORDS = [
 SERVICES_KEYWORDS = [
     "servicios", "catalogo", "catálogo", "listado", "lista",
     "precios", "que hacen", "qué hacen", "que ofrecen", "qué ofrecen",
+    # "trámite" es la palabra del negocio y faltaba. Sin ella "quiero un
+    # tramite" no se entendía, sumaba intento fallido y al tercero escalaba:
+    # el 2026-09-10 levantó los folios #47 y #48 ("Escalado a asesor") por eso.
+    # Van FRASES y no la palabra suelta a propósito: "como van mis tramites"
+    # es una pregunta de estatus y la atiende _asks_status, no este atajo.
+    "que tramites", "qué trámites", "que trámites", "qué tramites",
+    "cuales tramites", "cuáles trámites", "cuales servicios", "cuáles servicios",
+    "quiero un tramite", "quiero un trámite",
 ]
 GREETING_REPLY = "¡Hola! 😊 ¿Cómo puedo ayudarte hoy?"
 ASK_GOAL_REPLY = (
@@ -577,6 +585,12 @@ def _pendientes_por_aclarar(text: str, services: list) -> list:
     preguntaría de más en un pedido que ya estaba completo."""
     resueltos = {s.id for s in services}
     resto = nlu.texto_sin_menciones(text, services)
+    # Si el recorte no quitó NADA, el servicio no se nombró en el texto: lo
+    # dedujo un modelo. Entonces los "parecidos" que salgan del resto no son
+    # otro trámite, son las hermanas del mismo — y anunciarlas como un segundo
+    # pedido es lo que el 2026-09-11 convirtió "alta medica" en dos folios.
+    if resto.strip() == nlu._norm(text).strip():
+        return []
     return [s for s in nlu.suggestions(resto) if s.id not in resueltos]
 
 
@@ -829,6 +843,37 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     if normalized in NO_WORDS:
         _set_state(session, conv, "menu_categoria")
         return ["Sin problema. " + catalog.format_category_menu()]
+
+    # Corrección del alcance antes de insistir con el sí/no: "no solo alta
+    # medica basica" sobre una lista de dos NO es una respuesta inválida, es el
+    # cliente quitando el trámite que no pidió. El 2026-09-11 el agente la
+    # trató como error, repitió la pregunta y el cliente acabó diciendo "no" a
+    # todo: 24 minutos de conversación y cero folios.
+    #
+    # Se resuelve con el matcher LITERAL, que es gratis y exacto: si el cliente
+    # nombra un subconjunto de lo que ya está en la lista, eso basta. No se le
+    # vuelve a preguntar al modelo lo que el cliente ya dijo con todas sus
+    # letras — y así un "sí" que llegue después sigue costando cero.
+    if services:
+        mencionados = nlu._exact_matches(text)[0]
+        # Nombró parte de lo que está en la lista: quiere QUITAR el resto.
+        nombrados = [s for s in services if s.id in mencionados]
+        if not nombrados and len(mencionados) == 1:
+            # Nombró otro trámite del catálogo: se equivocó de opción y está
+            # corrigiendo. Solo con UNO: "mejor el básico, no el semiestable"
+            # nombra dos y ahí no se puede saber cuál quiere sin adivinar.
+            nombrados = list(mencionados.values())
+        pedidos = {s.id for s in services}
+        if nombrados and {s.id for s in nombrados} != pedidos:
+            _set_state(
+                session, conv, "confirmar",
+                _pendiente([s.id for s in nombrados], text, context.get("codigos")),
+            )
+            quedan = (
+                _confirm_multi_message(nombrados) if len(nombrados) > 1
+                else _confirm_message(nombrados[0], context.get("codigos"))
+            )
+            return [f"Va, lo dejamos así 👍\n\n{quedan}"]
 
     if len(services) > 1:
         confirm_text = _confirm_multi_message(services)
@@ -1183,8 +1228,9 @@ def _deduce_and_log(session: Session, phone: str, text: str):
     (multi, service, category, options) para que cada handler arme su UX."""
     # Arranca limpio. El ContextVar se copia por request, pero el cron procesa
     # muchos mensajes en el MISMO contexto: sin esto, un fallo de Ollama de
-    # hace dos mensajes se registraba como si fuera de este.
-    nlu.limpiar_fallo_ollama()
+    # hace dos mensajes se registraba —y ahora también degradaría las capas de
+    # prompt largo— como si fuera de este.
+    nlu.reiniciar_turno()
     multi = nlu.deduce_all(text)
     if multi:
         _log_nlu(session, phone, text, "multi", ",".join(s.id for s in multi))
@@ -1303,6 +1349,11 @@ def _try_informative(session: Session, phone: str, text: str) -> str | None:
     las filas extra (models.CAPAS_EXTRA) para no inflar su denominador."""
     if not settings.rag_enabled or not rag.es_pregunta_informativa(text):
         return None
+    # Ollama ya falló en ESTE mensaje: esta capa habla con el mismo servidor y
+    # con un piso de timeout de 45 s (prompt largo). Reintentar solo alarga la
+    # espera del cliente —medido el 2026-09-10: 70 s para acabar escalando—.
+    if nlu.backend_degradado() and not settings.anthropic_api_key:
+        return None
     # El corpus curado que ve el modelo es el de la oficina del cliente (§6):
     # requisitos y precios varían por estado, y contestarle a alguien de
     # Tlaxcala con los requisitos de otra ciudad es peor que no contestarle.
@@ -1324,6 +1375,10 @@ def _try_informative(session: Session, phone: str, text: str) -> str | None:
 def _try_agent_tools(session: Session, phone: str, text: str) -> str | None:
     """Nodo agéntico (app/agent_tools.py) con su bitácora: fila capa="tools"
     EXTRA del mismo mensaje, excluida de los denominadores igual que "rag"."""
+    # Mismo cortocircuito que la capa informativa: el nodo agéntico habla con
+    # el mismo Ollama, con prompt largo y hasta AGENT_MAX_TURNOS llamadas.
+    if nlu.backend_degradado() and not settings.anthropic_api_key:
+        return None
     respuesta = agent_tools.responder(session, phone, text)
     # También aquí: el nodo agéntico habla con el mismo servidor y su nodo del
     # Estudio ya muestra avisos. Sin esta línea, "el agéntico no pudo hablar
