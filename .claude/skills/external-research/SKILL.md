@@ -67,18 +67,47 @@ for a trámite — the exact material a client is entitled to know.
 - **Invocation goes through the installed skill's own wrapper** (`run.py`, under its `scripts/`
   directory — not this repo's). Calling one of its scripts directly fails: the wrapper creates and
   activates the isolated `.venv` first.
-- **It is installed globally, not vendored here.** It carries its own `.venv/` and a `data/`
-  directory holding live Google session cookies; neither belongs in this repo's history. That is why
+- **It is installed globally, not vendored here.** It lives in the operator's `~/.claude/skills/`
+  (clone of `PleasePrompto/notebooklm-skill`, MIT), carries its own `.venv/` and a `data/` directory
+  holding live Google session cookies; neither belongs in this repo's history. That is why
   `tests/test_harness.py` does not see it, and why installing it is an operator step, like the
-  permission policy.
-- **Every question is stateless.** There is no follow-up context between queries, so each question
-  must carry its own premises. The skill's own loop then asks whether anything is missing and fires
-  additional queries — budget several per research task against a free-tier daily cap.
+  permission policy. Installed on 2026-09-11.
+- **Upstream is archived.** Its README declares the project unmaintained as of September 2026: no
+  fixes when Google changes a selector or the login flow. Consequence for this repo: when it breaks,
+  it stays broken — fall back to fetching the official page and citing it, and never let a failed
+  lookup turn into a fact stated from memory. The `data/` and `.venv/` it creates are the only state,
+  so uninstalling is deleting the directory.
+- **What runs here is hand-patched, and nobody upstream owns the patches.** Two defects found the
+  day it was installed, both fixed locally with a `.bak` left beside the file:
+  (1) **the domain moved** — Google migrated `notebooklm.google.com` to `notebook.google.com`, and
+  the URL checks plus the login wait still matched the old host, so the login completed and timed
+  out anyway without saving the session, and every question died at 10 s; they now match
+  `^https://notebook(lm)?\.google\.com/`.
+  (2) **the chat's DOM is not chronological** — `ask_question.py` read the last matching element;
+  measured, the new answer had landed at index 8 of 11, so in a notebook with history it returned an
+  **old answer, coherent and cited, that did not answer the question asked**. It now takes a
+  baseline of blocks before sending, identifies the new one by difference, and times out rather than
+  returning the previous one.
+  Updating or reinstalling the skill reverts both, and the second one fails **silently** — which is
+  the precise failure this skill exists to prevent. After any update, before trusting an answer:
+  `grep -rn 'elements\[-1\]' ~/.claude/skills/notebooklm/scripts/` must come back empty.
+- **First run is not free, and one step needs root.** It builds its own `.venv` from two pure-Python
+  pins (`patchright`, `python-dotenv`) — so the interpreter version is not the obstacle it is for
+  this repo's own pins — and then needs **real Google Chrome**, not Playwright's Chromium: it forces
+  `channel="chrome"` when it launches. On Linux `patchright install chrome` installs a system
+  package and asks for root, so that half is an operator step like the permission policy; here it
+  was installed by hand at `/usr/bin/google-chrome`.
+- **Every question is stateless.** Each one opens a browser, asks, and closes: there is no follow-up
+  context between queries, so each question must carry its own premises. The skill closes every
+  answer with "Is that ALL you need to know?" precisely to provoke more queries — that prompt is the
+  skill talking to the model, not the documents talking, so treat it as a budget question: the free
+  tier allows about 50 queries a day.
 - **A cited answer is evidence, not authority.** It is grounded in the documents that were uploaded,
   which is a snapshot someone chose at some point. A requirement that changed last month is not in
   there unless somebody re-uploaded it.
-- **Describe notebooks from their contents.** Query the notebook for an overview first, then register
-  it with that description. A guessed description makes the library unsearchable later.
+- **Describe notebooks from their contents.** Read the cover summary NotebookLM already shows on the
+  notebook's own page, or —at the cost of one query— ask it for an overview; then register it with
+  that description. A guessed description makes the library unsearchable later.
 
 ## Common mistakes
 
@@ -93,6 +122,8 @@ for a trámite — the exact material a client is entitled to know.
 - Taking a researched requirement straight into the catalog. **Nothing auto-learns** — a catalog
   change goes through a human and leaves a `CatalogAudit` row, the same as a mined synonym does.
 - Treating a slow answer as a failure and re-asking. Each retry spends quota.
+- Reinstalling or updating the skill to "fix" a failure. Upstream is archived, so an update brings
+  no fix and takes the two local patches with it.
 
 ## Quality bar
 
@@ -111,12 +142,18 @@ for a trámite — the exact material a client is entitled to know.
 - Browser automation of a Google product carries an account-flagging risk the author documents
   openly. A dedicated account limits the blast radius to that account.
 - The stored session cookies are a credential. Never commit, copy or paste the contents of the
-  skill's `data/` directory.
+  skill's `data/` directory — `browser_state/` (the Chrome profile plus `state.json`),
+  `auth_info.json` and `library.json`. Reading them into context is the same leak as printing them.
+- **Nobody upstream is patching it.** An archived browser automation carrying a live Google session
+  is a dependency that only decays: assume no fix for anything found in it, and weigh that before
+  pointing it at an account that matters.
 
 ## Performance
 
-- Each question costs seconds of browser time plus one query from a daily allowance. Group related
-  questions into one research pass instead of drip-feeding them across a session.
+- Each question costs seconds of browser time plus one query from a daily allowance (~50 on the free
+  tier). Group related questions into one research pass instead of drip-feeding them across a
+  session, and read a notebook's cover summary from its page rather than asking the chat what it
+  contains — the panel is free, the chat is not.
 - It is still cheaper than what it replaces: pasting a large PDF into context every session, paying
   for those tokens every time, and getting an invented API back anyway.
 
