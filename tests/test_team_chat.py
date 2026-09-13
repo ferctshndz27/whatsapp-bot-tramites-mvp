@@ -398,7 +398,7 @@ def test_nadie_ajeno_lee_un_dm_cambiando_el_id_de_la_url(dm_de_ana_y_beto):
     hilo = carla.get(f"/team/rooms/{dm.sala}/messages")
 
     assert pagina.status_code == 200 and SECRETO not in pagina.text
-    assert f"TEAM_SALA_INICIAL = {dm.sala};" not in pagina.text, "la página abrió la sala ajena"
+    assert _sala_inicial(pagina.text) != dm.sala, "la página abrió la sala ajena"
     assert SECRETO not in hilo.text and "No tienes acceso" in hilo.text
     # Control positivo: la misma ruta SÍ le enseña el mensaje a beto. Sin esto,
     # una ruta mal escrita (404) pasaría por candado.
@@ -425,7 +425,7 @@ def test_un_id_que_no_es_suyo_cae_en_la_sala_general(dm_de_ana_y_beto, sala):
     pagina = _entrar("carla").get(f"/team?room={sala}")
 
     assert pagina.status_code == 200
-    assert f"TEAM_SALA_INICIAL = {sala};" not in pagina.text
+    assert _sala_inicial(pagina.text) != sala
 
 
 def test_sin_sesion_no_se_ve_nada(dm_de_ana_y_beto):
@@ -596,6 +596,16 @@ def test_el_chat_eliminado_reaparece_solo_con_lo_nuevo(dm_de_ana_y_beto):
     assert SECRETO not in hilo, "reapareció con el historial que ana eliminó"
 
 
+def _sala_inicial(html: str):
+    """La sala que la página le pide abrir a static/js/team.js, leída del JSON de
+    #team-datos. Antes era un script en línea (`TEAM_SALA_INICIAL = N;`) y las
+    pruebas buscaban ese texto: al quitarlo, los `not in` de las pruebas de sala
+    ajena pasaban sin comprobar nada. Leer el dato, y fallar si no está, lo evita."""
+    m = re.search(r'<script type="application/json" id="team-datos">(.*?)</script>', html, re.S)
+    assert m, "la página del chat ya no le pasa sus datos al JS"
+    return json.loads(m.group(1))["sala_inicial"]
+
+
 def test_volver_a_abrir_el_dm_eliminado_lo_muestra_vacio(dm_de_ana_y_beto):
     dm = dm_de_ana_y_beto
     ana = _entrar("ana")
@@ -604,7 +614,7 @@ def test_volver_a_abrir_el_dm_eliminado_lo_muestra_vacio(dm_de_ana_y_beto):
     r = ana.post("/team/rooms", data={"room_type": "group", "name": "", "members": ["beto"]}, follow_redirects=False)
 
     assert _sala_de_la_url(r) == dm.sala, "abrió otro DM en vez del mismo"
-    assert f"TEAM_SALA_INICIAL = {dm.sala};" in ana.get(f"/team?room={dm.sala}").text
+    assert _sala_inicial(ana.get(f"/team?room={dm.sala}").text) == dm.sala
     assert SECRETO not in ana.get(f"/team/rooms/{dm.sala}/messages").text
 
 

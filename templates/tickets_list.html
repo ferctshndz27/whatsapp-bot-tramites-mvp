@@ -50,21 +50,21 @@
   </nav>
 
   {% if nombres_etiquetas %}
-  <form method="get" action="/" style="margin:.5rem 0; display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;">
+  <form class="u-m-0_5rem-0 u-d-flex u-gap-0_4rem u-items-center u-wrap-wrap" method="get" action="/">
     {% if current_filter %}<input type="hidden" name="status" value="{{ current_filter }}">{% endif %}
     {% if assigned_filter %}<input type="hidden" name="assigned" value="{{ assigned_filter }}">{% endif %}
     {% if conv_filter %}<input type="hidden" name="conv" value="{{ conv_filter }}">{% endif %}
-    <label for="filtro-etiqueta" style="font-size:.9rem; color:var(--text-muted);">Etiqueta:</label>
-    <select id="filtro-etiqueta" name="etiqueta" onchange="this.form.submit()"
-            style="padding:.25rem .5rem; border:1px solid #d1d5db; border-radius:6px; font-size:.9rem;">
+    <label class="u-fs-0_9rem u-c-text-muted" for="filtro-etiqueta">Etiqueta:</label>
+    <select class="u-p-0_25rem-0_5rem u-b-1px-solid-gray-300 u-r-6px u-fs-0_9rem" id="filtro-etiqueta" name="etiqueta" data-autoenvio
+           >
       <option value="">todas</option>
       {% for n in nombres_etiquetas %}
       <option value="{{ n }}" {% if etiqueta_filter == n %}selected{% endif %}>{{ n }}</option>
       {% endfor %}
     </select>
     {# Sin JS obligatorio: el botón cubre a quien tenga el onchange bloqueado. #}
-    <button type="submit" class="btn" style="font-size:.85rem;">Filtrar</button>
-    {% if etiqueta_filter %}<a href="/" style="font-size:.85rem;">Quitar filtro</a>{% endif %}
+    <button type="submit" class="btn u-fs-0_85rem">Filtrar</button>
+    {% if etiqueta_filter %}<a class="u-fs-0_85rem" href="/">Quitar filtro</a>{% endif %}
   </form>
   {% endif %}
 
@@ -82,12 +82,11 @@
         </tr>
       </thead>
       <tbody>
-        {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
         {% for t in tickets %}
         <tr data-href="/tickets/{{ t.id }}?volver={{ volver_actual }}">
           <td>
-            <a class="cell-person" href="/tickets/{{ t.id }}?volver={{ volver_actual }}" style="text-decoration:none; color:inherit;">
-              <span class="avatar" style="background: {{ palette[t.id % 5] }}" aria-hidden="true">
+            <a class="cell-person u-deco-none u-c-inherit" href="/tickets/{{ t.id }}?volver={{ volver_actual }}">
+              <span class="avatar avatar-c{{ t.id % 5 }}" aria-hidden="true">
                 {{ (t.client_name or t.phone)[:2] | upper }}
               </span>
               <span>
@@ -108,7 +107,7 @@
             {% if t.assigned_to %}
               {{ t.assigned_to }}
             {% elif t.status.value != 'cerrado' %}
-              <form method="post" action="/tickets/{{ t.id }}/claim" style="margin:0;">
+              <form class="u-m-0" method="post" action="/tickets/{{ t.id }}/claim">
                 <button type="submit" class="btn-sm">Tomar</button>
               </form>
             {% else %}

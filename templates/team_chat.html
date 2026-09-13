@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Chat de equipo{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="/static/css/team.css">
-<script src="/static/js/team.js" defer></script>
+<link rel="stylesheet" href="{{ static('css/team.css') }}">
+<script src="{{ static('js/team.js') }}" defer></script>
 {% endblock %}
 {% block content %}
 <div class="chat-container" id="chat">
@@ -51,9 +51,6 @@
     </div>
 </div>
 
-<script>
-    // Config values for JS
-    window.TEAM_GENERAL_ROOM_ID = {{ general_room_id }};
-    window.TEAM_SALA_INICIAL = {{ sala_inicial }};
-</script>
+{# Datos para static/js/team.js: JSON inerte, no un script que la CSP tendría que ejecutar. #}
+<script type="application/json" id="team-datos">{{ {"general_room_id": general_room_id, "sala_inicial": sala_inicial} | tojson }}</script>
 {% endblock %}

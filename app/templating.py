@@ -7,7 +7,10 @@ mismas dos líneas duplicadas en 13 módulos). Aquí vive UNO solo, con:
     utcnow()— a hora de Ciudad de México para mostrarlos en el panel.
 """
 
+import hashlib
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi.templating import Jinja2Templates
@@ -33,7 +36,33 @@ def local_dt(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
     return value.astimezone(BUSINESS_TZ).strftime(fmt)
 
 
+STATIC_DIR = Path("static")
+
+
+@lru_cache(maxsize=256)
+def _huella(ruta: str, mtime_ns: int, tamano: int) -> str:
+    # mtime y tamaño entran a la llave solo para invalidar la caché: la huella
+    # sale del CONTENIDO, así un deploy que no cambió el archivo no lo invalida.
+    return hashlib.sha256(Path(ruta).read_bytes()).hexdigest()[:12]
+
+
+def static_url(ruta: str) -> str:
+    """URL de un estático con la huella de su contenido (`?v=…`).
+
+    Sin huella, tras un deploy el navegador podía seguir usando el JS de antes
+    con el HTML nuevo: con el JS fuera de las plantillas, eso es un botón sin
+    listener hasta que alguien limpie la caché. Si el archivo no existe se
+    devuelve la ruta sin huella y el 404 queda a la vista."""
+    archivo = STATIC_DIR / ruta
+    try:
+        st = archivo.stat()
+    except OSError:
+        return f"/static/{ruta}"
+    return f"/static/{ruta}?v={_huella(str(archivo), st.st_mtime_ns, st.st_size)}"
+
+
 templates = Jinja2Templates(directory="templates")
+templates.env.globals["static"] = static_url
 templates.env.globals["is_admin"] = is_admin
 templates.env.globals["is_admin_global"] = is_admin_global
 templates.env.globals["formato_monto"] = formato_monto

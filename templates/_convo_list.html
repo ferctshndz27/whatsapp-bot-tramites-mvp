@@ -9,15 +9,14 @@
      filtrada   bool: cambia el texto del estado vacío #}
 {% if items %}
 <div class="convo-list">
-  {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
   {% for i in items %}
   <a class="convo-card" href="/inbox/{{ i.phone }}{% if volver_url %}?volver={{ volver_url }}{% endif %}">
-    <span class="avatar" style="background: {{ palette[loop.index % 5] }}" aria-hidden="true">
+    <span class="avatar avatar-c{{ loop.index % 5 }}" aria-hidden="true">
       {{ (i.name or i.phone)[:2] | upper }}
     </span>
     <span class="body">
       <strong>{{ i.name or i.phone }}</strong>
-      {% if i.name %}<span class="sub" style="color:var(--text-muted); font-size:.8rem;"> · {{ i.phone }}</span>{% endif %}
+      {% if i.name %}<span class="sub u-c-text-muted u-fs-0_8rem"> · {{ i.phone }}</span>{% endif %}
       <div class="preview">{{ '📎 ' if i.last_direction == 'out' and not i.last_body else '' }}{{ i.last_body[:70] }}</div>
       <span class="badges">
         {% if i.waiting %}<span class="badge esperando">esperando respuesta</span>{% endif %}

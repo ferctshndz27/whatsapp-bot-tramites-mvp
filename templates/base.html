@@ -4,10 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Trámites — Dashboard{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/tokens.css">
-  <link rel="stylesheet" href="/static/css/layout.css">
-  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="{{ static('css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ static('css/layout.css') }}">
+  <link rel="stylesheet" href="{{ static('css/components.css') }}">
   {% block head %}{% endblock %}
+  {# Al final: las utilidades sustituyen a los estilos que vivían en línea y
+     conservan su precedencia con !important (ver el encabezado de utilidades.css). #}
+  <link rel="stylesheet" href="{{ static('css/utilidades.css') }}">
 </head>
 <body>
   {% if user %}
@@ -76,20 +79,9 @@
   {# Preservación de estado (scroll, secciones abiertas, foco, selección) para
      todas las vistas, y la auto-recarga que espera a que el usuario termine
      de escribir. defer: corre tras el HTML, antes de DOMContentLoaded. #}
-  <script src="/static/js/estado-vista.js" defer></script>
-  <script>
-    // Filas con data-href: toda la fila navega, como una tarjeta de
-    // conversación. Mejora progresiva: sin JS el enlace interno de la fila
-    // sigue funcionando. No navega si el click cayó en un control (enlace,
-    // botón, campo), lleva modificadores o hay texto seleccionado.
-    document.addEventListener('click', function (e) {
-      var fila = e.target.closest('tr[data-href]');
-      if (!fila) return;
-      if (e.target.closest('a, button, input, select, textarea, label')) return;
-      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      if (String(window.getSelection())) return;
-      window.location.assign(fila.dataset.href);
-    });
-  </script>
+  <script src="{{ static('js/estado-vista.js') }}" defer></script>
+  {# Filas con data-href y las acciones data-confirm / data-autoenvio / data-copiar.
+     Después de estado-vista.js: su guardado en submit sigue corriendo primero. #}
+  <script src="{{ static('js/acciones.js') }}" defer></script>
 </body>
 </html>

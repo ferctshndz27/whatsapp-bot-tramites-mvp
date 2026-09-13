@@ -9,15 +9,15 @@
   {% if new_token %}
   <div class="banner-warn" role="status">
     <strong>Código generado:</strong> {{ new_token }}
-    <button type="button" class="btn-sm copy-code" data-code="{{ new_token }}"
-            style="margin-left:.5rem;">Copiar código</button>
+    <button type="button" class="btn-sm copy-code u-ml-0_5rem" data-code="{{ new_token }}"
+           >Copiar código</button>
     <span class="badge cerrado" role="status" hidden>código copiado</span><br>
     Compártelo con el nuevo colaborador (WhatsApp, correo, en persona…). Es de un solo uso.
   </div>
   {% endif %}
 
   <form method="post" action="/invitations">
-    <p style="color: var(--text-muted); font-size: .85rem; margin: 0 0 .5rem;">
+    <p class="u-c-text-muted u-fs-0_85rem u-m-0-0-0_5rem">
       Genera un código de un solo uso y compártelo tú mismo con el colaborador
       (botón «Copiar código»). El registro se hace en <strong>/register</strong>.
       {% if oficinas | length > 1 %}
@@ -25,7 +25,7 @@
       pregunta.
       {% endif %}
     </p>
-    <div style="display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap;">
+    <div class="u-d-flex u-gap-0_75rem u-items-flex-end u-wrap-wrap">
       {% if oficinas | length == 1 %}
       {# Sin selector el POST igual dice cuál: el default del formulario es
          Tlaxcala, y un admin de otra oficina invitaría gente allá. #}
@@ -78,7 +78,7 @@
             </button>
             <span class="badge cerrado" role="status" hidden>código copiado</span>
             {% endif %}
-            <form method="post" action="/invitations/{{ i.id }}/toggle" style="display:inline;">
+            <form class="u-d-inline" method="post" action="/invitations/{{ i.id }}/toggle">
               <button type="submit" class="btn-sm {{ '' if i.habilitado else 'btn-danger' }}">
                 {{ 'Cancelar' if i.habilitado else 'Reactivar' }}
               </button>
@@ -95,35 +95,10 @@
   {% endif %}
 </div>
 
-<p style="color:var(--text-muted);">
+<p class="u-c-text-muted">
   La gestión de colaboradores (alta, contraseñas, roles, deshabilitar) está en
   <a href="/users">Usuarios</a>.
 </p>
 
-<script>
-  // Copiar al portapapeles con fallback para contextos no seguros (http local).
-  document.querySelectorAll('.copy-code').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var code = btn.dataset.code;
-      var done = function () {
-        var tag = btn.nextElementSibling;
-        if (tag) {
-          tag.hidden = false;
-          setTimeout(function () { tag.hidden = true; }, 2000);
-        }
-      };
-      if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(code).then(done);
-      } else {
-        var ta = document.createElement('textarea');
-        ta.value = code;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        done();
-      }
-    });
-  });
-</script>
+<script src="{{ static('js/invitations.js') }}" defer></script>
 {% endblock %}

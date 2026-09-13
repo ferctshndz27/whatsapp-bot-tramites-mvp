@@ -11,6 +11,10 @@ import pathlib
 
 TEMPLATES = pathlib.Path("templates")
 JS = pathlib.Path("static/js/estado-vista.js")
+# El lienzo del Estudio vivía en templates/agente.html; ahora su JS y su CSS
+# están en static/ (la CSP ya no ejecuta scripts en línea).
+AGENTE_JS = pathlib.Path("static/js/agente.js")
+AGENTE_CSS = pathlib.Path("static/css/agente.css")
 
 
 def _plantillas():
@@ -88,7 +92,7 @@ def test_los_hilos_de_chat_tienen_llave_para_preservarse():
 def test_el_lienzo_del_estudio_recuerda_el_nodo_abierto():
     # Los botones del Estudio recargan la página: sin esto, guardar un párrafo
     # devolvía al panel genérico y había que volver a buscar el nodo.
-    agente = (TEMPLATES / "agente.html").read_text()
+    agente = AGENTE_JS.read_text()
     assert 'EstadoVista.guardar(SELECCION' in agente
     assert "EstadoVista.leer(SELECCION)" in agente
     # Y el gancho existe del lado del módulo compartido.
@@ -112,7 +116,7 @@ def test_la_llave_ignora_los_parametros_efimeros_del_redirect():
 def test_los_nodos_del_lienzo_son_alcanzables_por_teclado():
     # Sin esto la configuración del agente era inaccesible sin ratón: los nodos
     # son <g> de SVG, que no entran solos en el orden de tabulación.
-    agente = (TEMPLATES / "agente.html").read_text()
+    agente = AGENTE_JS.read_text()
     for pieza in ('setAttribute("tabindex", "0")', 'setAttribute("role", "button")',
                   'setAttribute("aria-label"'):
         assert pieza in agente, pieza
@@ -123,7 +127,7 @@ def test_los_nodos_del_lienzo_son_alcanzables_por_teclado():
 def test_los_tres_estados_visuales_existen_y_en_ese_orden():
     # El orden importa: el ganador del probador se pinta DESPUÉS de la
     # selección, así conviven sin que ninguno tenga que saber del otro.
-    agente = (TEMPLATES / "agente.html").read_text()
+    agente = AGENTE_CSS.read_text()
     posiciones = {
         estado: agente.index(sel)
         for estado, sel in {
@@ -141,12 +145,12 @@ def test_los_tres_estados_visuales_existen_y_en_ese_orden():
 def test_el_resaltado_del_probador_dejo_de_pisar_atributos():
     # Antes el probador escribía el borde por atributo del modelo y la
     # selección por CSS: dos sistemas peleando por la misma propiedad.
-    agente = (TEMPLATES / "agente.html").read_text()
+    agente = AGENTE_JS.read_text()
     assert 'classList.add("est-ganador")' in agente
     assert 'attr({ body: { stroke: "#d29922"' not in agente
 
 
 def test_solo_un_nodo_seleccionado_y_anunciado():
-    agente = (TEMPLATES / "agente.html").read_text()
+    agente = AGENTE_JS.read_text()
     assert 'querySelectorAll("#lienzo .joint-cell.est-sel").forEach' in agente
     assert 'setAttribute("aria-current", "true")' in agente

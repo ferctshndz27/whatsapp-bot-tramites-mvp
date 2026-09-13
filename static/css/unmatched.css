@@ -1,0 +1,27 @@
+/* Estilo del Agente WhatsApp extraído de templates/unmatched.html (antes en línea; la CSP ya no lo permite). */
+/* Salud del agente (Fase 4b). El color nunca es el único indicador: cada
+   estado lleva ícono + texto; el borde izquierdo refuerza el nivel. */
+.health-banner {
+  display: flex; align-items: center; gap: .75rem;
+  border-radius: var(--radius); padding: .9rem 1.15rem; margin-bottom: 1.4rem;
+  font-weight: 600; box-shadow: var(--shadow); border-left: 6px solid var(--green);
+  background: #e3f7f0; color: #0b6e5d;
+}
+.health-banner .ico { font-size: 1.35rem; line-height: 1; }
+.health-banner .sub { display: block; font-weight: 400; font-size: .85rem; opacity: .85; }
+.health-banner.warn     { background: #fdeedd; color: #92590a; border-left-color: var(--orange); }
+.health-banner.critical { background: #fde7ef; color: #be1e51; border-left-color: var(--red); }
+
+.alert-list { display: flex; flex-direction: column; gap: .75rem; }
+.alert-row {
+  display: flex; gap: .85rem; align-items: flex-start;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: .9rem 1.1rem;
+  border-left: 5px solid var(--orange);
+}
+.alert-row.critical { border-left-color: var(--red); }
+.alert-row .a-body { flex: 1; min-width: 0; }
+.alert-row .a-title { font-weight: 700; margin: 0 0 .2rem; }
+.alert-row .a-detail { color: var(--text-muted); font-size: .9rem; margin: 0; }
+.alert-row .a-since { color: var(--text-muted); font-size: .78rem; margin-top: .35rem; display: block; }
+.badge.warn     { background: #fdeedd; color: #92590a; }
+.badge.critical { background: #fde7ef; color: #be1e51; }

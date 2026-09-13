@@ -1,39 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Catálogo{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static('css/catalog.css') }}">{% endblock %}
 {% block content %}
 <h1>Catálogo de servicios</h1>
 {# /kb es la vista de LECTURA de este mismo catálogo (kb ya enlaza hacia acá);
    sin este link la página era un callejón sin salida. #}
-<p style="margin-top:0;"><a href="/kb">📚 Ver como guía de trámites</a></p>
+<p class="u-mt-0"><a href="/kb">📚 Ver como guía de trámites</a></p>
 
 {% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
 
-<style>
-  .catalog-grid input, .catalog-grid textarea { width: 100%; box-sizing: border-box; }
-  .catalog-grid td { vertical-align: middle; }
-  .catalog-grid .col-price { width: 130px; }
-  .catalog-grid .col-state { width: 90px; text-align: center; }
-  .catalog-grid .col-actions { width: 210px; white-space: nowrap; }
-  .catalog-grid tr.row-dirty td { background: rgba(255, 196, 0, .07); }
-  .dirty-tag { color: var(--yellow, #d97706); font-size: .8rem; margin-left: .35rem; }
-  .req-row td { padding-top: 0; border-top: none; }
-  .req-row details summary { cursor: pointer; color: var(--text-muted); font-size: .85rem; }
-  .req-row textarea { min-height: 56px; margin-top: .35rem; }
-  .req-hint { color: var(--green, #16a34a); font-size: .8rem; margin-left: .5rem; }
-  .cat-head { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .75rem; }
-  .svc-off td { opacity: .55; }
-  .hist-old { color: var(--text-muted); text-decoration: line-through; }
-  .hist-new { font-weight: 600; }
-</style>
 
 <div class="card">
   <h2>Nueva categoría</h2>
-  <form method="post" action="/catalog/categories" style="display:flex; gap:.5rem; flex-wrap:wrap;">
-    <label for="new-cat" class="sr-only" style="position:absolute; left:-9999px;">Nombre de la categoría</label>
-    <input type="text" id="new-cat" name="name" required placeholder="Nombre de la categoría" style="max-width:280px;">
+  <form class="u-d-flex u-gap-0_5rem u-wrap-wrap" method="post" action="/catalog/categories">
+    <label for="new-cat" class="sr-only u-pos-absolute u-left-n9999px">Nombre de la categoría</label>
+    <input class="u-maxw-280px" type="text" id="new-cat" name="name" required placeholder="Nombre de la categoría">
     <button type="submit">Agregar categoría</button>
   </form>
-  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+  <p class="u-c-text-muted u-fs-0_85rem u-m-0_5rem-0-0">
     Los cambios se aplican al instante: el bot los usa en el siguiente mensaje, sin reiniciar.
     Cada cambio queda registrado en el historial (al final de esta página) con quién lo hizo,
     el valor anterior y el nuevo. Ocultar/deshabilitar no borra nada.
@@ -41,17 +25,17 @@
 </div>
 
 {% for cat in categories %}
-<div class="card" {% if not cat.habilitado %}style="opacity:.7;"{% endif %}>
+<div class="card{% if not cat.habilitado %} u-op-0_7{% endif %}">
   <div class="cat-head">
-    <h2 style="margin:0;">{{ cat.name }}</h2>
+    <h2 class="u-m-0">{{ cat.name }}</h2>
     {% if not cat.habilitado %}<span class="badge caducada">deshabilitada</span>{% endif %}
-    <form method="post" action="/catalog/categories/{{ cat.id }}/rename" style="display:flex; gap:.5rem; margin-left:auto;">
-      <label for="ren-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Nuevo nombre</label>
-      <input type="text" id="ren-{{ cat.id }}" name="name" value="{{ cat.name }}" required style="max-width:220px;">
+    <form class="u-d-flex u-gap-0_5rem u-ml-auto" method="post" action="/catalog/categories/{{ cat.id }}/rename">
+      <label for="ren-{{ cat.id }}" class="sr-only u-pos-absolute u-left-n9999px">Nuevo nombre</label>
+      <input class="u-maxw-220px" type="text" id="ren-{{ cat.id }}" name="name" value="{{ cat.name }}" required>
       <button type="submit" class="btn-sm">Renombrar</button>
     </form>
     <form method="post" action="/catalog/categories/{{ cat.id }}/toggle"
-      onsubmit="return confirm('{{ '¿Habilitar' if not cat.habilitado else '¿Deshabilitar' }} la categoría {{ cat.name }}?');">
+      data-confirm="{{ '¿Habilitar' if not cat.habilitado else '¿Deshabilitar' }} la categoría {{ cat.name }}?">
       <button type="submit" class="btn-sm {{ 'btn-danger' if cat.habilitado else '' }}">
         {{ 'Deshabilitar' if cat.habilitado else 'Habilitar' }}
       </button>
@@ -64,7 +48,7 @@
         <tr>
           <th>Servicio</th>
           <th class="col-price">Precio</th>
-          <th>Sinónimos <span title="Frases con que los clientes lo piden; el bot las usa para entender." style="cursor:help;">ⓘ</span></th>
+          <th>Sinónimos <span class="u-cursor-help" title="Frases con que los clientes lo piden; el bot las usa para entender.">ⓘ</span></th>
           <th class="col-state">Estado</th>
           <th class="col-actions">Acciones</th>
         </tr>
@@ -94,7 +78,7 @@
           <td class="col-actions">
             <button type="submit" form="f-{{ svc.id }}" class="btn-sm">Guardar</button>
             <span class="dirty-tag" data-for="f-{{ svc.id }}" hidden>● sin guardar</span>
-            <form method="post" action="/catalog/services/{{ svc.id }}/toggle" style="display:inline;">
+            <form class="u-d-inline" method="post" action="/catalog/services/{{ svc.id }}/toggle">
               <button type="submit" class="btn-sm {{ 'btn-danger' if svc.habilitado else '' }}">
                 {{ 'Ocultar' if svc.habilitado else 'Mostrar' }}
               </button>
@@ -127,12 +111,12 @@
   <form id="f-{{ svc.id }}" method="post" action="/catalog/services/{{ svc.id }}/update"></form>
   {% endfor %}
 
-  <form method="post" action="/catalog/services" style="display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem;">
+  <form class="u-d-flex u-gap-0_5rem u-wrap-wrap u-mt-0_75rem" method="post" action="/catalog/services">
     <input type="hidden" name="category_id" value="{{ cat.id }}">
-    <label for="ns-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Nombre del servicio</label>
-    <input type="text" id="ns-{{ cat.id }}" name="name" required placeholder="Nuevo servicio en {{ cat.name }}" style="min-width:260px;">
-    <label for="np-{{ cat.id }}" class="sr-only" style="position:absolute; left:-9999px;">Precio</label>
-    <input type="text" id="np-{{ cat.id }}" name="price_info" required placeholder="$500" style="max-width:130px;">
+    <label for="ns-{{ cat.id }}" class="sr-only u-pos-absolute u-left-n9999px">Nombre del servicio</label>
+    <input class="u-minw-260px" type="text" id="ns-{{ cat.id }}" name="name" required placeholder="Nuevo servicio en {{ cat.name }}">
+    <label for="np-{{ cat.id }}" class="sr-only u-pos-absolute u-left-n9999px">Precio</label>
+    <input class="u-maxw-130px" type="text" id="np-{{ cat.id }}" name="price_info" required placeholder="$500">
     <button type="submit" class="btn-sm">Agregar</button>
   </form>
 </div>
@@ -171,43 +155,5 @@
   {% endif %}
 </div>
 
-<script>
-  // Detección de cambios sin guardar: resalta la fila, muestra "● sin guardar"
-  // y avisa antes de salir de la página si hay ediciones pendientes.
-  (function () {
-    var dirty = new Set();
-
-    function formIsDirty(fid) {
-      var els = document.querySelectorAll('[form="' + fid + '"][name]');
-      for (var i = 0; i < els.length; i++) {
-        if (els[i].dataset.orig !== undefined && els[i].value !== els[i].dataset.orig) return true;
-      }
-      return false;
-    }
-
-    function refresh(fid) {
-      var isDirty = formIsDirty(fid);
-      isDirty ? dirty.add(fid) : dirty.delete(fid);
-      document.querySelectorAll('.dirty-tag[data-for="' + fid + '"]').forEach(function (t) {
-        t.hidden = !isDirty;
-      });
-      document.querySelectorAll('tr[data-form="' + fid + '"]').forEach(function (r) {
-        r.classList.toggle('row-dirty', isDirty);
-      });
-    }
-
-    document.querySelectorAll('input[form][name], textarea[form][name]').forEach(function (el) {
-      el.dataset.orig = el.value;
-      el.addEventListener('input', function () { refresh(el.getAttribute('form')); });
-    });
-
-    document.querySelectorAll('form[id^="f-"]').forEach(function (f) {
-      f.addEventListener('submit', function () { dirty.delete(f.id); });
-    });
-
-    window.addEventListener('beforeunload', function (e) {
-      if (dirty.size) { e.preventDefault(); e.returnValue = ''; }
-    });
-  })();
-</script>
+<script src="{{ static('js/catalog.js') }}" defer></script>
 {% endblock %}

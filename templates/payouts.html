@@ -5,11 +5,11 @@
 <h1>Depósitos del banco</h1>
 
 <div class="card">
-  <p style="margin-top:0;">
+  <p class="u-mt-0">
     <a href="/cobros">← Volver a Cobros</a> ·
-    <a href="/export/conciliacion.csv" class="btn-sm" style="text-decoration:none;">↓ CSV de conciliación</a>
+    <a href="/export/conciliacion.csv" class="btn-sm u-deco-none">↓ CSV de conciliación</a>
   </p>
-  <p style="color:var(--text-muted);">
+  <p class="u-c-text-muted">
     Stripe no deposita cobro por cobro: junta varios, les descuenta la comisión
     y manda <strong>un solo depósito</strong> días después. Aquí se ve qué
     folios componen cada depósito, que es lo que permite cuadrar el estado de
@@ -24,11 +24,11 @@
 
   {% if grupos %}
   {% for g in grupos %}
-  <h2 style="margin-top:1.25rem;">Depósito {{ g.payout_id }}</h2>
-  <p style="margin:.25rem 0 .5rem;">
+  <h2 class="u-mt-1_25rem">Depósito {{ g.payout_id }}</h2>
+  <p class="u-m-0_25rem-0-0_5rem">
     Bruto {{ formato_monto(g.bruto) }} · comisión {{ formato_monto(g.comision) }} ·
     <strong>neto depositado {{ formato_monto(g.neto) }}</strong>
-    <span style="color:var(--text-muted);">({{ g.cobros|length }} cobro{{ '' if g.cobros|length == 1 else 's' }})</span>
+    <span class="u-c-text-muted">({{ g.cobros|length }} cobro{{ '' if g.cobros|length == 1 else 's' }})</span>
   </p>
   <div class="table-wrap">
     <table>
@@ -57,7 +57,7 @@
   </div>
   {% endfor %}
   {% else %}
-  <p style="color:var(--text-muted);">
+  <p class="u-c-text-muted">
     Todavía no hay depósitos registrados. Aparecen cuando Stripe liquida los
     primeros cobros y el barrido nocturno lee su transacción de balance.
   </p>

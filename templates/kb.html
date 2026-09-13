@@ -2,7 +2,7 @@
 {% block title %}Guía de trámites{% endblock %}
 {% block content %}
 <h1>Guía de trámites</h1>
-<p style="color:var(--text-muted); margin-top:-.75rem;">
+<p class="u-c-text-muted u-mt-n0_75rem">
   Requisitos y precios oficiales — para que todo el equipo dé la misma información.
   {% if is_admin_global(user) %}Se editan desde <a href="/catalog">Catálogo</a>.{% endif %}
 </p>
@@ -12,13 +12,13 @@
   <h2>{{ cat.name }}</h2>
   <div class="table-wrap">
     <table>
-      <thead><tr><th style="width:30%;">Servicio</th><th style="width:15%;">Precio</th><th>Requisitos</th></tr></thead>
+      <thead><tr><th class="u-w-30pct">Servicio</th><th class="u-w-15pct">Precio</th><th>Requisitos</th></tr></thead>
       <tbody>
         {% for s in cat.services %}
         <tr>
           <td><strong>{{ s.name }}</strong></td>
           <td>{{ s.price_info }}</td>
-          <td style="white-space:pre-line;">{{ s.requirements or '— pendiente de documentar —' }}</td>
+          <td class="u-ws-pre-line">{{ s.requirements or '— pendiente de documentar —' }}</td>
         </tr>
         {% endfor %}
       </tbody>

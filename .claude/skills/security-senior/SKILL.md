@@ -75,9 +75,13 @@ change from silently opening one of them.
   outermost, so `_security_headers` seals every response and `session_activity` / `_nav_context`
   sit *inside* `SessionMiddleware` because they read `request.session`.
 - **Headers are applied with `setdefault`** (`main.py:76-80`) — a route *can* override one. Never
-  override CSP or `X-Frame-Options`. The CSP is `default-src 'self'` with `'unsafe-inline'` for
-  style and script only; charts are server-rendered SVG (`activity.py`) precisely so no external
-  host is ever needed.
+  override CSP or `X-Frame-Options`. The CSP is `default-src 'self'` with `script-src 'self'`
+  (**no** `'unsafe-inline'`: every script lives in `static/js/`, data reaches it as inert JSON or
+  `data-*`) and `'unsafe-inline'` kept for style only; charts are server-rendered SVG
+  (`activity.py`) precisely so no external host is ever needed. Never put Jinja inside an event
+  attribute (`onsubmit="confirm('{{ x }}')"`): the browser decodes the attribute before compiling
+  the JS, so autoescaping does not protect it — use `data-confirm` (`static/js/acciones.js`).
+  `tests/test_separacion_front.py` fails if either comes back.
 - **Session cookie** (`main.py:112-118`): `https_only=settings.secure_cookies` (default on,
   `SECURE_COOKIES=0` only for local HTTP), `same_site="lax"`, `max_age=SESSION_MAX_AGE` = 12 h.
   SameSite=Lax + POST is the *entire* CSRF defense; `/logout` (`dashboard.py:130`) is the one

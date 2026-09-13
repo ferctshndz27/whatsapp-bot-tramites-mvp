@@ -12,25 +12,25 @@
    olvidar en una de las dos rutas sin que Jinja diga nada. #}
 
 {% if totales %}
-<div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem;">
-  <div class="card" style="min-width:190px; margin:0; border-left:4px solid #be1e51;">
-    <div style="color:var(--text-muted); font-size:.82rem;">En la calle</div>
-    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(en_la_calle) }}</div>
-    <div style="color:var(--text-muted); font-size:.82rem;">falta por cobrar</div>
+<div class="u-d-flex u-gap-0_75rem u-wrap-wrap u-mb-1rem">
+  <div class="card u-minw-190px u-m-0 u-bl-4px-solid-red-ink">
+    <div class="u-c-text-muted u-fs-0_82rem">En la calle</div>
+    <div class="u-fs-1_25rem u-fw-600">{{ formato_monto(en_la_calle) }}</div>
+    <div class="u-c-text-muted u-fs-0_82rem">falta por cobrar</div>
   </div>
-  <div class="card" style="min-width:190px; margin:0; border-left:4px solid #1e7d52;">
-    <div style="color:var(--text-muted); font-size:.82rem;">Recuperado</div>
-    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(recuperado) }}</div>
-    <div style="color:var(--text-muted); font-size:.82rem;">ya entró</div>
+  <div class="card u-minw-190px u-m-0 u-bl-4px-solid-green-ink">
+    <div class="u-c-text-muted u-fs-0_82rem">Recuperado</div>
+    <div class="u-fs-1_25rem u-fw-600">{{ formato_monto(recuperado) }}</div>
+    <div class="u-c-text-muted u-fs-0_82rem">ya entró</div>
   </div>
   {# Ese cobro sigue `pendiente` a propósito: el estado «pagado» es exclusivo de
      Stripe. Pero el asesor ya vio el recibo, y sin decírselo la cifra de arriba
      le reclama dinero que él sabe que llegó. Se muestra, no se descuenta. #}
   {% if confirmado_sin_stripe %}
-  <div class="card" style="min-width:190px; margin:0; border-left:4px solid #b8860b;">
-    <div style="color:var(--text-muted); font-size:.82rem;">Confirmado sin Stripe</div>
-    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(confirmado_sin_stripe) }}</div>
-    <div style="color:var(--text-muted); font-size:.82rem;">incluido en «en la calle»</div>
+  <div class="card u-minw-190px u-m-0 u-bl-4px-solid-gold-ink">
+    <div class="u-c-text-muted u-fs-0_82rem">Confirmado sin Stripe</div>
+    <div class="u-fs-1_25rem u-fw-600">{{ formato_monto(confirmado_sin_stripe) }}</div>
+    <div class="u-c-text-muted u-fs-0_82rem">incluido en «en la calle»</div>
   </div>
   {% endif %}
   {# La tarjeta que de verdad contesta «¿a quién le cobro hoy?». La antigüedad
@@ -39,21 +39,21 @@
      nadie mira. Esto se agrega en SQL sobre TODA la cartera, igual que «En la
      calle», así que es independiente de la paginación por construcción. #}
   {% if viejos and viejos.n %}
-  <div class="card" style="min-width:190px; margin:0; border-left:4px solid #be1e51;">
-    <div style="color:var(--text-muted); font-size:.82rem;">Con más de {{ viejos.dias }} días</div>
-    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(viejos.centavos) }}</div>
-    <div style="color:var(--text-muted); font-size:.82rem;">
+  <div class="card u-minw-190px u-m-0 u-bl-4px-solid-red-ink">
+    <div class="u-c-text-muted u-fs-0_82rem">Con más de {{ viejos.dias }} días</div>
+    <div class="u-fs-1_25rem u-fw-600">{{ formato_monto(viejos.centavos) }}</div>
+    <div class="u-c-text-muted u-fs-0_82rem">
       {{ viejos.n }} cobro{{ '' if viejos.n == 1 else 's' }} · toca insistir
     </div>
   </div>
   {% endif %}
 </div>
-<div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+<div class="u-d-flex u-gap-0_75rem u-wrap-wrap u-mb-1rem">
   {% for estado, t in totales.items() %}
-  <div class="card" style="min-width:170px; margin:0;">
-    <div style="color:var(--text-muted); font-size:.82rem;">{{ estado|replace('_', ' ')|capitalize }}</div>
-    <div style="font-size:1.25rem; font-weight:600;">{{ formato_monto(t.centavos) }}</div>
-    <div style="color:var(--text-muted); font-size:.82rem;">
+  <div class="card u-minw-170px u-m-0">
+    <div class="u-c-text-muted u-fs-0_82rem">{{ estado|replace('_', ' ')|capitalize }}</div>
+    <div class="u-fs-1_25rem u-fw-600">{{ formato_monto(t.centavos) }}</div>
+    <div class="u-c-text-muted u-fs-0_82rem">
       {{ t.n }} cobro{{ '' if t.n == 1 else 's' }}
       {# Lo pedido y lo recibido son numeros distintos: un SPEI parcial deja
          el cobro pendiente con dinero ya adentro, y sumarlos como uno solo
@@ -87,7 +87,7 @@
         <td>
           {{ formato_monto(c.monto_centavos, c.moneda) }}
           {% if c.monto_pagado_centavos and c.monto_pagado_centavos != c.monto_centavos %}
-          <br><small style="color:#be1e51;">cobrado {{ formato_monto(c.monto_pagado_centavos, c.moneda_pagada or c.moneda) }}</small>
+          <br><small class="u-c-red-ink">cobrado {{ formato_monto(c.monto_pagado_centavos, c.moneda_pagada or c.moneda) }}</small>
           {% endif %}
         </td>
         <td>
@@ -100,8 +100,8 @@
           {% if c.confirmado_por_asesor and c.estado != 'pagado' %}
           <br><small>confirmado por {{ c.confirmado_por }}, sin Stripe</small>
           {% endif %}
-          {% if c.discrepancia %}<br><small style="color:#be1e51;">⚠ discrepancia</small>{% endif %}
-          {% if c.disputado %}<br><small style="color:#be1e51;">⚠ en disputa</small>{% endif %}
+          {% if c.discrepancia %}<br><small class="u-c-red-ink">⚠ discrepancia</small>{% endif %}
+          {% if c.disputado %}<br><small class="u-c-red-ink">⚠ en disputa</small>{% endif %}
         </td>
         <td>
           {{ c.metodo_usado or (c.metodos_ofrecidos|replace(',', ', ')) }}
@@ -109,7 +109,7 @@
         </td>
         <td>
           {% if c.neto_centavos is not none %}{{ formato_monto(c.neto_centavos, c.moneda_liquidacion or c.moneda) }}
-          {% elif c.estado == 'pagado' %}<small style="color:var(--text-muted);">por conciliar</small>
+          {% elif c.estado == 'pagado' %}<small class="u-c-text-muted">por conciliar</small>
           {% else %}—{% endif %}
         </td>
         {# La antigüedad se lee de la MISMA fecha que ya está en esta celda, así
@@ -129,13 +129,13 @@
             {% if a.viejo %}
             <span class="badge caducada">{{ a.dias }} días sin pagar</span>
             {% else %}
-            <span style="color:var(--text-muted);">{% if a.dias == 0 %}hoy{% else %}hace {{ a.dias }} día{{ '' if a.dias == 1 else 's' }}{% endif %}</span>
+            <span class="u-c-text-muted">{% if a.dias == 0 %}hoy{% else %}hace {{ a.dias }} día{{ '' if a.dias == 1 else 's' }}{% endif %}</span>
             {% endif %}
             {% if a.instrumento_vencido %}
             {# El cliente YA NO PUEDE PAGAR: la acción es regenerar el link, no
                llamarle. Mismo rosa que «⚠ discrepancia» de la celda de Estado —
                el color refuerza, el texto es el dato (WCAG 1.4.1). #}
-            <br><span style="color:#be1e51;">⚠ ficha vencida: regenera el link</span>
+            <br><span class="u-c-red-ink">⚠ ficha vencida: regenera el link</span>
             {% endif %}
           {% elif a.tardo is not none %}
           {# Ya cayó: lo útil no es su edad sino cuánto TARDÓ en caer. Un pagado
@@ -143,10 +143,10 @@
              una pared roja y el asesor deja de mirar el color también donde sí
              importa. De paso es el único número que contesta «¿qué tan rápido
              nos pagan?», que es con lo que algún día se calibra el 3. #}
-          <span style="color:var(--text-muted);">pagó {% if a.tardo == 0 %}el mismo día{% else %}en {{ a.tardo }} día{{ '' if a.tardo == 1 else 's' }}{% endif %}</span>
+          <span class="u-c-text-muted">pagó {% if a.tardo == 0 %}el mismo día{% else %}en {{ a.tardo }} día{{ '' if a.tardo == 1 else 's' }}{% endif %}</span>
           {% else %}
           {# Cancelado, vencido o fallido: es historia, no cola de trabajo. #}
-          <span style="color:var(--text-muted);">hace {{ a.dias }} día{{ '' if a.dias == 1 else 's' }}</span>
+          <span class="u-c-text-muted">hace {{ a.dias }} día{{ '' if a.dias == 1 else 's' }}</span>
           {% endif %}
         </small></td>
       </tr>
@@ -155,13 +155,13 @@
   </table>
 </div>
 
-<nav aria-label="Paginación de cobros"
-     style="display:flex; gap:1rem; align-items:center; margin-top:1rem;">
+<nav class="u-d-flex u-gap-1rem u-items-center u-mt-1rem" aria-label="Paginación de cobros"
+    >
   {% if pagina > 1 %}
   <a href="{{ ruta }}?pagina={{ pagina - 1 }}{% if todos %}&todos=1{% endif %}"
      rel="prev">&larr; Anteriores</a>
   {% endif %}
-  <span style="color:var(--text-muted); font-size:.9rem;">
+  <span class="u-c-text-muted u-fs-0_9rem">
     Página {{ pagina }} · {{ total_n }} cobro{{ '' if total_n == 1 else 's' }} en total
   </span>
   {% if hay_mas %}
@@ -170,7 +170,7 @@
   {% endif %}
 </nav>
 {% else %}
-<p style="color:var(--text-muted);">
+<p class="u-c-text-muted">
   {% if pagina > 1 %}
   No hay más cobros en esta página.
   <a href="{{ ruta }}{% if todos %}?todos=1{% endif %}">Volver al inicio</a>

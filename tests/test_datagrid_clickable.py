@@ -11,6 +11,7 @@ con el MISMO destino que el enlace de la fila. El comportamiento del click es
 del navegador y se validó a mano.
 """
 
+import pathlib
 import re
 
 import bcrypt
@@ -102,12 +103,17 @@ def test_el_data_href_coincide_con_el_enlace_de_la_fila(http):
     """Si el atributo y el enlace divergieran, click en la fila y click en el
     texto llevarían a lugares distintos."""
     html = http.get("/").text
-    fila = re.search(r'<tr data-href="([^"]+)">.*?<a class="cell-person" href="([^"]+)"', html, re.S)
+    # [^>]* y cell-person[^"]*: la fila y el enlace pueden llevar más atributos o
+    # clases (las utilidades que sustituyeron a los style=""); lo que importa es
+    # que el destino de los dos sea el mismo.
+    fila = re.search(r'<tr data-href="([^"]+)"[^>]*>.*?<a class="cell-person[^"]*" href="([^"]+)"', html, re.S)
     assert fila and fila.group(1) == fila.group(2)
 
 
 def test_el_script_de_delegacion_esta_en_todas_las_vistas(http):
-    """Vive en base.html: si alguien lo mueve a una plantilla concreta, el
-    resto de los grids queda con cursor de click que no hace nada."""
+    """Lo carga base.html desde static/js/acciones.js (la CSP ya no ejecuta el
+    script en línea que vivía ahí): si alguien lo mueve a una plantilla
+    concreta, el resto de los grids queda con cursor de click que no hace nada."""
+    assert "tr[data-href]" in pathlib.Path("static/js/acciones.js").read_text(encoding="utf-8")
     for url in ("/", "/clients", "/my"):
-        assert "tr[data-href]" in http.get(url).text, f"falta el script en {url}"
+        assert "/static/js/acciones.js?v=" in http.get(url).text, f"falta el script en {url}"

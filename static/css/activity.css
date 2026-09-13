@@ -1,0 +1,30 @@
+/* Estilo de Actividad extraído de templates/activity.html (antes en línea; la CSP ya no lo permite). */
+.chart-filter { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: 1rem; }
+.chart-filter label { display: block; font-size: .8rem; color: var(--text-muted); margin-bottom: .2rem; }
+.chart-flex { display: flex; gap: 2rem; flex-wrap: wrap; align-items: center; }
+.line-wrap { flex: 2; min-width: 320px; }
+.line-wrap svg { width: 100%; height: auto; display: block; }
+.donut-wrap { flex: 1; min-width: 230px; display: flex; gap: 1rem; align-items: center; justify-content: center; flex-wrap: wrap; }
+.chart-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: .5rem; font-size: .85rem; justify-content: flex-end; }
+.chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .35rem; }
+.donut-list { font-size: .85rem; display: flex; flex-direction: column; gap: .35rem; }
+.donut-list i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .4rem; }
+/* Mensajería: la leyenda lleva color Y patrón de trazo (el color no puede
+   ser el único indicador), y los números viven en la tabla, no en el hover. */
+.msg-legend { justify-content: flex-start; align-items: center; gap: 1.2rem; }
+.msg-legend span { display: inline-flex; align-items: center; gap: .4rem; }
+/* #5f6572 y no --text-muted (#7c828d): este es el texto que impide leer
+   «sin dato» como «gratis», y a .85rem el muted da 3.86:1, debajo del
+   4.5:1 de WCAG AA. Mismo gris que ya usa .composer-hint. */
+.msg-nota { color: #5f6572; font-size: .85rem; margin: .4rem 0 0; }
+/* .line-wrap trae flex:2 y min-width:320px para convivir con la dona dentro
+   de .chart-flex. Aquí cuelga directo de la tarjeta: sin esto, a 360px de
+   ancho el piso de 320px desborda y el scroll lateral llega al body. */
+.card > .line-wrap { flex: none; min-width: 0; }
+.msg-dias { margin: .4rem 0 0; font-size: .85rem; color: #5f6572; }
+.msg-dias summary { cursor: pointer; }
+.msg-dias ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+.msg-costo { display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; align-items: baseline; }
+.msg-costo .monto { font-size: 1.8rem; font-weight: 800; }
+.msg-costo .etiqueta { font-size: .75rem; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; background: #fdeedd; color: #92590a; border-radius: 999px; padding: .2rem .6rem; }

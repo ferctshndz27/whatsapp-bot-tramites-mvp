@@ -6,21 +6,21 @@
    se descarta si apunta a la Bandeja: un botón que dice «Solicitudes» y lleva a
    otro lado miente, y la Bandeja está por desaparecer. #}
 {% set destino = volver if volver and not volver.startswith('/inbox') else '/' %}
-<p style="margin-top:0;"><a class="btn-nav" href="{{ destino }}">← Volver a Solicitudes</a></p>
+<p class="u-mt-0"><a class="btn-nav" href="{{ destino }}">← Volver a Solicitudes</a></p>
 <h1>
   {{ client.name if client and client.name else 'Sin nombre' }}
-  <span style="color:var(--text-muted); font-size:.9rem; font-weight:400;">· {{ phone }}</span>
+  <span class="u-c-text-muted u-fs-0_9rem u-fw-400">· {{ phone }}</span>
 </h1>
 
 <div class="card">
-  <p style="margin:0; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+  <p class="u-m-0 u-d-flex u-gap-0_5rem u-wrap-wrap u-items-center">
     {% if bot_paused %}
     {% if ticket and not ticket.agent_active %}
     <span class="badge pausado">agente apagado — el cliente solo te ve a ti</span>
     {% else %}
     <span class="badge esperando">escalado — el agente sigue activo; se apaga al enviar tu primer mensaje</span>
     {% endif %}
-    <form method="post" action="/inbox/{{ phone }}/bot-on" style="display:inline;">
+    <form class="u-d-inline" method="post" action="/inbox/{{ phone }}/bot-on">
       <button type="submit" class="btn-sm">Reactivar bot</button>
     </form>
     {% else %}
@@ -49,8 +49,8 @@
     {% if client %}<a class="btn-nav" href="/clients/{{ phone }}?volver={{ ('/inbox/' ~ phone) | urlencode }}">👤 Ficha del cliente</a>{% endif %}
     {% if client and not client.habilitado %}<span class="badge caducada">cliente bloqueado</span>{% endif %}
     {% if is_admin(user) and client %}
-    <form method="post" action="/inbox/{{ phone }}/block" style="display:inline;"
-      onsubmit="return confirm('{{ '¿Desbloquear' if not client.habilitado else '¿Bloquear' }} a este cliente?');">
+    <form class="u-d-inline" method="post" action="/inbox/{{ phone }}/block"
+      data-confirm="{{ '¿Desbloquear' if not client.habilitado else '¿Bloquear' }} a este cliente?">
       <button type="submit" class="btn-sm {{ 'btn-danger' if client.habilitado else '' }}">
         {{ 'Bloquear cliente' if client.habilitado else 'Desbloquear cliente' }}
       </button>
@@ -97,8 +97,8 @@
         · {{ m.created_at | local }}
         {% if m.direction.value == 'out' and m.wa_status %} · {{ m.wa_status }}{% endif %}
         {% if m.direction.value == 'out' and m.sent_by == user %}
-        · <form method="post" action="/inbox/{{ phone }}/messages/{{ m.id }}/delete" style="display:inline;" onsubmit="return confirm('¿Ocultar este mensaje?');">
-            <button type="submit" style="background:none; border:none; padding:0; min-height:auto; color:inherit; text-decoration:underline; cursor:pointer; font-size:inherit;">eliminar</button>
+        · <form class="u-d-inline" method="post" action="/inbox/{{ phone }}/messages/{{ m.id }}/delete" data-confirm="¿Ocultar este mensaje?">
+            <button class="u-bg-none u-b-none u-p-0 u-minh-auto u-c-inherit u-deco-underline u-cursor-pointer u-fs-inherit" type="submit">eliminar</button>
           </form>
         {% endif %}
       </span>
@@ -109,12 +109,7 @@
      Fuera del `if window_open` porque un chat con la ventana cerrada también se
      lee. `scrollTop` directo y no `scrollIntoView`: nada de animación que
      pelearse con prefers-reduced-motion, y el resto de la página no se mueve. #}
-  <script>
-    (function () {
-      var chat = document.getElementById('chat');
-      if (chat) chat.scrollTop = chat.scrollHeight;
-    })();
-  </script>
+  <script src="{{ static('js/inbox-chat.js') }}" defer></script>
 
   <div class="composer">
     {% if error == 'window' %}
@@ -167,114 +162,12 @@
         Si adjuntas un archivo, tu texto se envía como pie.
       </p>
     </form>
-    <script>
-      (function () {
-        var form = document.getElementById('composer');
-        var ta = document.getElementById('body');
-        var file = document.getElementById('file');
-        var chip = document.getElementById('attach-chip');
-
-        document.querySelectorAll('.qr').forEach(function (b) {
-          b.addEventListener('click', function () {
-            ta.value = b.dataset.text;
-            ta.focus();
-            crecer();
-          });
-        });
-
-        // El textarea crece con el contenido y se detiene en max-height (CSS).
-        function crecer() {
-          ta.style.height = 'auto';
-          ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
-        }
-        ta.addEventListener('input', crecer);
-
-        // Enter envía, Shift+Enter salta de línea (como WhatsApp Web). Solo con
-        // teclado físico: en un teclado táctil no hay Shift+Enter y el asesor
-        // se quedaría sin poder escribir varias líneas desde el celular.
-        var tecladoFisico = window.matchMedia('(pointer: fine)').matches;
-        ta.addEventListener('keydown', function (e) {
-          if (tecladoFisico && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-            e.preventDefault();
-            form.requestSubmit();
-          }
-        });
-
-        function peso(bytes) {
-          return bytes < 1048576
-            ? Math.max(1, Math.round(bytes / 1024)) + ' KB'
-            : (bytes / 1048576).toFixed(1) + ' MB';
-        }
-
-        function pintarChip() {
-          chip.textContent = '';
-          var f = file.files && file.files[0];
-          if (!f) {
-            chip.hidden = true;
-            ta.placeholder = 'Escribe un mensaje…';
-            return;
-          }
-          // Se revela ANTES de llenarlo: lo que cambia dentro de un subárbol
-          // oculto no lo anuncia la región aria-live.
-          chip.hidden = false;
-          if (f.type.indexOf('image/') === 0) {
-            // data: y no blob: — el CSP del panel es `img-src 'self' data:`
-            // (app/main.py), así que una URL blob: no se pintaría.
-            var img = document.createElement('img');
-            img.alt = '';
-            var lector = new FileReader();
-            lector.onload = function () { img.src = lector.result; };
-            lector.readAsDataURL(f);
-            chip.appendChild(img);
-          } else {
-            var ico = document.createElement('span');
-            ico.textContent = '📄';
-            ico.setAttribute('aria-hidden', 'true');
-            chip.appendChild(ico);
-          }
-          var nombre = document.createElement('span');
-          nombre.className = 'name';
-          nombre.textContent = f.name;
-          var tam = document.createElement('span');
-          tam.className = 'peso';
-          tam.textContent = peso(f.size);
-          var quitar = document.createElement('button');
-          quitar.type = 'button';
-          quitar.className = 'chip-x';
-          quitar.textContent = '✕ Quitar';
-          quitar.addEventListener('click', function () {
-            file.value = '';
-            pintarChip();
-            file.focus();
-          });
-          chip.appendChild(nombre);
-          chip.appendChild(tam);
-          chip.appendChild(quitar);
-          ta.placeholder = 'Agrega un texto (opcional)…';
-        }
-        file.addEventListener('change', pintarChip);
-
-        // Sin texto ni archivo no hay nada que enviar: se dice por qué en vez
-        // de cancelar en silencio (el textarea ya no lleva `required`).
-        form.addEventListener('submit', function (e) {
-          if (!ta.value.trim() && !(file.files && file.files.length)) {
-            e.preventDefault();
-            chip.textContent = 'Escribe un mensaje o adjunta un archivo.';
-            chip.hidden = false;
-            ta.focus();
-          }
-        });
-      })();
-    </script>
+    <script src="{{ static('js/inbox-composer.js') }}" defer></script>
     <noscript>
       {# Sin JS no hay ficha del adjunto: se muestra el input tal cual, en su
          propio renglón para que en móvil no empuje al botón Enviar fuera de
          la pantalla. #}
-      <style>
-        .attach { display: none; }
-        .composer-bar { flex-wrap: wrap; }
-        #file { position: static; width: auto; height: auto; clip: auto; flex: 1 0 100%; order: -1; margin: 0 0 .5rem; }
-      </style>
+      <link rel="stylesheet" href="{{ static('css/inbox-chat-sin-js.css') }}">
     </noscript>
     {% else %}
     {# Antes aquí solo quedaba un renglón: el compositor desaparecía y el asesor

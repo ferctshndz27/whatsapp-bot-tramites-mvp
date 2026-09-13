@@ -4,7 +4,7 @@
 <div class="login-wrap">
   <div class="card login-card">
     <h1>Crear cuenta</h1>
-    <p style="color: var(--text-muted); margin-top: -.5rem;">Para colaboradores con código de invitación</p>
+    <p class="u-c-text-muted u-mt-n0_5rem">Para colaboradores con código de invitación</p>
     {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
     <form method="post" action="/register">
       <label for="username">Usuario</label>
@@ -22,7 +22,7 @@
       <br>
       <button type="submit">Registrarme</button>
     </form>
-    <p style="margin-top: 1rem; font-size: .85rem;">¿Ya tienes cuenta? <a href="/login">Inicia sesión</a></p>
+    <p class="u-mt-1rem u-fs-0_85rem">¿Ya tienes cuenta? <a href="/login">Inicia sesión</a></p>
   </div>
 </div>
 {% endblock %}

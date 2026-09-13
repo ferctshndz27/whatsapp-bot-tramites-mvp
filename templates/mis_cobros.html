@@ -5,18 +5,18 @@
 <h1>Mi cartera</h1>
 
 <div class="card">
-  <p style="margin-top:0; color:var(--text-muted); font-size:.9rem; margin-bottom:.75rem;">
+  <p class="u-mt-0 u-c-text-muted u-fs-0_9rem u-mb-0_75rem">
     Los cobros que <strong>generé yo</strong> o los de un folio que tengo asignado.
     Es mi cola de trabajo, no un candado: los folios de la oficina siguen siendo
     de todos y cualquiera puede tomar uno desde <a href="/tickets">Solicitudes</a>.
   </p>
   {% if modo %}
-  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; color:var(--text-muted); font-size:.9rem;">
+  <div class="u-d-flex u-items-center u-wrap-wrap u-gap-0_75rem u-mb-1rem u-c-text-muted u-fs-0_9rem">
     <span>Llave en modo <strong>{{ modo }}</strong>.</span>
     {% if todos %}
-      <a href="/my/cobros" class="btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; margin-left:auto;">Ver solo los de modo {{ modo }}</a>
+      <a href="/my/cobros" class="btn-sm u-deco-none u-d-inline-flex u-items-center u-ml-auto">Ver solo los de modo {{ modo }}</a>
     {% else %}
-      <a href="/my/cobros?todos=1" class="btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; margin-left:auto;">Ver todos</a>
+      <a href="/my/cobros?todos=1" class="btn-sm u-deco-none u-d-inline-flex u-items-center u-ml-auto">Ver todos</a>
     {% endif %}
   </div>
   {% endif %}

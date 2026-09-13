@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Mi día{% endblock %}
 {% block content %}
-<h1 style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+<h1 class="u-d-flex u-items-center u-gap-1rem u-wrap-wrap">
   Mi día
-  <form method="post" action="/my/estado" style="display:inline-flex; align-items:center; gap:.5rem; margin-left:auto;">
-    <label for="estado" style="margin:0;">Mi estado:</label>
-    <select name="estado" id="estado" onchange="this.form.submit()" style="max-width:160px; min-height:36px; padding:.3rem .5rem;">
+  <form class="u-d-inline-flex u-items-center u-gap-0_5rem u-ml-auto" method="post" action="/my/estado">
+    <label class="u-m-0" for="estado">Mi estado:</label>
+    <select class="u-maxw-160px u-minh-36px u-p-0_3rem-0_5rem" name="estado" id="estado" data-autoenvio>
       {% for e in estados %}
       <option value="{{ e }}" {{ 'selected' if e == estado else '' }}>{{ e }}</option>
       {% endfor %}
@@ -35,10 +35,10 @@
      alguien si se llega a ella desde la pantalla que ya abre todas las
      mañanas. `.stats` es grid, así que el ancla se comporta como bloque sola.
      El importe baja a 1.25rem porque «$1,250.50 MXN» a 2rem no cabe en 190px. #}
-  <a class="stat-card {{ 'orange' if cobros_vivos else 'green' }}" href="/my/cobros"
-     style="text-decoration:none;">
+  <a class="stat-card {{ 'orange' if cobros_vivos else 'green' }} u-deco-none" href="/my/cobros"
+    >
     <div class="label">Mi cartera por cobrar</div>
-    <div class="value" style="font-size:1.25rem;">{{ formato_monto(cobros_en_la_calle) }}</div>
+    <div class="value u-fs-1_25rem">{{ formato_monto(cobros_en_la_calle) }}</div>
     <div class="label">{{ cobros_vivos }} cobro{{ '' if cobros_vivos == 1 else 's' }} vivo{{ '' if cobros_vivos == 1 else 's' }}</div>
   </a>
 </div>
@@ -72,21 +72,21 @@
     <h2>Seguimientos</h2>
     {% if due_now or upcoming %}
     {% if due_now %}
-    <h2 style="font-size:.85rem; color:var(--red-2);">Para hoy</h2>
+    <h2 class="u-fs-0_85rem u-c-red-2">Para hoy</h2>
     {% for f in due_now %}
-    <p style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:.5rem;">
+    <p class="u-d-flex u-gap-0_5rem u-items-center u-wrap-wrap u-bb-1px-solid-border u-pb-0_5rem">
       <a href="/tickets/{{ f.ticket_id }}">#{{ f.ticket_id }}</a>
-      <span style="flex:1;">{{ f.note or 'Dar seguimiento' }}</span>
-      <form method="post" action="/my/followups/{{ f.id }}/done" style="display:inline;">
+      <span class="u-flex-1">{{ f.note or 'Dar seguimiento' }}</span>
+      <form class="u-d-inline" method="post" action="/my/followups/{{ f.id }}/done">
         <button type="submit" class="btn-sm">✓ Hecho</button>
       </form>
     </p>
     {% endfor %}
     {% endif %}
     {% if upcoming %}
-    <h2 style="font-size:.85rem; margin-top:1rem;">Próximos</h2>
+    <h2 class="u-fs-0_85rem u-mt-1rem">Próximos</h2>
     {% for f in upcoming %}
-    <p style="color:var(--text-muted); border-bottom:1px solid var(--border); padding-bottom:.5rem;">
+    <p class="u-c-text-muted u-bb-1px-solid-border u-pb-0_5rem">
       {{ f.due_at.strftime('%d %b') }} — <a href="/tickets/{{ f.ticket_id }}">#{{ f.ticket_id }}</a>
       {{ f.note or '' }}
     </p>

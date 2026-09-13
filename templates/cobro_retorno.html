@@ -11,33 +11,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>{{ titulo }}</title>
-  <style>
-    body {
-      margin: 0; min-height: 100vh; display: flex; align-items: center;
-      justify-content: center; padding: 1.5rem;
-      background: #f4f5f7; color: #22242a;
-      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    }
-    .caja {
-      background: #fff; border-radius: 14px; padding: 2rem 1.75rem;
-      max-width: 30rem; width: 100%; text-align: center;
-      box-shadow: 0 2px 18px rgba(0, 0, 0, .08);
-    }
-    .icono { font-size: 3rem; line-height: 1; }
-    h1 { font-size: 1.35rem; margin: .75rem 0 .5rem; }
-    p { margin: .5rem 0; }
-    .nota { color: #5a5f6b; font-size: .92rem; }
-    a.boton {
-      display: inline-block; margin-top: 1.25rem; padding: .7rem 1.4rem;
-      background: #22242a; color: #fff; border-radius: 999px;
-      text-decoration: none; font-weight: 600;
-    }
-    a.boton:focus-visible { outline: 3px solid #dcf24c; outline-offset: 2px; }
-    @media (prefers-reduced-motion: no-preference) {
-      .caja { animation: entrar .25s ease-out; }
-      @keyframes entrar { from { opacity: 0; transform: translateY(6px); } }
-    }
-  </style>
+  <link rel="stylesheet" href="{{ static('css/cobro-retorno.css') }}">
 </head>
 <body>
   <main class="caja">

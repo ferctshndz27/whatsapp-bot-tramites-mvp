@@ -472,7 +472,10 @@ def test_la_plantilla_no_reescribe_los_rangos_a_mano():
     deslizador pueden separarse en silencio."""
     from pathlib import Path
 
-    html = Path("templates/agente.html").read_text(encoding="utf-8")
+    # El formulario lo arma static/js/agente.js; la plantilla también se revisa
+    # por si alguien lo vuelve a escribir a mano en el HTML.
+    html = (Path("templates/agente.html").read_text(encoding="utf-8")
+            + Path("static/js/agente.js").read_text(encoding="utf-8"))
 
     for cota in ('min="70"', 'max="95"', 'min="30"', 'max="120"', 'min="1" max="5"'):
         assert cota not in html, f"{cota} volvió a la plantilla: usa el descriptor"

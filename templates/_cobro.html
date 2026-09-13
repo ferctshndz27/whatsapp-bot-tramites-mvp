@@ -14,7 +14,7 @@
 
   {% for c in cobros %}
   <div class="tile">
-    <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+    <div class="u-d-flex u-gap-0_5rem u-wrap-wrap u-items-center">
       {% if c.estado == 'pagado' %}
         <span class="badge cerrado">✓ Pagado</span>
       {% elif c.estado == 'pendiente' %}
@@ -30,7 +30,7 @@
       {% endif %}
 
       <strong>{{ formato_monto(c.monto_centavos, c.moneda) }}</strong>
-      <span style="color:var(--text-muted);">{{ c.concepto }}</span>
+      <span class="u-c-text-muted">{{ c.concepto }}</span>
 
       {% if c.confirmado_por_asesor and c.estado != 'pagado' %}
       <span class="badge esperando">Confirmado por {{ c.confirmado_por }} · Stripe aún no</span>
@@ -41,21 +41,21 @@
     </div>
 
     {% if c.estado == 'pagado' and c.monto_pagado_centavos and c.monto_pagado_centavos != c.monto_centavos %}
-    <p style="margin:.4rem 0 0; color:#be1e51;">
+    <p class="u-m-0_4rem-0-0 u-c-red-ink">
       Se cobró {{ formato_monto(c.monto_pagado_centavos, c.moneda_pagada or c.moneda) }},
       distinto de lo solicitado.
     </p>
     {% endif %}
     {% if c.monto_reembolsado_centavos %}
-    <p style="margin:.4rem 0 0;">
+    <p class="u-m-0_4rem-0-0">
       Reembolso: {{ formato_monto(c.monto_reembolsado_centavos, c.moneda) }}
     </p>
     {% endif %}
     {% if c.estado_motivo %}
-    <p style="margin:.4rem 0 0; color:var(--text-muted); font-size:.9rem;">{{ c.estado_motivo }}</p>
+    <p class="u-m-0_4rem-0-0 u-c-text-muted u-fs-0_9rem">{{ c.estado_motivo }}</p>
     {% endif %}
 
-    <p style="margin:.4rem 0 0; color:var(--text-muted); font-size:.85rem;">
+    <p class="u-m-0_4rem-0-0 u-c-text-muted u-fs-0_85rem">
       {# `metodo_usado` es el INSTRUMENTO vivo, no un hecho consumado: el
          aplicador lo escribe al emitirse el voucher, antes de que el cliente
          pague. Conjugarlo siempre en pasado anunciaba «Pagó con card» en un
@@ -68,38 +68,38 @@
     </p>
 
     {% if c.url_pago or c.voucher_url %}
-    <p style="margin:.5rem 0 0;">
+    <p class="u-m-0_5rem-0-0">
       <a href="{{ c.voucher_url or c.url_pago }}" target="_blank" rel="noopener">
         {{ 'Ver ficha de pago' if c.voucher_url else 'Abrir link de pago' }}
       </a>
-      <button type="button" class="btn-sm" style="margin-left:.5rem;"
-              onclick="navigator.clipboard.writeText('{{ c.voucher_url or c.url_pago }}'); this.textContent='Copiado ✓';">
+      <button type="button" class="btn-sm u-ml-0_5rem"
+              data-copiar="{{ c.voucher_url or c.url_pago }}">
         Copiar link
       </button>
     </p>
     {% endif %}
 
     {% if puede_cobrar %}
-    <div style="display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem;">
+    <div class="u-d-flex u-gap-0_5rem u-wrap-wrap u-mt-0_75rem">
       {% if c.estado in ('pendiente', 'borrador') %}
-      <form method="post" action="/cobros/{{ c.id }}/enviar" style="display:inline;">
+      <form class="u-d-inline" method="post" action="/cobros/{{ c.id }}/enviar">
         <input type="hidden" name="volver" value="{{ volver }}">
         <button type="submit" class="btn-sm">Reenviar por WhatsApp</button>
       </form>
       {% endif %}
       {% if c.estado in ('borrador', 'pendiente', 'cancelacion_solicitada') %}
-      <form method="post" action="/cobros/{{ c.id }}/cancelar" style="display:inline;"
-            onsubmit="return confirm('¿Cancelar este cobro? Si el cliente ya tiene una ficha de OXXO, solo se cancela cuando Stripe lo confirme.');">
+      <form class="u-d-inline" method="post" action="/cobros/{{ c.id }}/cancelar"
+            data-confirm="¿Cancelar este cobro? Si el cliente ya tiene una ficha de OXXO, solo se cancela cuando Stripe lo confirme.">
         <input type="hidden" name="volver" value="{{ volver }}">
         <button type="submit" class="btn-sm btn-danger">Cancelar cobro</button>
       </form>
-      <form method="post" action="/cobros/{{ c.id }}/reconciliar" style="display:inline;">
+      <form class="u-d-inline" method="post" action="/cobros/{{ c.id }}/reconciliar">
         <input type="hidden" name="volver" value="{{ volver }}">
         <button type="submit" class="btn-sm">Consultar a Stripe ahora</button>
       </form>
       {% endif %}
       {% if c.estado == 'pagado' and not c.aviso_pago_enviado_at %}
-      <form method="post" action="/cobros/{{ c.id }}/avisar-pago" style="display:inline;">
+      <form class="u-d-inline" method="post" action="/cobros/{{ c.id }}/avisar-pago">
         <input type="hidden" name="volver" value="{{ volver }}">
         <button type="submit" class="btn-sm">Avisar al cliente que ya pagó</button>
       </form>
@@ -107,14 +107,14 @@
     </div>
 
     {% if c.estado in ('pendiente', 'cancelacion_solicitada') and not c.confirmado_por_asesor %}
-    <form method="post" action="/cobros/{{ c.id }}/confirmar"
-          style="display:flex; gap:.5rem; align-items:flex-end; margin-top:.75rem;"
-          onsubmit="return confirm('Esto NO marca el cobro como pagado: solo deja constancia de que viste el comprobante. Stripe sigue siendo la única confirmación.');">
+    <form class="u-d-flex u-gap-0_5rem u-items-flex-end u-mt-0_75rem" method="post" action="/cobros/{{ c.id }}/confirmar"
+         
+          data-confirm="Esto NO marca el cobro como pagado: solo deja constancia de que viste el comprobante. Stripe sigue siendo la única confirmación.">
       <input type="hidden" name="volver" value="{{ volver }}">
       <div>
         <label for="ref-{{ c.id }}">Referencia del recibo</label>
-        <input type="text" name="referencia" id="ref-{{ c.id }}" maxlength="100"
-               placeholder="folio del comprobante" style="max-width:220px;">
+        <input class="u-maxw-220px" type="text" name="referencia" id="ref-{{ c.id }}" maxlength="100"
+               placeholder="folio del comprobante">
       </div>
       <button type="submit" class="btn-sm">Confirmado por asesor</button>
     </form>
@@ -126,11 +126,11 @@
   {% for c in cobros_vivos_del_telefono %}
   {# Borde ámbar: aquí hay dinero en la calle. Antes era .card, que no define
      `border`, así que este border-color no pintaba nada. #}
-  <div class="tile" style="border-color:#92590a;">
+  <div class="tile u-bc-amber-ink">
     <span class="badge tomado">⏳ Cobro vivo en otro folio</span>
-    <strong style="margin-left:.5rem;">{{ formato_monto(c.monto_centavos, c.moneda) }}</strong>
-    <span style="color:var(--text-muted);">{{ c.concepto }}</span>
-    <p style="margin:.4rem 0 0; color:var(--text-muted); font-size:.85rem;">
+    <strong class="u-ml-0_5rem">{{ formato_monto(c.monto_centavos, c.moneda) }}</strong>
+    <span class="u-c-text-muted">{{ c.concepto }}</span>
+    <p class="u-m-0_4rem-0-0 u-c-text-muted u-fs-0_85rem">
       Este cliente ya tiene un cobro sin liquidar
       {% if c.ticket_id %}(folio <a href="/tickets/{{ c.ticket_id }}">#{{ c.ticket_id }}</a>){% endif %}.
       No se puede generar otro del mismo servicio hasta que se pague o se cancele.
@@ -148,26 +148,26 @@
   <p><span class="badge caducada">Stripe no está configurado — no se puede generar ningún cobro.</span></p>
   {% else %}
   <form method="post" action="/tickets/{{ ticket.id }}/cobro"
-        onsubmit="return confirm('Se va a generar un cobro por ' + this.monto.value + ' para {{ ticket.client_name or ticket.phone }}. ¿Confirmas el monto?');">
+        data-confirm="Se va a generar un cobro por {monto} para {{ ticket.client_name or ticket.phone }}. ¿Confirmas el monto?" data-confirm-campos="monto">
     <input type="hidden" name="volver" value="{{ volver }}">
     {# El token viaja escondido y es único por RENDER: dos envíos del mismo
        formulario (F5 o doble clic) chocan contra ux_cobro_generacion y NO
        generan un segundo cobro. #}
     <input type="hidden" name="token_form" value="{{ token_form }}">
-    <div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end;">
+    <div class="u-d-flex u-gap-0_75rem u-wrap-wrap u-items-flex-end">
       <div>
         <label for="monto">Monto</label>
-        <input type="text" name="monto" id="monto" required inputmode="decimal"
-               value="{{ monto_sugerido }}" placeholder="1,250.00" style="max-width:160px;">
+        <input class="u-maxw-160px" type="text" name="monto" id="monto" required inputmode="decimal"
+               value="{{ monto_sugerido }}" placeholder="1,250.00">
       </div>
-      <div style="flex:1; min-width:220px;">
+      <div class="u-flex-1 u-minw-220px">
         <label for="concepto">Concepto (lo ve el cliente)</label>
-        <input type="text" name="concepto" id="concepto" maxlength="300"
-               value="{{ ticket.service_name }} (folio #{{ ticket.id }})" style="width:100%;">
+        <input class="u-w-100pct" type="text" name="concepto" id="concepto" maxlength="300"
+               value="{{ ticket.service_name }} (folio #{{ ticket.id }})">
       </div>
       <div>
         <label for="msi">Meses sin intereses</label>
-        <select name="msi" id="msi" style="max-width:150px;">
+        <select class="u-maxw-150px" name="msi" id="msi">
           <option value="">sin MSI</option>
           <option value="3">hasta 3</option>
           <option value="6">hasta 6</option>
@@ -177,31 +177,31 @@
       </div>
     </div>
 
-    <fieldset style="border:1px solid var(--border); border-radius:6px; padding:.5rem .75rem; margin-top:.75rem;">
-      <legend style="font-size:.85rem; color:var(--text-muted);">Formas de pago</legend>
-      <label style="display:inline-flex; align-items:center; gap:.35rem; margin-right:1rem;">
+    <fieldset class="u-b-1px-solid-border u-r-6px u-p-0_5rem-0_75rem u-mt-0_75rem">
+      <legend class="u-fs-0_85rem u-c-text-muted">Formas de pago</legend>
+      <label class="u-d-inline-flex u-items-center u-gap-0_35rem u-mr-1rem">
         <input type="checkbox" name="metodo" value="card" checked> Tarjeta
       </label>
-      <label style="display:inline-flex; align-items:center; gap:.35rem; margin-right:1rem;">
+      <label class="u-d-inline-flex u-items-center u-gap-0_35rem u-mr-1rem">
         <input type="checkbox" name="metodo" value="oxxo"> OXXO
       </label>
-      <label style="display:inline-flex; align-items:center; gap:.35rem;">
+      <label class="u-d-inline-flex u-items-center u-gap-0_35rem">
         <input type="checkbox" name="metodo" value="spei"> Transferencia SPEI
       </label>
-      <p style="margin:.4rem 0 0; color:var(--text-muted); font-size:.82rem;">
+      <p class="u-m-0_4rem-0-0 u-c-text-muted u-fs-0_82rem">
         OXXO tarda hasta 3 días en confirmar y tiene tope de
         {{ formato_monto(oxxo_max_centavos) }} por ficha.
       </p>
     </fieldset>
 
     {% if monto_cotizado_centavos %}
-    <p style="margin:.5rem 0 0; color:var(--text-muted); font-size:.85rem;">
+    <p class="u-m-0_5rem-0-0 u-c-text-muted u-fs-0_85rem">
       Al cliente se le cotizó <strong>{{ formato_monto(monto_cotizado_centavos) }}</strong> por WhatsApp.
       Si cobras otra cosa queda registrado como ajuste.
     </p>
     {% endif %}
 
-    <button type="submit" class="btn-sm" style="margin-top:.75rem;">Generar y enviar cobro</button>
+    <button type="submit" class="btn-sm u-mt-0_75rem">Generar y enviar cobro</button>
   </form>
   {% endif %}
   </div>

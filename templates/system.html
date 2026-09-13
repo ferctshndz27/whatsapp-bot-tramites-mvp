@@ -4,7 +4,7 @@
 <h1>Sistema</h1>
 
 {% if synced %}
-<div class="banner-warn" role="status" style="border-color:var(--green);">
+<div class="banner-warn u-bc-green" role="status">
   Sincronización del espejo completada.
 </div>
 {% endif %}
@@ -37,10 +37,10 @@
       </tbody>
     </table>
   </div>
-  <form method="post" action="/system/sync" style="margin-top:.75rem;">
+  <form class="u-mt-0_75rem" method="post" action="/system/sync">
     <button type="submit">Sincronizar ahora</button>
   </form>
-  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+  <p class="u-c-text-muted u-fs-0_85rem u-m-0_5rem-0-0">
     Ejecuta el backfill completo SQLite → MSSQL (idempotente). Úsalo si alguna tabla
     aparece desfasada, por ejemplo tras editar SQLite por consola.
   </p>
@@ -92,11 +92,11 @@
           <th scope="row">Credenciales ilegibles</th>
           <td>
             <span class="badge caducada">{{ info.credenciales_ilegibles | join(', ') }}</span>
-            <div style="color:var(--text-muted); font-size:.85rem;">
+            <div class="u-c-text-muted u-fs-0_85rem">
               Hay una credencial guardada que no se puede descifrar: revisa
               <code>CREDENTIALS_KEY</code> en el <code>.env</code>.
             </div>
-            <p style="margin:.5rem 0 0;"><a class="btn-nav" href="/oficinas">🏢 Ver por oficina</a></p>
+            <p class="u-m-0_5rem-0-0"><a class="btn-nav" href="/oficinas">🏢 Ver por oficina</a></p>
           </td>
         </tr>
         {% endif %}
@@ -107,14 +107,14 @@
 
 <div class="card">
   <h2>Reportes y auditoría</h2>
-  <p style="display:flex; gap:.75rem; flex-wrap:wrap; margin:0;">
-    <a href="/export/tickets.csv" class="btn-sm" style="text-decoration:none;">⬇ Solicitudes (CSV)</a>
-    <a href="/export/activity.csv" class="btn-sm" style="text-decoration:none;">⬇ Actividad (CSV)</a>
-    <a href="/export/logins.csv" class="btn-sm" style="text-decoration:none;">⬇ Accesos (CSV)</a>
-    <a href="/audit" class="btn-sm" style="text-decoration:none;">Bitácora de acciones admin</a>
-    <a href="/unmatched" class="btn-sm" style="text-decoration:none;">Mensajes no entendidos</a>
+  <p class="u-d-flex u-gap-0_75rem u-wrap-wrap u-m-0">
+    <a href="/export/tickets.csv" class="btn-sm u-deco-none">⬇ Solicitudes (CSV)</a>
+    <a href="/export/activity.csv" class="btn-sm u-deco-none">⬇ Actividad (CSV)</a>
+    <a href="/export/logins.csv" class="btn-sm u-deco-none">⬇ Accesos (CSV)</a>
+    <a href="/audit" class="btn-sm u-deco-none">Bitácora de acciones admin</a>
+    <a href="/unmatched" class="btn-sm u-deco-none">Mensajes no entendidos</a>
   </p>
-  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+  <p class="u-c-text-muted u-fs-0_85rem u-m-0_5rem-0-0">
     Los CSV abren directo en Excel (UTF-8 con BOM: los acentos se ven bien).
   </p>
 </div>
