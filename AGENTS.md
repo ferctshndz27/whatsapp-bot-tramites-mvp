@@ -159,9 +159,8 @@ Push to `main` → GitHub Actions runs `pytest` → on success the `promote` job
 deployed SHA (shown in `/system`).
 
 The human operator runs all `git push` / deploy commands themselves — prepare copy-paste-ready
-commands, don't push. See the auto-memory `feedback-comandos-deploy.md` for the exact command format
-this operator expects (explicit `git add` file lists, one ref per `git rev-parse`, heredocs for
-inline Python).
+commands, don't push, in the format this operator expects: explicit `git add` file lists, one ref
+per `git rev-parse`, heredocs for inline Python.
 
 ## Architecture
 
