@@ -85,7 +85,9 @@ def test_el_hilo_pegado_al_fondo_vuelve_al_fondo_NUEVO():
 
 def test_los_hilos_de_chat_tienen_llave_para_preservarse():
     # Sin id no hay nada que preservar tras un POST que recarga la página.
-    for nombre in ("inbox_chat.html", "team_chat.html"):
+    # inbox_chat.html se retiró (el chat vive en el CRM, que no recarga la página
+    # y por eso no necesita llave); queda el chat de equipo.
+    for nombre in ("team_chat.html",):
         assert 'id="chat"' in (TEMPLATES / nombre).read_text(), nombre
 
 

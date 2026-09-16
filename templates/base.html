@@ -25,12 +25,12 @@
         {# Va en Operación y NO bajo Administración: la cartera es del asesor.
            /cobros (admin) es la vista de toda la oficina; esta es la suya. #}
         <a href="/my/cobros" {% if request.url.path.startswith('/my/cobros') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💰</span>Mi cartera</a>
-        {# El detalle de folio vive bajo /tickets/ y el chat bajo /inbox/: sin
-           estas ramas, entrar a un folio o a una conversación dejaba el sidebar
-           entero sin ítem activo. Ambos se alcanzan desde Solicitudes, que ya
-           trae los filtros de conversación — por eso la Bandeja ya no es una
-           entrada del menú. #}
-        <a href="/" {% if request.url.path == '/' or request.url.path.startswith('/tickets') or request.url.path.startswith('/inbox') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🎫</span>Solicitudes</a>
+        {# El detalle de folio vive bajo /tickets/: sin esta rama, entrar a un
+           folio dejaba el sidebar entero sin ítem activo. El chat vive en /crm,
+           que tiene su propia entrada; /inbox/{phone} solo reenvía ahí. #}
+        <a href="/" {% if request.url.path == '/' or request.url.path.startswith('/tickets') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🎫</span>Solicitudes</a>
+        {# CRM: embudo comercial, bandeja y chat en una página (app/crm.py). #}
+        <a href="/crm" {% if request.url.path.startswith('/crm') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📋</span>WhatsApp</a>
         <a href="/clients" {% if request.url.path.startswith('/clients') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👤</span>Clientes</a>
         <a href="/team" {% if request.url.path.startswith('/team') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💬</span>Equipo</a>
         <a href="/activity" {% if request.url.path.startswith('/activity') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📈</span>Actividad</a>

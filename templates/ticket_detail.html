@@ -3,7 +3,7 @@
 {% block content %}
 {# `volver` trae la lista de origen con filtros y página (validado en la
    ruta); el texto del botón dice a DÓNDE regresa. #}
-{% set volver_texto = '← Volver a cobros' if volver.startswith('/cobros') else ('← Volver al chat' if volver.startswith('/inbox') else '← Volver a solicitudes') %}
+{% set volver_texto = '← Volver a cobros' if volver.startswith('/cobros') else ('← Volver al chat' if volver.startswith('/inbox') or volver.startswith('/crm') else '← Volver a solicitudes') %}
 <p class="u-mt-0"><a class="btn-nav" href="{{ volver or '/' }}">{{ volver_texto }}</a></p>
 <h1>Solicitud #{{ ticket.id }}</h1>
 
@@ -39,7 +39,7 @@
     <strong>Conversación:</strong>
     {# Con ?folio: abrir el chat desde el folio #30 debe mostrar el #30, no el
        último del cliente. #}
-    <a class="btn-nav" href="/inbox/{{ ticket.phone }}?folio={{ ticket.id }}">💬 Abrir chat</a>
+    <a class="btn-nav" href="/crm?chat={{ ticket.phone }}">💬 Abrir chat</a>
     <a class="btn-nav" href="/clients/{{ ticket.phone }}?volver={{ ('/tickets/' ~ ticket.id) | urlencode }}">👤 Ficha del cliente</a>
   </p>
 </div>

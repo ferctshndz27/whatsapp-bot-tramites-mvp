@@ -35,7 +35,8 @@ ARCHIVE_DDL = [
         email TEXT, origen TEXT, idioma TEXT DEFAULT 'es-MX',
         opt_in_at TIMESTAMP, opt_in_source TEXT, opt_out_at TIMESTAMP,
         atributos_json TEXT, last_activity_at TIMESTAMP,
-        notas_internas TEXT, office_id INTEGER DEFAULT 1)""",
+        notas_internas TEXT, office_id INTEGER DEFAULT 1,
+        etapa_crm_id INTEGER, etapa_crm_at TIMESTAMP, etapa_crm_por TEXT)""",
     """CREATE TABLE wa_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,
         phone TEXT REFERENCES wa_clients(phone), direction TEXT, body TEXT,
@@ -106,6 +107,10 @@ ARCHIVE_DDL = [
     """CREATE TABLE ticket_labels (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, label_id INTEGER,
         created_by TEXT, habilitado INTEGER DEFAULT 1,
+        created_at TIMESTAMP)""",
+    """CREATE TABLE crm_etapas (
+        source_id INTEGER PRIMARY KEY, nombre TEXT, color TEXT,
+        ord INTEGER DEFAULT 0, habilitado INTEGER DEFAULT 1,
         created_at TIMESTAMP)""",
     """CREATE TABLE ticket_activity (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT,

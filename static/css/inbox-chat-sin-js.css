@@ -1,4 +1,0 @@
-/* Solo sin JS: templates/inbox_chat.html lo carga dentro de <noscript>. */
-.attach { display: none; }
-.composer-bar { flex-wrap: wrap; }
-#file { position: static; width: auto; height: auto; clip: auto; flex: 1 0 100%; order: -1; margin: 0 0 .5rem; }

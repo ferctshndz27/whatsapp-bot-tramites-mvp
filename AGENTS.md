@@ -240,7 +240,8 @@ No Alembic. New **columns** on existing tables are added by hand:
 
 ### CRM Kanban (`/crm`, `app/crm.py`)
 Embudo comercial por cliente, bandeja y chat en una página JSON-driven (`templates/crm.html`,
-`static/js/crm.js`, `static/css/crm.css`). Las etapas (`CrmEtapa`) son **globales** y las
+`static/js/crm.js`, `static/css/crm.css`, más el cajón del folio en `static/js/crm-panel.js` y
+`static/css/crm-panel.css`). Las etapas (`CrmEtapa`) son **globales** y las
 administra el admin global; la etapa de cada cliente vive en `Client.etapa_crm_id` (NULL = la
 primera por `ord`, así el histórico no necesita un UPDATE masivo que el espejo no vería). Todo lo
 que lee pasa por `auth.alcance()` y, para quien no es admin, por el folio vigente: **un colaborador
@@ -248,14 +249,26 @@ ve solo las conversaciones de las solicitudes que toma** (clientes cuyo folio vi
 asignado), sin tira de miembros ni alta de contactos; los admins (global o de oficina) ven todos
 los clientes de su alcance y a los **miembros de la oficina** (`User.estado` y cuántos chats
 atiende cada uno), agrupados por oficina para el admin global.
+**El cajón lateral del chat** unifica lo que antes obligaba a salir a `/tickets/{id}`: gestión del
+folio, etiquetas, notas —del trámite y del cliente—, cobro, seguimiento y transferencia. Lee de
+`GET /crm/api/panel/{phone}` (aparte del hilo a propósito: el chat se sondea cada 8 s y no tiene por
+qué cargar cobros ni compañeros) y **escribe por los POST que ya existen** en `app/dashboard.py`,
+`app/my.py`, `app/cobranza_panel.py` y `app/clients.py`: ni un endpoint de escritura nuevo. Como
+esos endpoints contestan un redirect 303 y varios rechazan en silencio, el cajón no pinta nada de
+forma optimista: ejecuta, vuelve a pedir el panel y compara. Ofrece los permisos del BACKEND, no los
+de `ticket_detail.html`, que esconde de más: terminar y soltar también los puede un admin, y
+etiquetar o agendar un seguimiento, cualquiera de la oficina. Transferir la solicitud propia quita
+el acceso a la conversación (un colaborador solo ve las que toma): el panel contesta 404 y el cajón
+lo trata como éxito y devuelve al tablero.
 **Enviar, reactivar el bot, bloquear y ocultar mensajes siguen siendo los endpoints POST de
 `app/inbox.py`**, llamados por `fetch` desde el JS. El chat viejo ya no existe (fase B hecha):
 `GET /inbox/{phone}` solo reenvía a `/crm?chat=` conservando `?err=`, y las tarjetas de
 Solicitudes, Mi día, la ficha del cliente y el folio abren el chat del CRM. El JS no tiene pruebas
 unitarias: su verificación es el juez de navegador `node scripts/qa_crm_navegador.mjs` (uvicorn con
-una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 19 criterios de
+una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 29 criterios de
 aceptación como admin global, colaborador y admin de oficina; termina en 1 si alguno falla y
-`--capturas=DIR` guarda capturas de pantalla). Córrelo tras tocar `crm.js`, `crm.html` o `crm.css`.
+`--capturas=DIR` guarda capturas de pantalla). Córrelo tras tocar `crm.js`, `crm-panel.js`,
+`crm.html`, `crm.css` o `crm-panel.css`.
 
 ### Dashboard, charts, security
 Templates extend `templates/base.html` ("Starline" style: sticky sidebar/topbar, lime `#dcf24c`

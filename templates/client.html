@@ -6,7 +6,7 @@
    sola vez aquí — el rol no cambia a media página. #}
 {% set es_admin = is_admin(user) %}
 {# `volver` trae el folio o el chat de origen; el texto dice a dónde regresa. #}
-{% set volver_texto = '← Volver a la solicitud' if volver.startswith('/tickets') else ('← Volver al chat' if volver.startswith('/inbox') else '← Volver a clientes') %}
+{% set volver_texto = '← Volver a la solicitud' if volver.startswith('/tickets') else ('← Volver al chat' if (volver.startswith('/inbox') or volver.startswith('/crm')) else '← Volver a clientes') %}
 <p class="u-mt-0"><a class="btn-nav" href="{{ volver or '/clients' }}">{{ volver_texto }}</a></p>
 <h1>
   {{ client.name or 'Sin nombre' }}
@@ -16,7 +16,7 @@
 
 <div class="card">
   <p class="u-m-0 u-d-flex u-gap-0_75rem u-wrap-wrap">
-    <a href="/inbox/{{ client.phone }}" class="btn-sm u-deco-none u-c-white u-d-inline-flex u-items-center u-bg-green-2 u-r-999px u-p-0_35rem-0_9rem">💬 Abrir chat</a>
+    <a href="/crm?chat={{ client.phone }}" class="btn-sm u-deco-none u-c-white u-d-inline-flex u-items-center u-bg-green-2 u-r-999px u-p-0_35rem-0_9rem">💬 Abrir chat</a>
     <span class="u-c-text-muted u-self-center">
       Cliente desde {{ client.created_at | local('%Y-%m-%d') }} · {{ tickets | length }} solicitud(es)
     </span>

@@ -613,6 +613,19 @@ _SCHEMA_DDL = [
         created_at DATETIME2    NOT NULL
     )
     """,
+    # Embudo comercial del CRM (/crm): las etapas del tablero. La etapa de cada
+    # cliente va en wa_clients (etapa_crm_*, _COLUMNS_ADDED_AFTER_LAUNCH).
+    """
+    IF OBJECT_ID('crm_etapas', 'U') IS NULL
+    CREATE TABLE crm_etapas (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        nombre     NVARCHAR(80) NOT NULL,
+        color      NVARCHAR(16) NOT NULL,
+        ord        INT          NOT NULL DEFAULT 0,
+        habilitado BIT          NOT NULL DEFAULT 1,
+        created_at DATETIME2    NOT NULL
+    )
+    """,
 ]
 
 # office_id en el espejo (docs/SPEC-MULTI-OFICINA.md §2.3): el MISMO default que
@@ -650,6 +663,10 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "last_activity_at": "DATETIME2 NULL",
         "notas_internas": "NVARCHAR(MAX) NULL",
         "office_id": _OFFICE_ID_MSSQL,
+        # Embudo del CRM — NULL es «en la primera etapa», igual que en SQLite.
+        "etapa_crm_id": "BIGINT NULL",
+        "etapa_crm_at": "DATETIME2 NULL",
+        "etapa_crm_por": "NVARCHAR(120) NULL",
     },
     "app_users": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
@@ -1037,6 +1054,9 @@ def sync_client_name(c) -> None:
             ),
             "notas_internas": c.notas_internas,
             "office_id": c.office_id,
+            "etapa_crm_id": c.etapa_crm_id,
+            "etapa_crm_at": _naive_utc(c.etapa_crm_at) if c.etapa_crm_at else None,
+            "etapa_crm_por": c.etapa_crm_por,
         },
     )
 
@@ -1187,6 +1207,19 @@ def archive_ticket_label(tl) -> None:
             "created_by": tl.created_by,
             "habilitado": tl.habilitado,
             "created_at": _naive_utc(tl.created_at),
+        },
+    )
+
+
+def archive_crm_etapa(e) -> None:
+    _upsert(
+        "crm_etapas", "source_id", e.id,
+        {
+            "nombre": e.nombre,
+            "color": e.color,
+            "ord": e.ord,
+            "habilitado": e.habilitado,
+            "created_at": _naive_utc(e.created_at),
         },
     )
 
@@ -1810,6 +1843,7 @@ def backfill() -> None:
         User,
         Label,
         TicketLabel,
+        CrmEtapa,
         WebSession,
     )
     from sqlmodel import select
@@ -1896,6 +1930,8 @@ def backfill() -> None:
                 archive_label(lb)
             for tl in session.exec(select(TicketLabel)).all():
                 archive_ticket_label(tl)
+            for ce in session.exec(select(CrmEtapa)).all():
+                archive_crm_etapa(ce)
             etapa = "mensajes"
             for m in session.exec(select(Message)).all():
                 sync_wa_message(m)
@@ -1956,6 +1992,7 @@ def _register_listeners() -> None:
         TicketActivity,
         Label,
         TicketLabel,
+        CrmEtapa,
         User,
         WebSession,
     )
@@ -2018,6 +2055,11 @@ def _register_listeners() -> None:
     @event.listens_for(TicketLabel, "after_update")
     def _ticket_label_upsert(mapper, connection, target):
         _safe(archive_ticket_label, target)
+
+    @event.listens_for(CrmEtapa, "after_insert")
+    @event.listens_for(CrmEtapa, "after_update")
+    def _crm_etapa_upsert(mapper, connection, target):
+        _safe(archive_crm_etapa, target)
 
     @event.listens_for(User, "after_insert")
     @event.listens_for(User, "after_update")

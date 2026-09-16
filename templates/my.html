@@ -48,7 +48,7 @@
   <h2>Clientes esperando mi respuesta</h2>
   <div class="convo-list">
     {% for w in waiting %}
-    <a class="convo-card" href="/inbox/{{ w.phone }}">
+    <a class="convo-card" href="/crm?chat={{ w.phone }}">
       <div class="body">
         <strong>{{ w.name or w.phone }}</strong>
         <div class="preview">{{ w.last_body }}</div>

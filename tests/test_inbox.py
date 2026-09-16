@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 import app.db as db
 from app import media_store, twilio_client, whatsapp_client
-from app.inbox import build_conversation_items, inbox_bot_on, inbox_chat, inbox_delete_message, inbox_send
+from app.inbox import build_conversation_items, inbox_bot_on, inbox_delete_message, inbox_send
 from app.models import (
     PROVIDER_TWILIO,
     Conversation,
@@ -377,19 +377,5 @@ def test_advisor_cannot_delete_client_message(monkeypatch, session):
     assert client_msg.habilitado is True
 
 
-def test_soft_deleted_message_hidden_from_inbox_chat(monkeypatch, session):
-    monkeypatch.setattr(db, "engine", session.get_bind())
-    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.SENT3")
-    session.add(_msg("888", Direction.IN, "hola", hours_ago=1))
-    session.commit()
-    inbox_send(_request("ana"), "888", body="respuesta a ocultar")
-    sent = session.exec(select(Message).where(
-        Message.phone == "888", Message.direction == Direction.OUT
-    )).one()
-
-    inbox_delete_message(_request("ana"), "888", sent.id)
-
-    response = inbox_chat(_request("ana"), "888")
-    bodies = [m.body for m in response.context["messages"]]
-    assert "respuesta a ocultar" not in bodies
-    assert "hola" in bodies
+# «Un mensaje ocultado no se muestra» vive ahora en el chat del CRM:
+# tests/test_crm.py::test_un_mensaje_oculto_no_sale_en_el_hilo_ni_cuenta_como_no_leido.

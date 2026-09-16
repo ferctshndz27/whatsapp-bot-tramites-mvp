@@ -1,0 +1,315 @@
+/* Cajón lateral del chat del CRM (/crm): las funciones del folio sin salir de la
+   conversación —gestión, etiquetas, notas, cobro, seguimiento y transferencia—.
+
+   Vive bajo .crm, como el resto del módulo, y por dentro usa las clases que ya
+   existen en el panel (.tile, .badge, .btn-sm, .btn-danger, label/input/select/
+   textarea de components.css): lo único nuevo aquí es el armazón del cajón y el
+   riel de acciones. El marcado está en templates/crm.html y el comportamiento en
+   static/js/crm-panel.js. */
+
+.crm {
+  --wa-panel-w: 380px;
+  /* Curva de cajón de iOS: arranca rápido y frena suave. */
+  --wa-ease-drawer: cubic-bezier(.32, .72, 0, 1);
+}
+
+/* ---- Riel de acciones: la píldora de filtros del ERP, en <button> ---- */
+.crm .chat-acciones {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--wa-panel);
+  border-bottom: 1px solid var(--wa-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.crm .accion {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  min-height: 40px;
+  padding: .45rem 1rem;
+  border-radius: 999px;
+  border: var(--btn-border-width) solid var(--btn-border);
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  color: var(--text-muted);
+  font-size: .88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.crm .accion:hover { color: var(--text); }
+/* Dos canales para el estado abierto: lima y aria-expanded (WCAG 1.4.1). */
+.crm .accion[aria-expanded="true"] {
+  background: var(--lime);
+  color: var(--lime-ink);
+  font-weight: 700;
+}
+
+.crm .accion[disabled] {
+  opacity: .45;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.crm .accion-ico { filter: grayscale(1); opacity: .85; }
+.crm .accion[aria-expanded="true"] .accion-ico { filter: none; opacity: 1; }
+
+.crm .accion-num {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #22242a;
+  color: #fff;
+  font-size: .68rem;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+.crm .accion[aria-expanded="true"] .accion-num {
+  background: var(--lime-ink);
+  color: var(--lime);
+}
+
+/* ---- El cajón ---- */
+.crm #crm-chat { position: relative; }
+
+.crm .chat-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  width: min(var(--wa-panel-w), 100%);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid var(--wa-border);
+  box-shadow: -14px 0 34px rgba(17, 27, 33, .13);
+  /* Se abre y cierra con clase, NUNCA con [hidden]: .crm [hidden] lleva
+     display:none !important y eso mataría la transición. */
+  transform: translateX(100%);
+  visibility: hidden;
+}
+
+.crm.panel-abierto .chat-panel {
+  transform: none;
+  visibility: visible;
+}
+
+/* Velo: solo cuando el cajón se encima (abajo de 1280 px). Es un <button> para
+   que cerrar con clic no dependa de un div con manejador. */
+.crm .panel-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(17, 27, 33, .38);
+  opacity: 0;
+  visibility: hidden;
+  cursor: pointer;
+}
+
+.crm.panel-abierto .panel-scrim { opacity: 1; visibility: visible; }
+
+.crm .panel-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--wa-panel);
+  border-bottom: 1px solid var(--wa-border);
+}
+
+.crm .panel-id { flex: 1 1 auto; min-width: 0; }
+
+.crm .panel-title {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+/* Mismo criterio que .chat-name: recibe el foco para los lectores de pantalla,
+   pero no dibuja anillo — no es un control. */
+.crm .panel-title:focus { outline: none; }
+
+/* Con el cajón encima (o a pantalla completa) el nombre del cliente queda
+   tapado, y sin él no se sabe sobre quién se está actuando. */
+.crm .panel-sub {
+  display: block;
+  font-size: .78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crm .panel-close {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--wa-border);
+  background: transparent;
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.crm .panel-close:hover { background: var(--lime); color: var(--lime-ink); }
+
+.crm .panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
+}
+
+.crm .panel-seccion { display: flex; flex-direction: column; gap: 12px; }
+
+.crm .panel-body .tile { margin-bottom: 0; }
+.crm .panel-body h3 {
+  margin: 0 0 .5rem;
+  font-size: .82rem;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.crm .panel-body p { margin: 0 0 .4rem; font-size: .88rem; }
+.crm .panel-body p:last-child { margin-bottom: 0; }
+.crm .panel-body .muted { color: var(--text-muted); }
+.crm .panel-body label { margin-top: .6rem; }
+.crm .panel-body .tile > label:first-child,
+.crm .panel-body form > label:first-child { margin-top: 0; }
+/* 320 px se queda corto dentro del cajón. */
+.crm .panel-body input,
+.crm .panel-body select { max-width: none; }
+.crm .panel-cargando { color: var(--text-muted); padding: 1rem 0; }
+.crm .panel-pie { margin-top: .5rem; }
+
+.crm .panel-acciones { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+.crm .panel-pills { display: flex; flex-wrap: wrap; gap: .5rem; }
+.crm .panel-pills button {
+  min-height: 40px;
+  padding: .45rem 1rem;
+  border-radius: 999px;
+  border: var(--btn-border-width) solid var(--btn-border);
+  background: var(--card-bg);
+  color: var(--text-muted);
+  box-shadow: var(--shadow);
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.crm .panel-pills button[aria-current="true"] {
+  background: var(--lime);
+  color: var(--lime-ink);
+  font-weight: 700;
+}
+.crm .panel-pills button[disabled] { opacity: .5; cursor: not-allowed; }
+
+/* Etiquetas del folio: el color lo pone el JS en --c, como en la vista del folio. */
+.crm .panel-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .6rem; }
+.crm .chip-et {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  min-height: 32px;
+  padding: .2rem .7rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--c, #6b7280);
+  color: #fff;
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.crm .panel-form { display: flex; gap: .5rem; align-items: flex-end; }
+.crm .panel-form-campo { flex: 1 1 auto; min-width: 0; }
+
+/* Las notas del trámite son UNA cadena con saltos de línea (_append_note). */
+.crm .panel-notas { white-space: pre-line; font-size: .88rem; }
+
+.crm .panel-nota {
+  border-top: 1px solid var(--border);
+  margin-top: .55rem;
+  padding-top: .55rem;
+}
+.crm .panel-nota:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.crm .panel-nota .when { display: block; font-size: .75rem; color: var(--text-muted); }
+
+.crm .panel-cobro {
+  border-top: 1px solid var(--border);
+  margin-top: .7rem;
+  padding-top: .7rem;
+}
+.crm .panel-cobro:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.crm .panel-cobro .cobro-cabeza { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+
+.crm .panel-metodos { border: 0; padding: 0; margin: .7rem 0 0; }
+.crm .panel-metodos legend { font-size: .85rem; color: var(--text-muted); padding: 0; }
+.crm .panel-check {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  margin: .3rem .9rem 0 0;
+  font-size: .88rem;
+  color: var(--text);
+}
+.crm .panel-check input { width: auto; min-height: 0; }
+
+/* En pantalla ancha el cajón EMPUJA: el hilo y el compositor se encogen y nada
+   queda tapado. El hueco lo abre el padding, así el cajón cae justo dentro. */
+@media (min-width: 1280px) {
+  .crm.panel-abierto #crm-chat { padding-right: var(--wa-panel-w); }
+  .crm .panel-scrim { display: none; }
+}
+
+@media (max-width: 560px) {
+  .crm .chat-panel { width: 100%; }
+}
+
+/* Movimiento: solo si el usuario no pidió reducirlo, el patrón invertido del
+   ERP. Entra en 240 ms y sale en 180: el sistema responde más rápido de lo que
+   el usuario decide. Solo se anima transform; el ancho, nunca. */
+@media (prefers-reduced-motion: no-preference) {
+  .crm .chat-panel {
+    transition: transform 180ms var(--wa-ease-drawer), visibility 0s linear 180ms;
+  }
+  .crm.panel-abierto .chat-panel {
+    transition: transform 240ms var(--wa-ease-drawer), visibility 0s;
+  }
+  .crm .panel-scrim {
+    transition: opacity 180ms ease-out, visibility 0s linear 180ms;
+  }
+  .crm.panel-abierto .panel-scrim {
+    transition: opacity 240ms ease-out, visibility 0s;
+  }
+  .crm .accion {
+    transition: background-color .15s, color .15s, border-color .15s, transform .12s ease-out;
+  }
+  .crm .accion:active { transform: scale(.97); }
+}

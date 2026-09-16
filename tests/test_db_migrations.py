@@ -470,6 +470,9 @@ _ESQUEMA_DESPLEGADO = {
     ),
     "ipgeocache": ("ip", "geo", "resolved_at"),
     "label": ("id", "nombre", "color", "descripcion", "created_at", "habilitado"),
+    # Embudo del CRM (/crm): tabla nueva, create_all() la crea completa. Las columnas
+    # etapa_crm_* de `client` NO van aquí: las crea _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH.
+    "crmetapa": ("id", "nombre", "color", "ord", "habilitado", "created_at"),
     "loginevent": (
         "id",
         "username",

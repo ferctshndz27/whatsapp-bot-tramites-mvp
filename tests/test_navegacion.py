@@ -143,7 +143,9 @@ def test_la_bandeja_ya_no_es_una_entrada_del_menu(http):
 @pytest.mark.parametrize("url,activo", [
     ("/", "/"),
     ("/?conv=pausadas", "/"),
-    (f"/inbox/{PHONE}", "/"),
+    # El chat vive en el CRM: la ruta vieja reenvía ahí y el sidebar marca CRM.
+    (f"/inbox/{PHONE}", "/crm"),
+    (f"/crm?chat={PHONE}", "/crm"),
     ("/clients", "/clients"),
     # «Mi día» y «Mi cartera» comparten prefijo: con un `startswith('/my')` se
     # marcaban las DOS a la vez, que es peor que no marcar ninguna — el menú
@@ -158,33 +160,14 @@ def test_el_sidebar_siempre_marca_un_item_activo(http, url, activo):
     assert activos == [activo]
 
 
-def _boton_volver(html: str) -> str:
-    """Destino del botón «Volver» del chat (el primero de la página)."""
-    return re.search(r'<a class="btn-nav" href="([^"]+)">← Volver', html).group(1)
-
-
-def test_el_volver_del_chat_conserva_el_filtro_de_solicitudes(http):
-    r = http.get(f"/inbox/{PHONE}?volver=/%3Fconv%3Dpausadas")
-
-    assert r.status_code == 200
-    assert _boton_volver(r.text) == "/?conv=pausadas"
-
-
-def test_el_volver_del_chat_descarta_un_origen_en_la_bandeja(http):
-    """El botón dice «Solicitudes», así que no puede llevar a la Bandeja."""
-    r = http.get(f"/inbox/{PHONE}?volver=/inbox%3Ffilter%3Desperando")
-
-    assert r.status_code == 200
-    assert _boton_volver(r.text) == "/"
-    assert "Volver a Solicitudes" in r.text
-
-
-def test_un_volver_externo_en_el_chat_cae_a_solicitudes(http):
-    r = http.get(f"/inbox/{PHONE}?volver=//evil.com")
-
-    assert r.status_code == 200
-    assert "evil.com" not in r.text
-    assert _boton_volver(r.text) == "/"
+def test_la_ruta_vieja_del_chat_reenvia_al_crm_sin_arrastrar_el_volver(http):
+    """El chat vive en el CRM (fase B). La ruta vieja sigue existiendo por los
+    enlaces guardados, pero solo reenvía: `volver` ya no significa nada ahí, así
+    que ni un origen legítimo ni uno externo (`//evil.com`) viajan al destino."""
+    for volver in ("/%3Fconv%3Dpausadas", "/inbox%3Ffilter%3Desperando", "//evil.com"):
+        r = http.get(f"/inbox/{PHONE}?volver={volver}", follow_redirects=False)
+        assert r.status_code == 303
+        assert r.headers["location"] == f"/crm?chat={PHONE}"
 
 
 # ---------------------------------------------------------------------------

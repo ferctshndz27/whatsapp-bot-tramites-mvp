@@ -92,13 +92,13 @@ def http():
 
 def _telefonos(html: str) -> set[str]:
     """Teléfonos de las tarjetas de conversación que trae la página."""
-    return set(re.findall(r'href="/inbox/(\d+)', html))
+    return set(re.findall(r'href="/crm\?chat=(\d+)"', html))
 
 
 def test_la_bandeja_esta_apagada(http):
     """La ruta /inbox quedó sin decorador (comentado en app/inbox.py): la vista
-    vieja responde 404. El chat /inbox/{phone} sigue vivo — lo cubren las
-    pruebas de navegación."""
+    vieja responde 404. El chat vive en el CRM y /inbox/{phone} solo reenvía
+    ahí (tests/test_crm.py y tests/test_navegacion.py)."""
     assert http.get("/inbox").status_code == 404
 
 
@@ -211,10 +211,11 @@ def test_los_conteos_no_cambian_al_activar_un_filtro(con_folios):
     assert dict(chips.findall(sin_filtro)) == dict(chips.findall(filtrada))
 
 
-def test_volver_desde_una_conversacion_regresa_al_filtro(http):
-    """Entrar a un chat desde «/» y volver tiene que restaurar el filtro, no
-    tirar a la operadora a la vista sin filtros."""
+def test_las_tarjetas_de_conversacion_abren_el_chat_del_crm(http):
+    """El chat vive en el CRM: cada tarjeta lleva a /crm?chat=<teléfono> (la bandeja
+    del CRM es la lista, con sus filtros) y la ruta vieja con `volver` reenvía ahí
+    sin arrastrar el parámetro."""
     html = http.get("/?conv=pausadas").text
-    assert "volver=/%3Fconv%3Dpausadas" in html
-    chat = http.get(f"/inbox/{PAUSADA}?volver=/%3Fconv%3Dpausadas")
-    assert 'href="/?conv=pausadas"' in chat.text
+    assert f'href="/crm?chat={PAUSADA}"' in html
+    r = http.get(f"/inbox/{PAUSADA}?volver=/%3Fconv%3Dpausadas", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/crm?chat={PAUSADA}"

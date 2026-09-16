@@ -18,6 +18,7 @@ from app import (
     catalog_admin,
     clients,
     cobranza_panel,
+    crm,
     dashboard,
     inbox,
     kb,
@@ -191,6 +192,7 @@ app.include_router(stripe_webhook.router)
 app.include_router(dashboard.router)
 app.include_router(cobranza_panel.router)
 app.include_router(inbox.router)
+app.include_router(crm.router)
 app.include_router(team_chat.router)
 app.include_router(activity.router)
 app.include_router(users.router)

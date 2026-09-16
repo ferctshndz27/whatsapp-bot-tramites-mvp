@@ -5,12 +5,12 @@
 
    Contexto que espera:
      items      lista de dicts de app.inbox.build_conversation_items
-     volver_url ruta de regreso YA urlencoded, o '' para no ofrecer regreso
+     volver_url ya no se usa: el chat vive en el CRM, que tiene su propia navegación
      filtrada   bool: cambia el texto del estado vacío #}
 {% if items %}
 <div class="convo-list">
   {% for i in items %}
-  <a class="convo-card" href="/inbox/{{ i.phone }}{% if volver_url %}?volver={{ volver_url }}{% endif %}">
+  <a class="convo-card" href="/crm?chat={{ i.phone }}">
     <span class="avatar avatar-c{{ loop.index % 5 }}" aria-hidden="true">
       {{ (i.name or i.phone)[:2] | upper }}
     </span>

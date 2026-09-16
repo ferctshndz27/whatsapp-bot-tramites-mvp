@@ -96,6 +96,13 @@ class Client(SQLModel, table=True):
     last_activity_at: datetime | None = None
     # Resumen fijado del cliente; el historial granular vive en ClientNote.
     notas_internas: str | None = None
+    # Embudo comercial del CRM (/crm, app/crm.py). NULL = «en la primera etapa»
+    # (la de menor `ord`): así el histórico entra al tablero sin un UPDATE
+    # masivo, que además el espejo MSSQL no vería. Quién y cuándo la movió, para
+    # medir tiempo en etapa (fase 5 del análisis de brechas).
+    etapa_crm_id: int | None = None
+    etapa_crm_at: datetime | None = None
+    etapa_crm_por: str | None = None
 
 
 class Conversation(SQLModel, table=True):
@@ -264,6 +271,35 @@ class Label(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
     office_id: int = _office_id_field()
+
+
+# Etapas con las que nace el embudo (db._seed_crm_etapas). Nombres y colores del
+# plan del CRM; después las edita el admin global desde /crm.
+ETAPAS_CRM_DEFAULT = (
+    ("Nuevo Lead", "#1E88E5"),
+    ("En Negociación", "#FFB300"),
+    ("Seguimiento", "#8E24AA"),
+    ("Cerrado ✅", "#25D366"),
+)
+
+
+class CrmEtapa(SQLModel, table=True):
+    """Etapa comercial del embudo del CRM (/crm): una columna del tablero.
+
+    GLOBAL a propósito —sin office_id—: un solo embudo para todas las oficinas,
+    igual que el catálogo (SPEC multi-oficina §11.3), para que los reportes por
+    etapa sean comparables. La crea, renombra y da de baja el admin global;
+    mover clientes entre etapas es de cualquiera con acceso al cliente. Baja =
+    habilitado=0 (soft delete, como todo en este repo): así el espejo se entera
+    por after_update. Tabla física `crmetapa` (SQLModel sin __tablename__, como
+    ticketlabel); en MSSQL es `crm_etapas`."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    nombre: str = Field(unique=True, index=True)
+    color: str = "#25D366"
+    ord: int = 0
+    habilitado: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class TicketLabel(SQLModel, table=True):
