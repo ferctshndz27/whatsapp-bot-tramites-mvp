@@ -36,8 +36,8 @@ edit still starts by reading the lines the graph pointed at.
   writes `Message` rows and the inbox reads them; neither function calls the other. "Does screen X
   see what the bot received?" is answered by the models and a test, not by the graph.
 - **Templates, CSS and docs.** Only code is parsed: `app/`, `tests/`, the JavaScript in `static/`,
-  the tracked scripts, `deploy/` and the Gemini hook. Jinja templates, stylesheets and `docs/` are not
-  in the graph — search them directly.
+  the tracked scripts, `deploy/` and the Gemini hook. Jinja templates, stylesheets and Markdown —
+  `docs/`, the skills, `AGENTS.md` — are not in the graph. Search them directly.
 - **Production state**: counts, what a client wrote, what the MSSQL mirror holds. That is `/system`,
   the database or the domain skill.
 - **The file you are about to edit.** Read it. The graph is only as fresh as its last update.
@@ -50,8 +50,8 @@ edit still starts by reading the lines the graph pointed at.
    session, before the next query.
 2. Keep it code-only and local. Nothing in this workflow sends code, docs or node names to a model.
 3. Verify every graph claim that drives an edit against the file and line it cites.
-4. Keep `.graphifyignore` honest. It excludes what is not the bot — the Flask prototype, the
-   landing page, terraform and vendored JavaScript — and nothing the bot runs.
+4. Keep `.graphifyignore` honest. It excludes what is not the bot's code — the Flask prototype, the
+   landing page, terraform, vendored JavaScript and every Markdown file — and nothing the bot runs.
 5. Say so when the graph and the code disagree, instead of trusting the graph.
 
 ## Analysis checklist
@@ -76,9 +76,13 @@ edit still starts by reading the lines the graph pointed at.
   `calls`, `imports`, `uses`, `references` and `contains`. Docstrings and `# WHY:` comments become
   `rationale` nodes linked to the code they explain. A fresh build of this repo (2026-09-15,
   graphify 0.9.62) had 145 files, about 4,200 nodes and 12,100 edges, 89 % of them extracted.
-- **Scope follows git.** graphify reads `.gitignore`, `.git/info/exclude` and `.graphifyignore`, so
-  `.env`, `data/`, `tramites.db`, `docs/` and the operator's private folders never enter. Tracked
-  files under an excluded folder still do: the tracked scripts are in, the local ones are not.
+- **Scope follows git, with one catch.** graphify reads `.gitignore`, `.git/info/exclude` and
+  `.graphifyignore`, so `.env`, `data/`, `tramites.db` and the operator's private folders never
+  enter. Tracked files under an excluded folder still do: the tracked scripts are in, the local ones
+  are not. That is why `.graphifyignore` excludes `*.md`: `graphify update` indexes the headings of
+  every tracked Markdown file, and the files in `docs/` are tracked — the local-only multi-office
+  spec included. Measured on 2026-09-15: one update added 25 Markdown files and 408 document nodes to
+  what the first build had kept code-only.
 - **Ids are path-qualified** (`app_webhook_handle_inbound`). Use them, or `path::symbol`, whenever a
   name is ambiguous.
 - **`query` is a breadth-first walk with a token budget.** A natural-language question starts from
@@ -113,6 +117,8 @@ edit still starts by reading the lines the graph pointed at.
   SQLAlchemy listeners in `app/archive.py` never appear as call edges.
 - **Committing `graphify-out/`.** graphify recommends it for teams; here it is megabytes of churn per
   rebuild for a single operator, and it stays in `.gitignore`.
+- **Dropping the `*.md` line from `.graphifyignore`.** The next `update` indexes the headings of every
+  tracked Markdown file, `docs/` included, and the code-only graph quietly stops being one.
 
 ## Quality bar
 

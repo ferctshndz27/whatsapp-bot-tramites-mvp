@@ -279,7 +279,8 @@ instaladores reescriben justo lo que este harness vigila: agregan una sección g
 `graphify hook install` crea un `.gitattributes` para un grafo que aquí no se versiona. Se adoptó la
 herramienta con una skill propia, `code-graph`, a demanda y sin hooks. El grafo vive en
 `graphify-out/`, fuera de git y reconstruible en segundos; `.graphifyignore` saca el prototipo, la
-landing, terraform y el JavaScript de terceros; y la skill nombra los comandos que mandarían
+landing, terraform, el JavaScript de terceros y todo Markdown —`graphify update` indexa los títulos
+de cualquier archivo versionado, `docs/` incluido—; y la skill nombra los comandos que mandarían
 contenido a un modelo, para que nadie los corra: sin backend explícito, graphify usa la primera
 llave de API que encuentre en el entorno.
 
