@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Actividad{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static('css/activity.css') }}">{% endblock %}
 {% block content %}
 <h1>
   Actividad
   {% if viewing != user %}
-  <span style="color:var(--text-muted); font-size:.9rem; font-weight:400;">· viendo a {{ viewing }}</span>
+  <span class="u-c-text-muted u-fs-0_9rem u-fw-400">· viendo a {{ viewing }}</span>
   {% endif %}
 </h1>
 
@@ -27,37 +28,6 @@
   </div>
 </div>
 
-<style>
-  .chart-filter { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: 1rem; }
-  .chart-filter label { display: block; font-size: .8rem; color: var(--text-muted); margin-bottom: .2rem; }
-  .chart-flex { display: flex; gap: 2rem; flex-wrap: wrap; align-items: center; }
-  .line-wrap { flex: 2; min-width: 320px; }
-  .line-wrap svg { width: 100%; height: auto; display: block; }
-  .donut-wrap { flex: 1; min-width: 230px; display: flex; gap: 1rem; align-items: center; justify-content: center; flex-wrap: wrap; }
-  .chart-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: .5rem; font-size: .85rem; justify-content: flex-end; }
-  .chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .35rem; }
-  .donut-list { font-size: .85rem; display: flex; flex-direction: column; gap: .35rem; }
-  .donut-list i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .4rem; }
-  /* Mensajería: la leyenda lleva color Y patrón de trazo (el color no puede
-     ser el único indicador), y los números viven en la tabla, no en el hover. */
-  .msg-legend { justify-content: flex-start; align-items: center; gap: 1.2rem; }
-  .msg-legend span { display: inline-flex; align-items: center; gap: .4rem; }
-  /* #5f6572 y no --text-muted (#7c828d): este es el texto que impide leer
-     «sin dato» como «gratis», y a .85rem el muted da 3.86:1, debajo del
-     4.5:1 de WCAG AA. Mismo gris que ya usa .composer-hint. */
-  .msg-nota { color: #5f6572; font-size: .85rem; margin: .4rem 0 0; }
-  /* .line-wrap trae flex:2 y min-width:320px para convivir con la dona dentro
-     de .chart-flex. Aquí cuelga directo de la tarjeta: sin esto, a 360px de
-     ancho el piso de 320px desborda y el scroll lateral llega al body. */
-  .card > .line-wrap { flex: none; min-width: 0; }
-  .msg-dias { margin: .4rem 0 0; font-size: .85rem; color: #5f6572; }
-  .msg-dias summary { cursor: pointer; }
-  .msg-dias ul { margin: .4rem 0 0; padding-left: 1.2rem; }
-  .msg-costo { display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; align-items: baseline; }
-  .msg-costo .monto { font-size: 1.8rem; font-weight: 800; }
-  .msg-costo .etiqueta { font-size: .75rem; font-weight: 700; letter-spacing: .05em;
-    text-transform: uppercase; background: #fdeedd; color: #92590a; border-radius: 999px; padding: .2rem .6rem; }
-</style>
 
 <div class="card">
   <h2>Gráfica de actividades — despachadas por día</h2>
@@ -72,7 +42,7 @@
       <input type="date" id="hasta" name="hasta" value="{{ hasta }}">
     </div>
     <button type="submit" class="btn-sm">Aplicar filtro</button>
-    <a href="/activity{% if viewing != user %}?user={{ viewing }}{% endif %}" class="btn-sm" style="text-decoration:none;">Hoy</a>
+    <a href="/activity{% if viewing != user %}?user={{ viewing }}{% endif %}" class="btn-sm u-deco-none">Hoy</a>
   </form>
 
   {% if chart_total == 0 %}
@@ -82,7 +52,7 @@
     <div class="line-wrap">
       {% if chart_colors | length > 1 %}
       <div class="chart-legend">
-        {% for u, color in chart_colors.items() %}<span><i style="background: {{ color }};"></i>{{ u }}</span>{% endfor %}
+        {% for u, color in chart_colors.items() %}<span><i class="u-bg-c" style="--c: {{ color }}"></i>{{ u }}</span>{% endfor %}
       </div>
       {% endif %}
       <svg viewBox="0 0 {{ line_chart.width }} {{ line_chart.height }}" role="img"
@@ -123,7 +93,7 @@
       </svg>
       <div class="donut-list">
         {% for s in donut.segments %}
-        <div><i style="background: {{ s.color }};"></i>{{ s.user }} — {{ s.n }} ({{ s.pct }}%)</div>
+        <div><i class="u-bg-c" style="--c: {{ s.color }}"></i>{{ s.user }} — {{ s.n }} ({{ s.pct }}%)</div>
         {% endfor %}
       </div>
     </div>
@@ -136,11 +106,11 @@
   <h2>Reportes</h2>
   {# Los mismos enlaces que /system, aquí porque el admin de oficina no entra a
      /system. Cada uno ya viene acotado a la oficina de quien lo pide. #}
-  <p style="display:flex; gap:.5rem; flex-wrap:wrap; margin:0;">
-    <a href="/export/tickets.csv" class="btn-sm" style="text-decoration:none;">⬇ Solicitudes (CSV)</a>
-    <a href="/export/activity.csv" class="btn-sm" style="text-decoration:none;">⬇ Actividad (CSV)</a>
-    <a href="/export/logins.csv" class="btn-sm" style="text-decoration:none;">⬇ Accesos (CSV)</a>
-    <a href="/audit" class="btn-sm" style="text-decoration:none;">Bitácora de acciones admin</a>
+  <p class="u-d-flex u-gap-0_5rem u-wrap-wrap u-m-0">
+    <a href="/export/tickets.csv" class="btn-sm u-deco-none">⬇ Solicitudes (CSV)</a>
+    <a href="/export/activity.csv" class="btn-sm u-deco-none">⬇ Actividad (CSV)</a>
+    <a href="/export/logins.csv" class="btn-sm u-deco-none">⬇ Accesos (CSV)</a>
+    <a href="/audit" class="btn-sm u-deco-none">Bitácora de acciones admin</a>
   </p>
 </div>
 {% endif %}
@@ -166,11 +136,11 @@
       <div class="value">{{ operacion.resolucion_n }}</div>
     </div>
   </div>
-  <p style="color:var(--text-muted); font-size:.85rem;">Solo folios posteriores a la fase 1: los
+  <p class="u-c-text-muted u-fs-0_85rem">Solo folios posteriores a la fase 1: los
     previos no traen tiempos y se excluyen en vez de inventarles uno.</p>
 
   {% if pr_chart %}
-  <h3 style="font-size:.95rem;">Mediana de primera respuesta por día (minutos)</h3>
+  <h3 class="u-fs-0_95rem">Mediana de primera respuesta por día (minutos)</h3>
   <div class="line-wrap">
     <svg viewBox="0 0 {{ pr_chart.width }} {{ pr_chart.height }}" role="img"
       aria-label="Mediana de primera respuesta por día, en minutos ({{ pr_dias_con_dato }} días con datos)">
@@ -195,16 +165,16 @@
   <p class="empty">Aún no hay folios con primera respuesta registrada en este rango.</p>
   {% endif %}
 
-  <div class="chart-flex" style="margin-top:1rem;">
-    <div style="flex:1; min-width:260px;">
-      <h3 style="font-size:.95rem;">Embudo por etapa</h3>
+  <div class="chart-flex u-mt-1rem">
+    <div class="u-flex-1 u-minw-260px">
+      <h3 class="u-fs-0_95rem">Embudo por etapa</h3>
       <div class="table-wrap">
         <table>
           <tbody>
             {% for etapa, n in operacion.embudo %}
             <tr>
               <td>{{ etapa }}</td>
-              <td style="width:140px;">
+              <td class="u-w-140px">
                 <svg width="120" height="12" role="img" aria-label="{{ etapa }}: {{ n }} folios">
                   <rect width="{{ (120 * n / operacion.embudo_max) | round | int }}" height="12" rx="3" fill="#dcf24c"/>
                 </svg>
@@ -216,8 +186,8 @@
         </table>
       </div>
     </div>
-    <div style="flex:1; min-width:260px;">
-      <h3 style="font-size:.95rem;">Top etiquetas</h3>
+    <div class="u-flex-1 u-minw-260px">
+      <h3 class="u-fs-0_95rem">Top etiquetas</h3>
       {% if operacion.top_etiquetas %}
       <div class="table-wrap">
         <table>
@@ -254,7 +224,7 @@
     «gratis» de aquí abajo es el que se va a convertir en costo.
     {% endif %}
     <br>
-    <span style="font-size:.85rem;">Fuente: Meta — {{ mensajeria.aviso.fuente }}
+    <span class="u-fs-0_85rem">Fuente: Meta — {{ mensajeria.aviso.fuente }}
       (consultada el {{ mensajeria.aviso.consultada_el }}).
       {% if mensajeria.aviso.contempla_servicio and mensajeria.aviso.tarifa_servicio is none %}
       El rate card ya contempla la categoría <code>service</code>, pero <strong>su tarifa sigue
@@ -294,16 +264,16 @@
     desconocidos, y por eso van al lado del total en vez de sumarse a «gratis».
     De {{ mensajeria.salientes }} salientes, {{ mensajeria.con_veredicto }} traen veredicto de Meta.</p>
 
-  <h3 style="font-size:.95rem;">Costo del periodo</h3>
+  <h3 class="u-fs-0_95rem">Costo del periodo</h3>
   <div class="msg-costo">
     {% if mensajeria.costo_estimable %}
     <span class="etiqueta">Estimado</span>
     <span class="monto">{{ mensajeria.costo_texto }}</span>
-    <span class="msg-nota" style="margin:0;">El bot nunca fija un precio final; esto es un
+    <span class="msg-nota u-m-0">El bot nunca fija un precio final; esto es un
       estimado de lo que Meta cobra por entregar mensajes, no una factura.</span>
     {% else %}
     <span class="monto">{{ mensajeria.costo_texto }}</span>
-    <span class="msg-nota" style="margin:0;">
+    <span class="msg-nota u-m-0">
       {% if mensajeria.salientes %}Ningún saliente del periodo trae veredicto de cobro de Meta,
       así que no hay nada que estimar. Un «$0.00» aquí afirmaría que costó cero, y eso no se
       sabe.{% else %}No salió ningún mensaje en el periodo: no hay nada que costear.{% endif %}
@@ -347,7 +317,7 @@
   </div>
   {% endif %}
 
-  <h3 style="font-size:.95rem;">Desglose por categoría</h3>
+  <h3 class="u-fs-0_95rem">Desglose por categoría</h3>
   {% if mensajeria.por_categoria %}
   <div class="table-wrap">
     <table>
@@ -381,7 +351,7 @@
   <p class="empty">Ningún saliente del periodo trae veredicto de cobro todavía.</p>
   {% endif %}
 
-  <h3 style="font-size:.95rem;">Salientes por día (día UTC)</h3>
+  <h3 class="u-fs-0_95rem">Salientes por día (día UTC)</h3>
   {% if mensajeria.salientes %}
   <div class="chart-legend msg-legend">
     {% for s in mensajeria.linea.series %}
@@ -471,7 +441,7 @@
       </thead>
       <tbody>
         {% for m in team %}
-        <tr {% if m.username == viewing %}style="background:#f0f7ff;"{% endif %}>
+        <tr{% if m.username == viewing %} class="u-bg-blue-50"{% endif %}>
           <th scope="row">{{ m.username }}{% if m.inhabilitado %}
             <span class="badge">deshabilitado</span>{% endif %}</th>
           <td><strong>{{ m.abiertos }}</strong></td>

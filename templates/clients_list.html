@@ -22,13 +22,13 @@
     {# La ayuda del teléfono va dentro del label: así ambas columnas miden lo
        mismo y los campos quedan alineados (antes el <small> colgaba del input
        y descuadraba la fila). #}
-    <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end;">
-      <div style="flex:1 1 220px; max-width:320px;">
-        <label for="alta-phone">Teléfono <span style="opacity:.75;">— 10 dígitos, o 52 + 10 dígitos</span></label>
+    <div class="u-d-flex u-gap-1rem u-wrap-wrap u-items-flex-end">
+      <div class="u-flex-1-1-220px u-maxw-320px">
+        <label for="alta-phone">Teléfono <span class="u-op-0_75">— 10 dígitos, o 52 + 10 dígitos</span></label>
         <input type="tel" id="alta-phone" name="phone" required
                placeholder="55 0000 0000" autocomplete="off">
       </div>
-      <div style="flex:1 1 200px; max-width:320px;">
+      <div class="u-flex-1-1-200px u-maxw-320px">
         <label for="alta-name">Nombre</label>
         <input type="text" id="alta-name" name="name" required
                placeholder="Ana Ruiz" maxlength="200" autocomplete="off">
@@ -42,12 +42,12 @@
   <h2>Directorio</h2>
 
   <form method="get" action="/clients" role="search">
-    <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
-      <label for="q" style="margin:0;">Buscar</label>
+    <div class="u-d-flex u-gap-0_5rem u-wrap-wrap u-items-center">
+      <label class="u-m-0" for="q">Buscar</label>
       <input type="text" id="q" name="q" value="{{ q }}"
              placeholder="Nombre o teléfono" autocomplete="off">
       <button type="submit" class="btn-sm">Buscar</button>
-      {% if q %}<a class="btn-sm" href="/clients" style="text-decoration:none; display:inline-flex; align-items:center;">Limpiar</a>{% endif %}
+      {% if q %}<a class="btn-sm u-deco-none u-d-inline-flex u-items-center" href="/clients">Limpiar</a>{% endif %}
     </div>
   </form>
 
@@ -58,12 +58,11 @@
         <tr><th>Cliente</th><th>Teléfono</th><th>Alta</th></tr>
       </thead>
       <tbody>
-        {% set palette = ['#1bcfb4', '#198ae3', '#fe7096', '#f5a623', '#7c5cd6'] %}
         {% for c in clients %}
         <tr data-href="/clients/{{ c.phone }}?volver={{ volver_actual }}">
           <td>
-            <a class="cell-person" href="/clients/{{ c.phone }}?volver={{ volver_actual }}" style="text-decoration:none; color:inherit;">
-              <span class="avatar" style="background: {{ palette[loop.index0 % 5] }}" aria-hidden="true">
+            <a class="cell-person u-deco-none u-c-inherit" href="/clients/{{ c.phone }}?volver={{ volver_actual }}">
+              <span class="avatar avatar-c{{ loop.index0 % 5 }}" aria-hidden="true">
                 {{ (c.name or c.phone)[:2] | upper }}
               </span>
               <span><strong>{{ c.name or 'Sin nombre' }}</strong></span>

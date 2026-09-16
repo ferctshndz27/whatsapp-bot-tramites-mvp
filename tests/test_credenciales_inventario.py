@@ -564,12 +564,18 @@ def test_ningun_modulo_lee_una_credencial_de_settings_directo():
 
 # El conjunto (archivo, clave) de los puntos que hoy fijan la oficina a mano.
 # ES la lista de trabajo del PR 4 y del PR 5, y el diff de esta lista es el
-# artefacto de auditoría de ambos. 15 pares para 22 llamadas: tres funciones
+# artefacto de auditoría de ambos. 16 pares para 23 llamadas: tres funciones
 # leen la misma llave más de una vez (whatsapp_client._send/send_media,
 # twilio_client.enabled/verify_signature/_post_message, stripe_client).
 PUNTOS_CON_OFICINA_INLINE = {
     ("cobranza.py", "STRIPE_SECRET_KEY"),
     ("cobranza_panel.py", "STRIPE_SECRET_KEY"),
+    # crm.py: el cajón del chat pregunta si Stripe está configurado para decidir
+    # si pinta el formulario de cobro. Fija Tlaxcala a mano A PROPÓSITO, aunque
+    # tenga el ticket en la mano: quien de verdad cobra es cobranza_panel.py, que
+    # también la fija. Resolverla aquí antes que allá haría que el panel ofreciera
+    # un cobro que el endpoint rechaza. Se saldan juntas en el PR 5.
+    ("crm.py", "STRIPE_SECRET_KEY"),
     ("dashboard.py", "STRIPE_SECRET_KEY"),
     ("dashboard.py", "TWILIO_CONTENT_SID_FEEDBACK"),
     ("stripe_client.py", "STRIPE_SECRET_KEY"),

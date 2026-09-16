@@ -1,6 +1,7 @@
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -10,11 +11,10 @@ from sqlmodel import select
 
 from app import messaging, ventana
 from app.audit import log_admin
-from app.utils import ruta_interna
 from app.auth import is_admin, alcance
 from app.config import settings
 from app import asignacion
-from app.conversation import _latest_open_ticket, _log_message
+from app.conversation import _latest_open_ticket
 from app.db import get_session
 from app.media_store import MEDIA_NAME_RE, save_upload, verify_media_token
 from app.team_chat import archivo_de_chat_visible
@@ -192,154 +192,26 @@ def inbox_list(request: Request, filter: str | None = None):
 # quedaría con una ventana vacía.
 # ponytail: heurística de tiempo; si no alcanza, la solución real es una columna
 # Message.ticket_id llenada al confirmar el alta (y su espejo en MSSQL).
-FOLIOS_MISMO_TURNO = timedelta(seconds=60)
-
-
-def _mitad(a: datetime, b: datetime) -> datetime:
-    return a + (b - a) / 2
-
-
-def _segmento_del_folio(
-    tickets: list[Ticket], ticket: Ticket
-) -> tuple[datetime | None, datetime | None]:
-    """Rango `(inicio, fin]` de la conversación que pertenece a `ticket`.
-
-    `None` en un extremo = sin límite por ese lado."""
-    creado = ventana.as_utc(ticket.created_at)
-    todos = [ventana.as_utc(t.created_at) for t in tickets]
-    # El folio no viaja solo: se lleva a los de su mismo turno.
-    turno = [c for c in todos if abs(c - creado) <= FOLIOS_MISMO_TURNO]
-    primero, ultimo = min(turno), max(turno)
-    antes = [c for c in todos if c < primero - FOLIOS_MISMO_TURNO]
-    despues = [c for c in todos if c > ultimo + FOLIOS_MISMO_TURNO]
-    return (
-        _mitad(max(antes), primero) if antes else None,
-        _mitad(ultimo, min(despues)) if despues else None,
-    )
-
-
-def _en_segmento(dt: datetime, inicio: datetime | None, fin: datetime | None) -> bool:
-    momento = ventana.as_utc(dt)
-    return (inicio is None or momento > inicio) and (fin is None or momento <= fin)
-
-
 @router.get("/inbox/{phone}")
-def inbox_chat(
-    request: Request,
-    phone: str,
-    err: str | None = None,
-    volver: str = "",
-    folio: int | None = None,
-    todo: int = 0,
-):
-    user = _current_user(request)
-    if not user:
+def inbox_chat(request: Request, phone: str, err: str | None = None):
+    """La conversación vive en el CRM (fase B): esta ruta solo reenvía.
+
+    Se conserva por los enlaces guardados y porque los POST de abajo (enviar,
+    reactivar el bot, bloquear, ocultar) siguen redirigiendo aquí al terminar:
+    el ?err= que traen (window | tipo | peso) viaja al CRM, que lo muestra en su
+    compositor. `volver`, `folio` y `todo` ya no significan nada —el CRM tiene su
+    propia navegación y muestra la conversación completa— y se descartan, con
+    lo que un `volver` fabricado tampoco puede convertirse en un redirect abierto.
+    Solo se reenvía un teléfono con forma de teléfono: lo demás cae al tablero.
+    """
+    if not _current_user(request):
         return RedirectResponse("/login", status_code=303)
-
-    vista = alcance(user)
-    with get_session() as session:
-        if not _verificar_acceso_oficina(session, phone, vista, user):
-            return RedirectResponse("/", status_code=303)
-            
-        historial = session.exec(
-            select(Message)
-            .where(Message.phone == phone)
-            .where(Message.habilitado.is_(True))
-            .order_by(Message.created_at)
-        ).all()
-        if not historial:
-            # return RedirectResponse("/inbox", status_code=303)  # Bandeja apagada
-            return RedirectResponse("/", status_code=303)
-        client = session.get(Client, phone)
-        conv = session.get(Conversation, phone)
-        tickets = session.exec(
-            select(Ticket).where(Ticket.phone == phone).order_by(Ticket.created_at.desc())
-        ).all()
-        # `folio` viene de la URL: se busca DENTRO de los folios de este número,
-        # así un id de otro cliente no abre su conversación aquí.
-        ticket = next((t for t in tickets if t.id == folio), None) or (
-            tickets[0] if tickets else None
-        )
-        from app.replies import personal_replies
-
-        my_replies = personal_replies(session, user)
-
-    # Un número sin folios (p. ej. los que llegan desde /unmatched) no tiene nada
-    # que acotar: se muestra todo o la vista saldría vacía.
-    ver_todo = bool(todo) or ticket is None
-    if ver_todo:
-        messages, folios = historial, []
-    else:
-        inicio, fin = _segmento_del_folio(tickets, ticket)
-        messages = [m for m in historial if _en_segmento(m.created_at, inicio, fin)]
-        folios = sorted(
-            (t for t in tickets if _en_segmento(t.created_at, inicio, fin)),
-            key=lambda t: t.id,
-        )
-
-    # La ventana de 24 h es del NÚMERO, no del folio: se calcula sobre el
-    # historial completo. Si se calculara sobre lo que se pinta, abrir un folio
-    # viejo apagaría el compositor de un chat que sigue vivo.
-    last_in = next(
-        (m.created_at for m in reversed(historial) if m.direction == Direction.IN), None
-    )
-    # El umbral de urgencia es el MISMO que marca «Mi día» en su lista de chats
-    # que esperan respuesta: dos números distintos harían que un chat se viera
-    # urgente en una pantalla y tranquilo en la otra.
-    # ponytail: import dentro de la función porque `app.my` importa `app.inbox`
-    # al cargar (circular si se sube arriba). Techo: la constante vive en el
-    # panel personal y su casa natural es `app/ventana.py`, junto a
-    # WINDOW_HOURS — mudarla ahí borra este import diferido.
-    from app.my import EXPIRING_HOURS
-
-    window_open = ventana.abierta(last_in)
-    horas_restantes = ventana.horas_restantes(last_in)
-    return templates.TemplateResponse(
-        request, "inbox_chat.html",
-        {
-            "request": request,
-            "user": user,
-            "phone": phone,
-            "client": client,
-            "messages": messages,
-            "ticket": ticket,
-            # Qué se está viendo y qué queda fuera: acotar sin decirlo se lee
-            # como historial perdido.
-            "folios": folios,
-            "ver_todo": ver_todo,
-            "ocultos": len(historial) - len(messages),
-            "bot_paused": bool(conv and conv.state == "escalado"),
-            # La vista muestra por cuál de las dos cuentas se responde: la
-            # ventana de 24 h es por número y el remitente que ve el cliente
-            # cambia según el canal.
-            "conversation": conv,
-            "window_open": window_open,
-            # Cuánto queda, no solo si está abierta: el asesor tiene que poder
-            # decidir ANTES de escribir si le da tiempo. El texto y las horas
-            # salen de `app.ventana`; la vista no vuelve a calcular nada.
-            # ponytail: es una foto del momento del render — con la pestaña
-            # abierta dos horas, el «cierra en 3 h 12 min» miente. Techo
-            # aceptado porque el panel es server-rendered y cada envío
-            # repinta la página. Vía: un tick de JS sobre un
-            # <time datetime> o recargar la vista sola.
-            "window_left": ventana.restante_texto(last_in),
-            "window_hours_left": horas_restantes,
-            # Urgente = abierta pero por poco. Cerrada no es «urgente», es otro
-            # aviso completamente distinto.
-            "window_urgent": window_open and horas_restantes <= EXPIRING_HOURS,
-            "window_hours": ventana.WINDOW_HOURS,
-            # Un chat sin ningún mensaje del cliente (llegó por /unmatched o lo
-            # abrió cobranza) nunca tuvo ventana: el aviso no puede hablar de
-            # «su último mensaje» porque no existe.
-            "window_never": last_in is None,
-            # Ruta de la Bandeja de origen (con su filtro) para el botón
-            # «volver»; validada, un valor externo se descarta.
-            "volver": ruta_interna(volver),
-            "quick_replies": QUICK_REPLIES,
-            "my_replies": my_replies,
-            "error": err,
-        },
-    )
+    if not re.fullmatch(r"\d{8,15}", phone or ""):
+        return RedirectResponse("/crm", status_code=303)
+    destino = f"/crm?chat={phone}"
+    if err in ("window", "tipo", "peso"):
+        destino += f"&err={err}"
+    return RedirectResponse(destino, status_code=303)
 
 
 def _pause_bot(session, phone: str, user: str) -> None:

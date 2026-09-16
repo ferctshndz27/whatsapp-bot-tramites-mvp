@@ -580,6 +580,11 @@ def test_la_tabla_cubre_toda_ruta_con_guard_de_admin():
     #     además soltar el de otro, que es la única salida para los folios de un
     #     colaborador deshabilitado (tiene su prueba en test_fase3_horario.py).
     fuera_de_tabla = {("GET", "/activity"), ("POST", "/tickets/{ticket_id}/release")}
+    # API JSON del CRM: sí cierra la puerta, pero contesta 403 JSON en vez de redirigir
+    # (la llama fetch) y no encaja en el molde de Ruta. Su rechazo al colaborador y su
+    # control positivo con el admin viven en tests/test_crm.py
+    # (test_el_alta_nace_en_la_oficina_de_quien_la_hace_con_telefono_canonico).
+    con_prueba_propia = {("POST", "/crm/api/contactos")}
 
     cubiertas = {(r.metodo, _plantilla_de(r.metodo, r.path)) for r in RUTAS}
     assert None not in {p for _, p in cubiertas}, "hay filas cuyo path no existe en el router"
@@ -598,7 +603,9 @@ def test_la_tabla_cubre_toda_ruta_con_guard_de_admin():
         con_guard |= {(m, route.path) for m in route.methods & {"GET", "POST"}}
 
     assert con_guard, "la detección de guards dejó de encontrar rutas"
-    faltantes = sorted(f"{m} {p}" for m, p in con_guard - cubiertas - fuera_de_tabla)
+    faltantes = sorted(
+        f"{m} {p}" for m, p in con_guard - cubiertas - fuera_de_tabla - con_prueba_propia
+    )
     assert faltantes == [], f"rutas admin sin fila en RUTAS: {faltantes}"
 
 

@@ -7,18 +7,18 @@
 <h1>Cobros</h1>
 
 <div class="card">
-  <p style="margin-top:0;">
-    <a href="/export/cobros.csv" class="btn-sm" style="text-decoration:none;">↓ CSV de cobros</a>
-    <a href="/export/conciliacion.csv" class="btn-sm" style="text-decoration:none;">↓ CSV de conciliación</a>
-    <a href="/cobros/payouts" class="btn-sm" style="text-decoration:none;">Depósitos del banco</a>
-    <a href="/my/cobros" class="btn-sm" style="text-decoration:none;">Mi cartera</a>
+  <p class="u-mt-0">
+    <a href="/export/cobros.csv" class="btn-sm u-deco-none">↓ CSV de cobros</a>
+    <a href="/export/conciliacion.csv" class="btn-sm u-deco-none">↓ CSV de conciliación</a>
+    <a href="/cobros/payouts" class="btn-sm u-deco-none">Depósitos del banco</a>
+    <a href="/my/cobros" class="btn-sm u-deco-none">Mi cartera</a>
   </p>
 
   {% if not stripe_configurado %}
   <p><span class="badge caducada">Stripe no está configurado</span>
      Sin <code>STRIPE_SECRET_KEY</code> no se puede generar ningún cobro.</p>
   {% else %}
-  <div style="display:flex; align-items:center; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; color:var(--text-muted); font-size:.9rem;">
+  <div class="u-d-flex u-items-center u-wrap-wrap u-gap-0_75rem u-mb-1rem u-c-text-muted u-fs-0_9rem">
     <span>
       Llave en modo <strong>{{ modo }}</strong>.
       {% if todos %}
@@ -28,9 +28,9 @@
       {% endif %}
     </span>
     {% if todos %}
-      <a href="/cobros" class="btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; margin-left:auto;">Ver solo los de modo {{ modo }}</a>
+      <a href="/cobros" class="btn-sm u-deco-none u-d-inline-flex u-items-center u-ml-auto">Ver solo los de modo {{ modo }}</a>
     {% else %}
-      <a href="/cobros?todos=1" class="btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; margin-left:auto;">Ver todos</a>
+      <a href="/cobros?todos=1" class="btn-sm u-deco-none u-d-inline-flex u-items-center u-ml-auto">Ver todos</a>
     {% endif %}
   </div>
   {% endif %}
@@ -43,7 +43,7 @@
 {% if asesores %}
 <div class="card">
   <h2>Por asesor</h2>
-  <p style="color:var(--text-muted); font-size:.9rem; margin-top:0;">
+  <p class="u-c-text-muted u-fs-0_9rem u-mt-0">
     Quién trae más dinero sin cobrar. Se agrupa por <strong>quien generó</strong> el
     cobro, no por quien tiene el folio hoy: el folio se suelta y se reasigna, y un
     corte que se mueva solo no sirve para comparar contra el mes pasado.
@@ -69,7 +69,7 @@
         {% endfor %}
       </tbody>
       <tfoot>
-        <tr style="font-weight:600;">
+        <tr class="u-fw-600">
           <td>Total</td>
           <td>{{ total_n }}</td>
           <td>{{ formato_monto(en_la_calle) }}</td>

@@ -1,0 +1,566 @@
+{% extends "base.html" %}
+{% block title %}CRM — Embudo{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static('css/crm.css') }}">
+<link rel="stylesheet" href="{{ static('css/crm-panel.css') }}">{% endblock %}
+{% block content %}
+{# CRM Kanban: embudo por etapas, bandeja de chats y panel de conversación en
+   una sola página (app/crm.py). La plantilla solo MARCA: el estado vive en
+   static/js/crm.js (se carga con defer) y llega como JSON inerte en #crm-datos;
+   todo el DOM con datos (pestañas, bandeja, columnas, tarjetas, burbujas) se
+   arma desde los <template> de abajo con cloneNode + textContent. Sin la
+   metaetiqueta de auto-recarga: el tablero y el chat se refrescan por fetch. #}
+{% set horas = datos.ventana_horas | default(24) %}
+<div class="crm" id="crm">
+  <h1>WhatsApp</h1>
+
+  <header class="crm-toolbar">
+    <div class="search-wrap">
+      <label for="crm-search" class="sr-only">Buscar contacto o teléfono</label>
+      <span class="search-icon" aria-hidden="true">🔍</span>
+      <input id="crm-search" type="search" placeholder="Buscar contacto o teléfono" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="toolbar-actions">
+      <button id="crm-btn-toggle-tray" class="btn btn-ghost" type="button" aria-controls="crm-tray" aria-expanded="true">Ocultar bandeja</button>
+      {# Solo el admin global administra etapas: si no lo es, crm.js lo quita del DOM. #}
+      <button id="crm-btn-new-column" class="btn btn-primary" type="button">Nueva etapa</button>
+    </div>
+  </header>
+
+  {# Fila de pestañas: primero el botón «← Tablero» —visible solo con un chat
+     abierto, como botón de regreso— y después las pestañas-filtro que crm.js
+     pinta en #crm-tabs-list (el tablist). El botón es hermano de esa lista y no
+     hijo: renderTabs() la vacía en cada repintado y un tablist solo admite
+     pestañas. #}
+  <div id="crm-tabs" class="tabs-bar">
+    <button id="crm-btn-board" class="btn btn-secondary btn-board" type="button" hidden><span aria-hidden="true">←</span>Tablero</button>
+    <div id="crm-tabs-list" class="tabs-list" role="tablist" aria-label="Filtrar por etapa"></div>
+  </div>
+  {# Miembros de la oficina, solo para admins (el global ve los de todas,
+     agrupados): un chip por asesor con su disponibilidad y cuántos chats del
+     tablero atiende. Pulsar uno deja en tablero y bandeja solo sus clientes.
+     Lo pinta crm.js; un colaborador recibe la lista vacía y no ve la tira. #}
+  <nav id="crm-miembros" aria-label="Miembros de la oficina"></nav>
+
+  <div class="crm-layout">
+    <aside id="crm-tray" role="tabpanel" aria-label="Bandeja de chats">
+      <div class="tray-header">
+        <span class="tray-title">Chats</span>
+        <span id="crm-tray-count" class="tray-count" aria-live="polite"></span>
+      </div>
+      <ul id="crm-tray-list"></ul>
+    </aside>
+
+    {# <section> y no <main>: base.html ya tiene el <main> de la página y un
+       documento no puede llevar dos landmarks main visibles. El id es el gancho. #}
+    <section id="crm-board" aria-label="Embudo de clientes">
+      <p class="board-loading">Cargando el tablero…</p>
+    </section>
+
+    <section id="crm-chat" aria-labelledby="crm-chat-name" hidden>
+      <header class="chat-header">
+        <span class="avatar" id="crm-chat-avatar" aria-hidden="true"></span>
+        <div class="chat-id">
+          <h2 class="chat-name" id="crm-chat-name" tabindex="-1">Conversación</h2>
+          <span class="chat-phone" id="crm-chat-phone"></span>
+        </div>
+        <button class="chat-close" type="button" aria-label="Cerrar el chat y volver al tablero">✕</button>
+        <div class="chat-badges" id="crm-chat-badges"></div>
+      </header>
+
+      {# Riel de acciones del folio: abre el cajón de la derecha. Son las
+         píldoras del ERP y su estado abierto viaja en aria-expanded. Los
+         contadores los pone crm-panel.js con lo que trae /crm/api/panel. #}
+      <nav class="chat-acciones" id="crm-acciones" aria-label="Acciones de la solicitud">
+        <button class="accion" type="button" data-seccion="gestion" data-titulo="Gestión" aria-expanded="false" aria-controls="crm-panel">
+          <span class="accion-ico" aria-hidden="true">🎛️</span> Gestión
+        </button>
+        <button class="accion" type="button" data-seccion="etiquetas" data-titulo="Etiquetas" aria-expanded="false" aria-controls="crm-panel">
+          <span class="accion-ico" aria-hidden="true">🏷️</span> Etiquetas
+          <span class="accion-num" hidden></span>
+        </button>
+        <button class="accion" type="button" data-seccion="notas" data-titulo="Notas" aria-expanded="false" aria-controls="crm-panel">
+          <span class="accion-ico" aria-hidden="true">📝</span> Notas
+          <span class="accion-num" hidden></span>
+        </button>
+        <button class="accion" type="button" data-seccion="cobro" data-titulo="Cobro" aria-expanded="false" aria-controls="crm-panel">
+          <span class="accion-ico" aria-hidden="true">💳</span> Cobro
+          <span class="accion-num" hidden></span>
+        </button>
+        <button class="accion" type="button" data-seccion="seguimiento" data-titulo="Seguimiento" aria-expanded="false" aria-controls="crm-panel">
+          <span class="accion-ico" aria-hidden="true">⏰</span> Seguimiento
+          <span class="accion-num" hidden></span>
+        </button>
+        <button class="accion" type="button" data-seccion="transferir" data-titulo="Transferir" aria-expanded="false" aria-controls="crm-panel">
+          <span class="accion-ico" aria-hidden="true">🔄</span> Transferir
+        </button>
+      </nav>
+
+      <div class="chat-thread" id="crm-chat-thread" role="log" tabindex="0" aria-label="Mensajes de la conversación"></div>
+
+      <div class="chat-composer" id="crm-chat-composer">
+        <p class="error" id="crm-send-error" role="alert" hidden></p>
+
+        {# Ventana de 24 h abierta: aviso de cuánto queda, respuestas rápidas y
+           el formulario. Los textos son los que tenía la bandeja vieja; crm.js solo
+           muestra u oculta los tramos .si-urgente y rellena el <strong>. #}
+        <div id="crm-composer-abierto" hidden>
+          <p class="window-note" id="crm-window-note">
+            <span class="window-ico" id="crm-window-ico" aria-hidden="true">⏳</span>
+            <span class="si-urgente" hidden>Queda poco:</span>
+            la ventana de {{ horas }} h cierra en <strong id="crm-window-left"></strong>.
+            <span class="si-urgente" hidden>Después solo podrás responder cuando el cliente vuelva a escribir.</span>
+          </p>
+          <div class="qr-bar" id="crm-qr-bar" role="toolbar" aria-label="Respuestas rápidas"></div>
+          <form method="post" enctype="multipart/form-data" id="crm-composer">
+            <div class="composer-bar">
+              <input type="file" id="crm-file" name="file" class="sr-only"
+                accept=".jpg,.jpeg,.png,.webp,.pdf" aria-describedby="crm-composer-hint">
+              <div class="field">
+                <label for="crm-file" class="attach" title="Adjuntar imagen o PDF">
+                  <span aria-hidden="true">📎</span>
+                  <span class="sr-only">Adjuntar archivo: JPG, PNG, WebP o PDF</span>
+                </label>
+                <label for="crm-body" class="sr-only">Mensaje</label>
+                <textarea id="crm-body" name="body" rows="1" placeholder="Escribe un mensaje…"></textarea>
+              </div>
+              <button type="submit" class="btn-send">Enviar</button>
+            </div>
+            <div id="crm-attach-chip" class="attach-chip" role="status" aria-live="polite" hidden></div>
+            <p class="composer-hint" id="crm-composer-hint">
+              Adjunta JPG, PNG, WebP o PDF (máx. 5 MB imágenes, 16 MB PDF).
+              Si adjuntas un archivo, tu texto se envía como pie.
+            </p>
+          </form>
+        </div>
+
+        {# Ventana cerrada: el aviso ocupa el lugar del compositor y se explica
+           solo. Dos variantes (.si-nunca / .si-cerrada); crm.js deja visible una. #}
+        <div class="banner-warn banner-cerrada" id="crm-banner-cerrada" role="note" aria-labelledby="crm-ventana-cerrada-titulo" hidden>
+          <p class="banner-titulo" id="crm-ventana-cerrada-titulo">
+            <span aria-hidden="true">🔒</span>
+            <span class="si-nunca">Sin ventana abierta — todavía no puedes escribirle</span>
+            <span class="si-cerrada">Ventana de {{ horas }} h cerrada — no puedes escribirle ahora</span>
+          </p>
+          <p>
+            WhatsApp solo deja responder con mensajes libres durante las {{ horas }} h
+            siguientes al último mensaje <em>del cliente</em>.
+            <span class="si-nunca">Este número nunca nos ha escrito, así que esa ventana nunca se abrió.</span>
+            <span class="si-cerrada">Pasado ese plazo Meta rechaza cualquier mensaje que salga de aquí.</span>
+          </p>
+          <p>
+            Para retomar la conversación por tu cuenta haría falta una
+            <strong>plantilla aprobada por Meta</strong>, y este panel todavía no puede enviarlas.
+            Lo que sí funciona: esperar a que el cliente escriba —su mensaje reabre la ventana
+            {{ horas }} h— o buscarlo por otro medio (llamada) y pedirle que mande un
+            mensaje por WhatsApp.
+          </p>
+        </div>
+      </div>
+
+      {# Velo del cajón: solo se ve cuando el cajón se encima (abajo de 1280 px).
+         Es un <button> para que cerrar con clic no cuelgue de un div. #}
+      <button class="panel-scrim" id="crm-panel-scrim" type="button" tabindex="-1"
+              aria-label="Cerrar el panel de la solicitud"></button>
+
+      {# Cajón del folio: una sección a la vez, la elige el riel de arriba. Lee
+         de /crm/api/panel/{phone} y ESCRIBE por los POST de /tickets, /cobros y
+         /clients — ni un endpoint nuevo. Se abre y cierra con clase (.panel-abierto
+         en #crm), nunca con [hidden]: eso mataría la animación. #}
+      <aside class="chat-panel" id="crm-panel" role="region" aria-labelledby="crm-panel-title" inert>
+        <header class="panel-header">
+          <div class="panel-id">
+            <h2 class="panel-title" id="crm-panel-title" tabindex="-1">Gestión</h2>
+            <span class="panel-sub" id="crm-panel-sub"></span>
+          </div>
+          <button class="panel-close" id="crm-panel-close" type="button" aria-label="Cerrar el panel">✕</button>
+        </header>
+
+        <div class="panel-body" id="crm-panel-body">
+          <p class="panel-cargando" id="crm-panel-cargando">Cargando la solicitud…</p>
+          <p class="error" id="crm-panel-error" role="alert" hidden></p>
+
+          <div class="banner-warn" id="crm-panel-sinfolio" role="note" hidden>
+            <p><strong>Esta conversación no tiene una solicitud abierta.</strong></p>
+            <p>
+              El folio lo levanta el agente cuando el cliente confirma el trámite.
+              Mientras tanto, lo que sí puedes dejar es una nota del cliente.
+            </p>
+          </div>
+
+          <section class="panel-seccion" id="crm-sec-gestion" hidden>
+            <div class="tile">
+              <p><strong id="crm-g-folio"></strong> <span id="crm-g-servicio"></span></p>
+              <p class="muted" id="crm-g-meta"></p>
+              <p class="panel-acciones" id="crm-g-badges"></p>
+              <p class="muted" id="crm-g-asesor"></p>
+            </div>
+
+            <div class="tile" id="crm-g-estado-tile" hidden>
+              <h3>Estado</h3>
+              <div class="panel-pills" id="crm-g-estados">
+                <button type="button" data-estado="nuevo">Nuevo</button>
+                <button type="button" data-estado="tomado">Tomado</button>
+                <button type="button" data-estado="en_proceso">En proceso</button>
+                <button type="button" data-estado="cerrado">Cerrado</button>
+              </div>
+            </div>
+
+            <div class="tile" id="crm-g-acciones-tile" hidden>
+              <h3>Acciones</h3>
+              <div class="panel-acciones">
+                <button class="btn-sm" type="button" id="crm-g-tomar" hidden>Tomar esta solicitud</button>
+                <button class="btn-sm" type="button" id="crm-g-terminar" hidden>✔ Terminar solicitud</button>
+                <button class="btn-sm btn-danger" type="button" id="crm-g-soltar" hidden>Soltar solicitud</button>
+                <button class="btn-sm" type="button" id="crm-g-agente" hidden></button>
+              </div>
+              <p class="muted panel-pie" id="crm-g-agente-nota" hidden>
+                Mientras el agente esté activo le sigue respondiendo al cliente en automático.
+              </p>
+            </div>
+
+            <p class="muted" id="crm-g-ajeno" hidden>
+              La atiende <strong id="crm-g-ajeno-quien"></strong>. Solo esa persona puede
+              cambiar el estado, anotar en el folio o transferirlo.
+            </p>
+            <a class="btn-nav" id="crm-g-ver" href="/">🎫 Abrir la solicitud completa ↗</a>
+          </section>
+
+          <section class="panel-seccion" id="crm-sec-etiquetas" hidden>
+            <div class="tile">
+              <h3>Puestas en el folio</h3>
+              <div class="panel-chips" id="crm-e-chips"></div>
+              <p class="empty" id="crm-e-vacio" hidden>Sin etiquetas todavía.</p>
+              <form class="panel-form" id="crm-e-form">
+                <div class="panel-form-campo">
+                  <label for="crm-e-nueva">Agregar etiqueta</label>
+                  <input type="text" id="crm-e-nueva" name="nombre" list="crm-e-lista"
+                         placeholder="+ etiqueta" maxlength="80" required autocomplete="off">
+                  <datalist id="crm-e-lista"></datalist>
+                </div>
+                <button class="btn-sm" type="submit">Agregar</button>
+              </form>
+              <p class="muted panel-pie">
+                Cualquiera de la oficina puede etiquetar, aunque no atienda el folio.
+              </p>
+            </div>
+          </section>
+
+          <section class="panel-seccion" id="crm-sec-notas" hidden>
+            <div class="tile" id="crm-n-tramite-tile">
+              <h3>Notas del trámite</h3>
+              <p class="panel-notas" id="crm-n-tramite"></p>
+              <p class="empty" id="crm-n-tramite-vacio" hidden>Todavía no hay notas en el folio.</p>
+            </div>
+
+            <form class="tile" id="crm-n-form" hidden>
+              <label for="crm-n-texto">Agregar nota al folio</label>
+              <textarea id="crm-n-texto" name="note" required
+                        placeholder="Detalles del trámite, avances, pendientes…"></textarea>
+              <div class="panel-acciones panel-pie">
+                <button class="btn-sm" type="submit">Guardar nota</button>
+              </div>
+            </form>
+
+            <p class="muted" id="crm-n-ajeno" hidden>
+              Solo <strong id="crm-n-ajeno-quien"></strong>, que atiende el folio, puede
+              anotar en el trámite.
+            </p>
+
+            <div class="tile">
+              <h3>Notas del cliente</h3>
+              <div id="crm-n-cliente"></div>
+              <p class="empty" id="crm-n-cliente-vacio" hidden>Aún no hay notas sobre este cliente.</p>
+              <form id="crm-n-cliente-form">
+                <label for="crm-n-cliente-texto">Nueva nota del cliente</label>
+                <textarea id="crm-n-cliente-texto" name="body" required maxlength="2000"
+                          placeholder="Queda en la ficha del cliente, no en el folio."></textarea>
+                <div class="panel-acciones panel-pie">
+                  <button class="btn-sm" type="submit">Guardar nota</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="panel-seccion" id="crm-sec-cobro" hidden>
+            <div class="tile">
+              <h3>Cobros de este folio</h3>
+              <div id="crm-c-lista"></div>
+              <p class="empty" id="crm-c-vacio" hidden>Sin cobros todavía.</p>
+            </div>
+
+            <div class="tile" id="crm-c-otros-tile" hidden>
+              <h3>Cobros vivos en otros folios</h3>
+              <div id="crm-c-otros"></div>
+              <p class="muted panel-pie">
+                Son del mismo cliente: con OXXO el folio se cierra y el agente abre otro,
+                pero esa ficha sigue siendo cobrable.
+              </p>
+            </div>
+
+            <form class="tile" id="crm-c-form" hidden>
+              <h3>Generar cobro</h3>
+              <label for="crm-c-monto">Monto</label>
+              <input type="text" id="crm-c-monto" name="monto" required inputmode="decimal"
+                     placeholder="1,250.00" autocomplete="off">
+              <label for="crm-c-concepto">Concepto (lo ve el cliente)</label>
+              <input type="text" id="crm-c-concepto" name="concepto" maxlength="300" autocomplete="off">
+              <label for="crm-c-msi">Meses sin intereses</label>
+              <select id="crm-c-msi" name="msi">
+                <option value="">Sin MSI</option>
+                <option value="3">3 meses</option>
+                <option value="6">6 meses</option>
+                <option value="9">9 meses</option>
+                <option value="12">12 meses</option>
+              </select>
+              <fieldset class="panel-metodos">
+                <legend>Formas de pago</legend>
+                <label class="panel-check"><input type="checkbox" name="metodo" value="card" checked> Tarjeta</label>
+                <label class="panel-check"><input type="checkbox" name="metodo" value="oxxo"> OXXO</label>
+                <label class="panel-check"><input type="checkbox" name="metodo" value="spei"> Transferencia SPEI</label>
+              </fieldset>
+              <input type="hidden" name="token_form" id="crm-c-token">
+              <p class="muted panel-pie" id="crm-c-cotizado" hidden>
+                Al cliente se le cotizó <strong id="crm-c-cotizado-monto"></strong> por WhatsApp.
+                Si cobras otra cosa queda registrado como ajuste.
+              </p>
+              <p class="muted panel-pie">OXXO admite hasta <span id="crm-c-oxxo"></span>.</p>
+              <div class="panel-acciones panel-pie">
+                <button class="btn-sm" type="submit">Generar y enviar cobro</button>
+              </div>
+            </form>
+
+            <p class="muted" id="crm-c-sin-stripe" hidden>
+              Stripe no está configurado — no se puede generar ningún cobro.
+            </p>
+            <p class="muted" id="crm-c-sin-permiso" hidden>
+              Cobrar es acto del asesor que atiende el folio.
+            </p>
+          </section>
+
+          <section class="panel-seccion" id="crm-sec-seguimiento" hidden>
+            <div class="tile">
+              <h3>Pendientes</h3>
+              <div id="crm-s-lista"></div>
+              <p class="empty" id="crm-s-vacio" hidden>Sin recordatorios pendientes.</p>
+            </div>
+
+            <form class="tile" id="crm-s-form">
+              <label for="crm-s-dias">Recordarme en</label>
+              <select id="crm-s-dias" name="days">
+                <option value="0">Hoy mismo</option>
+                <option value="1" selected>1 día</option>
+                <option value="2">2 días</option>
+                <option value="3">3 días</option>
+                <option value="7">1 semana</option>
+                <option value="15">15 días</option>
+              </select>
+              <label for="crm-s-nota">Motivo (opcional)</label>
+              <input type="text" id="crm-s-nota" name="note" maxlength="500"
+                     placeholder="Ej. recontactar por documentos" autocomplete="off">
+              <div class="panel-acciones panel-pie">
+                <button class="btn-sm" type="submit">Crear recordatorio</button>
+              </div>
+              <p class="muted panel-pie">El recordatorio aparece en «Mi día» el día que toca.</p>
+            </form>
+          </section>
+
+          <section class="panel-seccion" id="crm-sec-transferir" hidden>
+            <form class="tile" id="crm-t-form" hidden>
+              <label for="crm-t-user">Colaborador</label>
+              <select id="crm-t-user" name="to_user" required></select>
+              <label for="crm-t-nota">Nota para quien recibe (opcional)</label>
+              <textarea id="crm-t-nota" name="note"
+                        placeholder="Qué se ha hecho, qué falta, acuerdos con el cliente…"></textarea>
+              <div class="panel-acciones panel-pie">
+                <button class="btn-sm" type="submit">Transferir</button>
+              </div>
+              <p class="muted panel-pie">Solo aparecen los colaboradores de la oficina del folio.</p>
+            </form>
+
+            <p class="muted" id="crm-t-ajeno" hidden>
+              Transferir solo lo puede hacer <strong id="crm-t-ajeno-quien"></strong>, que
+              atiende el folio. Un admin puede soltarlo desde «Gestión» para que alguien más lo tome.
+            </p>
+            <p class="empty" id="crm-t-sin-companeros" hidden>
+              No hay a quién transferirlo en la oficina del folio.
+            </p>
+          </section>
+        </div>
+      </aside>
+    </section>
+  </div>
+
+  <div id="crm-toast" role="status" aria-live="polite"></div>
+
+  <dialog id="crm-dlg-column" aria-labelledby="crm-dlg-column-title">
+    <form id="crm-form-column" method="post" novalidate>
+      <h2 id="crm-dlg-column-title">Nueva etapa</h2>
+
+      <label class="field-label" for="crm-column-name">Nombre</label>
+      <input id="crm-column-name" name="nombre" type="text" maxlength="40" placeholder="Por cobrar" autocomplete="off" required>
+
+      <p class="field-label" id="crm-column-color-label">Color</p>
+      <div class="color-picker" role="group" aria-labelledby="crm-column-color-label">
+        {# Los 8 button.swatch se generan desde crm.js con la paleta. #}
+        <input id="crm-column-color" name="color" type="color" value="#25D366" aria-label="Color personalizado">
+      </div>
+
+      <div class="dlg-actions">
+        <button id="crm-btn-column-cancel" class="btn btn-secondary" type="button">Cancelar</button>
+        <button id="crm-btn-column-create" class="btn btn-primary" type="submit">Crear</button>
+      </div>
+    </form>
+  </dialog>
+
+  {# Plantillas: todo el DOM con datos se construye con cloneNode + textContent. #}
+
+  <template id="crm-tpl-tab">
+    <button class="tab" type="button" role="tab" aria-selected="false">
+      <span class="tab-dot" aria-hidden="true"></span>
+      <span class="tab-name"></span>
+      <span class="tab-count"></span>
+     
+    </button>
+  </template>
+
+  <template id="crm-tpl-tray-item">
+    <li class="tray-item" tabindex="0">
+      <span class="avatar" aria-hidden="true"></span>
+      <span class="tray-main">
+        <span class="tray-row">
+          <span class="tray-name"></span>
+          <span class="tray-time"></span>
+        </span>
+        <span class="tray-row">
+          <span class="tray-preview"></span>
+          <span class="tray-meta">
+            <span class="tray-pin" role="img" title="Fijado" aria-label="Fijado">📌</span>
+            <span class="tray-unread"></span>
+          </span>
+        </span>
+        <span class="tray-badges"></span>
+      </span>
+    </li>
+  </template>
+
+  <template id="crm-tpl-column">
+    <section class="column">
+      <header class="column-header">
+        <span class="column-dot" aria-hidden="true"></span>
+        <h2 class="column-name"></h2>
+        <span class="column-count"></span>
+        <button class="column-menu-btn" type="button" aria-label="Opciones de la etapa" aria-haspopup="true" aria-expanded="false">⋮</button>
+        <div class="column-menu" role="menu" hidden>
+          <button class="act-rename" type="button" role="menuitem">✏️ Renombrar</button>
+          <button class="act-color" type="button" role="menuitem">🎨 Cambiar color</button>
+          <button class="act-delete" type="button" role="menuitem">🗑️ Eliminar etapa</button>
+        </div>
+      </header>
+      <div class="column-body"></div>
+      <footer class="column-footer">
+        <button class="btn-add-contact" type="button">＋ Añadir contacto</button>
+        <form class="add-contact-form" method="post" hidden>
+          <label><span class="sr-only">Nombre</span><input name="name" type="text" maxlength="80" placeholder="Nombre" autocomplete="off" required></label>
+          <label><span class="sr-only">Teléfono</span><input name="phone" type="tel" maxlength="20" placeholder="Teléfono (+52 55 …)" autocomplete="off" required></label>
+          <div class="form-actions">
+            <button class="btn btn-primary btn-save" type="submit">Guardar</button>
+            <button class="btn btn-secondary btn-cancel" type="button">Cancelar</button>
+          </div>
+        </form>
+      </footer>
+    </section>
+  </template>
+
+  <template id="crm-tpl-card">
+    <article class="card" draggable="true" tabindex="0">
+      <div class="card-top">
+        <span class="avatar" aria-hidden="true"></span>
+        <div class="card-id">
+          <div class="card-name-row">
+            <span class="card-name"></span>
+            <span class="card-pin" role="img" title="Fijado" aria-label="Fijado">📌</span>
+          </div>
+          <span class="card-phone"></span>
+        </div>
+        <span class="card-unread"></span>
+      </div>
+      <p class="card-preview"></p>
+      <div class="card-bottom">
+        <span class="card-badges"></span>
+        <span class="card-time"></span>
+      </div>
+      <select class="card-move" aria-label="Mover a otra etapa"></select>
+    </article>
+  </template>
+
+  <template id="crm-tpl-miembro">
+    <button class="miembro" type="button" aria-pressed="false">
+      <span class="avatar miembro-avatar" aria-hidden="true"></span>
+      <span class="miembro-nombre"></span>
+      <span class="miembro-estado" role="img"></span>
+      <span class="miembro-count"></span>
+    </button>
+  </template>
+
+  <template id="crm-tpl-etiqueta">
+    <button class="chip-et" type="button">
+      <span class="chip-et-nombre"></span><span aria-hidden="true">✕</span>
+    </button>
+  </template>
+
+  <template id="crm-tpl-nota">
+    <div class="panel-nota">
+      <p class="panel-nota-texto"></p>
+      <span class="when"></span>
+    </div>
+  </template>
+
+  <template id="crm-tpl-seguimiento">
+    <p class="panel-seg">
+      <span class="badge esperando seg-fecha"></span>
+      <span class="seg-texto"></span>
+    </p>
+  </template>
+
+  <template id="crm-tpl-cobro">
+    <div class="panel-cobro">
+      <p class="cobro-cabeza">
+        <span class="badge cobro-badge"></span>
+        <strong class="cobro-monto"></strong>
+        <span class="muted cobro-concepto"></span>
+      </p>
+      <p class="panel-acciones cobro-avisos"></p>
+      <p class="muted cobro-motivo" hidden></p>
+      <p class="muted cobro-pie"></p>
+      <div class="panel-acciones panel-pie cobro-acciones">
+        <a class="btn-sm cobro-link" target="_blank" rel="noopener" hidden></a>
+        <button class="btn-sm cobro-copiar" type="button" hidden>Copiar link</button>
+        <button class="btn-sm cobro-enviar" type="button" hidden>Reenviar por WhatsApp</button>
+        <button class="btn-sm cobro-reconciliar" type="button" hidden>Consultar a Stripe</button>
+        <button class="btn-sm cobro-confirmar" type="button" hidden>Confirmado por asesor</button>
+        <button class="btn-sm cobro-avisar" type="button" hidden>Avisar que ya pagó</button>
+        <button class="btn-sm btn-danger cobro-cancelar" type="button" hidden>Cancelar cobro</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="crm-tpl-cobro-otro">
+    <p class="panel-acciones cobro-otro">
+      <span class="badge tomado">⏳ Cobro vivo en otro folio</span>
+      <strong class="otro-monto"></strong>
+      <span class="muted otro-concepto"></span>
+      <a class="btn-nav otro-folio" href="/">Ver el folio</a>
+    </p>
+  </template>
+
+  <template id="crm-tpl-bubble">
+    <div class="bubble">
+      <span class="bubble-text"></span>
+      <span class="meta"></span>
+    </div>
+  </template>
+</div>
+<script type="application/json" id="crm-datos">{{ datos | tojson }}</script>
+<script src="{{ static('js/crm.js') }}" defer></script>
+<script src="{{ static('js/crm-panel.js') }}" defer></script>
+{% endblock %}

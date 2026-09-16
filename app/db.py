@@ -114,6 +114,11 @@ _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH = {
     "atributos_json": "VARCHAR",
     "last_activity_at": "DATETIME",
     "notas_internas": "VARCHAR",
+    # Embudo del CRM (/crm). Nullable sin default a propósito: NULL es «en la
+    # primera etapa» y evita un UPDATE masivo que el espejo no vería.
+    "etapa_crm_id": "INTEGER",
+    "etapa_crm_at": "DATETIME",
+    "etapa_crm_por": "VARCHAR",
 }
 
 
@@ -167,6 +172,7 @@ def init_db() -> None:
     _add_missing_columns("ticket", _TICKET_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("conversation", _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("client", _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH)
+    _seed_crm_etapas()
     for table in _TABLES_NEEDING_HABILITADO:
         _add_missing_columns(table, _HABILITADO_COLUMN)
     for table in _TABLES_NEEDING_OFFICE:
@@ -208,6 +214,27 @@ def init_db() -> None:
         )
 
     _normalize_phones()
+
+
+def _seed_crm_etapas() -> None:
+    """Siembra las cuatro etapas del embudo del CRM si la tabla está vacía.
+
+    Vive en init_db por la misma razón que _seed_office_tlaxcala: el cron
+    también llama init_db() y puede ser el primer proceso sobre una base vacía.
+    Se comprueba «tabla vacía» y NO cada nombre: un admin que renombró o dio de
+    baja una etapa no la quiere de vuelta en el siguiente arranque. Va por el
+    ORM para que el espejo MSSQL reciba las filas por su listener. Los ids van
+    EXPLÍCITOS (1..4) por la misma razón que Tlaxcala: una base restaurada —o la
+    tabla sin PK del candado de tests/test_db_migrations.py— no genera ids sola.
+    """
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        if session.exec(select(models.CrmEtapa)).first() is not None:
+            return
+        for orden, (nombre, color) in enumerate(models.ETAPAS_CRM_DEFAULT):
+            session.add(models.CrmEtapa(id=orden + 1, nombre=nombre, color=color, ord=orden))
+        session.commit()
 
 
 def _seed_office_tlaxcala() -> None:

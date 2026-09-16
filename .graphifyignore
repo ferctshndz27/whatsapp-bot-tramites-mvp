@@ -1,0 +1,15 @@
+# Qué NO entra al grafo de código (graphify). Se suma a .gitignore y a .git/info/exclude, que
+# graphify ya respeta: .env, data/, tramites.db, docs/, marketing/ y scripts/ quedan fuera sin
+# repetirlos aquí. Por qué existe y cómo se usa: .claude/skills/code-graph/SKILL.md.
+
+# Prototipo Flask autónomo: otro stack y otro contrato; en el grafo solo duplica nombres.
+crm-kanban/
+# Sitio público estático e infraestructura del correo: no es código del bot.
+landing/
+terraform/
+# Librería de terceros minificada: miles de nodos que no explican nada del bot.
+static/vendor/
+# Documentos: el grafo es solo de código. `graphify update` indexa los títulos de todo Markdown
+# versionado —también los de docs/, que .gitignore no alcanza porque ya estaban rastreados—. No usa
+# modelo ni sale de la máquina, pero queda fuera del alcance acordado para este grafo.
+*.md

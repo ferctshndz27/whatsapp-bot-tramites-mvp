@@ -43,7 +43,7 @@
     <a href="/logins" {% if not result %}aria-current="true"{% endif %}>Todos</a>
     <a href="/logins?result=ok" {% if result == 'ok' %}aria-current="true"{% endif %}>Exitosos</a>
     <a href="/logins?result=fail" {% if result == 'fail' %}aria-current="true"{% endif %}>Fallidos</a>
-    <a href="/export/logins.csv" class="btn-sm" style="text-decoration:none;">⬇ CSV completo</a>
+    <a href="/export/logins.csv" class="btn-sm u-deco-none">⬇ CSV completo</a>
   </div>
   {% if entries %}
   <div class="table-wrap">
@@ -61,7 +61,7 @@
             <span class="badge cerrado">entró</span>
             {% else %}
             <span class="badge nuevo">fallo</span>
-            <span style="color:var(--text-muted); font-size:.85rem;">{{ e.reason }}</span>
+            <span class="u-c-text-muted u-fs-0_85rem">{{ e.reason }}</span>
             {% endif %}
           </td>
           <td>{{ e.ip or '—' }}</td>
@@ -72,7 +72,7 @@
       </tbody>
     </table>
   </div>
-  <p style="color:var(--text-muted); font-size:.85rem; margin:.75rem 0 0;">
+  <p class="u-c-text-muted u-fs-0_85rem u-m-0_75rem-0-0">
     Se muestran los últimos {{ entries|length }} intentos; el CSV incluye el historial completo.
     La ubicación es aproximada (por IP) y puede tardar unos segundos en aparecer tras el primer acceso desde una IP nueva.
   </p>

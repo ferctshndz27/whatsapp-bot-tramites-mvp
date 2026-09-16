@@ -1,0 +1,2031 @@
+#!/usr/bin/env node
+/**
+ * qa_crm_navegador.mjs — QA del CRM Kanban del ERP (/crm) en Chrome headless vía CDP, contra el
+ * backend real.
+ *
+ * static/js/crm.js no tiene pruebas unitarias (el harness de pytest solo revisa que cumpla la
+ * separación HTML/CSS/JS); este juez es su verificación: levanta uvicorn con una base temporal
+ * sembrada (scripts/qa_crm_seed.py), abre Chrome sin cabeza, entra con la sesión del panel como
+ * admin global, colaborador y admin de oficina, y ejecuta los criterios de aceptación del CRM
+ * (tablero, drag & drop persistente, pestañas, búsqueda, chat, envío por los endpoints de
+ * app/inbox.py, bot, bloqueo, etapas, alta de contacto, alcance por oficina) más una pasada
+ * responsiva. Imprime una línea ✅/❌ por criterio (⚠️ = observación) y termina con código 1 si
+ * hay algún ❌. Node 22 sin dependencias npm; requiere google-chrome.
+ *
+ * Uso: node scripts/qa_crm_navegador.mjs [--verbose] [--keep] [--capturas=DIR]
+ *   --capturas=DIR  guarda capturas PNG (tablero, chat, diálogo y anchos de 900 y 400 px) en DIR
+ */
+
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import http from "node:http";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const AQUI = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.resolve(AQUI, "..");
+const PYTHON = path.join(REPO, ".venv", "bin", "python");
+const SEED = path.join(AQUI, "qa_crm_seed.py");
+const CHROME = process.env.CHROME_BIN || "/usr/bin/google-chrome";
+const CLAVE = "clave-qa-123";
+const ANA = "525500000011";
+const BETO = "525500000012";
+const DIEGO = "525500000013";
+const CARLA = "522200000021";
+const ALTA = { name: "Prueba Alta QA", phone: "+52 55 0000 9999", canonico: "525500009999" };
+// Peticiones cuyo 404 es esperado y no cuenta como fallo.
+const RUTAS_IGNORADAS = ["/favicon.ico", "/media/qa-no-existe.jpg"];
+
+const args = process.argv.slice(2);
+const verbose = args.includes("--verbose") || args.includes("-v");
+const keep = args.includes("--keep");
+const CAPTURAS = (args.find((a) => a.startsWith("--capturas=")) ?? "").slice("--capturas=".length) || null;
+if (CAPTURAS) fs.mkdirSync(CAPTURAS, { recursive: true });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Utilidades
+// ────────────────────────────────────────────────────────────────────────────
+
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function waitFor(fn, { timeout = 5000, interval = 100, label = "la condición" } = {}) {
+  const limite = Date.now() + timeout;
+  for (;;) {
+    const valor = await fn();
+    if (valor) return valor;
+    if (Date.now() >= limite) throw new Error(`Tiempo agotado (${timeout} ms) esperando ${label}`);
+    await dormir(interval);
+  }
+}
+
+function puertoLibre() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.unref();
+    s.on("error", reject);
+    s.listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = http.request(
+      { host: u.hostname, port: u.port, path: u.pathname + u.search, method: "GET", agent: false, timeout: 10000 },
+      (res) => {
+        const trozos = [];
+        res.on("data", (c) => trozos.push(c));
+        res.on("end", () => {
+          const text = Buffer.concat(trozos).toString("utf8");
+          let json = null;
+          try { json = JSON.parse(text); } catch { /* no era JSON */ }
+          resolve({ status: res.statusCode, json, text });
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error(`timeout en GET ${url}`)));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+function describirObjeto(o) {
+  if (!o) return "";
+  if (o.value !== undefined) return typeof o.value === "string" ? o.value : JSON.stringify(o.value);
+  return o.description ?? o.unserializableValue ?? o.type ?? "";
+}
+
+function ubicacion(stackTrace) {
+  const f = stackTrace?.callFrames?.[0];
+  return f && f.url ? ` (${f.url}:${f.lineNumber + 1}:${f.columnNumber + 1})` : "";
+}
+
+function describirExcepcion(d) {
+  if (!d) return "excepción sin detalle";
+  const e = d.exception;
+  const texto = String(e?.description ?? e?.value ?? d.text ?? "excepción").split("\n")[0];
+  const donde = d.url ? ` (${d.url}:${(d.lineNumber ?? 0) + 1}:${(d.columnNumber ?? 0) + 1})` : ubicacion(d.stackTrace);
+  return `${texto}${donde}`;
+}
+
+function mismoConjunto(a, b) {
+  const sa = [...a].map(String).sort();
+  const sb = [...b].map(String).sort();
+  return sa.length === sb.length && sa.every((x, i) => x === sb[i]);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Cliente CDP mínimo (WebSocket global de Node 22)
+// ────────────────────────────────────────────────────────────────────────────
+
+class ClienteCDP {
+  constructor(url) {
+    this.url = url;
+    this.ws = null;
+    this.siguienteId = 0;
+    this.pendientes = new Map();
+    this.oyentes = new Map();
+  }
+
+  conectar() {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(this.url);
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error(`No se pudo abrir el WebSocket de CDP en ${this.url}`)), { once: true });
+      ws.addEventListener("close", () => {
+        for (const p of this.pendientes.values()) {
+          clearTimeout(p.timer);
+          p.reject(new Error(`La conexión CDP se cerró (${p.method})`));
+        }
+        this.pendientes.clear();
+      });
+      ws.addEventListener("message", (ev) => this._recibir(ev.data));
+      this.ws = ws;
+    });
+  }
+
+  _recibir(texto) {
+    let msg;
+    try { msg = JSON.parse(texto); } catch { return; }
+    if (msg.id !== undefined) {
+      const p = this.pendientes.get(msg.id);
+      if (!p) return;
+      this.pendientes.delete(msg.id);
+      clearTimeout(p.timer);
+      if (msg.error) p.reject(new Error(`${p.method}: ${msg.error.message}${msg.error.data ? " — " + msg.error.data : ""}`));
+      else p.resolve(msg.result ?? {});
+    } else if (msg.method) {
+      for (const cb of this.oyentes.get(msg.method) ?? []) {
+        try { cb(msg.params ?? {}); } catch (e) { console.error(`Oyente CDP de ${msg.method} falló:`, e); }
+      }
+    }
+  }
+
+  send(method, params = {}, { timeout = 30000 } = {}) {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return reject(new Error(`CDP no conectado (${method})`));
+      const id = ++this.siguienteId;
+      const timer = setTimeout(() => {
+        this.pendientes.delete(id);
+        reject(new Error(`${method}: sin respuesta en ${timeout} ms`));
+      }, timeout);
+      this.pendientes.set(id, { resolve, reject, timer, method });
+      this.ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  on(method, cb) {
+    if (!this.oyentes.has(method)) this.oyentes.set(method, new Set());
+    this.oyentes.get(method).add(cb);
+    return () => this.oyentes.get(method)?.delete(cb);
+  }
+
+  esperarEvento(method, timeout = 15000) {
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const quitar = this.on(method, (p) => {
+        clearTimeout(timer);
+        quitar();
+        resolve(p);
+      });
+      timer = setTimeout(() => {
+        quitar();
+        reject(new Error(`${method}: no llegó en ${timeout} ms`));
+      }, timeout);
+    });
+  }
+
+  /** Ejecuta `fn(...args)` en la página. `fn` debe ser autocontenida (se serializa con toString). */
+  async evaluate(fn, ...args) {
+    const expression = `(${fn.toString()})(${args.map((a) => JSON.stringify(a)).join(", ")})`;
+    const r = await this.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    if (r.exceptionDetails) throw new Error(`Runtime.evaluate: ${describirExcepcion(r.exceptionDetails)}`);
+    return r.result?.value;
+  }
+
+  cerrar() {
+    try { this.ws?.close(); } catch { /* ya cerrado */ }
+  }
+}
+
+class Recolector {
+  constructor(cdp) {
+    this.fallos = [];
+    this.avisos = [];
+    this.urls = new Map();
+    cdp.on("Runtime.exceptionThrown", (p) => {
+      this.fallos.push({ origen: "excepción", texto: describirExcepcion(p.exceptionDetails) });
+    });
+    cdp.on("Runtime.consoleAPICalled", (p) => {
+      const texto = (p.args ?? []).map(describirObjeto).join(" ") + ubicacion(p.stackTrace);
+      if (p.type === "error" || p.type === "assert") this.fallos.push({ origen: `console.${p.type}`, texto });
+      else if (p.type === "warning") this.avisos.push({ origen: "console.warn", texto });
+    });
+    cdp.on("Log.entryAdded", ({ entry }) => {
+      if (!entry) return;
+      const texto = `${entry.text}${entry.url ? " — " + entry.url : ""}`;
+      if (RUTAS_IGNORADAS.some((r) => (entry.url ?? "").includes(r))) return;
+      if (entry.level === "error") this.fallos.push({ origen: `log.${entry.source}`, texto });
+      else if (entry.level === "warning") this.avisos.push({ origen: `log.${entry.source}`, texto });
+    });
+    cdp.on("Network.requestWillBeSent", (p) => {
+      this.urls.set(p.requestId, `${p.request?.method ?? ""} ${p.request?.url ?? ""}`.trim());
+    });
+    cdp.on("Network.responseReceived", (p) => {
+      const r = p.response ?? {};
+      if (r.status >= 400 && !RUTAS_IGNORADAS.some((x) => (r.url ?? "").includes(x))) {
+        const peticion = this.urls.get(p.requestId) ?? r.url;
+        this.fallos.push({ origen: "red", texto: `HTTP ${r.status} en ${peticion} (${p.type})` });
+      }
+    });
+    cdp.on("Network.loadingFinished", (p) => this.urls.delete(p.requestId));
+    cdp.on("Network.loadingFailed", (p) => {
+      const peticion = this.urls.get(p.requestId) ?? p.requestId;
+      this.urls.delete(p.requestId);
+      if (!p.canceled && p.errorText !== "net::ERR_ABORTED") {
+        this.avisos.push({ origen: "red", texto: `carga fallida (${p.errorText}) en ${peticion} (${p.type})` });
+      }
+    });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Procesos
+// ────────────────────────────────────────────────────────────────────────────
+
+function capturarSalida(proc, etiqueta, maxLineas = 120) {
+  const lineas = [];
+  const alimentar = (trozo) => {
+    for (const l of trozo.toString("utf8").split(/\r?\n/)) {
+      if (!l) continue;
+      lineas.push(l);
+      if (lineas.length > maxLineas) lineas.shift();
+      if (verbose) console.log(`   [${etiqueta}] ${l}`);
+    }
+  };
+  proc.stdout?.on("data", alimentar);
+  proc.stderr?.on("data", alimentar);
+  return lineas;
+}
+
+async function matarProceso(proc) {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+  const salio = new Promise((r) => proc.once("exit", r));
+  try { proc.kill("SIGTERM"); } catch { return; }
+  const aTiempo = await Promise.race([salio.then(() => true), dormir(2500).then(() => false)]);
+  if (!aTiempo) {
+    try { proc.kill("SIGKILL"); } catch { /* ya murió */ }
+    await Promise.race([salio, dormir(1500)]);
+  }
+}
+
+async function lanzarChrome(perfil) {
+  if (!fs.existsSync(CHROME)) throw new Error(`No se encontró Chrome en ${CHROME}`);
+  fs.mkdirSync(perfil, { recursive: true });
+  const puerto = await puertoLibre();
+  const flags = [
+    "--headless=new", "--disable-gpu", "--no-sandbox", `--user-data-dir=${perfil}`,
+    `--remote-debugging-port=${puerto}`, "--no-first-run", "--no-default-browser-check",
+    "--disable-extensions", "--disable-background-networking", "--disable-sync",
+    "--disable-features=Translate,BackForwardCache", "--remote-allow-origins=*",
+    "--window-size=1400,900", "about:blank",
+  ];
+  const proc = spawn(CHROME, flags, { stdio: ["ignore", "pipe", "pipe"] });
+  const salida = capturarSalida(proc, "chrome");
+  let terminado = null;
+  proc.on("exit", (code, signal) => (terminado = { code, signal }));
+  proc.on("error", (e) => (terminado = { error: e }));
+  const base = `http://127.0.0.1:${puerto}`;
+  const lista = await waitFor(async () => {
+    if (terminado) throw new Error(`Chrome terminó antes de abrir el puerto de depuración\n${salida.join("\n")}`);
+    try {
+      const r = await httpGet(`${base}/json/list`);
+      return r.status === 200 && Array.isArray(r.json) ? r.json : null;
+    } catch { return null; }
+  }, { timeout: 20000, interval: 150, label: "el puerto de depuración de Chrome" });
+  const objetivo = lista.find((t) => t.type === "page" && t.webSocketDebuggerUrl);
+  if (!objetivo) throw new Error("Chrome no expone ninguna pestaña por CDP");
+  return { proc, wsUrl: objetivo.webSocketDebuggerUrl };
+}
+
+async function lanzarServidor(env, puerto) {
+  const proc = spawn(PYTHON, ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(puerto), "--log-level", "warning"],
+    { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+  const salida = capturarSalida(proc, "uvicorn");
+  let terminado = null;
+  proc.on("exit", (code, signal) => (terminado = { code, signal }));
+  proc.on("error", (e) => (terminado = { error: e }));
+  const base = `http://127.0.0.1:${puerto}`;
+  await waitFor(async () => {
+    if (terminado) throw new Error(`uvicorn terminó antes de atender\n${salida.join("\n")}`);
+    try {
+      const r = await httpGet(`${base}/login`);
+      return r.status === 200 ? true : null;
+    } catch { return null; }
+  }, { timeout: 40000, interval: 250, label: "que uvicorn atienda /login" });
+  return { proc, base, salida };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Funciones que corren DENTRO de la página (autocontenidas)
+// ────────────────────────────────────────────────────────────────────────────
+
+const enPagina = {
+  api: async (ruta) => {
+    const r = await fetch(ruta, { headers: { Accept: "application/json" }, credentials: "same-origin" });
+    return { status: r.status, json: await r.json().catch(() => null) };
+  },
+
+  tablero: () => ({
+    columnas: document.querySelectorAll("#crm-board section.column").length,
+    tarjetas: document.querySelectorAll("#crm-board article.card").length,
+    tabs: [...document.querySelectorAll("#crm-tabs button.tab")].map((b) => ({
+      filter: b.dataset.filter, nombre: b.querySelector(".tab-name")?.textContent.trim(), conteo: b.querySelector(".tab-count")?.textContent.trim(),
+    })),
+    bandeja: [...document.querySelectorAll("#crm-tray-list li.tray-item")].map((li) => li.dataset.contactId),
+    conteoBandeja: document.querySelector("#crm-tray-count")?.textContent.trim(),
+    nuevaEtapa: !!document.querySelector("#crm-btn-new-column"),
+    menus: document.querySelectorAll("#crm-board .column-menu-btn").length,
+    altas: document.querySelectorAll("#crm-board .btn-add-contact").length,
+    miembrosTira: document.querySelectorAll("#crm-miembros .miembro").length,
+    tiraVisible: (() => { const n = document.querySelector("#crm-miembros"); return !!n && getComputedStyle(n).display !== "none"; })(),
+    vacioBandeja: document.querySelector("#crm-tray-list li.tray-empty")?.textContent.trim() ?? null,
+    crmKanban: !!(window.CRMKanban && typeof window.CRMKanban.reload === "function"),
+    openChat: typeof window.openChat === "function",
+    cargando: !!document.querySelector("#crm-board .board-loading"),
+  }),
+
+  columnasDOM: () =>
+    [...document.querySelectorAll("#crm-board section.column")].map((s) => ({
+      id: s.dataset.columnId ?? null,
+      nombre: (s.querySelector("h2.column-name")?.textContent ?? "").replace(/\s+/g, " ").trim(),
+      conteo: (s.querySelector("span.column-count")?.textContent ?? "").trim(),
+      color: s.style.getPropertyValue("--col-color"),
+      tarjetas: [...s.querySelectorAll("article.card")].map((c) => c.dataset.contactId ?? null),
+      menu: !!s.querySelector(".column-menu-btn"),
+    })),
+
+  tarjetas: () =>
+    [...document.querySelectorAll("#crm-board article.card[data-contact-id]")].map((card) => {
+      const q = (sel) => card.querySelector(sel);
+      return {
+        id: card.dataset.contactId,
+        columna: card.closest("section.column")?.dataset.columnId ?? null,
+        avatar: q(".avatar")?.textContent ?? null,
+        nombre: q(".card-name")?.textContent ?? null,
+        telefono: q(".card-phone")?.textContent ?? null,
+        noLeidos: q(".card-unread")?.textContent.trim() ?? null,
+        preview: q(".card-preview")?.textContent.trim() ?? null,
+        ticks: q(".card-preview .ticks")?.textContent ?? null,
+        ticksRead: !!q(".card-preview .ticks.read"),
+        tiempo: q(".card-time")?.textContent.trim() ?? null,
+        badges: [...card.querySelectorAll(".card-badges .chip")].map((c) => c.textContent.trim()),
+        draggable: card.draggable === true,
+        role: card.getAttribute("role"),
+        aria: card.getAttribute("aria-label"),
+        opciones: [...(q("select.card-move")?.options ?? [])].map((o) => o.textContent.trim()),
+      };
+    }),
+
+  columnaDeTarjeta: (id) =>
+    document.querySelector(`#crm-board article.card[data-contact-id="${id}"]`)?.closest("section.column")?.dataset.columnId ?? null,
+
+  soltar: (contactId, columnId) => {
+    const card = document.querySelector(`#crm-board article.card[data-contact-id="${contactId}"]`);
+    const col = document.querySelector(`#crm-board section.column[data-column-id="${columnId}"]`);
+    if (!card) return { error: `no existe article.card[data-contact-id="${contactId}"]` };
+    if (!col) return { error: `no existe section.column[data-column-id="${columnId}"]` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    const draggable = card.draggable === true;
+    const dt = new DataTransfer();
+    const disparar = (tipo, destino) => destino.dispatchEvent(new DragEvent(tipo, { bubbles: true, cancelable: true, dataTransfer: dt }));
+    disparar("dragstart", card);
+    const arrastrando = card.classList.contains("is-dragging");
+    const dato = dt.getData("text/plain");
+    disparar("dragenter", col);
+    const dragoverCancelado = !disparar("dragover", col);
+    const resaltada = col.classList.contains("is-over");
+    const dropCancelado = !disparar("drop", col);
+    disparar("dragend", card);
+    return { ok: true, draggable, arrastrando, dato, resaltada, dragoverCancelado, dropCancelado, limpia: !col.classList.contains("is-over") };
+  },
+
+  toast: () => {
+    const t = document.querySelector("#crm-toast");
+    return t && t.classList.contains("is-visible") ? t.textContent.trim() : null;
+  },
+
+  ocultarToast: () => { document.querySelector("#crm-toast")?.classList.remove("is-visible"); return true; },
+
+  pulsarTab: (filtro) => {
+    const b = document.querySelector(`#crm-tabs button.tab[data-filter="${filtro}"]`);
+    if (!b) return false;
+    b.click();
+    return true;
+  },
+
+  miembros: () =>
+    [...document.querySelectorAll("#crm-miembros .miembro")].map((b) => ({
+      username: b.dataset.username,
+      nombre: b.querySelector(".miembro-nombre")?.textContent.trim(),
+      estado: [...(b.querySelector(".miembro-estado")?.classList ?? [])].find((c) => ["disponible", "ocupado", "ausente"].includes(c)) ?? null,
+      conteo: b.querySelector(".miembro-count")?.textContent.trim(),
+      activo: b.classList.contains("is-active"),
+      aria: b.getAttribute("aria-pressed"),
+    })),
+
+  oficinasEnTira: () => [...document.querySelectorAll("#crm-miembros .miembros-oficina")].map((s) => s.textContent.trim()),
+
+  pulsarMiembro: (username) => {
+    const b = document.querySelector(`#crm-miembros .miembro[data-username="${username}"]`);
+    if (!b) return false;
+    b.click();
+    return true;
+  },
+
+  estadoTab: (filtro) => {
+    const b = document.querySelector(`#crm-tabs button.tab[data-filter="${filtro}"]`);
+    return {
+      existe: !!b,
+      clase: !!b && b.classList.contains("is-active"),
+      aria: !!b && b.getAttribute("aria-selected") === "true",
+      tabindex: b ? b.tabIndex : null,
+      items: [...document.querySelectorAll("#crm-tray-list li.tray-item")].map((li) => li.dataset.contactId),
+      vacio: !!document.querySelector("#crm-tray-list li.tray-empty"),
+      enfocada: !!document.querySelector(`#crm-board section.column[data-column-id="${filtro}"].is-focused`),
+    };
+  },
+
+  buscar: (texto) => {
+    const i = document.querySelector("#crm-search");
+    if (!i) return false;
+    i.value = texto;
+    i.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  },
+
+  cambiarSelect: (contactId, valor) => {
+    const card = document.querySelector(`#crm-board article.card[data-contact-id="${contactId}"]`);
+    if (!card) return { error: `no existe article.card[data-contact-id="${contactId}"]` };
+    const sel = card.querySelector("select.card-move");
+    if (!sel) return { error: "la tarjeta no tiene select.card-move" };
+    sel.value = valor;
+    if (sel.value !== valor) return { error: `no se pudo fijar select.card-move.value = ${JSON.stringify(valor)}` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true };
+  },
+
+  abrirTarjeta: (phone, desde) => {
+    const sel = desde === "bandeja"
+      ? `#crm-tray-list li.tray-item[data-contact-id="${phone}"]`
+      : `#crm-board article.card[data-contact-id="${phone}"]`;
+    const el = document.querySelector(sel);
+    if (!el) return { error: `no existe ${sel}` };
+    el.click();
+    return { ok: true };
+  },
+
+  estadoChat: () => {
+    const root = document.querySelector("#crm");
+    const chat = document.querySelector("#crm-chat");
+    const board = document.querySelector("#crm-board");
+    // getClientRects: un elemento cuyo ANCESTRO está oculto conserva su propio display, así que
+    // sin esto un botón dentro de una fila con display:none contaría como visible.
+    const visible = (el) => !!el && !el.hidden && getComputedStyle(el).display !== "none" && el.getClientRects().length > 0;
+    const note = document.querySelector("#crm-window-note");
+    return {
+      abierto: root.classList.contains("chat-abierto"),
+      chatVisible: visible(chat),
+      boardVisible: visible(board),
+      btnBoardVisible: visible(document.querySelector("#crm-btn-board")),
+      nombre: document.querySelector("#crm-chat-name")?.textContent.trim(),
+      telefono: document.querySelector("#crm-chat-phone")?.textContent.trim(),
+      avatar: document.querySelector("#crm-chat-avatar")?.textContent.trim(),
+      badges: [...document.querySelectorAll("#crm-chat-badges .chip")].map((c) => c.textContent.trim()),
+      enlaces: [...document.querySelectorAll("#crm-chat-badges a")].map((a) => ({ texto: a.textContent.trim(), href: a.getAttribute("href") })),
+      botones: [...document.querySelectorAll("#crm-chat-badges button")].map((b) => ({ clase: b.className, texto: b.textContent.trim() })),
+      burbujas: [...document.querySelectorAll("#crm-chat-thread .bubble")].map((b) => ({
+        id: b.dataset.messageId,
+        dir: b.classList.contains("out") ? "out" : "in",
+        texto: b.querySelector(".bubble-text")?.textContent ?? "",
+        meta: b.querySelector(".meta")?.textContent.trim() ?? "",
+        eliminar: !!b.querySelector(".msg-delete"),
+        adjunto: b.querySelector(".bubble-adjunto")?.getAttribute("href") ?? null,
+      })),
+      estadoHilo: document.querySelector("#crm-chat-thread > p")?.className ?? null,
+      composerVisible: visible(document.querySelector("#crm-composer-abierto")),
+      bannerVisible: visible(document.querySelector("#crm-banner-cerrada")),
+      siNunca: visible(document.querySelector("#crm-banner-cerrada .si-nunca")),
+      siCerrada: visible(document.querySelector("#crm-banner-cerrada .si-cerrada")),
+      windowLeft: document.querySelector("#crm-window-left")?.textContent.trim(),
+      urgente: !!note && note.classList.contains("urgente"),
+      qr: document.querySelectorAll("#crm-qr-bar .qr").length,
+      accionForm: document.querySelector("#crm-composer")?.getAttribute("action"),
+      errorEnvio: visible(document.querySelector("#crm-send-error")) ? document.querySelector("#crm-send-error").textContent.trim() : null,
+      url: location.pathname + location.search,
+      bandejaAbierta: [...document.querySelectorAll("#crm-tray-list li.tray-item.is-open")].map((li) => li.dataset.contactId),
+      tarjetaAbierta: [...document.querySelectorAll("#crm-board article.card.is-open")].map((c) => c.dataset.contactId),
+      foco: document.activeElement ? (document.activeElement.id || document.activeElement.className || document.activeElement.tagName) : null,
+      scrollAlFondo: (() => { const h = document.querySelector("#crm-chat-thread"); return h ? h.scrollHeight - h.scrollTop - h.clientHeight < 40 : null; })(),
+    };
+  },
+
+  escribirYEnviar: (texto) => {
+    const ta = document.querySelector("#crm-body");
+    const form = document.querySelector("#crm-composer");
+    if (!ta || !form) return { error: "no hay compositor" };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    ta.value = texto;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    form.requestSubmit();
+    return { ok: true };
+  },
+
+  enviarVacio: () => {
+    const ta = document.querySelector("#crm-body");
+    const form = document.querySelector("#crm-composer");
+    ta.value = "";
+    form.requestSubmit();
+    const chip = document.querySelector("#crm-attach-chip");
+    return { chip: chip && !chip.hidden ? chip.textContent.trim() : null };
+  },
+
+  pulsarQr: () => {
+    const b = document.querySelector("#crm-qr-bar .qr");
+    if (!b) return { error: "no hay respuestas rápidas" };
+    b.click();
+    return { texto: document.querySelector("#crm-body").value, esperado: b.dataset.text };
+  },
+
+  pulsarEnCabecera: (clase) => {
+    const b = document.querySelector(`#crm-chat-badges button.${clase}`);
+    if (!b) return { error: `no hay button.${clase} en la cabecera` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    b.click();
+    return { ok: true };
+  },
+
+  pulsarEliminarUltimo: () => {
+    const botones = [...document.querySelectorAll("#crm-chat-thread .msg-delete")];
+    if (!botones.length) return { error: "no hay ningún botón «eliminar» en el hilo" };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    botones[botones.length - 1].click();
+    return { ok: true, total: botones.length };
+  },
+
+  cerrarChat: (como) => {
+    const b = como === "tablero" ? document.querySelector("#crm-btn-board") : document.querySelector("#crm-chat .chat-close");
+    if (!b) return { error: "no hay botón para cerrar" };
+    b.click();
+    return { ok: true };
+  },
+
+  teclaEscape: () => {
+    document.body.focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    return true;
+  },
+
+  abrirMenuColumna: (columnId) => {
+    const col = document.querySelector(`#crm-board section.column[data-column-id="${columnId}"]`);
+    if (!col) return { error: `no existe section.column[data-column-id="${columnId}"]` };
+    const boton = col.querySelector("button.column-menu-btn");
+    if (!boton) return { error: `la columna ${columnId} no tiene button.column-menu-btn` };
+    boton.click();
+    const menu = col.querySelector("div.column-menu");
+    return { ok: true, abierto: !!menu && !menu.hidden, expandido: boton.getAttribute("aria-expanded") };
+  },
+
+  pulsarAccionColumna: (columnId, accion) => {
+    const col = document.querySelector(`#crm-board section.column[data-column-id="${columnId}"]`);
+    if (!col) return { error: `no existe section.column[data-column-id="${columnId}"]` };
+    const boton = col.querySelector(`div.column-menu button.${accion}`);
+    if (!boton) return { error: `la columna ${columnId} no tiene button.${accion}` };
+    if (boton.disabled) return { error: `button.${accion} está deshabilitado (${boton.title})` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    boton.click();
+    return { ok: true };
+  },
+
+  renombrarColumna: (columnId, nombre) => {
+    const col = document.querySelector(`#crm-board section.column[data-column-id="${columnId}"]`);
+    const input = col?.querySelector("input.column-rename");
+    if (!input) return { error: `no apareció input.column-rename en la columna ${columnId}` };
+    input.value = nombre;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    return { ok: true };
+  },
+
+  pulsarSwatch: (columnId, color) => {
+    const col = document.querySelector(`#crm-board section.column[data-column-id="${columnId}"]`);
+    const picker = col?.querySelector(".color-picker");
+    if (!picker) return { error: `no apareció .color-picker en la columna ${columnId}` };
+    const s = picker.querySelector(`.swatch[data-color="${color}"]`);
+    if (!s) return { error: `no hay swatch ${color}` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    s.click();
+    return { ok: true, swatches: picker.querySelectorAll(".swatch").length };
+  },
+
+  abrirDialogoColumna: () => {
+    const b = document.querySelector("#crm-btn-new-column");
+    if (!b) return { error: "no existe button#crm-btn-new-column" };
+    b.click();
+    const d = document.querySelector("dialog#crm-dlg-column");
+    return { ok: true, abierto: !!d && d.open === true, swatches: d ? d.querySelectorAll(".swatch").length : 0 };
+  },
+
+  enviarDialogoColumna: (nombre) => {
+    const d = document.querySelector("dialog#crm-dlg-column");
+    const input = d?.querySelector("#crm-column-name");
+    const form = d?.querySelector("form");
+    if (!input || !form) return { error: "el diálogo no tiene input o form" };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    input.value = nombre;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    form.requestSubmit();
+    return { ok: true };
+  },
+
+  dialogoAbierto: () => document.querySelector("dialog#crm-dlg-column")?.open === true,
+
+  altaContacto: (columnId, nombre, telefono) => {
+    const col = document.querySelector(`#crm-board section.column[data-column-id="${columnId}"]`);
+    if (!col) return { error: `no existe section.column[data-column-id="${columnId}"]` };
+    const boton = col.querySelector("button.btn-add-contact");
+    if (!boton) return { error: `la columna ${columnId} no tiene button.btn-add-contact` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    boton.click();
+    const form = col.querySelector("form.add-contact-form");
+    if (!form) return { error: "no hay form.add-contact-form" };
+    const visible = !form.hidden && getComputedStyle(form).display !== "none";
+    const iNombre = form.querySelector("input[name=name]");
+    const iTelefono = form.querySelector("input[name=phone]");
+    for (const [input, valor] of [[iNombre, nombre], [iTelefono, telefono]]) {
+      input.value = valor;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    form.requestSubmit();
+    return { ok: true, visible };
+  },
+
+  pulsarToggleTray: () => {
+    const b = document.querySelector("#crm-btn-toggle-tray");
+    b.click();
+    const tray = document.querySelector("#crm-tray");
+    return { colapsada: tray.classList.contains("is-collapsed"), texto: b.textContent.trim(), aria: b.getAttribute("aria-expanded") };
+  },
+
+  login: (usuario, clave) => {
+    document.querySelector("#username").value = usuario;
+    document.querySelector("#password").value = clave;
+    document.querySelector('form[action="/login"]').submit();
+    return true;
+  },
+
+  ruta: () => location.pathname + location.search,
+
+  // ---- Cajón del folio (static/js/crm-panel.js) ----
+  panelEstado: () => {
+    // visibility: un elemento dentro del cajón cerrado conserva su display y
+    // sus rects, así que sin mirar visibility todo contaría como visible.
+    const vis = (el) => {
+      if (!el || el.hidden) return false;
+      const cs = getComputedStyle(el);
+      return cs.display !== "none" && cs.visibility !== "hidden" && el.getClientRects().length > 0;
+    };
+    const panel = document.querySelector("#crm-panel");
+    const velo = document.querySelector("#crm-panel-scrim");
+    const chat = document.querySelector("#crm-chat");
+    const activo = document.activeElement;
+    const secciones = ["gestion", "etiquetas", "notas", "cobro", "seguimiento", "transferir"];
+    const num = (b) => {
+      const n = b.querySelector(".accion-num");
+      return n && !n.hidden ? n.textContent.trim() : null;
+    };
+    return {
+      abierto: document.querySelector("#crm").classList.contains("panel-abierto"),
+      panelVisible: vis(panel),
+      cargado: !!panel && panel.hasAttribute("data-cargado"),
+      inerte: !!panel && panel.hasAttribute("inert"),
+      titulo: document.querySelector("#crm-panel-title")?.textContent.trim() ?? null,
+      sub: document.querySelector("#crm-panel-sub")?.textContent.trim() ?? null,
+      sinFolio: vis(document.querySelector("#crm-panel-sinfolio")),
+      error: vis(document.querySelector("#crm-panel-error")),
+      foco: activo ? (activo.id || activo.className || activo.tagName) : null,
+      velo: (() => {
+        if (!velo) return null;
+        const cs = getComputedStyle(velo);
+        return cs.display === "none" ? "oculto" : cs.visibility;
+      })(),
+      anchoPanel: panel ? Math.round(panel.getBoundingClientRect().width) : null,
+      anchoChat: chat ? Math.round(chat.getBoundingClientRect().width) : null,
+      empuje: chat ? getComputedStyle(chat).paddingRight : null,
+      riel: [...document.querySelectorAll("#crm-acciones .accion")].map((b) => ({
+        seccion: b.dataset.seccion,
+        titulo: b.dataset.titulo,
+        expandido: b.getAttribute("aria-expanded") === "true",
+        deshabilitado: b.disabled,
+        num: num(b),
+      })),
+      seccionVisible: secciones.filter((s) => vis(document.querySelector("#crm-sec-" + s))),
+      folio: document.querySelector("#crm-g-folio")?.textContent.trim() ?? null,
+      badges: [...document.querySelectorAll("#crm-g-badges .badge")].map((b) => b.textContent.trim()),
+      estados: [...document.querySelectorAll("#crm-g-estados button")].map((b) => ({
+        estado: b.dataset.estado,
+        actual: b.getAttribute("aria-current") === "true",
+        deshabilitado: b.disabled,
+      })),
+      estadoTile: vis(document.querySelector("#crm-g-estado-tile")),
+      gestionBotones: ["crm-g-tomar", "crm-g-terminar", "crm-g-soltar", "crm-g-agente"]
+        .filter((id) => vis(document.getElementById(id))),
+      gAjeno: vis(document.querySelector("#crm-g-ajeno")),
+      verFolio: document.querySelector("#crm-g-ver")?.getAttribute("href") ?? null,
+      etiquetas: [...document.querySelectorAll("#crm-e-chips .chip-et")]
+        .map((c) => c.querySelector(".chip-et-nombre").textContent.trim()),
+      etiquetaForm: vis(document.querySelector("#crm-e-form")),
+      notasTramite: document.querySelector("#crm-n-tramite")?.textContent.trim() ?? "",
+      notaForm: vis(document.querySelector("#crm-n-form")),
+      nAjeno: vis(document.querySelector("#crm-n-ajeno")),
+      notasCliente: [...document.querySelectorAll("#crm-n-cliente .panel-nota-texto")]
+        .map((p) => p.textContent.trim()),
+      cobros: [...document.querySelectorAll("#crm-c-lista .panel-cobro")].map((c) => ({
+        badge: c.querySelector(".cobro-badge")?.textContent.trim(),
+        monto: c.querySelector(".cobro-monto")?.textContent.trim(),
+        pie: c.querySelector(".cobro-pie")?.textContent.trim(),
+        acciones: [...c.querySelectorAll(".cobro-acciones > *")]
+          .filter((b) => !b.hidden).map((b) => b.textContent.trim()),
+      })),
+      cobroForm: vis(document.querySelector("#crm-c-form")),
+      sinStripe: vis(document.querySelector("#crm-c-sin-stripe")),
+      seguimientos: [...document.querySelectorAll("#crm-s-lista .panel-seg")]
+        .map((p) => p.textContent.replace(/\s+/g, " ").trim()),
+      transferForm: vis(document.querySelector("#crm-t-form")),
+      companeros: [...document.querySelectorAll("#crm-t-user option")].map((o) => o.value),
+      tAjeno: vis(document.querySelector("#crm-t-ajeno")),
+    };
+  },
+
+  panelPulsar: (seccion) => {
+    const b = document.querySelector(`#crm-acciones .accion[data-seccion="${seccion}"]`);
+    if (!b) return { error: `no existe la píldora «${seccion}»` };
+    if (b.disabled) return { error: `la píldora «${seccion}» está deshabilitada` };
+    b.click();
+    return { ok: true };
+  },
+
+  panelCerrar: (como) => {
+    const sel = como === "velo" ? "#crm-panel-scrim" : "#crm-panel-close";
+    const b = document.querySelector(sel);
+    if (!b) return { error: `no existe ${sel}` };
+    b.click();
+    return { ok: true };
+  },
+
+  panelBoton: (id) => {
+    const b = document.getElementById(id);
+    if (!b || b.hidden) return { error: `el botón #${id} no está visible` };
+    b.click();
+    return { ok: true };
+  },
+
+  panelEstadoPulsar: (estado) => {
+    const b = document.querySelector(`#crm-g-estados button[data-estado="${estado}"]`);
+    if (!b) return { error: `no existe el estado ${estado}` };
+    if (b.disabled) return { error: `el estado ${estado} está deshabilitado` };
+    b.click();
+    return { ok: true };
+  },
+
+  panelFormulario: (formSel, valores) => {
+    const form = document.querySelector(formSel);
+    if (!form) return { error: `no existe ${formSel}` };
+    for (const [nombre, valor] of Object.entries(valores || {})) {
+      const campo = form.elements.namedItem(nombre);
+      if (!campo) return { error: `${formSel} no tiene el campo ${nombre}` };
+      const proto = campo.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype
+        : campo.tagName === "SELECT" ? HTMLSelectElement.prototype
+          : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value").set.call(campo, valor);
+      campo.dispatchEvent(new Event("input", { bubbles: true }));
+      campo.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    form.requestSubmit();
+    return { ok: true };
+  },
+
+  panelQuitarEtiqueta: (nombre) => {
+    const chip = [...document.querySelectorAll("#crm-e-chips .chip-et")]
+      .find((c) => c.querySelector(".chip-et-nombre").textContent.trim() === nombre);
+    if (!chip) return { error: `no hay chip de la etiqueta «${nombre}»` };
+    chip.click();
+    return { ok: true };
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// Navegación y contexto
+// ────────────────────────────────────────────────────────────────────────────
+
+async function navegar(cdp, url) {
+  const cargado = cdp.esperarEvento("Page.loadEventFired", 20000);
+  const r = await cdp.send("Page.navigate", { url });
+  if (r.errorText) throw new Error(`Page.navigate ${url}: ${r.errorText}`);
+  await cargado;
+}
+
+async function recargar(cdp) {
+  const cargado = cdp.esperarEvento("Page.loadEventFired", 20000);
+  await cdp.send("Page.reload", { ignoreCache: true });
+  await cargado;
+}
+
+const esperarTablero = (cdp) =>
+  waitFor(async () => {
+    const t = await cdp.evaluate(enPagina.tablero);
+    return t.columnas > 0 && !t.cargando ? t : null;
+  }, { timeout: 15000, label: "section.column en #crm-board" });
+
+function crearContexto({ cdp, base, recolector, dialogos, env, db }) {
+  const ctx = { cdp, base, recolector, dialogos, env, db, avisosPaso: [] };
+  ctx.avisar = (t) => ctx.avisosPaso.push(t);
+  ctx.log = (t) => { if (verbose) console.log(`   · ${t}`); };
+  ctx.api = async (ruta) => {
+    const r = await cdp.evaluate(enPagina.api, ruta);
+    if (r.status < 200 || r.status >= 300) throw new Error(`GET ${ruta} → HTTP ${r.status}: ${JSON.stringify(r.json).slice(0, 200)}`);
+    return r.json;
+  };
+  ctx.tablero = () => ctx.api("/crm/api/tablero");
+  ctx.contacto = async (phone) => (await ctx.tablero()).contactos.find((c) => c.phone === phone) ?? null;
+  ctx.chat = (phone) => ctx.api(`/crm/api/chat/${phone}`);
+  ctx.esperarToast = async (prefijo, timeout = 4000) => {
+    const t = await waitFor(async () => {
+      const v = await cdp.evaluate(enPagina.toast);
+      return v && v.includes(prefijo) ? v : null;
+    }, { timeout, interval: 80, label: `el toast «${prefijo}…»` }).catch(() => null);
+    if (!t) {
+      const visto = await cdp.evaluate(enPagina.toast);
+      throw new Error(`no apareció el toast «${prefijo}…» (visible: ${JSON.stringify(visto)})`);
+    }
+    ctx.log(`toast: ${t}`);
+    return t;
+  };
+  ctx.esperarDialogo = async ({ desde = 0, tipo = "confirm", prefijo = "" } = {}) => {
+    const d = await waitFor(() => ctx.dialogos.slice(desde).find((x) => !x.consumido) ?? null, { timeout: 3000, interval: 50 }).catch(() => null);
+    if (!d) throw new Error(`no se abrió ningún ${tipo} tras la acción`);
+    d.consumido = true;
+    if (d.tipo !== tipo) throw new Error(`se abrió un ${d.tipo} y no un ${tipo}: ${JSON.stringify(d.mensaje)}`);
+    if (prefijo && !d.mensaje.startsWith(prefijo)) throw new Error(`el ${tipo} dice ${JSON.stringify(d.mensaje)} y debía empezar por ${JSON.stringify(prefijo)}`);
+    ctx.log(`${tipo} aceptado: ${d.mensaje}`);
+    return d.mensaje;
+  };
+  ctx.esperarMovimiento = async (phone, destinoId, destinoNombre) => {
+    await waitFor(async () => {
+      const dom = await cdp.evaluate(enPagina.columnaDeTarjeta, phone);
+      const c = await ctx.contacto(phone);
+      return dom === String(destinoId) && c && String(c.etapa_id) === String(destinoId) ? true : null;
+    }, { timeout: 6000, interval: 100, label: `que ${phone} quede en «${destinoNombre}» (DOM y API)` });
+    const toast = await ctx.esperarToast("Movido a");
+    if (!toast.includes(destinoNombre)) ctx.avisar(`el toast dice ${JSON.stringify(toast)} y no menciona «${destinoNombre}»`);
+  };
+  ctx.login = async (usuario) => {
+    await cdp.send("Network.clearBrowserCookies");
+    await navegar(cdp, base + "/login");
+    const cargado = cdp.esperarEvento("Page.loadEventFired", 20000);
+    await cdp.evaluate(enPagina.login, usuario, CLAVE);
+    await cargado;
+    const ruta = await cdp.evaluate(enPagina.ruta);
+    if (ruta.startsWith("/login")) throw new Error(`el login de ${usuario} no entró (sigue en ${ruta})`);
+    ctx.log(`sesión de ${usuario} abierta (${ruta})`);
+  };
+  ctx.abrirCrm = async (sufijo = "") => {
+    await navegar(cdp, base + "/crm" + sufijo);
+    return esperarTablero(cdp);
+  };
+  ctx.capturar = async (nombre) => {
+    if (!CAPTURAS) return;
+    const r = await cdp.send("Page.captureScreenshot", { format: "png" });
+    fs.writeFileSync(path.join(CAPTURAS, `${nombre}.png`), Buffer.from(r.data, "base64"));
+    ctx.log(`captura ${nombre}.png`);
+  };
+  ctx.ancho = async (width, height) => {
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 700 });
+  };
+  return ctx;
+}
+
+const resultados = [];
+
+function imprimir(icono, titulo, detalle, avisos = []) {
+  console.log(`${icono} ${titulo}${detalle ? " — " + detalle : ""}`);
+  for (const a of avisos) console.log(`   ⚠️  ${a}`);
+}
+
+async function criterio(ctx, titulo, fn) {
+  ctx.avisosPaso = [];
+  const marca = ctx.recolector.fallos.length;
+  try {
+    const detalle = await fn(ctx);
+    const nuevos = ctx.recolector.fallos.slice(marca);
+    if (nuevos.length) {
+      resultados.push({ titulo, ok: false });
+      imprimir("❌", titulo, `${detalle ?? ""} · pero hubo ${nuevos.length} error(es) en consola/red: ${nuevos.map((f) => `[${f.origen}] ${f.texto}`).join(" | ")}`);
+    } else {
+      resultados.push({ titulo, ok: true });
+      imprimir("✅", titulo, detalle, ctx.avisosPaso);
+    }
+  } catch (e) {
+    resultados.push({ titulo, ok: false });
+    imprimir("❌", titulo, e.message, ctx.avisosPaso);
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Criterios
+// ────────────────────────────────────────────────────────────────────────────
+
+async function criterioCarga(ctx) {
+  const t = await ctx.abrirCrm();
+  const api = await ctx.tablero();
+  const fallos = [];
+  if (t.columnas !== api.etapas.length) fallos.push(`${t.columnas} columnas en el DOM vs ${api.etapas.length} etapas en la API`);
+  if (t.tarjetas !== api.contactos.length) fallos.push(`${t.tarjetas} tarjetas vs ${api.contactos.length} contactos`);
+  if (t.tabs.length !== api.etapas.length + 1) fallos.push(`${t.tabs.length} pestañas (esperaba ${api.etapas.length + 1})`);
+  if (t.tabs[0]?.nombre !== "Todos" || t.tabs[0]?.conteo !== String(api.total)) fallos.push(`la pestaña «Todos» dice ${JSON.stringify(t.tabs[0])}`);
+  if (!mismoConjunto(t.bandeja, api.contactos.map((c) => c.phone))) fallos.push(`la bandeja trae ${JSON.stringify(t.bandeja)}`);
+  if (!t.nuevaEtapa) fallos.push("el admin global no ve el botón «Nueva etapa»");
+  if (t.menus !== api.etapas.length) fallos.push(`el admin global ve ${t.menus} menús ⋮ (esperaba ${api.etapas.length})`);
+  if (t.altas !== api.etapas.length) fallos.push(`el admin ve ${t.altas} botones «Añadir contacto» (esperaba ${api.etapas.length})`);
+  if (!t.crmKanban || !t.openChat) fallos.push("faltan window.CRMKanban.reload o window.openChat");
+  const nombres = (await ctx.cdp.evaluate(enPagina.columnasDOM)).map((c) => c.nombre);
+  const esperados = api.etapas.map((e) => e.nombre);
+  if (JSON.stringify(nombres) !== JSON.stringify(esperados)) fallos.push(`orden de columnas ${JSON.stringify(nombres)} vs API ${JSON.stringify(esperados)}`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  await ctx.capturar("01-tablero-1400");
+  return `${t.columnas} etapas (${esperados.join(" · ")}), ${t.tarjetas} tarjetas, ${t.tabs.length} pestañas, bandeja «${t.conteoBandeja}»`;
+}
+
+async function criterioTarjetas(ctx) {
+  const api = await ctx.tablero();
+  const tarjetas = await ctx.cdp.evaluate(enPagina.tarjetas);
+  const columnas = await ctx.cdp.evaluate(enPagina.columnasDOM);
+  const fallos = [];
+  for (const c of api.contactos) {
+    const t = tarjetas.find((x) => x.id === c.phone);
+    if (!t) { fallos.push(`sin tarjeta para ${c.phone}`); continue; }
+    if (t.columna !== String(c.etapa_id)) fallos.push(`${c.phone} está en la columna ${t.columna} y no en ${c.etapa_id}`);
+    const nombreEsperado = c.name || "+52 55 0000 0015";
+    if (t.nombre !== nombreEsperado) fallos.push(`${c.phone}: nombre ${JSON.stringify(t.nombre)} (esperaba ${JSON.stringify(nombreEsperado)})`);
+    if (t.avatar !== c.initials) fallos.push(`${c.phone}: avatar ${JSON.stringify(t.avatar)} vs initials ${JSON.stringify(c.initials)}`);
+    if (c.unread > 0 ? t.noLeidos !== String(c.unread) : t.noLeidos !== null) fallos.push(`${c.phone}: badge no leídos ${JSON.stringify(t.noLeidos)} vs unread ${c.unread}`);
+    if (!t.draggable || t.role !== "button" || !t.aria?.startsWith("Abrir chat con")) fallos.push(`${c.phone}: draggable/role/aria ${JSON.stringify([t.draggable, t.role, t.aria])}`);
+    if (t.opciones.length !== api.etapas.length) fallos.push(`${c.phone}: select con ${t.opciones.length} opciones (esperaba ${api.etapas.length}: «Mover a…» + las otras etapas)`);
+  }
+  for (const e of api.etapas) {
+    const col = columnas.find((x) => x.id === String(e.id));
+    if (!col) { fallos.push(`sin columna ${e.id}`); continue; }
+    if (col.conteo !== String(e.count)) fallos.push(`«${e.nombre}»: contador ${col.conteo} vs API ${e.count}`);
+    if (col.tarjetas.length !== e.count) fallos.push(`«${e.nombre}»: ${col.tarjetas.length} tarjetas vs API ${e.count}`);
+    if (col.color.toUpperCase() !== e.color.toUpperCase()) fallos.push(`«${e.nombre}»: --col-color ${col.color} vs ${e.color}`);
+  }
+  const ana = tarjetas.find((x) => x.id === ANA);
+  if (ana) {
+    if (!ana.badges.includes("tomado · colab1")) fallos.push(`Ana sin la insignia «tomado · colab1»: ${JSON.stringify(ana.badges)}`);
+    if (!ana.badges.includes("bot pausado")) fallos.push(`Ana sin la insignia «bot pausado»`);
+    if (ana.preview !== "Y ¿cuánto tarda?") fallos.push(`preview de Ana: ${JSON.stringify(ana.preview)}`);
+    if (ana.telefono !== "+52 55 0000 0011") fallos.push(`teléfono de Ana: ${JSON.stringify(ana.telefono)}`);
+  }
+  const diego = tarjetas.find((x) => x.id === DIEGO);
+  if (diego) {
+    if (!diego.badges.includes("caducó")) fallos.push(`Diego sin «caducó»: ${JSON.stringify(diego.badges)}`);
+    if (!diego.badges.includes("cerrado · jefa1")) fallos.push(`Diego sin «cerrado · jefa1»: ${JSON.stringify(diego.badges)}`);
+    if (diego.ticks !== "✓✓ " || diego.ticksRead) fallos.push(`palomitas de Diego (delivered): ${JSON.stringify([diego.ticks, diego.ticksRead])}`);
+  }
+  const beto = tarjetas.find((x) => x.id === BETO);
+  if (beto && beto.preview !== "Sin mensajes") fallos.push(`preview de Beto: ${JSON.stringify(beto.preview)}`);
+  const felipe = tarjetas.find((x) => x.id === "525500000015");
+  if (felipe && felipe.preview !== "📷 Imagen") fallos.push(`preview de Felipe (adjunto): ${JSON.stringify(felipe.preview)}`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `${tarjetas.length} tarjetas con nombre, iniciales, teléfono, preview, palomitas, no leídos e insignias correctos; contadores = API`;
+}
+
+async function criterioPestanas(ctx) {
+  const api = await ctx.tablero();
+  const etapa = api.etapas[1];
+  const esperados = api.contactos.filter((c) => c.etapa_id === etapa.id).map((c) => c.phone);
+  if (!(await ctx.cdp.evaluate(enPagina.pulsarTab, String(etapa.id)))) throw new Error(`no hay pestaña ${etapa.id}`);
+  const e = await ctx.cdp.evaluate(enPagina.estadoTab, String(etapa.id));
+  const fallos = [];
+  if (!e.clase || !e.aria || e.tabindex !== 0) fallos.push(`la pestaña «${etapa.nombre}» no quedó activa: ${JSON.stringify(e)}`);
+  if (!mismoConjunto(e.items, esperados)) fallos.push(`la bandeja filtrada trae ${JSON.stringify(e.items)} y no ${JSON.stringify(esperados)}`);
+  if (!e.enfocada) fallos.push(`la columna «${etapa.nombre}» no recibió is-focused`);
+  const vacia = api.etapas.find((x) => x.count === 0);
+  if (vacia) {
+    await ctx.cdp.evaluate(enPagina.pulsarTab, String(vacia.id));
+    const v = await ctx.cdp.evaluate(enPagina.estadoTab, String(vacia.id));
+    if (!v.vacio || v.items.length) fallos.push(`la etapa vacía «${vacia.nombre}» no muestra «Sin contactos en esta etapa»`);
+  }
+  await ctx.cdp.evaluate(enPagina.pulsarTab, "all");
+  const todos = await ctx.cdp.evaluate(enPagina.estadoTab, "all");
+  if (!mismoConjunto(todos.items, api.contactos.map((c) => c.phone))) fallos.push("«Todos» no restauró la bandeja completa");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `«${etapa.nombre}» filtra a ${esperados.length} chat(s) y enfoca su columna; «Todos» restaura ${api.contactos.length}`;
+}
+
+async function criterioMiembros(ctx) {
+  const api = await ctx.tablero();
+  const tira = await ctx.cdp.evaluate(enPagina.miembros);
+  const fallos = [];
+  const esperados = api.miembros.map((m) => m.username);
+  const enTira = tira.filter((m) => m.username !== "__sin_asesor__").map((m) => m.username);
+  if (JSON.stringify(enTira) !== JSON.stringify(esperados)) fallos.push(`la tira trae ${JSON.stringify(enTira)} y la API ${JSON.stringify(esperados)}`);
+  for (const m of api.miembros) {
+    const t = tira.find((x) => x.username === m.username);
+    if (!t) continue;
+    if (t.conteo !== String(m.atiende)) fallos.push(`${m.username}: atiende ${t.conteo} en la tira vs ${m.atiende} en la API`);
+    if (t.estado !== m.estado) fallos.push(`${m.username}: estado ${t.estado} en la tira vs ${m.estado} en la API`);
+  }
+  const oficinas = await ctx.cdp.evaluate(enPagina.oficinasEnTira);
+  const oficinasApi = api.oficinas.map((o) => o.nombre);
+  if (JSON.stringify(oficinas) !== JSON.stringify(oficinasApi)) fallos.push(`agrupación por oficina: ${JSON.stringify(oficinas)} vs ${JSON.stringify(oficinasApi)}`);
+  const sin = tira.find((m) => m.username === "__sin_asesor__");
+  const sinEsperado = api.contactos.filter((c) => !(c.ticket && c.ticket.assigned_to)).length;
+  if (!sin || sin.conteo !== String(sinEsperado)) fallos.push(`«Sin asesor»: ${JSON.stringify(sin)} (esperaba ${sinEsperado})`);
+  // Filtrar por colab1 deja solo sus chats, en tablero y bandeja, y «Todos» cuenta lo visible.
+  if (!(await ctx.cdp.evaluate(enPagina.pulsarMiembro, "colab1"))) throw new Error("no hay chip de colab1 en la tira");
+  const deColab1 = api.contactos.filter((c) => c.ticket && c.ticket.assigned_to === "colab1").map((c) => c.phone);
+  const t = await ctx.cdp.evaluate(enPagina.tablero);
+  const cards = (await ctx.cdp.evaluate(enPagina.tarjetas)).map((c) => c.id);
+  if (!mismoConjunto(cards, deColab1)) fallos.push(`con el filtro de colab1 el tablero muestra ${JSON.stringify(cards)} y no ${JSON.stringify(deColab1)}`);
+  if (!mismoConjunto(t.bandeja, deColab1)) fallos.push(`con el filtro de colab1 la bandeja muestra ${JSON.stringify(t.bandeja)}`);
+  if (t.tabs[0]?.conteo !== String(deColab1.length)) fallos.push(`«Todos» dice ${t.tabs[0]?.conteo} con el filtro de colab1`);
+  const activo = (await ctx.cdp.evaluate(enPagina.miembros)).find((m) => m.username === "colab1");
+  if (!activo?.activo || activo.aria !== "true") fallos.push("el chip de colab1 no quedó marcado como activo (is-active / aria-pressed)");
+  await ctx.cdp.evaluate(enPagina.pulsarMiembro, "colab1");
+  const t2 = await ctx.cdp.evaluate(enPagina.tablero);
+  if (t2.tarjetas !== api.contactos.length) fallos.push(`al quitar el filtro quedan ${t2.tarjetas} tarjetas y no ${api.contactos.length}`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `${esperados.length} miembros en ${oficinasApi.length} oficinas con estado y conteo iguales a la API; el filtro de colab1 deja ${deColab1.length} chat(s) y se quita al volver a pulsar`;
+}
+
+async function criterioEntranteEnVivo(ctx) {
+  // Con el chat de Ana abierto, entra un mensaje del cliente por fuera del navegador —como lo
+  // escribe el webhook— y debe verse sin recargar: en el hilo (sondeo de 8 s) y en la tarjeta y
+  // la bandeja (sondeo de 20 s).
+  const antes = await ctx.cdp.evaluate(enPagina.estadoChat);
+  if (!antes.abierto || antes.nombre !== "Ana Lucía Ramírez") throw new Error("hace falta el chat de Ana abierto");
+  const unreadAntes = (await ctx.contacto(ANA)).unread;
+  const texto = "¿Sigue disponible la cita de mañana?";
+  const r = spawnSync(PYTHON, ["-c", `
+import sys; sys.path.insert(0, ${JSON.stringify(REPO)})
+from sqlmodel import Session
+import app.db as db
+from app.models import Client, Direction, Message, utcnow
+with Session(db.engine) as s:
+    s.add(Message(phone=${JSON.stringify(ANA)}, direction=Direction.IN, body=${JSON.stringify(texto)}))
+    c = s.get(Client, ${JSON.stringify(ANA)}); c.last_activity_at = utcnow(); s.add(c); s.commit()
+print("ok")`], { cwd: REPO, env: ctx.env, encoding: "utf8" });
+  if (r.status !== 0 || !r.stdout.includes("ok")) throw new Error(`no se pudo insertar el mensaje: ${(r.stderr || "").slice(-300)}`);
+  const t0 = Date.now();
+  await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.burbujas.length === antes.burbujas.length + 1 && s.burbujas[s.burbujas.length - 1].texto === texto ? true : null;
+  }, { timeout: 15000, interval: 250, label: "la burbuja del mensaje entrante en el hilo abierto (sondeo de 8 s)" });
+  const hilo = Date.now() - t0;
+  await waitFor(async () => {
+    const t = (await ctx.cdp.evaluate(enPagina.tarjetas)).find((x) => x.id === ANA);
+    return t && t.preview === texto && t.noLeidos === String(unreadAntes + 1) ? true : null;
+  }, { timeout: 30000, interval: 500, label: "la tarjeta de Ana con el mensaje nuevo y un no leído más (sondeo de 20 s)" });
+  const tarjeta = Date.now() - t0;
+  return `el entrante apareció en el hilo a los ${(hilo / 1000).toFixed(1)} s y en la tarjeta (preview y ${unreadAntes + 1} sin leer) a los ${(tarjeta / 1000).toFixed(1)} s, sin recargar`;
+}
+
+async function criterioRutaVieja(ctx) {
+  await navegar(ctx.cdp, `${ctx.base}/inbox/${ANA}?volver=//evil.com&folio=1`);
+  await esperarTablero(ctx.cdp);
+  const s = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return e.abierto && e.burbujas.length > 0 ? e : null;
+  }, { timeout: 8000, label: "que /inbox/{phone} aterrice en el chat del CRM" });
+  if (s.url !== `/crm?chat=${ANA}`) throw new Error(`la URL final es ${s.url}`);
+  if (s.nombre !== "Ana Lucía Ramírez") throw new Error(`abrió ${JSON.stringify(s.nombre)}`);
+  return `/inbox/${ANA} (con volver y folio) aterriza en /crm?chat=${ANA} con el chat abierto y sin arrastrar parámetros`;
+}
+
+async function criterioBusqueda(ctx) {
+  await ctx.cdp.evaluate(enPagina.buscar, "ramirez");
+  await waitFor(async () => {
+    const t = await ctx.cdp.evaluate(enPagina.tablero);
+    return t.bandeja.length === 1 && t.bandeja[0] === ANA ? true : null;
+  }, { timeout: 4000, label: "que la búsqueda «ramirez» deje solo a Ana" });
+  const t1 = await ctx.cdp.evaluate(enPagina.tablero);
+  await ctx.cdp.evaluate(enPagina.buscar, "+52 55 0000 0012");
+  await waitFor(async () => {
+    const t = await ctx.cdp.evaluate(enPagina.tablero);
+    return t.bandeja.length === 1 && t.bandeja[0] === BETO ? true : null;
+  }, { timeout: 4000, label: "que la búsqueda por teléfono con formato deje solo a Beto" });
+  await ctx.cdp.evaluate(enPagina.buscar, "");
+  const api = await ctx.tablero();
+  await waitFor(async () => {
+    const t = await ctx.cdp.evaluate(enPagina.tablero);
+    return t.bandeja.length === api.contactos.length ? true : null;
+  }, { timeout: 4000, label: "que al borrar la búsqueda vuelvan todos" });
+  return `«ramirez» → solo Ana (tarjetas: ${t1.tarjetas}, «Todos»: ${t1.tabs[0].conteo}); «+52 55 0000 0012» → solo Beto; vacío → ${api.contactos.length}`;
+}
+
+async function criterioArrastre(ctx) {
+  const api = await ctx.tablero();
+  const origen = api.etapas[0];
+  const destino = api.etapas[api.etapas.length - 1];
+  const ana = api.contactos.find((c) => c.phone === ANA);
+  if (ana.etapa_id !== origen.id) throw new Error(`Ana no está en «${origen.nombre}»`);
+  const r = await ctx.cdp.evaluate(enPagina.soltar, ANA, String(destino.id));
+  if (r.error) throw new Error(r.error);
+  const fallos = [];
+  if (!r.draggable) fallos.push("la tarjeta no es arrastrable");
+  if (!r.arrastrando) fallos.push("sin is-dragging en dragstart");
+  if (r.dato !== ANA) fallos.push(`dataTransfer trae ${JSON.stringify(r.dato)}`);
+  if (!r.dragoverCancelado) fallos.push("dragover sin preventDefault()");
+  if (!r.resaltada) fallos.push("la columna destino no recibió is-over");
+  if (!r.dropCancelado) fallos.push("drop sin preventDefault()");
+  if (!r.limpia) fallos.push("la columna conservó is-over tras dragend");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  await ctx.esperarMovimiento(ANA, destino.id, destino.nombre);
+  const c = await ctx.contacto(ANA);
+  await recargar(ctx.cdp);
+  await esperarTablero(ctx.cdp);
+  const dom = await ctx.cdp.evaluate(enPagina.columnaDeTarjeta, ANA);
+  if (dom !== String(destino.id)) throw new Error(`tras recargar, Ana está en la columna ${dom} y no en «${destino.nombre}»`);
+  const cols = await ctx.cdp.evaluate(enPagina.columnasDOM);
+  const colDestino = cols.find((x) => x.id === String(destino.id));
+  const colOrigen = cols.find((x) => x.id === String(origen.id));
+  if (colDestino.conteo !== String(destino.count + 1) || colOrigen.conteo !== String(origen.count - 1)) {
+    throw new Error(`contadores tras mover: «${origen.nombre}»=${colOrigen.conteo} (esperaba ${origen.count - 1}), «${destino.nombre}»=${colDestino.conteo} (esperaba ${destino.count + 1})`);
+  }
+  return `Ana pasó de «${origen.nombre}» a «${destino.nombre}» por drag & drop, la API la guardó (etapa_id=${c.etapa_id}) y sigue ahí tras recargar; contadores al día`;
+}
+
+async function criterioSelectMover(ctx) {
+  const api = await ctx.tablero();
+  const destino = api.etapas[0];
+  const r = await ctx.cdp.evaluate(enPagina.cambiarSelect, ANA, String(destino.id));
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarMovimiento(ANA, destino.id, destino.nombre);
+  return `select «Mover a…» devolvió a Ana a «${destino.nombre}»`;
+}
+
+async function criterioAbrirChat(ctx) {
+  const r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "tarjeta");
+  if (r.error) throw new Error(r.error);
+  const chat = await ctx.chat(ANA);
+  const e = await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.burbujas.length === chat.mensajes.length ? s : null;
+  }, { timeout: 6000, label: `${chat.mensajes.length} burbujas en el hilo` });
+  const fallos = [];
+  if (!e.abierto || !e.chatVisible || e.boardVisible || !e.btnBoardVisible) fallos.push(`estado del panel: ${JSON.stringify({ abierto: e.abierto, chat: e.chatVisible, board: e.boardVisible, btn: e.btnBoardVisible })}`);
+  // «← Tablero» es el primer elemento de la fila de pestañas, antes de «Todos» y fuera del
+  // tablist, y sobrevive a un repintado del tablero: renderTabs() vacía la lista entera, así
+  // que si estuviera dentro desaparecería aquí.
+  const fila = await ctx.cdp.evaluate(async () => {
+    const enFila = () => {
+      const b = document.querySelector("#crm-tabs > #crm-btn-board");
+      const todos = document.querySelector('#crm-tabs-list > button.tab[data-filter="all"]');
+      return !!b && !!todos && !b.closest("[role=tablist]") && !b.hidden && b.getClientRects().length > 0
+        && document.querySelector("#crm-tabs").firstElementChild === b
+        && b.getBoundingClientRect().right <= todos.getBoundingClientRect().left;
+    };
+    const antes = enFila();
+    await window.CRMKanban.reload();
+    return { antes, despues: enFila(), pestanas: document.querySelectorAll("#crm-tabs-list > button.tab").length };
+  });
+  if (!fila.antes || !fila.despues) fallos.push(`«← Tablero» no está visible como primer elemento de #crm-tabs, antes de «Todos» y fuera del tablist (antes del repintado: ${fila.antes}, después: ${fila.despues})`);
+  if (fila.pestanas < 2) fallos.push(`tras el repintado el tablist tiene ${fila.pestanas} pestañas`);
+  if (e.nombre !== "Ana Lucía Ramírez" || e.telefono !== "+52 55 0000 0011" || e.avatar !== "AL") fallos.push(`cabecera: ${JSON.stringify([e.nombre, e.telefono, e.avatar])}`);
+  if (!e.badges.some((b) => b.startsWith("escalado — el agente sigue activo"))) fallos.push(`sin insignia de escalado: ${JSON.stringify(e.badges)}`);
+  if (!e.badges.some((b) => b.startsWith("ventana: "))) fallos.push(`sin insignia de ventana abierta: ${JSON.stringify(e.badges)}`);
+  if (!e.badges.includes("responde por Meta")) fallos.push("sin «responde por Meta»");
+  // La siembra deja a colab1 «ocupado»: la cabecera dice quién atiende y cómo está.
+  if (!e.badges.includes("atiende: colab1 · ocupado")) fallos.push(`sin «atiende: colab1 · ocupado»: ${JSON.stringify(e.badges)}`);
+  if (!e.botones.some((b) => b.clase.includes("chat-bot-on"))) fallos.push("sin botón «Reactivar bot»");
+  if (!e.botones.some((b) => b.clase.includes("chat-block") && b.texto === "Bloquear cliente")) fallos.push("el admin no ve «Bloquear cliente»");
+  const ticket = chat.ticket;
+  const volver = encodeURIComponent(`/crm?chat=${ANA}`);
+  if (!e.enlaces.some((a) => a.href === `/tickets/${ticket.id}?volver=${volver}`)) fallos.push(`enlace al folio: ${JSON.stringify(e.enlaces)}`);
+  if (!e.enlaces.some((a) => a.href === `/clients/${ANA}?volver=${volver}`)) fallos.push("sin enlace a la ficha del cliente");
+  const dirs = e.burbujas.map((b) => b.dir).join(",");
+  if (dirs !== "in,out,in,in") fallos.push(`direcciones del hilo: ${dirs}`);
+  if (e.burbujas[0].texto !== "Hola, ¿cuánto cuesta un acta?" || !e.burbujas[0].meta.startsWith("Cliente · ")) fallos.push(`primera burbuja: ${JSON.stringify(e.burbujas[0])}`);
+  if (!e.burbujas[1].meta.startsWith("colab1 · ") || !e.burbujas[1].meta.endsWith("· read") || e.burbujas[1].eliminar) fallos.push(`burbuja saliente de otro asesor: ${JSON.stringify(e.burbujas[1])}`);
+  if (!e.composerVisible || e.bannerVisible) fallos.push("el compositor debía estar visible y el aviso de ventana cerrada oculto");
+  if (!e.windowLeft || e.urgente) fallos.push(`aviso de ventana: ${JSON.stringify([e.windowLeft, e.urgente])}`);
+  if (e.qr !== chat.respuestas_rapidas.length) fallos.push(`${e.qr} respuestas rápidas (esperaba ${chat.respuestas_rapidas.length})`);
+  if (e.accionForm !== `/inbox/${ANA}/send`) fallos.push(`action del compositor: ${e.accionForm}`);
+  if (e.url !== `/crm?chat=${ANA}`) fallos.push(`URL: ${e.url}`);
+  if (!e.bandejaAbierta.includes(ANA)) fallos.push("el ítem de bandeja no quedó marcado is-open");
+  if (e.foco !== "crm-chat-name") fallos.push(`el foco quedó en ${e.foco} y no en el nombre del chat`);
+  if (e.scrollAlFondo === false) fallos.push("el hilo no quedó al fondo al abrir");
+  await ctx.capturar("02-chat-ana-1400");
+  const qr = await ctx.cdp.evaluate(enPagina.pulsarQr);
+  if (qr.error || qr.texto !== qr.esperado) fallos.push(`respuesta rápida: ${JSON.stringify(qr)}`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `chat de Ana: cabecera, ${e.burbujas.length} burbujas, insignias (${e.badges.length}), enlaces, compositor con ventana «${e.windowLeft}» y ${e.qr} respuestas rápidas; URL ${e.url}`;
+}
+
+async function criterioVentanaCerrada(ctx) {
+  // Beto nunca escribió: variante «nunca». Se abre desde la bandeja (sigue visible a 1400 px).
+  let r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, BETO, "bandeja");
+  if (r.error) throw new Error(r.error);
+  const beto = await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.nombre === "Beto Nuñez" && s.estadoHilo === "chat-vacio" ? s : null;
+  }, { timeout: 6000, label: "el chat vacío de Beto" });
+  const fallos = [];
+  if (beto.composerVisible || !beto.bannerVisible) fallos.push("Beto: compositor visible o aviso oculto");
+  if (!beto.siNunca || beto.siCerrada) fallos.push(`Beto: variante equivocada del aviso ${JSON.stringify([beto.siNunca, beto.siCerrada])}`);
+  if (!beto.badges.includes("ventana de 24 h cerrada")) fallos.push(`Beto: insignias ${JSON.stringify(beto.badges)}`);
+  if (!beto.badges.includes("bot activo")) fallos.push("Beto: sin «bot activo»");
+  if (beto.botones.some((b) => b.clase.includes("chat-bot-on"))) fallos.push("Beto: no debía haber «Reactivar bot»");
+  // Diego: la ventana caducó (variante «cerrada»).
+  r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, DIEGO, "bandeja");
+  if (r.error) throw new Error(r.error);
+  const diego = await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.nombre === "Diego Solís" && s.burbujas.length === 2 ? s : null;
+  }, { timeout: 6000, label: "el chat de Diego" });
+  if (diego.composerVisible || !diego.bannerVisible) fallos.push("Diego: compositor visible o aviso oculto");
+  if (diego.siNunca || !diego.siCerrada) fallos.push(`Diego: variante equivocada del aviso ${JSON.stringify([diego.siNunca, diego.siCerrada])}`);
+  await ctx.capturar("03-chat-diego-ventana-cerrada-1400");
+  if (!diego.burbujas[1].meta.includes("· delivered")) fallos.push(`Diego: meta del saliente ${JSON.stringify(diego.burbujas[1].meta)}`);
+  if (!diego.burbujas[1].eliminar) fallos.push("Diego: el saliente de jefa1 debía traer «eliminar» (es de quien tiene la sesión)");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "Beto (nunca escribió) y Diego (ventana caducada) muestran el aviso correcto en lugar del compositor";
+}
+
+async function criterioEnviar(ctx) {
+  const r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "bandeja");
+  if (r.error) throw new Error(r.error);
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.estadoChat)).composerVisible ? true : null, { timeout: 6000, label: "el compositor de Ana" });
+  const vacio = await ctx.cdp.evaluate(enPagina.enviarVacio);
+  const fallos = [];
+  if (vacio.chip !== "Escribe un mensaje o adjunta un archivo.") fallos.push(`envío vacío: ${JSON.stringify(vacio)}`);
+  const antes = (await ctx.chat(ANA)).mensajes.length;
+  const texto = "Prueba QA desde el CRM ✓";
+  const e = await ctx.cdp.evaluate(enPagina.escribirYEnviar, texto);
+  if (e.error) throw new Error(e.error);
+  await ctx.esperarToast("Mensaje enviado", 8000);
+  const estado = await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.burbujas.length === antes + 1 ? s : null;
+  }, { timeout: 8000, label: "la burbuja nueva en el hilo" });
+  const ultima = estado.burbujas[estado.burbujas.length - 1];
+  if (ultima.dir !== "out" || ultima.texto !== texto || !ultima.eliminar || !ultima.meta.startsWith("jefa1 · ")) fallos.push(`burbuja enviada: ${JSON.stringify(ultima)}`);
+  if (estado.scrollAlFondo === false) fallos.push("el hilo no bajó al fondo tras enviar");
+  const chat = await ctx.chat(ANA);
+  const enApi = chat.mensajes[chat.mensajes.length - 1];
+  if (enApi.body !== texto || !enApi.mio || enApi.sent_by !== "jefa1") fallos.push(`la API no registró el envío: ${JSON.stringify(enApi)}`);
+  if (chat.contacto.unread !== 0) fallos.push(`tras contestar, unread debía ser 0 y es ${chat.contacto.unread}`);
+  // El bot se apaga al contestar («quien responde se queda el chat»: inbox._pause_bot).
+  if (!chat.bot_pausado) fallos.push("tras contestar, el bot debía quedar pausado");
+  // La tarjeta del tablero se actualiza sin recargar.
+  await waitFor(async () => {
+    const t = (await ctx.cdp.evaluate(enPagina.tarjetas)).find((x) => x.id === ANA);
+    return t && t.preview === texto && t.noLeidos === null ? true : null;
+  }, { timeout: 8000, label: "que la tarjeta de Ana muestre el mensaje enviado y sin no leídos" });
+  // Ocultar el mensaje propio.
+  const desde = ctx.dialogos.length;
+  const d = await ctx.cdp.evaluate(enPagina.pulsarEliminarUltimo);
+  if (d.error) throw new Error(d.error);
+  await ctx.esperarDialogo({ desde, prefijo: "¿Ocultar este mensaje?" });
+  await ctx.esperarToast("Mensaje ocultado", 8000);
+  await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.burbujas.length === antes ? true : null;
+  }, { timeout: 8000, label: "que la burbuja ocultada desaparezca" });
+  if ((await ctx.chat(ANA)).mensajes.length !== antes) fallos.push("la API sigue devolviendo el mensaje ocultado");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `envío vacío avisado; «${texto}» enviado por POST /inbox/${ANA}/send, visto en hilo, API y tarjeta; ocultado con confirm y desaparecido`;
+}
+
+async function criterioReactivarBot(ctx) {
+  const antes = await ctx.chat(ANA);
+  if (!antes.bot_pausado) throw new Error("Ana debía tener el bot pausado antes de la prueba");
+  const r = await ctx.cdp.evaluate(enPagina.pulsarEnCabecera, "chat-bot-on");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Bot reactivado", 8000);
+  await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.badges.includes("bot activo") && !s.botones.some((b) => b.clase.includes("chat-bot-on")) ? true : null;
+  }, { timeout: 8000, label: "la insignia «bot activo» en la cabecera" });
+  const chat = await ctx.chat(ANA);
+  if (chat.bot_pausado) throw new Error("la API sigue diciendo bot_pausado");
+  await waitFor(async () => {
+    const t = (await ctx.cdp.evaluate(enPagina.tarjetas)).find((x) => x.id === ANA);
+    return t && !t.badges.includes("bot pausado") ? true : null;
+  }, { timeout: 8000, label: "que la tarjeta pierda «bot pausado»" });
+  return "POST /inbox/{phone}/bot-on desde la cabecera; la insignia y la tarjeta se actualizan sin recargar";
+}
+
+async function criterioBloquear(ctx) {
+  let desde = ctx.dialogos.length;
+  let r = await ctx.cdp.evaluate(enPagina.pulsarEnCabecera, "chat-block");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarDialogo({ desde, prefijo: "¿Bloquear a este cliente?" });
+  await ctx.esperarToast("Cliente bloqueado", 8000);
+  await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.badges.includes("cliente bloqueado") && s.botones.some((b) => b.texto === "Desbloquear cliente") ? true : null;
+  }, { timeout: 8000, label: "la insignia «cliente bloqueado»" });
+  if (!(await ctx.chat(ANA)).bloqueado) throw new Error("la API no marca bloqueado");
+  desde = ctx.dialogos.length;
+  r = await ctx.cdp.evaluate(enPagina.pulsarEnCabecera, "chat-block");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarDialogo({ desde, prefijo: "¿Desbloquear a este cliente?" });
+  await ctx.esperarToast("Cliente desbloqueado", 8000);
+  await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return !s.badges.includes("cliente bloqueado") ? true : null;
+  }, { timeout: 8000, label: "que desaparezca «cliente bloqueado»" });
+  if ((await ctx.chat(ANA)).bloqueado) throw new Error("la API sigue marcando bloqueado");
+  return "bloqueo y desbloqueo con confirm, toast, insignia y API coherentes";
+}
+
+async function criterioCerrarChat(ctx) {
+  let r = await ctx.cdp.evaluate(enPagina.cerrarChat, "cerrar");
+  if (r.error) throw new Error(r.error);
+  let s = await ctx.cdp.evaluate(enPagina.estadoChat);
+  const fallos = [];
+  if (s.abierto || s.chatVisible || !s.boardVisible || s.btnBoardVisible) fallos.push(`tras ✕: ${JSON.stringify({ abierto: s.abierto, chat: s.chatVisible, board: s.boardVisible })}`);
+  if (s.url !== "/crm") fallos.push(`URL tras cerrar: ${s.url}`);
+  if (s.bandejaAbierta.length || s.tarjetaAbierta.length) fallos.push("quedó algo marcado is-open");
+  if (s.foco !== "card is-open" && !String(s.foco).includes("card")) ctx.avisar(`el foco quedó en ${JSON.stringify(s.foco)}`);
+  // Volver a abrir y cerrar con «Tablero» y con Escape.
+  r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "tarjeta");
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.estadoChat)).abierto ? true : null, { timeout: 4000 });
+  r = await ctx.cdp.evaluate(enPagina.cerrarChat, "tablero");
+  s = await ctx.cdp.evaluate(enPagina.estadoChat);
+  if (s.abierto) fallos.push("el botón «Tablero» no cerró el chat");
+  r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "tarjeta");
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.estadoChat)).abierto ? true : null, { timeout: 4000 });
+  await ctx.cdp.evaluate(enPagina.teclaEscape);
+  s = await ctx.cdp.evaluate(enPagina.estadoChat);
+  if (s.abierto) fallos.push("Escape no cerró el chat");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "✕, «Tablero» y Escape vuelven al tablero, limpian ?chat= y la marca is-open";
+}
+
+async function criterioEtapas(ctx) {
+  const antes = await ctx.tablero();
+  let r = await ctx.cdp.evaluate(enPagina.abrirDialogoColumna);
+  if (r.error) throw new Error(r.error);
+  const fallos = [];
+  if (!r.abierto) fallos.push("el diálogo no se abrió");
+  if (r.swatches !== 8) fallos.push(`${r.swatches} swatches en el diálogo (esperaba 8)`);
+  await ctx.capturar("04-dialogo-nueva-etapa-1400");
+  r = await ctx.cdp.evaluate(enPagina.enviarDialogoColumna, "Por cobrar");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Etapa «Por cobrar» creada", 8000);
+  await waitFor(async () => !(await ctx.cdp.evaluate(enPagina.dialogoAbierto)) ? true : null, { timeout: 4000, label: "que el diálogo se cierre" });
+  const nueva = await waitFor(async () => {
+    const t = await ctx.tablero();
+    return t.etapas.find((e) => e.nombre === "Por cobrar") ?? null;
+  }, { timeout: 6000, label: "la etapa «Por cobrar» en la API" });
+  await waitFor(async () => {
+    const cols = await ctx.cdp.evaluate(enPagina.columnasDOM);
+    const t = await ctx.cdp.evaluate(enPagina.tablero);
+    return cols.some((c) => c.id === String(nueva.id) && c.nombre === "Por cobrar") && t.tabs.some((x) => x.nombre === "Por cobrar") ? true : null;
+  }, { timeout: 6000, label: "la columna y la pestaña «Por cobrar»" });
+  // Mover a Beto ahí con el select y comprobar contadores.
+  r = await ctx.cdp.evaluate(enPagina.cambiarSelect, BETO, String(nueva.id));
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarMovimiento(BETO, nueva.id, "Por cobrar");
+  // Renombrar desde el menú ⋮.
+  r = await ctx.cdp.evaluate(enPagina.abrirMenuColumna, String(nueva.id));
+  if (r.error) throw new Error(r.error);
+  if (!r.abierto || r.expandido !== "true") fallos.push(`menú ⋮: ${JSON.stringify(r)}`);
+  r = await ctx.cdp.evaluate(enPagina.pulsarAccionColumna, String(nueva.id), "act-rename");
+  if (r.error) throw new Error(r.error);
+  r = await ctx.cdp.evaluate(enPagina.renombrarColumna, String(nueva.id), "Cobrado");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Etapa renombrada a «Cobrado»", 8000);
+  await waitFor(async () => (await ctx.tablero()).etapas.some((e) => e.id === nueva.id && e.nombre === "Cobrado") ? true : null, { timeout: 6000, label: "el nombre «Cobrado» en la API" });
+  // Color desde el menú ⋮.
+  r = await ctx.cdp.evaluate(enPagina.abrirMenuColumna, String(nueva.id));
+  r = await ctx.cdp.evaluate(enPagina.pulsarAccionColumna, String(nueva.id), "act-color");
+  if (r.error) throw new Error(r.error);
+  r = await ctx.cdp.evaluate(enPagina.pulsarSwatch, String(nueva.id), "#F4511E");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Color de «Cobrado» actualizado", 8000);
+  await waitFor(async () => (await ctx.tablero()).etapas.some((e) => e.id === nueva.id && e.color === "#F4511E") ? true : null, { timeout: 6000, label: "el color #F4511E en la API" });
+  // Eliminar: Beto vuelve a la primera etapa restante.
+  const desde = ctx.dialogos.length;
+  r = await ctx.cdp.evaluate(enPagina.abrirMenuColumna, String(nueva.id));
+  r = await ctx.cdp.evaluate(enPagina.pulsarAccionColumna, String(nueva.id), "act-delete");
+  if (r.error) throw new Error(r.error);
+  const msg = await ctx.esperarDialogo({ desde, prefijo: "¿Eliminar la etapa «Cobrado»?" });
+  if (!msg.includes("Su único contacto pasará a")) fallos.push(`el confirm no explica a dónde van los contactos: ${msg}`);
+  await ctx.esperarToast("Etapa «Cobrado» eliminada", 8000);
+  await waitFor(async () => {
+    const t = await ctx.tablero();
+    return !t.etapas.some((e) => e.id === nueva.id) && t.etapas.length === antes.etapas.length ? t : null;
+  }, { timeout: 6000, label: "que la etapa desaparezca de la API" });
+  const beto = await ctx.contacto(BETO);
+  if (beto.etapa_id !== antes.etapas[0].id) fallos.push(`Beto quedó en ${beto.etapa_id} y no en la primera etapa (${antes.etapas[0].id})`);
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.columnasDOM)).length === antes.etapas.length ? true : null, { timeout: 6000, label: "que la columna desaparezca del DOM" });
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "«Por cobrar» creada desde el diálogo, Beto movido ahí, renombrada a «Cobrado», recoloreada y eliminada desde ⋮ (Beto volvió a la primera etapa)";
+}
+
+async function criterioAltaContacto(ctx) {
+  const api = await ctx.tablero();
+  const etapa = api.etapas[1];
+  const r = await ctx.cdp.evaluate(enPagina.altaContacto, String(etapa.id), ALTA.name, ALTA.phone);
+  if (r.error) throw new Error(r.error);
+  if (!r.visible) throw new Error("el formulario de alta no se mostró");
+  await ctx.esperarToast(`Contacto «${ALTA.name}» añadido a «${etapa.nombre}»`, 8000);
+  const nuevo = await waitFor(async () => (await ctx.contacto(ALTA.canonico)) ?? null, { timeout: 6000, label: "el contacto nuevo en la API" });
+  if (nuevo.etapa_id !== etapa.id) throw new Error(`el contacto nació en la etapa ${nuevo.etapa_id}`);
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.columnaDeTarjeta, ALTA.canonico)) === String(etapa.id) ? true : null, { timeout: 6000, label: "la tarjeta nueva en su columna" });
+  // Repetido: 409 con mensaje del servidor en el toast (la petición 409 se descuenta del recolector).
+  const marca = ctx.recolector.fallos.length;
+  const r2 = await ctx.cdp.evaluate(enPagina.altaContacto, String(etapa.id), "Otra Ana", ANA);
+  if (r2.error) throw new Error(r2.error);
+  await ctx.esperarToast("Ya existe un cliente con ese teléfono", 8000);
+  // El 409 lo provocó esta prueba a propósito: ni la respuesta ni su línea en el log de red cuentan.
+  const extra = ctx.recolector.fallos.splice(marca).filter((f) => !/\b409\b/.test(f.texto));
+  ctx.recolector.fallos.push(...extra);
+  return `«${ALTA.name}» (${ALTA.phone} → ${nuevo.phone}) nació en «${etapa.nombre}»; el duplicado avisa con el 409 del servidor`;
+}
+
+async function criterioChatInicial(ctx) {
+  await ctx.abrirCrm(`?chat=${ANA}`);
+  const s = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return e.abierto && e.burbujas.length > 0 ? e : null;
+  }, { timeout: 8000, label: "que /crm?chat= abra el chat solo" });
+  if (s.nombre !== "Ana Lucía Ramírez") throw new Error(`abrió ${JSON.stringify(s.nombre)}`);
+  await ctx.abrirCrm("?chat=<script>");
+  const t = await ctx.cdp.evaluate(enPagina.estadoChat);
+  if (t.abierto) throw new Error("un ?chat= inválido abrió un chat");
+  return `/crm?chat=${ANA} abre el chat de Ana al cargar; un valor inválido se ignora`;
+}
+
+async function criterioToggleTray(ctx) {
+  const a = await ctx.cdp.evaluate(enPagina.pulsarToggleTray);
+  const b = await ctx.cdp.evaluate(enPagina.pulsarToggleTray);
+  if (!a.colapsada || a.texto !== "Mostrar bandeja" || a.aria !== "false") throw new Error(`al ocultar: ${JSON.stringify(a)}`);
+  if (b.colapsada || b.texto !== "Ocultar bandeja" || b.aria !== "true") throw new Error(`al mostrar: ${JSON.stringify(b)}`);
+  return "«Ocultar bandeja» alterna is-collapsed, el texto y aria-expanded";
+}
+
+async function criterioColaborador(ctx) {
+  await ctx.login("colab1");
+  const t = await ctx.abrirCrm();
+  const api = await ctx.tablero();
+  const fallos = [];
+  if (t.nuevaEtapa) fallos.push("el colaborador ve «Nueva etapa»");
+  if (t.menus !== 0) fallos.push(`el colaborador ve ${t.menus} menús ⋮`);
+  if (t.altas !== 0) fallos.push(`el colaborador ve ${t.altas} botones «Añadir contacto»`);
+  if (t.miembrosTira !== 0 || t.tiraVisible) fallos.push("el colaborador ve la tira de miembros");
+  if (api.miembros.length) fallos.push("la API le da miembros a un colaborador");
+  // Solo las conversaciones de las solicitudes que toma: Ana (folio tomado por colab1).
+  if (!mismoConjunto(api.contactos.map((c) => c.phone), [ANA])) fallos.push(`la API le da a colab1 ${JSON.stringify(api.contactos.map((c) => c.phone))} y no solo a Ana`);
+  if (!mismoConjunto(t.bandeja, [ANA])) fallos.push(`la bandeja muestra ${JSON.stringify(t.bandeja)}`);
+  if (t.tarjetas !== 1) fallos.push(`${t.tarjetas} tarjetas en el tablero (esperaba 1)`);
+  const destino = api.etapas[2];
+  const r = await ctx.cdp.evaluate(enPagina.cambiarSelect, ANA, String(destino.id));
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarMovimiento(ANA, destino.id, destino.nombre);
+  // Abre el chat: no hay botón de bloqueo para quien no es admin.
+  await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "tarjeta");
+  const s = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return e.burbujas.length > 0 ? e : null;
+  }, { timeout: 6000, label: "el chat de Ana como colab1" });
+  if (s.botones.some((b) => b.clase.includes("chat-block"))) fallos.push("el colaborador ve «Bloquear cliente»");
+  // El saliente que mandó jefa1 no es «suyo»: sin «eliminar».
+  if (s.burbujas.some((b) => b.dir === "out" && b.meta.startsWith("jefa1") && b.eliminar)) fallos.push("colab1 puede ocultar un mensaje de jefa1");
+  // Un chat que no es suyo responde «no existe», aunque sea de su oficina. El 404 lo provoca
+  // esta prueba a propósito: ni la respuesta ni su línea en el log de red cuentan como fallo.
+  const marca = ctx.recolector.fallos.length;
+  const ajeno = await ctx.cdp.evaluate(enPagina.api, `/crm/api/chat/${BETO}`);
+  if (ajeno.status !== 404) fallos.push(`el chat de Beto (sin folio suyo) respondió ${ajeno.status} a colab1`);
+  const extra = ctx.recolector.fallos.splice(marca).filter((f) => !(f.texto.includes(`/crm/api/chat/${BETO}`) && /\b404\b/.test(f.texto)));
+  ctx.recolector.fallos.push(...extra);
+  // Un colaborador sin conversaciones ve el aviso que lo explica.
+  await ctx.login("colab2");
+  const t2 = await ctx.abrirCrm();
+  if (t2.tarjetas !== 0 || !(t2.vacioBandeja ?? "").startsWith("Sin conversaciones todavía")) fallos.push(`colab2 (sin folios) ve ${t2.tarjetas} tarjetas y la bandeja dice ${JSON.stringify(t2.vacioBandeja)}`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `colab1 solo ve a Ana (su folio), sin miembros, altas ni controles de admin, la mueve a «${destino.nombre}» y abre su chat; Beto le responde 404; colab2 sin folios ve el aviso`;
+}
+
+async function criterioAdminOficina(ctx) {
+  await ctx.login("jefe2");
+  const t = await ctx.abrirCrm();
+  const api = await ctx.tablero();
+  const fallos = [];
+  if (t.nuevaEtapa || t.menus !== 0) fallos.push("el admin de oficina ve controles de etapas (son del admin global)");
+  if (!mismoConjunto(api.contactos.map((c) => c.phone), [CARLA])) fallos.push(`jefe2 ve ${JSON.stringify(api.contactos.map((c) => c.phone))}`);
+  if (!mismoConjunto(t.bandeja, [CARLA])) fallos.push(`la bandeja de jefe2 trae ${JSON.stringify(t.bandeja)}`);
+  await ctx.cdp.evaluate(enPagina.abrirTarjeta, CARLA, "tarjeta");
+  const s = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return e.burbujas.length === 1 ? e : null;
+  }, { timeout: 6000, label: "el chat de Carla" });
+  if (!s.botones.some((b) => b.clase.includes("chat-block"))) fallos.push("el admin de oficina no ve «Bloquear cliente»");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "jefe2 (admin de Puebla) solo ve a Carla, sin controles de etapas, y sí puede bloquear";
+}
+
+async function criterioResponsivo(ctx) {
+  await ctx.login("jefa1");
+  const fallos = [];
+  // 900 px: la bandeja pasa arriba y se puede plegar; las columnas se apilan.
+  await ctx.ancho(900, 1100);
+  await ctx.abrirCrm();
+  let m = await ctx.cdp.evaluate(() => ({
+    toggle: getComputedStyle(document.querySelector("#crm-btn-toggle-tray")).display !== "none",
+    apiladas: getComputedStyle(document.querySelector("#crm-board")).flexDirection === "column",
+    filas: getComputedStyle(document.querySelector(".crm-layout")).gridTemplateColumns.split(" ").length,
+    scrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  }));
+  if (!m.toggle) fallos.push("a 900 px no se ve «Ocultar bandeja»");
+  if (!m.apiladas) fallos.push("a 900 px las columnas no se apilan");
+  if (m.filas !== 1) fallos.push(`a 900 px la rejilla tiene ${m.filas} columnas`);
+  if (m.scrollX) fallos.push("a 900 px hay scroll horizontal de página");
+  await ctx.capturar("05-tablero-900");
+  await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "tarjeta");
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.estadoChat)).burbujas.length > 0 ? true : null, { timeout: 6000 });
+  m = await ctx.cdp.evaluate(() => {
+    const b = document.querySelector("#crm-btn-board");
+    const r = b ? b.getBoundingClientRect() : null;
+    const fila = document.querySelector("#crm-tabs").getBoundingClientRect();
+    return {
+      bandeja: getComputedStyle(document.querySelector("#crm-tray")).display,
+      // Se oculta la lista de pestañas, no la fila: el botón «Tablero» vive en la fila.
+      pestanas: getComputedStyle(document.querySelector("#crm-tabs-list")).display,
+      tablero: !!b && !b.hidden && b.getClientRects().length > 0,
+      alInicio: !!r && Math.abs(r.left - fila.left) < 24,
+    };
+  });
+  if (m.bandeja !== "none" || m.pestanas !== "none") fallos.push(`a 900 px con el chat abierto siguen visibles bandeja/pestañas: ${JSON.stringify(m)}`);
+  if (!m.tablero) fallos.push("a 900 px con el chat abierto no se ve el botón «Tablero»");
+  if (!m.alInicio) fallos.push(`a 900 px el botón «Tablero» no quedó al inicio de la fila de pestañas: ${JSON.stringify(m)}`);
+  await ctx.capturar("06-chat-900");
+  // 400 px: teléfono.
+  await ctx.ancho(400, 800);
+  await ctx.abrirCrm();
+  m = await ctx.cdp.evaluate(() => ({
+    scrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    columnas: document.querySelectorAll("#crm-board section.column").length,
+  }));
+  if (m.scrollX) fallos.push("a 400 px hay scroll horizontal de página");
+  await ctx.capturar("07-tablero-400");
+  await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "tarjeta");
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.estadoChat)).burbujas.length > 0 ? true : null, { timeout: 6000 });
+  m = await ctx.cdp.evaluate(() => {
+    const b = document.querySelector("#crm-btn-board");
+    return {
+      tablero: !!b && !b.hidden && b.getClientRects().length > 0,
+      scrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  });
+  if (!m.tablero) fallos.push("a 400 px con el chat abierto no se ve el botón «Tablero»");
+  if (m.scrollX) fallos.push("a 400 px con el chat abierto hay scroll horizontal de página");
+  await ctx.capturar("08-chat-400");
+  await ctx.cdp.send("Emulation.clearDeviceMetricsOverride");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "a 900 px la bandeja sube y se pliega, las columnas se apilan y el chat ocupa todo; a 400 px sin scroll horizontal";
+}
+
+// ---- Cajón del folio (crm-panel.js) ------------------------------------------
+
+async function abrirChatDe(ctx, phone, conBurbujas = true) {
+  await ctx.abrirCrm(`?chat=${phone}`);
+  return waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return e.abierto && (!conBurbujas || e.burbujas.length > 0) ? e : null;
+  }, { timeout: 8000, label: `el chat de ${phone}` });
+}
+
+const esperarCajon = (ctx) =>
+  waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return e.cargado && e.riel.length === 6 ? e : null;
+  }, { timeout: 8000, label: "los datos del cajón del folio" });
+
+const esperarCajonCerrado = (ctx) =>
+  waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return !e.abierto ? e : null;
+  }, { timeout: 4000, label: "que el cajón se cierre" });
+
+async function abrirSeccion(ctx, seccion) {
+  const r = await ctx.cdp.evaluate(enPagina.panelPulsar, seccion);
+  if (r.error) throw new Error(r.error);
+  return waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return e.abierto && e.seccionVisible.length === 1 && e.seccionVisible[0] === seccion ? e : null;
+  }, { timeout: 5000, label: `la sección «${seccion}» del cajón` });
+}
+
+async function criterioCajonAbrirCerrar(ctx) {
+  await ctx.login("jefa1");
+  await abrirChatDe(ctx, ANA);
+  const fallos = [];
+  let p = await esperarCajon(ctx);
+  if (p.abierto) fallos.push("el cajón nace abierto");
+  if (!p.inerte) fallos.push("el cajón cerrado no queda inerte");
+  const cobro = p.riel.find((b) => b.seccion === "cobro");
+  if (cobro.num !== "1") fallos.push(`la píldora de cobro dice ${JSON.stringify(cobro.num)} y hay 1 cobro sembrado`);
+
+  // Cada píldora abre SU sección, con su título y una sola marcada.
+  for (const { seccion, titulo } of p.riel) {
+    p = await abrirSeccion(ctx, seccion);
+    if (p.titulo !== titulo) fallos.push(`«${seccion}» se titula ${JSON.stringify(p.titulo)}`);
+    if (!(p.sub ?? "").includes("Ana")) fallos.push(`la cabecera del cajón no dice de quién es: ${JSON.stringify(p.sub)}`);
+    if (p.inerte) fallos.push(`«${seccion}» quedó inerte estando abierta`);
+    if (p.foco !== "crm-panel-title") fallos.push(`al abrir «${seccion}» el foco quedó en ${JSON.stringify(p.foco)}`);
+    const marcadas = p.riel.filter((b) => b.expandido).map((b) => b.seccion);
+    if (marcadas.length !== 1 || marcadas[0] !== seccion) fallos.push(`aria-expanded marca ${JSON.stringify(marcadas)} con «${seccion}» abierta`);
+  }
+
+  // La píldora activa cierra, y el foco vuelve a ella.
+  await ctx.cdp.evaluate(enPagina.panelPulsar, "transferir");
+  p = await esperarCajonCerrado(ctx);
+  if (!p.inerte) fallos.push("al cerrar no vuelve a quedar inerte");
+  if (!(p.foco ?? "").includes("accion")) fallos.push(`al cerrar el foco quedó en ${JSON.stringify(p.foco)}`);
+
+  // La ✕ también cierra.
+  await abrirSeccion(ctx, "gestion");
+  await ctx.cdp.evaluate(enPagina.panelCerrar, "boton");
+  await esperarCajonCerrado(ctx);
+
+  // Escape cierra el cajón y NO el chat; el segundo Escape sí vuelve al tablero.
+  await abrirSeccion(ctx, "gestion");
+  await ctx.cdp.evaluate(enPagina.teclaEscape);
+  await esperarCajonCerrado(ctx);
+  const chat = await ctx.cdp.evaluate(enPagina.estadoChat);
+  if (!chat.abierto) fallos.push("Escape cerró el chat junto con el cajón");
+  await ctx.cdp.evaluate(enPagina.teclaEscape);
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return !e.abierto ? true : null;
+  }, { timeout: 4000, label: "que el segundo Escape vuelva al tablero" });
+
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "las seis secciones abren con su título y su contador, el foco entra al cajón y vuelve a la píldora; la píldora activa, ✕ y Escape lo cierran sin cerrar el chat";
+}
+
+async function criterioCajonResponsivo(ctx) {
+  const fallos = [];
+  const medidas = [];
+  for (const [ancho, alto] of [[1440, 900], [1100, 900], [400, 800]]) {
+    await ctx.ancho(ancho, alto);
+    await abrirChatDe(ctx, ANA);
+    await esperarCajon(ctx);
+    const p = await abrirSeccion(ctx, "gestion");
+    const scrollX = await ctx.cdp.evaluate(() =>
+      document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    if (scrollX) fallos.push(`a ${ancho} px hay scroll horizontal con el cajón abierto`);
+    if (!p.panelVisible) fallos.push(`a ${ancho} px el cajón no se ve`);
+    medidas.push(`${ancho}px → cajón ${p.anchoPanel}px, velo ${p.velo}, empuje ${p.empuje}`);
+    if (ancho >= 1280) {
+      // Empuja: el hilo y el compositor se encogen y nada queda tapado.
+      if (p.empuje === "0px") fallos.push(`a ${ancho} px el cajón se encima en vez de empujar`);
+      if (p.velo !== "oculto") fallos.push(`a ${ancho} px el velo está ${p.velo}: el chat debe seguir usable`);
+    } else {
+      if (p.empuje !== "0px") fallos.push(`a ${ancho} px el chat reserva ${p.empuje}: ahí debe encimarse`);
+      if (p.velo !== "visible") fallos.push(`a ${ancho} px el cajón se abre sin velo`);
+      // Donde se encima, el velo cierra.
+      await ctx.cdp.evaluate(enPagina.panelCerrar, "velo");
+      await esperarCajonCerrado(ctx);
+    }
+    if (ancho === 400 && p.anchoPanel !== p.anchoChat) {
+      fallos.push(`a 400 px el cajón mide ${p.anchoPanel} px y el chat ${p.anchoChat}: debe ocupar todo`);
+    }
+    await ctx.capturar(`09-cajon-${ancho}`);
+  }
+  await ctx.cdp.send("Emulation.clearDeviceMetricsOverride");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return medidas.join(" · ");
+}
+
+async function criterioCajonGestion(ctx) {
+  await ctx.login("colab1");
+  await abrirChatDe(ctx, ANA);
+  await esperarCajon(ctx);
+  const fallos = [];
+  let p = await abrirSeccion(ctx, "gestion");
+  const folio = (await ctx.chat(ANA)).ticket;
+  if (p.folio !== `Folio #${folio.id}`) fallos.push(`el cajón dice ${JSON.stringify(p.folio)} y el folio es #${folio.id}`);
+  if (!p.estadoTile) fallos.push("quien atiende no ve el selector de estado");
+  if (p.gAjeno) fallos.push("a quien atiende le sale el aviso de folio ajeno");
+  if (!mismoConjunto(p.gestionBotones, ["crm-g-terminar", "crm-g-soltar"])) {
+    fallos.push(`botones de gestión visibles: ${JSON.stringify(p.gestionBotones)}`);
+  }
+  if (!(p.verFolio ?? "").startsWith(`/tickets/${folio.id}?volver=`)) {
+    fallos.push(`el enlace a la solicitud completa es ${JSON.stringify(p.verFolio)}`);
+  }
+
+  await ctx.capturar("10-cajon-gestion");
+
+  // Cambiar el estado: la API y la píldora activa se enteran.
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r = await ctx.cdp.evaluate(enPagina.panelEstadoPulsar, "en_proceso");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Estado actualizado", 8000);
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    const api = (await ctx.chat(ANA)).ticket;
+    return api.status === "en_proceso" && e.estados.find((x) => x.estado === "en_proceso").actual ? true : null;
+  }, { timeout: 8000, label: "que el folio quede «en proceso» en la API y en el cajón" });
+
+  // Etiquetas: agregar y quitar, con el contador del riel al día.
+  p = await abrirSeccion(ctx, "etiquetas");
+  if (!p.etiquetaForm) fallos.push("no se ofrece agregar etiqueta");
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r2 = await ctx.cdp.evaluate(enPagina.panelFormulario, "#crm-e-form", { nombre: "urgente" });
+  if (r2.error) throw new Error(r2.error);
+  await ctx.esperarToast("Etiqueta agregada", 8000);
+  p = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return e.etiquetas.includes("urgente") ? e : null;
+  }, { timeout: 8000, label: "la etiqueta «urgente» en el cajón" });
+  const numEt = p.riel.find((b) => b.seccion === "etiquetas").num;
+  if (numEt !== "1") fallos.push(`la píldora de etiquetas dice ${JSON.stringify(numEt)}`);
+  const tarjeta = await ctx.contacto(ANA);
+  if (!tarjeta.labels.includes("urgente")) fallos.push(`la API del tablero trae ${JSON.stringify(tarjeta.labels)}`);
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r3 = await ctx.cdp.evaluate(enPagina.panelQuitarEtiqueta, "urgente");
+  if (r3.error) throw new Error(r3.error);
+  await ctx.esperarToast("Etiqueta quitada", 8000);
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return e.etiquetas.length === 0 ? true : null;
+  }, { timeout: 8000, label: "que la etiqueta desaparezca" });
+
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `colab1 ve su folio #${folio.id}, lo pasa a «en proceso» y pone y quita la etiqueta «urgente» sin salir del chat`;
+}
+
+async function criterioCajonNotas(ctx) {
+  const fallos = [];
+  let p = await abrirSeccion(ctx, "notas");
+  if (!p.notaForm) fallos.push("quien atiende no puede anotar en el folio");
+  if (p.nAjeno) fallos.push("a quien atiende le sale el aviso de nota ajena");
+
+  const nota = "QA: el cliente manda el acta del papá";
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r = await ctx.cdp.evaluate(enPagina.panelFormulario, "#crm-n-form", { note: nota });
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Nota guardada", 8000);
+  p = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return e.notasTramite.includes(nota) ? e : null;
+  }, { timeout: 8000, label: "la nota en «Notas del trámite»" });
+  if (!p.notasTramite.includes("colab1")) fallos.push(`la nota no dice quién la escribió: ${JSON.stringify(p.notasTramite)}`);
+
+  const notaCliente = "QA: prefiere llamadas después de las 6";
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r2 = await ctx.cdp.evaluate(enPagina.panelFormulario, "#crm-n-cliente-form", { body: notaCliente });
+  if (r2.error) throw new Error(r2.error);
+  await ctx.esperarToast("Nota guardada en la ficha", 8000);
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return e.notasCliente.includes(notaCliente) ? true : null;
+  }, { timeout: 8000, label: "la nota en la ficha del cliente" });
+
+  // Seguimiento: el recordatorio queda listado y contado.
+  p = await abrirSeccion(ctx, "seguimiento");
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r3 = await ctx.cdp.evaluate(enPagina.panelFormulario, "#crm-s-form",
+    { days: "3", note: "QA recontactar por documentos" });
+  if (r3.error) throw new Error(r3.error);
+  await ctx.esperarToast("Recordatorio creado", 8000);
+  p = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return e.seguimientos.some((s) => s.includes("QA recontactar por documentos")) ? e : null;
+  }, { timeout: 8000, label: "el recordatorio en «Pendientes»" });
+  const numSeg = p.riel.find((b) => b.seccion === "seguimiento").num;
+  if (numSeg !== "1") fallos.push(`la píldora de seguimiento dice ${JSON.stringify(numSeg)}`);
+  if (!p.seguimientos[0].includes("colab1")) fallos.push(`el pendiente no dice de quién es: ${JSON.stringify(p.seguimientos)}`);
+
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "la nota del folio, la nota del cliente y el recordatorio se guardan desde el cajón y aparecen ahí mismo";
+}
+
+async function criterioCajonPermisos(ctx) {
+  await ctx.login("jefa1");
+  const fallos = [];
+
+  // 1) Conversación sin folio: solo la nota del cliente.
+  await abrirChatDe(ctx, BETO, false);
+  let p = await esperarCajon(ctx);
+  const apagadas = p.riel.filter((b) => b.deshabilitado).map((b) => b.seccion);
+  if (!mismoConjunto(apagadas, ["gestion", "etiquetas", "cobro", "seguimiento", "transferir"])) {
+    fallos.push(`sin folio quedan activas de más o de menos: apagadas ${JSON.stringify(apagadas)}`);
+  }
+  p = await abrirSeccion(ctx, "notas");
+  if (!p.sinFolio) fallos.push("sin folio no se explica por qué no hay acciones");
+  if (p.notaForm) fallos.push("sin folio se ofrece anotar en un folio que no existe");
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r = await ctx.cdp.evaluate(enPagina.panelFormulario, "#crm-n-cliente-form",
+    { body: "QA: nota de un cliente sin folio" });
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Nota guardada en la ficha", 8000);
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.panelEstado);
+    return e.notasCliente.includes("QA: nota de un cliente sin folio") ? true : null;
+  }, { timeout: 8000, label: "la nota del cliente sin folio" });
+
+  // 2) Admin que NO atiende: puede terminar y soltar, no tocar estado ni notas.
+  await abrirChatDe(ctx, ANA);
+  await esperarCajon(ctx);
+  p = await abrirSeccion(ctx, "gestion");
+  if (p.estadoTile) fallos.push("un admin que no atiende ve el selector de estado");
+  if (!p.gAjeno) fallos.push("no se explica quién atiende el folio");
+  if (!mismoConjunto(p.gestionBotones, ["crm-g-terminar", "crm-g-soltar"])) {
+    fallos.push(`botones del admin ajeno: ${JSON.stringify(p.gestionBotones)}`);
+  }
+  p = await abrirSeccion(ctx, "notas");
+  if (p.notaForm || !p.nAjeno) fallos.push("el admin ajeno puede anotar en el folio de otro");
+  p = await abrirSeccion(ctx, "transferir");
+  if (p.transferForm || !p.tAjeno) fallos.push("el admin ajeno ve el formulario de transferencia");
+
+  // 3) Cobro: resumen del cobro sembrado y aviso de Stripe apagado.
+  p = await abrirSeccion(ctx, "cobro");
+  if (p.cobros.length !== 1) throw new Error(`el cajón lista ${p.cobros.length} cobros y hay 1 sembrado`);
+  const c = p.cobros[0];
+  if (c.badge !== "⏳ Pendiente de pago") fallos.push(`la insignia del cobro es ${JSON.stringify(c.badge)}`);
+  if (c.monto !== "$150.00 MXN") fallos.push(`el monto es ${JSON.stringify(c.monto)}`);
+  if (!c.pie.includes("Generado por colab1")) fallos.push(`el pie del cobro es ${JSON.stringify(c.pie)}`);
+  for (const esperado of ["Copiar link", "Reenviar por WhatsApp", "Cancelar cobro"]) {
+    if (!c.acciones.includes(esperado)) fallos.push(`falta la acción «${esperado}»: ${JSON.stringify(c.acciones)}`);
+  }
+  await ctx.capturar("11-cajon-cobro");
+  if (p.cobroForm) fallos.push("se ofrece generar un cobro con Stripe apagado");
+  if (!p.sinStripe) fallos.push("no se dice que Stripe no está configurado");
+
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "sin folio solo queda la nota del cliente; un admin que no atiende puede terminar y soltar pero no tocar estado, notas ni transferencia; el cobro sembrado se resume con sus acciones";
+}
+
+async function criterioCajonTransferir(ctx) {
+  await ctx.login("colab1");
+  await abrirChatDe(ctx, ANA);
+  await esperarCajon(ctx);
+  const fallos = [];
+  const p = await abrirSeccion(ctx, "transferir");
+  if (!p.transferForm) fallos.push("quien atiende no ve el formulario de transferencia");
+  if (!p.companeros.includes("jefa1")) fallos.push(`compañeros de la oficina del folio: ${JSON.stringify(p.companeros)}`);
+
+  // Transferir la propia solicitud quita el acceso: el panel contesta 404 y eso
+  // ES el éxito. El 404 lo provoca esta prueba, así que no cuenta como fallo.
+  const marca = ctx.recolector.fallos.length;
+  const desde = ctx.dialogos.length;
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r = await ctx.cdp.evaluate(enPagina.panelFormulario, "#crm-t-form",
+    { to_user: "jefa1", note: "QA: se la paso con contexto" });
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarDialogo({ desde, prefijo: "¿Transferir esta solicitud a jefa1?" });
+  await ctx.esperarToast("Solicitud transferida a jefa1", 10000);
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    const t = await ctx.tablero();
+    return !e.abierto && !t.contactos.some((c) => c.phone === ANA) ? true : null;
+  }, { timeout: 10000, label: "que la conversación transferida salga del tablero de colab1" });
+  const extra = ctx.recolector.fallos.splice(marca)
+    .filter((f) => !(f.texto.includes("/crm/api/panel/") && /\b404\b/.test(f.texto)));
+  ctx.recolector.fallos.push(...extra);
+
+  // El dueño nuevo la ve, con la nota de contexto en el folio.
+  await ctx.login("jefa1");
+  await abrirChatDe(ctx, ANA);
+  await esperarCajon(ctx);
+  const q = await abrirSeccion(ctx, "notas");
+  if (!q.notasTramite.includes("QA: se la paso con contexto")) {
+    fallos.push(`la nota de la transferencia no quedó en el folio: ${JSON.stringify(q.notasTramite)}`);
+  }
+  const panel = await ctx.api(`/crm/api/panel/${ANA}`);
+  if (panel.ticket.assigned_to !== "jefa1") fallos.push(`el folio quedó en ${JSON.stringify(panel.ticket.assigned_to)}`);
+  if (!panel.permisos.atiende) fallos.push("el dueño nuevo no aparece como quien atiende");
+
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "colab1 transfiere su solicitud a jefa1 con nota de contexto, pierde el acceso y el CRM lo devuelve al tablero; jefa1 la recibe con la nota";
+}
+
+function criterioConsola(recolector) {
+  const titulo = "Consola y red limpias durante todo el recorrido";
+  if (recolector.fallos.length) {
+    resultados.push({ titulo, ok: false });
+    imprimir("❌", titulo, recolector.fallos.map((f) => `[${f.origen}] ${f.texto}`).join(" | "));
+  } else {
+    resultados.push({ titulo, ok: true });
+    imprimir("✅", titulo, "sin excepciones, sin console.error, sin respuestas ≥ 400 inesperadas", recolector.avisos.map((a) => `[${a.origen}] ${a.texto}`));
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// main
+// ────────────────────────────────────────────────────────────────────────────
+
+async function main() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crm-qa-"));
+  const db = path.join(dir, "crm-qa.db");
+  const env = {
+    ...process.env,
+    DB_PATH: db, SECURE_COOKIES: "0", SESSION_SECRET: "qa-secreto-de-prueba-no-usar",
+    MSSQL_HOST: "", MSSQL_SA_PASSWORD: "", OLLAMA_URL: "", ANTHROPIC_API_KEY: "", WHATSAPP_TOKEN: "",
+    STRIPE_SECRET_KEY: "",
+    GEOIP_ENABLED: "0", DASHBOARD_USERNAME: "", DASHBOARD_PASSWORD: "",
+    CRM_QA_REPO: REPO, CRM_QA_CLAVE: CLAVE, PYTHONUNBUFFERED: "1",
+  };
+  console.log(`Base temporal: ${db}`);
+  const siembra = spawnSync(PYTHON, [SEED], { cwd: REPO, env, encoding: "utf8" });
+  if (siembra.status !== 0) {
+    console.error("❌ La siembra falló:\n" + siembra.stdout + siembra.stderr);
+    process.exit(1);
+  }
+  console.log("Siembra: " + siembra.stdout.trim().split("\n").pop());
+
+  const puerto = await puertoLibre();
+  let servidor = null;
+  let chrome = null;
+  let cdp = null;
+  let codigo = 1;
+  try {
+    servidor = await lanzarServidor(env, puerto);
+    console.log(`uvicorn en ${servidor.base}`);
+    chrome = await lanzarChrome(path.join(dir, "perfil-chrome"));
+    cdp = new ClienteCDP(chrome.wsUrl);
+    await cdp.conectar();
+    await cdp.send("Page.enable");
+    await cdp.send("Runtime.enable");
+    await cdp.send("Log.enable");
+    await cdp.send("Network.enable");
+    const dialogos = [];
+    cdp.on("Page.javascriptDialogOpening", (p) => {
+      dialogos.push({ tipo: p.type, mensaje: p.message, consumido: false });
+      cdp.send("Page.handleJavaScriptDialog", { accept: true }).catch(() => {});
+    });
+    const recolector = new Recolector(cdp);
+    const ctx = crearContexto({ cdp, base: servidor.base, recolector, dialogos, env, db });
+
+    await ctx.login("jefa1");
+    await criterio(ctx, "1. Carga del tablero (admin global)", criterioCarga);
+    await criterio(ctx, "2. Tarjetas, contadores e insignias contra la API", criterioTarjetas);
+    await criterio(ctx, "3. Pestañas-filtro y columna enfocada", criterioPestanas);
+    await criterio(ctx, "3b. Miembros de la oficina: tira, estado, conteos y filtro", criterioMiembros);
+    await criterio(ctx, "4. Búsqueda sin acentos y por teléfono con formato", criterioBusqueda);
+    await criterio(ctx, "5. Drag & drop persistente tras recargar", criterioArrastre);
+    await criterio(ctx, "6. Select «Mover a…»", criterioSelectMover);
+    await criterio(ctx, "7. Abrir el chat de un contacto", criterioAbrirChat);
+    await criterio(ctx, "7b. Un mensaje entrante aparece en el chat y en la tarjeta sin recargar", criterioEntranteEnVivo);
+    await criterio(ctx, "8. Ventana cerrada: variantes «nunca» y «caducó»", criterioVentanaCerrada);
+    await criterio(ctx, "9. Enviar un mensaje y ocultarlo", criterioEnviar);
+    await criterio(ctx, "10. Reactivar el bot", criterioReactivarBot);
+    await criterio(ctx, "11. Bloquear y desbloquear (admin)", criterioBloquear);
+    await criterio(ctx, "12. Cerrar el chat: ✕, «Tablero» y Escape", criterioCerrarChat);
+    await criterio(ctx, "13. Etapas: crear, mover, renombrar, color, eliminar", criterioEtapas);
+    await criterio(ctx, "14. Alta de contacto desde una columna", criterioAltaContacto);
+    await criterio(ctx, "15. /crm?chat= abre el chat al cargar", criterioChatInicial);
+    await criterio(ctx, "15b. La ruta vieja /inbox/{phone} aterriza en el CRM", criterioRutaVieja);
+    await criterio(ctx, "16. Ocultar/mostrar bandeja", criterioToggleTray);
+    await criterio(ctx, "17. Colaborador: alcance y sin controles de admin", criterioColaborador);
+    await criterio(ctx, "18. Admin de oficina: solo su oficina", criterioAdminOficina);
+    await criterio(ctx, "19. Pantallas de 900 y 400 px", criterioResponsivo);
+    await criterio(ctx, "20. Cajón del folio: abrir cada sección, cambiar y cerrar", criterioCajonAbrirCerrar);
+    await criterio(ctx, "21. El cajón a 1440, 1100 y 400 px", criterioCajonResponsivo);
+    await criterio(ctx, "22. Gestión y etiquetas desde el cajón (quien atiende)", criterioCajonGestion);
+    await criterio(ctx, "23. Notas del folio, del cliente y recordatorio", criterioCajonNotas);
+    await criterio(ctx, "24. Sin folio, admin que no atiende y resumen del cobro", criterioCajonPermisos);
+    await criterio(ctx, "25. Transferir la solicitud desde el cajón", criterioCajonTransferir);
+    criterioConsola(recolector);
+
+    const ok = resultados.filter((r) => r.ok).length;
+    console.log(`\n${ok}/${resultados.length} criterios en verde`);
+    codigo = ok === resultados.length ? 0 : 1;
+  } catch (e) {
+    console.error("❌ El QA se interrumpió: " + (e.stack || e.message));
+    if (servidor) console.error(servidor.salida.slice(-30).join("\n"));
+  } finally {
+    cdp?.cerrar();
+    await matarProceso(chrome?.proc);
+    await matarProceso(servidor?.proc);
+    if (verbose && servidor) console.log("--- uvicorn ---\n" + servidor.salida.join("\n"));
+    if (keep) console.log(`Se conserva ${dir}`);
+    else fs.rmSync(dir, { recursive: true, force: true });
+  }
+  process.exit(codigo);
+}
+
+main();

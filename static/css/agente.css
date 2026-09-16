@@ -1,0 +1,158 @@
+/* Estilo del Estudio extraído de templates/agente.html (antes en línea; la CSP ya no lo permite). */
+/* Design system replicado del demo ai-workflow-builder (JointJS). El código
+   JointJS+ es comercial: se replica el LOOK con CSS propio, no su código. */
+.est-scope{--fondo:#0d1117;--tarjeta:#161b22;--tarjeta2:#1c2128;--borde:#30363d;
+  --texto:#e6edf3;--texto2:#8b949e;--run:#238636;--run-h:#2ea043;--acento:#a3e635;
+  background:var(--fondo);border-radius:18px;padding:14px;color:var(--texto)}
+.est-scope h1,.est-scope h2{color:var(--texto)}
+.est-scope .muted,.est-scope .mini{color:var(--texto2)}
+.est-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:.7rem 1rem;
+  background:var(--tarjeta);border:1px solid var(--borde);border-radius:14px}
+.est-toolbar input{flex:1 1 260px;padding:8px 12px;border:1px solid var(--borde);
+  border-radius:999px;font:inherit;background:#0d1117;color:var(--texto)}
+.est-toolbar input::placeholder{color:var(--texto2)}
+.est-sep{flex:0 0 1px;align-self:stretch;background:var(--borde);margin:0 4px}
+.est-resultado{margin:.5rem 0;min-height:1.4em;font-size:.9rem;color:var(--texto)}
+.est-resultado .ok{background:#12261e;border:1px solid #238636;border-radius:12px;
+  padding:.6rem .9rem;display:inline-block}
+.est-resultado .err{color:#f85149}
+.agente-layout{display:flex;gap:14px;align-items:stretch;flex-wrap:wrap}
+.agente-panel{flex:0 0 420px;max-height:max(78vh,640px);overflow-y:auto}
+.est-hr{border:0;border-top:1px solid var(--borde);margin:14px 0}
+.parrafo-chip textarea{width:100%;min-height:84px;margin-bottom:6px}
+.est-paleta{overflow-y:auto;padding:12px;
+  background:var(--tarjeta);border:1px solid var(--borde);border-radius:14px}
+.est-paleta h2{margin:0 0 4px;font-size:1rem}
+.mini{font-size:.78rem}
+.parrafo-chip{border:1px solid var(--borde);border-radius:10px;padding:8px;margin:8px 0;
+  cursor:grab;background:var(--tarjeta2)}
+.parrafo-chip p{margin:0 0 6px;font-size:.8rem;white-space:pre-wrap;color:var(--texto)}
+/* animate-node-in del demo (0.28s, cubic-bezier(.16,1,.3,1)). El demo también
+   anima scale/translateY, pero aquí los nodos son <g> de SVG cuya posición la
+   fija JointJS con el atributo transform: una transform de CSS lo pisaría y
+   los mandaría al origen mientras dura la animación. Queda el fundido. */
+@keyframes node-in { from { opacity: 0 } }
+#lienzo .joint-cell{animation:node-in .28s cubic-bezier(.16,1,.3,1)}
+/* transition-[box-shadow,border-color] duration-200 ease-out */
+#lienzo .joint-cell rect{transition:stroke .2s ease-out,filter .2s ease-out}
+
+/* ---- Estados del nodo (hover → focus → selected → activo → ganador) ----
+   Todos viven en CSS y en ESTE orden a propósito: el último que toca una
+   propiedad gana, así que el resaltado del probador (ámbar) se pinta encima
+   de la selección sin que ninguno tenga que saber del otro. El nodo no se
+   mueve en ningún estado: una transform de CSS pisaría el atributo transform
+   con que JointJS lo posiciona. */
+#lienzo .joint-cell{cursor:pointer;outline:none}
+#lienzo .joint-cell:hover rect{stroke:color-mix(in oklch, #4790d8 35%, #2b2e32)}
+/* selected: node-glow-selected del demo — borde teñido de --primary y halo. */
+#lienzo .joint-cell.est-sel rect{
+  stroke:color-mix(in oklch, #4790d8 55%, #2b2e32);
+  filter:url(#node-glow)}
+/* focus VISIBLE (teclado): el mismo halo más un borde pleno, que es el único
+   indicador para quien no usa ratón. No se usa :focus a secas para no
+   dibujarlo en cada clic. */
+#lienzo .joint-cell:focus-visible rect{stroke:#4790d8;stroke-width:2;filter:url(#node-glow)}
+/* active: el nodo se "hunde" — pierde el halo y queda con su sombra base. */
+#lienzo .joint-cell:active rect{filter:url(#node-elevation)}
+/* El ganador del probador manda sobre el color del borde en cualquier estado. */
+#lienzo .joint-cell.est-ganador rect{stroke:#d29922;stroke-width:3}
+@media (prefers-reduced-motion: reduce){
+  #lienzo .joint-cell rect{transition:none}
+}
+@media (prefers-reduced-motion: reduce){
+  #lienzo .joint-cell{animation:none}
+  #lienzo .joint-cell rect{transition:none}
+}
+.mini-titulo{margin:12px 0 6px;font-size:.85rem;color:var(--texto)}
+/* Avisos del nodo: el ⚠ y el texto cargan el significado, el ámbar solo
+   acompaña (WCAG 1.4.1 — el color no es el único indicador). */
+.avisos{list-style:none;margin:0 0 10px;padding:8px 10px;
+  border:1px solid #f0b429;border-left-width:3px;border-radius:8px;
+  background:rgba(240,180,41,.08)}
+.avisos li{font-size:.78rem;line-height:1.35;color:var(--texto)}
+.avisos li+li{margin-top:6px}
+.panel-grupo{margin-top:4px}
+.tools-lista{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.tool-fila{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:8px 10px;border:1px solid var(--borde);border-radius:8px;background:var(--tarjeta2)}
+.tool-fila strong{display:block;font-size:.8rem;font-weight:600}
+.tool-fila .mini{font-size:.72rem}
+/* La bloqueada se lee bloqueada sin depender solo del color (WCAG 1.4.1). */
+.tool-fila.bloqueada{border-style:dashed;opacity:.75}
+.tool-candado{font-size:.72rem;color:#b3b8be;white-space:nowrap}
+.sinonimos{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.sinonimo-chip{display:flex;align-items:center;justify-content:space-between;gap:4px;
+  width:290px;max-width:100%;padding:3px 4px 3px 12px;
+  border:1px solid var(--borde);border-radius:999px;background:var(--tarjeta2);
+  font-size:.78rem;color:var(--texto)}
+/* Solo se recorta el padding lateral: el alto lo fija el min-height de 44 px
+   del sistema de diseño (objetivo táctil WCAG) y no se toca. */
+.est-scope .sinonimo-chip .btn-mini{padding:0 10px;margin:0;font-size:.9rem}
+/* SelectTrigger del demo (shadcn), traducido a un <select> nativo: h-9,
+   rounded-md (--radius menos 2px), border-input, bg-background, text-sm,
+   shadow-sm, transition-colors y el chevron-down de lucide a size-4 con
+   opacity-50. El icono va como background-image porque un <select> nativo no
+   admite hijos; la CSP ya permite data: en img-src. */
+.est-scope select#f-servicio{
+  appearance:none;-webkit-appearance:none;
+  display:block;width:100%;min-width:0;
+  /* Sin la h-9 (36 px) del demo a propósito: components.css fija 44 px de alto
+     mínimo en todo control de formulario (objetivo táctil) y esa regla gana.
+     Declarar 36 px aquí sería CSS muerto que aparenta lo que no pasa. */
+  padding:8px 34px 8px 12px;
+  border:1px solid #26292d;border-radius:6px;
+  background-color:#151719;color:#f0f2f4;
+  font-size:14px;line-height:1.25;
+  box-shadow:0 1px 2px 0 rgba(0,0,0,.05);
+  transition:color .15s ease,background-color .15s ease,border-color .15s ease;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23b3b8be' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' opacity='.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;background-size:16px 16px}
+/* focus-visible:ring-2 ring-ring */
+.est-scope select#f-servicio:focus-visible{outline:none;box-shadow:0 0 0 2px #4790d8}
+/* La lista desplegable la pinta el sistema: al menos que herede el popover. */
+.est-scope select#f-servicio option{background:#202326;color:#f0f2f4}
+.fila-sinonimo{display:flex;gap:6px;align-items:center}
+.fila-sinonimo input{flex:1;min-width:0}
+#lienzo-wrap{flex:1 1 520px;position:relative;min-width:0;display:flex;flex-direction:column}
+#lienzo{min-height:640px;height:max(78vh,640px);position:relative;border-radius:14px;overflow:hidden;background:var(--fondo);
+  background-image:radial-gradient(#21262d 1px,transparent 1px);background-size:22px 22px;
+  border:1px solid var(--borde)}
+#minimapa{position:absolute;right:14px;bottom:44px;width:206px;background:#161b22f2;border:1px solid #30363d;border-radius:10px;padding:6px;z-index:5}
+#minimapa-caja{position:relative;width:194px;height:92px;overflow:hidden;border-radius:6px}
+#minimapa-caja[hidden]{display:none}
+#minimapa-paper{width:194px;height:92px}
+/* Recuadro de lo que se está viendo. Va como div sobre el minimapa y no como
+   <rect> dentro del SVG porque el transform del mini lo fijamos nosotros
+   (encuadrarMini): la conversión papel→píxel es una multiplicación, y así el
+   recuadro se estiliza y se arrastra con CSS y pointer events normales. */
+#mini-vista{position:absolute;top:0;left:0;border:1.5px solid #58a6ff;
+  background:rgba(88,166,255,.12);border-radius:3px;cursor:grab;touch-action:none}
+#mini-vista.agarrando{cursor:grabbing;background:rgba(88,166,255,.2)}
+#lienzo.agarrando{cursor:grabbing}
+.mini-ctl{display:flex;align-items:center;gap:3px;justify-content:center;margin-top:5px}
+.mini-ctl .btn-mini{padding:1px 6px;margin:0;font-size:.75rem;min-height:24px}
+.mini-ctl .btn-mini[disabled]{opacity:.4;cursor:not-allowed}
+.mini-ctl #mz-pct{color:#8b949e;font-size:.72rem;min-width:34px;text-align:center;
+  font-variant-numeric:tabular-nums}
+.mini-sep{width:1px;height:14px;background:#30363d;flex:0 0 auto}
+#mz-rango{width:56px;margin:0;padding:0;accent-color:#58a6ff;cursor:pointer}
+#mz-rango:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+.est-hint{color:var(--texto2);font-size:.78rem;margin:.4rem 0 0}
+.agente-panel{overflow-y:auto;padding:14px;
+  background:var(--tarjeta);border:1px solid var(--borde);border-radius:14px}
+.agente-panel h2{margin-top:0;font-size:1rem}
+.agente-panel label{display:block;margin:10px 0 4px;font-weight:600;font-size:.85rem;color:var(--texto)}
+.agente-panel p{color:var(--texto)}
+.agente-panel input,.agente-panel textarea{width:100%;padding:8px;border:1px solid var(--borde);
+  border-radius:10px;font:inherit;background:#0d1117;color:var(--texto)}
+.agente-panel textarea{min-height:100px}
+.est-scope .btn-mini{padding:6px 14px;border-radius:999px;border:1px solid var(--borde);
+  background:#21262d;color:var(--texto);cursor:pointer;font-size:.8rem;margin-right:6px}
+.est-scope .btn-mini:hover{background:#30363d}
+.est-scope .btn-mini.primario{background:var(--run);border-color:var(--run);color:#fff;font-weight:600}
+.est-scope .btn-mini.primario:hover{background:var(--run-h)}
+.est-scope .btn-mini:focus-visible,.est-scope input:focus-visible,.est-scope textarea:focus-visible{
+  outline:2px solid #388bfd;outline-offset:1px}
+.agente-error{color:#f85149;font-size:.85rem;min-height:1.2em}
+.sr-solo{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media (prefers-reduced-motion: reduce){ .glow{animation:none!important} }

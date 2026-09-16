@@ -166,14 +166,14 @@ De ahí las tres decisiones:
 **Los enlaces viven en `.agents/skills/`, no en `.gemini/skills/`.** Es el único directorio que las
 dos herramientas de Google escanean, así que un solo juego de enlaces sirve para ambas. El costo es
 que ese directorio es la **raíz de personalización del operador**: sus propias skills viven ahí
-(`tidyfactor-styler`) y estaba excluido entero. Por eso `.gitignore` versiona los trece enlaces
+(`tidyfactor-styler`) y estaba excluido entero. Por eso `.gitignore` versiona los catorce enlaces
 **uno por uno y por nombre**, y nada más: re-incluir `.agents/skills/*` entero metería al repo la
 siguiente skill que el operador guarde ahí, y un `git add .` bastaría para hacerlo sin que nadie lo
 note. El precio de listarlos es un lugar más que tocar al agregar una skill, y por eso el test
 compara esa lista con las skills en disco y falla nombrando la línea que falta.
 
 **Las skills se enlazan, no se copian.** `loadSkillsFromDir` busca `SKILL.md` y `*/SKILL.md` con
-`fs.stat`, que sigue symlinks: `gemini skills list` dentro del repo lista las trece más la del
+`fs.stat`, que sigue symlinks: `gemini skills list` dentro del repo lista las catorce más la del
 operador. Un enlace *relativo* sobrevive a cualquier clone; uno absoluto solo funciona en la máquina
 donde se creó, y el test lo rechaza. El precio es Windows sin `core.symlinks`, y se paga a sabiendas:
 el operador trabaja en Linux y el repo se despliega en un contenedor Linux.
@@ -238,7 +238,7 @@ Tres notas para quien venga:
   siempre y el primero solo si está presente: leerlo sin más pondría rojo el CI —y con él el deploy—
   por un archivo que el repo decidió no guardar. Es el mismo error que `_LOCALES` existe para evitar,
   y se cometió al escribir esta sección antes de que el test lo atrapara.
-- **La skill del operador convive con las nuestras.** `.agents/skills/` mezcla los trece enlaces del
+- **La skill del operador convive con las nuestras.** `.agents/skills/` mezcla los catorce enlaces del
   repo con las skills propias del operador. El test solo mira los symlinks; lo demás no es asunto de
   este repo y `deny` sigue prohibiendo escribir ahí.
 
@@ -254,7 +254,7 @@ catálogo vive en SQLite y que el JSON es solo semilla.
 Cuatro preguntas, en orden, y la primera que falle cierra el caso:
 
 1. **¿Cita archivos de este repo?** Sin anclas, no hay skill.
-2. **¿Choca con una de las trece?** `backend-senior` ya es FastAPI + SQLModel, `qa-senior` ya es
+2. **¿Choca con una de las catorce?** `backend-senior` ya es FastAPI + SQLModel, `qa-senior` ya es
    pytest y fixtures, `architecture-senior` ya es los límites entre capas. Una segunda copia del
    mismo rol es una fuente de verdad que va a derivar.
 3. **¿Trae las once secciones en orden?** Si no, `tests/test_harness.py` se pone rojo, y un rojo
@@ -268,6 +268,21 @@ esta skill». Cuatro de las ocho revisadas traen el **frontmatter duplicado**, c
 relleno en medio. Los `examples/` de las diecinueve son el mismo `print("Hello, World!")`, byte por
 byte. Hay un `SKILL.md.backup` versionado. Falla las cuatro preguntas; la revisión completa costó
 menos que escribir este párrafo, y ese es justamente el punto de dejarlo escrito.
+
+**Caso resuelto (septiembre 2026): graphify — la herramienta sí, su skill y sus instaladores no.**
+graphify (paquete `graphifyy`, Apache-2.0) convierte el código en un grafo de llamadas consultable, y
+la herramienta pasa la prueba que importa: construye el grafo de este repo solo desde el AST, sin
+modelo ni red, en unos siete segundos, y responde quién llama a qué con archivo y línea. Su skill
+falla las preguntas 1 y 3 —no cita nada de este repo y no trae las once secciones— y sus
+instaladores reescriben justo lo que este harness vigila: agregan una sección genérica a
+`AGENTS.md`, `CLAUDE.md` o `GEMINI.md`, registran hooks en los settings versionados, y
+`graphify hook install` crea un `.gitattributes` para un grafo que aquí no se versiona. Se adoptó la
+herramienta con una skill propia, `code-graph`, a demanda y sin hooks. El grafo vive en
+`graphify-out/`, fuera de git y reconstruible en segundos; `.graphifyignore` saca el prototipo, la
+landing, terraform, el JavaScript de terceros y todo Markdown —`graphify update` indexa los títulos
+de cualquier archivo versionado, `docs/` incluido—; y la skill nombra los comandos que mandarían
+contenido a un modelo, para que nadie los corra: sin backend explícito, graphify usa la primera
+llave de API que encuentre en el entorno.
 
 ## No-objetivos
 

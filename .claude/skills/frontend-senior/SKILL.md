@@ -9,7 +9,7 @@ description: Úsalo al tocar el panel/ERP interno — plantillas Jinja2 de templ
 
 Own the internal dashboard/ERP UI: Jinja2 templates, `static/css/{tokens,layout,components}.css`,
 `static/js/estado-vista.js`, the server-built SVG charts in `app/activity.py`, and the jointjs
-canvas in `templates/agente.html`. No build step, no bundler, no framework: what you write ships.
+canvas of `/agente` (`templates/agente.html` marks it up, `static/js/agente.js` draws it). No build step, no bundler, no framework: what you write ships.
 
 ## When to use
 
@@ -43,8 +43,8 @@ canvas in `templates/agente.html`. No build step, no bundler, no framework: what
 
 Before editing, answer these against the actual files:
 
-1. Does the change add a **node id** in `agente_studio._estado()`? Then `BASE` in `agente.html`
-   (~line 274) needs its coordinate, and the arrow chain changes (see Common mistakes).
+1. Does the change add a **node id** in `agente_studio._estado()`? Then `BASE` in `static/js/agente.js`
+   (~line 32) needs its coordinate, and the arrow chain changes (see Common mistakes).
 2. Does it add a **chart or a series**? Where do the same numbers appear as *text*?
 3. Does it use color to mean something? What is the second channel (dash, glyph, text)?
 4. Does it add a clickable row? Is the delegation contract (`data-href`) satisfied?
@@ -85,31 +85,45 @@ Before editing, answer these against the actual files:
   which cannot be stopped. State the DOM does not reflect goes through
   `window.EstadoVista.guardar/leer` — that is how `/agente` remembers the open node
   (`SELECCION = "nodo-abierto"`) and the collapsed panel across a POST.
-- **Clickable rows.** `tr[data-href]` delegation lives **only** in `base.html`; the handler
+- **Clickable rows.** `tr[data-href]` delegation lives **only** in `static/js/acciones.js`
+  (loaded once by `base.html`); the handler
   ignores clicks on `a, button, input, select, textarea, label`, modifier clicks and active text
   selections, so the inner link still works without JS.
-- **CSP (`app/main.py:67`)** allows `'unsafe-inline'` for style and script but no external hosts:
-  vendored libs live in `static/vendor/` (`joint.min.js` is local, not a CDN), and per-page
-  `<style>` / `<script>` blocks in `activity.html` / `agente.html` are legitimate, not a smell.
+- **CSP (`app/main.py`, `SECURITY_HEADERS`)**: `script-src 'self'` — **no inline JS of any kind**,
+  no external hosts; vendored libs live in `static/vendor/` (`joint.min.js` is local, not a CDN).
+  `style-src` keeps `'unsafe-inline'` only for data colours (`style="--c: {{ … }}"`) and the SVG
+  JointJS builds. `tests/test_separacion_front.py` locks all of it: no `<style>`, no executable
+  `<script>`, no `on*=` in templates or in HTML built by `static/js/`, no `style=` other than a
+  `--c` custom property, every asset through `{{ static('…') }}`.
+- **Declarative actions (`static/js/acciones.js`).** A template never wires behaviour with an
+  attribute handler: `data-confirm="texto"` on a `<form>` or button (tokens like `{monto}` are
+  filled from the fields named in `data-confirm-campos`), `data-autoenvio` on a `<select>`,
+  `data-copiar="valor"`. The reason is security, not taste: the browser decodes an attribute's
+  entities **before** compiling its JS, so `onsubmit="confirm('{{ ticket.client_name }}')"` let a
+  WhatsApp display name run code in the advisor's session — Jinja's escaping does not help there.
+- **Asset fingerprints.** `{{ static('js/x.js') }}` (`app/templating.py::static_url`) appends
+  `?v=<sha256 of the content>`. With JS outside the templates, a deploy without it can pair new
+  HTML with a cached old script.
 - **DRY and separated concerns — the operator's rule.** Don't rewrite markup, styles or
   behaviour a second time: structure new UI as modular pieces. Markup repeated across views
   becomes a partial in `templates/partials/` (`{% include %}`) or a Jinja macro; a template
   extends `base.html` instead of copying its shell. CSS lives in `static/css/` files (a
   page-specific sheet like `static/css/team.css`, shared rules in `components.css`, values in
   `tokens.css`); JavaScript lives in `static/js/` files (`static/js/team.js`,
-  `static/js/estado-vista.js`) loaded with `defer`. A template only passes data to JS
-  (`window.X = {{ valor }}`), it does not carry the logic. No new inline `style="…"`, no new
-  `onclick="…"` wiring when a listener in the page's JS file can do it, and no copy of a helper
-  that already exists in another file — import it or move it somewhere both can reach. The
-  existing inline blocks (`activity.html`, `agente.html`, old `style=` attributes) are legacy:
-  CSP-legal, not a pattern to extend; move them out when you are already editing that code.
+  `static/js/estado-vista.js`) loaded with `defer`. A template only passes data to JS, as inert
+  JSON (`<script type="application/json" id="…">{{ datos | tojson }}</script>`, read with
+  `JSON.parse`) or `data-*` attributes — never `window.X = {{ valor }}`, which the CSP blocks. No
+  copy of a helper that already exists in another file — import it or move it somewhere both can
+  reach. One-off styling that used to be inline lives in `static/css/utilidades.css`
+  (`u-<propiedad>-<valor>`, with `!important` so the migration kept inline precedence); new UI
+  should prefer a component class in `components.css` over adding utilities.
 
 ## Common mistakes
 
 - **Adding a node without a `BASE` coordinate.** `nodoRico()` has `BASE[n.id] || [380, 40]`
-  (agente.html:298) — added after a missing key threw a TypeError that aborted the whole script
+  (static/js/agente.js:56) — added after a missing key threw a TypeError that aborted the whole script
   and left `/agente` blank. But `corpus` still reads `BASE.corpus[0]` **unguarded**
-  (agente.html:386): the fallback covers server-emitted nodes only. Never remove `corpus` from `BASE`.
+  (static/js/agente.js:144): the fallback covers server-emitted nodes only. Never remove `corpus` from `BASE`.
 - **Reordering `nodos` in `agente_studio._estado()`** thinking it is cosmetic. It silently rewires
   the arrows and moves every `entra_si` label.
 - **Treating an SVG `<title>` as accessibility.** Inside `<svg role="img">` descendant `<title>`
@@ -143,15 +157,15 @@ Before editing, answer these against the actual files:
 - Responsive: the ≤ 900 px breakpoint in `layout.css` turns the sidebar into a sticky horizontal
   nav, hides `.nav-label` and widens `.bubble` to 90%. Check both widths.
 - Motion is gated in both directions already used in-repo: `layout.css` **adds** transitions under
-  `@media (prefers-reduced-motion: no-preference)`; `agente.html` kills `.glow` under `(reduce)`.
+  `@media (prefers-reduced-motion: no-preference)`; `static/css/agente.css` kills `.glow` under `(reduce)`.
 - Tables scroll inside `.table-wrap` (`overflow-x: auto`); the page body must not scroll sideways.
 
 ## Security
 
-- `| tojson` appears exactly once in all of `templates/` (`ESTADO` in `agente.html:247`). Anything
-  else you interpolate into JS or into an HTML attribute goes through that file's local `esc()`:
-  textContent→innerHTML escapes `< > &` but **not** quotes, and several of these land inside
-  `value="…"` / `data-tool="…"`.
+- Data reaches JS only through `| tojson` inside a `type="application/json"` script
+  (`#agente-datos` in `agente.html`, `#team-datos` in `team_chat.html`) or through `data-*`.
+  HTML that `static/js/agente.js` builds goes through its local `esc()`, which escapes `< > &`
+  **and** both quotes, because several values land inside `value="…"` / `data-tool="…"`.
 - Never add `| safe` to user- or client-derived text. Jinja autoescaping is the only barrier.
 - `?volver=` must round-trip through `ruta_interna()` (`app/utils.py:58`), which rejects `//` and
   `/\`: protocol-relative URLs would turn the back button into an open redirect. `ticket_detail.html`
@@ -167,7 +181,7 @@ Before editing, answer these against the actual files:
 - `RECENT_LIMIT = 50` and `MAX_CHART_DAYS = 92` exist so `/activity` cannot grow unbounded; keep
   new panels bounded the same way.
 - The pending-proposal badge comes from `app/main._nav_context` (one best-effort count per
-  request) and is read in `agente.html` as `request.state.pending_proposals` — do not re-query it.
+  request) and `agente.html` hands it to the canvas as `pendientes` in `#agente-datos` — do not re-query it.
 - Node heights are measured twice at most (once now, once on `document.fonts.ready`); do not put
   `getBBox()` inside a paper event handler.
 - `joint.min.js` is the only vendored library and only `/agente` loads it. Do not add it to `base.html`.
@@ -186,10 +200,11 @@ Before editing, answer these against the actual files:
 - [ ] Timestamps use `| local`; interpolations into JS/attributes use `esc()`; `volver` uses
       `ruta_interna()`.
 - [ ] `pytest tests/test_estado_vista.py tests/test_datagrid_clickable.py tests/test_navegacion.py
-      tests/test_activity.py tests/test_agente_studio.py -q` passes. These read template **source
+      tests/test_activity.py tests/test_agente_studio.py tests/test_separacion_front.py -q` passes. These read **source
       text**: `test_los_tres_estados_visuales_existen_y_en_ese_orden` asserts the *order* of five
-      CSS selectors in `agente.html` (`.est-sel` and `:focus-visible` must precede `.est-ganador`),
-      and `test_los_nodos_del_lienzo_son_alcanzables_por_teclado` greps for the literal strings
+      CSS selectors in `static/css/agente.css` (`.est-sel` and `:focus-visible` must precede
+      `.est-ganador`), and `test_los_nodos_del_lienzo_son_alcanzables_por_teclado` greps
+      `static/js/agente.js` for the literal strings
       `setAttribute("tabindex", "0")`, `role="button"`, `aria-label`, `e.key !== "Enter"` and
       `preventDefault()`. Reordering the stylesheet or renaming those calls fails the suite.
 - [ ] `pytest -q` green.

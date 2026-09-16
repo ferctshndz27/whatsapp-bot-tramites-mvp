@@ -29,6 +29,7 @@ The user never has to say "act as a DBA". Infer it from the task and invoke the 
 | Scope of a bot behaviour, what stays with the human advisor, the KPI behind a claim | `product-owner` |
 | The routing table itself, a new skill, the permission policy, `tests/test_harness.py` | `harness-engineer` |
 | Official trámite requirements headed for the catalog, or a vendor API detail you'd otherwise state from memory | `external-research` |
+| Code you don't know yet: who calls X and what X touches before you edit it, a request's path through the layers, the blast radius of a rename — asked to the local graphify graph | `code-graph` |
 
 **Combine them when the task spans domains** — that is the normal case, not the exception:
 
@@ -48,7 +49,9 @@ file. Resolve conflicts in this order, most specific first:
 2. The user's own global rules.
 3. This file and the skills it routes to — they are scoped to this repo.
 4. A parent file, only where it applies here. Its tables of .NET/Flutter skills and its mandatory
-   `gitnexus_*` calls describe other projects; a FastAPI bot is not one of them.
+   `gitnexus_*` calls describe other projects; a FastAPI bot is not one of them. Its graphify wiki
+   table lists other projects too: this repo's graph is local, code-only and has no wiki, and it is
+   used through the `code-graph` skill, never through `/graphify`.
 
 A tool a parent file makes mandatory is not mandatory here if this repo doesn't use it. Say so once
 and move on, don't silently obey and don't argue about it every turn.
@@ -82,7 +85,8 @@ This routing table is a contract, not documentation: `tests/test_harness.py` ass
 directions— that every skill on disk has a row and every row points at a skill that exists, that
 each `name:` matches its folder, that every skill still carries a `description:` and the eleven
 shared sections in order, and that every repo path a skill cites still resolves. Adding a skill is
-three places: the file, the row, and a green harness test **in the same commit**.
+five places: the file, the row, its relative link in `.agents/skills/`, its `!` line in `.gitignore`,
+and a green harness test **in the same commit**.
 
 `.claude/settings.json` carries the permission policy the agent works under: the operator runs every
 `git push`, `ssh` and deploy, and `deny` now enforces that instead of trusting memory. The agent
@@ -91,9 +95,9 @@ block. Why the harness looks like this, and how it measures up against a referen
 `docs/HARNESS.md`.
 
 The same harness is operable from the Google agents without a second copy of anything:
-`.agents/skills/` links the thirteen skills (Antigravity and Gemini CLI both scan it; only Gemini
+`.agents/skills/` links the fourteen skills (Antigravity and Gemini CLI both scan it; only Gemini
 CLI also reads `.gemini/`), and `GEMINI.md` imports this file for Gemini CLI, which unlike
-Antigravity does not read `AGENTS.md` on its own. `.gitignore` versions those thirteen links and
+Antigravity does not read `AGENTS.md` on its own. `.gitignore` versions those fourteen links and
 nothing else — the rest of `.agents/` belongs to the operator.
 
 **The guardrails do not travel the same way, and that matters.** Under Claude Code they are the
@@ -233,6 +237,38 @@ No Alembic. New **columns** on existing tables are added by hand:
 - SQLite: add to the relevant `_*_COLUMNS_ADDED_AFTER_LAUNCH` dict in `app/db.py` (applied by
   `_add_missing_columns` in `init_db()` via `ALTER TABLE ... ADD COLUMN`).
 - MSSQL mirror: also add to `_COLUMNS_ADDED_AFTER_LAUNCH` in `app/archive.py`.
+
+### CRM Kanban (`/crm`, `app/crm.py`)
+Embudo comercial por cliente, bandeja y chat en una página JSON-driven (`templates/crm.html`,
+`static/js/crm.js`, `static/css/crm.css`, más el cajón del folio en `static/js/crm-panel.js` y
+`static/css/crm-panel.css`). Las etapas (`CrmEtapa`) son **globales** y las
+administra el admin global; la etapa de cada cliente vive en `Client.etapa_crm_id` (NULL = la
+primera por `ord`, así el histórico no necesita un UPDATE masivo que el espejo no vería). Todo lo
+que lee pasa por `auth.alcance()` y, para quien no es admin, por el folio vigente: **un colaborador
+ve solo las conversaciones de las solicitudes que toma** (clientes cuyo folio vigente le está
+asignado), sin tira de miembros ni alta de contactos; los admins (global o de oficina) ven todos
+los clientes de su alcance y a los **miembros de la oficina** (`User.estado` y cuántos chats
+atiende cada uno), agrupados por oficina para el admin global.
+**El cajón lateral del chat** unifica lo que antes obligaba a salir a `/tickets/{id}`: gestión del
+folio, etiquetas, notas —del trámite y del cliente—, cobro, seguimiento y transferencia. Lee de
+`GET /crm/api/panel/{phone}` (aparte del hilo a propósito: el chat se sondea cada 8 s y no tiene por
+qué cargar cobros ni compañeros) y **escribe por los POST que ya existen** en `app/dashboard.py`,
+`app/my.py`, `app/cobranza_panel.py` y `app/clients.py`: ni un endpoint de escritura nuevo. Como
+esos endpoints contestan un redirect 303 y varios rechazan en silencio, el cajón no pinta nada de
+forma optimista: ejecuta, vuelve a pedir el panel y compara. Ofrece los permisos del BACKEND, no los
+de `ticket_detail.html`, que esconde de más: terminar y soltar también los puede un admin, y
+etiquetar o agendar un seguimiento, cualquiera de la oficina. Transferir la solicitud propia quita
+el acceso a la conversación (un colaborador solo ve las que toma): el panel contesta 404 y el cajón
+lo trata como éxito y devuelve al tablero.
+**Enviar, reactivar el bot, bloquear y ocultar mensajes siguen siendo los endpoints POST de
+`app/inbox.py`**, llamados por `fetch` desde el JS. El chat viejo ya no existe (fase B hecha):
+`GET /inbox/{phone}` solo reenvía a `/crm?chat=` conservando `?err=`, y las tarjetas de
+Solicitudes, Mi día, la ficha del cliente y el folio abren el chat del CRM. El JS no tiene pruebas
+unitarias: su verificación es el juez de navegador `node scripts/qa_crm_navegador.mjs` (uvicorn con
+una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 29 criterios de
+aceptación como admin global, colaborador y admin de oficina; termina en 1 si alguno falla y
+`--capturas=DIR` guarda capturas de pantalla). Córrelo tras tocar `crm.js`, `crm-panel.js`,
+`crm.html`, `crm.css` o `crm-panel.css`.
 
 ### Dashboard, charts, security
 Templates extend `templates/base.html` ("Starline" style: sticky sidebar/topbar, lime `#dcf24c`

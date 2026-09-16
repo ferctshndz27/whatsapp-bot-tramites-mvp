@@ -4,31 +4,31 @@
 <h1>Oficinas</h1>
 
 {% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
-{% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}
+{% if ok %}<div class="banner-warn u-bc-green" role="status">{{ ok }}</div>{% endif %}
 
 <div class="card">
   <h2>Nueva oficina</h2>
   <form method="post" action="/oficinas">
-    <div class="row" style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end;">
+    <div class="row u-d-flex u-gap-0_75rem u-wrap-wrap u-items-flex-end">
       <div>
         <label for="nombre">Nombre</label>
-        <input type="text" id="nombre" name="nombre" required autocomplete="off"
-          placeholder="Puebla" style="max-width:200px;">
+        <input class="u-maxw-200px" type="text" id="nombre" name="nombre" required autocomplete="off"
+          placeholder="Puebla">
       </div>
       <div>
         <label for="slug">Slug</label>
-        <input type="text" id="slug" name="slug" required autocomplete="off"
-          pattern="[a-z0-9\-]+" placeholder="puebla" style="max-width:160px;"
+        <input class="u-maxw-160px" type="text" id="slug" name="slug" required autocomplete="off"
+          pattern="[a-z0-9\-]+" placeholder="puebla"
           aria-describedby="ayuda-slug">
       </div>
       <div>
         <label for="ciudad">Ciudad</label>
-        <input type="text" id="ciudad" name="ciudad" required autocomplete="off"
-          placeholder="Puebla" style="max-width:200px;">
+        <input class="u-maxw-200px" type="text" id="ciudad" name="ciudad" required autocomplete="off"
+          placeholder="Puebla">
       </div>
       <button type="submit">Crear oficina</button>
     </div>
-    <p id="ayuda-slug" style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+    <p class="u-c-text-muted u-fs-0_85rem u-m-0_5rem-0-0" id="ayuda-slug">
       El slug será la URL del webhook de pagos de esta oficina: minúsculas, números y guiones.
     </p>
   </form>
@@ -49,7 +49,7 @@
             {% if not r.oficina.habilitado %}
             <span class="badge caducada">deshabilitada</span>
             {% endif %}
-            <div style="color:var(--text-muted); font-size:.85rem;">{{ r.oficina.ciudad }}</div>
+            <div class="u-c-text-muted u-fs-0_85rem">{{ r.oficina.ciudad }}</div>
           </td>
           <td><code>{{ r.oficina.slug }}</code></td>
           <td>{{ r.usuarios }}</td>

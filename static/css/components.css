@@ -89,6 +89,13 @@
       width: 36px; height: 36px; border-radius: 50%; color: #fff; font-weight: 700; font-size: .8rem;
       margin-right: .6rem; flex-shrink: 0;
     }
+    /* Paleta de avatares (antes una lista de colores en tres plantillas). !important
+       como el estilo en línea que sustituye. */
+    .avatar-c0 { background: var(--avatar-0) !important; }
+    .avatar-c1 { background: var(--avatar-1) !important; }
+    .avatar-c2 { background: var(--avatar-2) !important; }
+    .avatar-c3 { background: var(--avatar-3) !important; }
+    .avatar-c4 { background: var(--avatar-4) !important; }
     .cell-person { display: flex; align-items: center; }
     .cell-person .sub { color: var(--text-muted); font-size: .8rem; }
 

@@ -6,18 +6,18 @@
    sola vez aquí — el rol no cambia a media página. #}
 {% set es_admin = is_admin(user) %}
 {# `volver` trae el folio o el chat de origen; el texto dice a dónde regresa. #}
-{% set volver_texto = '← Volver a la solicitud' if volver.startswith('/tickets') else ('← Volver al chat' if volver.startswith('/inbox') else '← Volver a clientes') %}
-<p style="margin-top:0;"><a class="btn-nav" href="{{ volver or '/clients' }}">{{ volver_texto }}</a></p>
+{% set volver_texto = '← Volver a la solicitud' if volver.startswith('/tickets') else ('← Volver al chat' if (volver.startswith('/inbox') or volver.startswith('/crm')) else '← Volver a clientes') %}
+<p class="u-mt-0"><a class="btn-nav" href="{{ volver or '/clients' }}">{{ volver_texto }}</a></p>
 <h1>
   {{ client.name or 'Sin nombre' }}
-  <span style="color:var(--text-muted); font-size:.9rem; font-weight:400;">· {{ client.phone }}</span>
+  <span class="u-c-text-muted u-fs-0_9rem u-fw-400">· {{ client.phone }}</span>
   {% if not client.habilitado %}<span class="badge caducada">bloqueado</span>{% endif %}
 </h1>
 
 <div class="card">
-  <p style="margin:0; display:flex; gap:.75rem; flex-wrap:wrap;">
-    <a href="/inbox/{{ client.phone }}" class="btn-sm" style="text-decoration:none; color:#fff; display:inline-flex; align-items:center; background:var(--green-2); border-radius:999px; padding:.35rem .9rem;">💬 Abrir chat</a>
-    <span style="color:var(--text-muted); align-self:center;">
+  <p class="u-m-0 u-d-flex u-gap-0_75rem u-wrap-wrap">
+    <a href="/crm?chat={{ client.phone }}" class="btn-sm u-deco-none u-c-white u-d-inline-flex u-items-center u-bg-green-2 u-r-999px u-p-0_35rem-0_9rem">💬 Abrir chat</a>
+    <span class="u-c-text-muted u-self-center">
       Cliente desde {{ client.created_at | local('%Y-%m-%d') }} · {{ tickets | length }} solicitud(es)
     </span>
   </p>
@@ -30,59 +30,59 @@
       <label for="ficha-email">Correo</label>
       <input id="ficha-email" name="email" type="email" value="{{ client.email or '' }}" maxlength="200"
              placeholder="cliente@ejemplo.com">
-      <label for="ficha-origen" style="margin-top:.5rem; display:block;">Origen</label>
+      <label class="u-mt-0_5rem u-d-block" for="ficha-origen">Origen</label>
       <select id="ficha-origen" name="origen">
         {% for o in ('', 'meta', 'twilio', 'referido', 'manual') %}
         <option value="{{ o }}" {% if (client.origen or '') == o %}selected{% endif %}>{{ o or '—' }}</option>
         {% endfor %}
       </select>
-      <label for="ficha-idioma" style="margin-top:.5rem; display:block;">Idioma</label>
+      <label class="u-mt-0_5rem u-d-block" for="ficha-idioma">Idioma</label>
       <input id="ficha-idioma" name="idioma" value="{{ client.idioma }}" maxlength="10">
-      <label for="ficha-notas" style="margin-top:.5rem; display:block;">Resumen fijado</label>
+      <label class="u-mt-0_5rem u-d-block" for="ficha-notas">Resumen fijado</label>
       <textarea id="ficha-notas" name="notas_internas" maxlength="2000"
         placeholder="Lo que cualquiera del equipo debe saber antes de contestarle.">{{ client.notas_internas or '' }}</textarea>
-      <button type="submit" class="btn-sm" style="margin-top:.5rem;">Guardar ficha</button>
+      <button type="submit" class="btn-sm u-mt-0_5rem">Guardar ficha</button>
     </form>
 
-    <h2 style="margin-top:1.2rem;">Consentimiento</h2>
+    <h2 class="u-mt-1_2rem">Consentimiento</h2>
     {% if client.opt_out_at %}
     <p><span class="badge caducada">opt-out</span> desde {{ client.opt_out_at | local('%Y-%m-%d') }} —
        no se le envían mensajes iniciados por el negocio.</p>
     {% elif client.opt_in_at %}
     <p><span class="badge">opt-in</span> {{ client.opt_in_at | local('%Y-%m-%d') }}
-       · <span style="color:var(--text-muted);">{{ client.opt_in_source }}</span></p>
+       · <span class="u-c-text-muted">{{ client.opt_in_source }}</span></p>
     {% else %}
-    <p style="color:var(--text-muted);">Sin consentimiento registrado: solo puede responder dentro
+    <p class="u-c-text-muted">Sin consentimiento registrado: solo puede responder dentro
        de la ventana de 24 h (un mensaje entrante no es opt-in).</p>
     {% endif %}
-    <form method="post" action="/clients/{{ client.phone }}/consentimiento"
-          style="display:flex; gap:.4rem; flex-wrap:wrap; align-items:center;">
+    <form class="u-d-flex u-gap-0_4rem u-wrap-wrap u-items-center" method="post" action="/clients/{{ client.phone }}/consentimiento"
+         >
       <label for="consent-fuente" class="sr-only">Fuente del consentimiento</label>
       <input id="consent-fuente" name="fuente" maxlength="120" placeholder="Cómo consintió (ej. lo pidió en el chat)">
       <button type="submit" name="accion" value="opt_in" class="btn-sm">Registrar opt-in</button>
       <button type="submit" name="accion" value="opt_out" class="btn-sm"
-              onclick="return confirm('¿Registrar opt-out? Dejará de recibir mensajes iniciados por el negocio.');">Opt-out</button>
+              data-confirm="¿Registrar opt-out? Dejará de recibir mensajes iniciados por el negocio.">Opt-out</button>
     </form>
   </div>
 
   <div class="card">
     <h2>Notas del equipo</h2>
-    <form method="post" action="/clients/{{ client.phone }}/notes" style="margin-bottom:1rem;">
-      <label for="body" class="sr-only" style="position:absolute; left:-9999px;">Nueva nota</label>
+    <form class="u-mb-1rem" method="post" action="/clients/{{ client.phone }}/notes">
+      <label for="body" class="sr-only u-pos-absolute u-left-n9999px">Nueva nota</label>
       <textarea id="body" name="body" required
         placeholder="Ej. ya pagó anticipo, prefiere llamadas por la tarde…"></textarea>
-      <button type="submit" class="btn-sm" style="margin-top:.5rem;">Guardar nota</button>
+      <button type="submit" class="btn-sm u-mt-0_5rem">Guardar nota</button>
     </form>
     {% if notes %}
     {% for n in notes %}
-    <p style="border-bottom:1px solid var(--border); padding-bottom:.6rem;">
+    <p class="u-bb-1px-solid-border u-pb-0_6rem">
       {{ n.body }}<br>
-      <span style="color:var(--text-muted); font-size:.78rem;">
+      <span class="u-c-text-muted u-fs-0_78rem">
         — {{ n.author }} · {{ n.created_at | local }}
         {% if n.author == user or es_admin %}
-        · <form method="post" action="/clients/{{ client.phone }}/notes/{{ n.id }}/delete" style="display:inline;"
-            onsubmit="return confirm('¿Ocultar esta nota?');">
-            <button type="submit" style="background:none; border:none; padding:0; min-height:auto; color:inherit; text-decoration:underline; cursor:pointer; font-size:inherit;">eliminar</button>
+        · <form class="u-d-inline" method="post" action="/clients/{{ client.phone }}/notes/{{ n.id }}/delete"
+            data-confirm="¿Ocultar esta nota?">
+            <button class="u-bg-none u-b-none u-p-0 u-minh-auto u-c-inherit u-deco-underline u-cursor-pointer u-fs-inherit" type="submit">eliminar</button>
           </form>
         {% endif %}
       </span>
@@ -101,7 +101,7 @@
         <thead><tr><th>Folio</th><th>Servicio</th><th>Estado</th><th>Fecha</th><th>Atendió</th></tr></thead>
         <tbody>
           {% for t in tickets %}
-          <tr data-href="/tickets/{{ t.id }}" {% if not t.habilitado %}style="opacity:.55;"{% endif %}>
+          <tr data-href="/tickets/{{ t.id }}"{% if not t.habilitado %} class="u-op-0_55"{% endif %}>
             <td><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
             <td>{{ t.service_name }}</td>
             <td><span class="badge {{ t.status.value }}">{{ t.status.value.replace('_', ' ') }}</span></td>

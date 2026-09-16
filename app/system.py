@@ -27,6 +27,7 @@ from app import credenciales
 from app.credenciales import CredencialIlegible, credencial
 from app.db import get_session
 from app.models import (
+    CrmEtapa,
     AgentConfig,
     InfoDoc,
     AdminAudit,
@@ -114,6 +115,8 @@ MIRROR_TABLES = [
     # Etiquetas (fase 1).
     (Label, "labels"),
     (TicketLabel, "ticket_labels"),
+    # Embudo comercial del CRM (/crm).
+    (CrmEtapa, "crm_etapas"),
 ]
 
 

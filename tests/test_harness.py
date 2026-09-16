@@ -79,7 +79,7 @@ _LOCALES = {"scripts/ship.sh"}
 # no a él. Que estas entradas sigan ahí es la mitad del valor de la política.
 _DENY_OBLIGATORIO = ("git push", "ship.sh", "ssh")
 
-# Las once secciones que comparten hoy las trece skills, en este orden. No es un
+# Las once secciones que comparten hoy las catorce skills, en este orden. No es un
 # template estético: `When to use` / `When NOT to use` son lo que evita que una
 # tarea de dos líneas cargue cuatro roles, y `Definition of done` es la única
 # condición de salida escrita. La forma ya existía de facto; lo que faltaba era
@@ -218,7 +218,7 @@ def test_la_politica_de_permisos_conserva_los_barandales_del_operador():
 
 def test_cada_skill_conserva_la_forma_del_harness():
     """`description:` es el texto con el que el modelo decide si una skill aplica,
-    y las secciones son el esqueleto que vuelve comparables a trece roles
+    y las secciones son el esqueleto que vuelve comparables a catorce roles
     distintos. Una skill sin `description:` existe pero no la elige nadie; una sin
     `When NOT to use` deja que una tarea de dos líneas cargue cuatro roles. Las dos
     fallan tan calladas como una skill mal nombrada, así que se verifican igual."""
@@ -301,7 +301,7 @@ def test_cada_portada_presente_importa_el_mismo_agents_md():
 
 
 def test_las_skills_del_repo_estan_enlazadas_para_los_agentes_de_google():
-    """Las trece, por enlace y en `.agents/skills/`.
+    """Las catorce, por enlace y en `.agents/skills/`.
 
     Bidireccional para lo que es del repo: una skill sin enlace no existe para
     Antigravity ni para Gemini CLI, y un enlace sin skill apunta a la nada. Lo
@@ -332,7 +332,7 @@ def test_las_skills_del_repo_estan_enlazadas_para_los_agentes_de_google():
 
 
 def test_gitignore_versiona_los_enlaces_y_solo_los_enlaces():
-    """`.agents/` es del operador: se versionan los trece enlaces y nada más.
+    """`.agents/` es del operador: se versionan los catorce enlaces y nada más.
 
     Re-incluir `.agents/skills/*` entero metería al repo la siguiente skill que
     el operador guarde ahí, y un `git add .` bastaría. Por eso van uno por uno,

@@ -4,7 +4,7 @@
 <div class="login-wrap">
   <div class="card login-card">
     <h1>Trámites</h1>
-    <p style="color: var(--text-muted); margin-top: -.5rem;">Panel de solicitudes</p>
+    <p class="u-c-text-muted u-mt-n0_5rem">Panel de solicitudes</p>
     {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
     <form method="post" action="/login">
       <label for="username">Usuario</label>
@@ -15,7 +15,7 @@
       <br>
       <button type="submit">Entrar</button>
     </form>
-    <p style="margin-top: 1rem; font-size: .85rem;">¿Colaborador nuevo? <a href="/register">Regístrate con tu código</a></p>
+    <p class="u-mt-1rem u-fs-0_85rem">¿Colaborador nuevo? <a href="/register">Regístrate con tu código</a></p>
   </div>
 </div>
 {% endblock %}

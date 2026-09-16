@@ -349,7 +349,8 @@ document.addEventListener("DOMContentLoaded", () => {
         elegirAdjunto(nombrarCaptura(archivos[0]));
     });
 
-    const inicial = window.TEAM_SALA_INICIAL || window.TEAM_GENERAL_ROOM_ID;
+    const datos = JSON.parse(document.getElementById('team-datos')?.textContent || '{}');
+    const inicial = datos.sala_inicial || datos.general_room_id;
     if (inicial) {
         loadRoom(inicial);
     }

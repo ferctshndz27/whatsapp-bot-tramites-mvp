@@ -4,21 +4,21 @@
 <h1>Colaboradores</h1>
 
 {% if error %}<div class="banner-warn" role="alert">{{ error }}</div>{% endif %}
-{% if ok %}<div class="banner-warn" role="status" style="border-color:var(--green);">{{ ok }}</div>{% endif %}
+{% if ok %}<div class="banner-warn u-bc-green" role="status">{{ ok }}</div>{% endif %}
 
 <div class="card">
   <h2>Nuevo colaborador</h2>
   <form method="post" action="/users">
-    <div class="row" style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end;">
+    <div class="row u-d-flex u-gap-0_75rem u-wrap-wrap u-items-flex-end">
       <div>
         <label for="username">Usuario</label>
-        <input type="text" id="username" name="username" required autocomplete="off"
-          placeholder="ana_lopez" style="max-width:200px;">
+        <input class="u-maxw-200px" type="text" id="username" name="username" required autocomplete="off"
+          placeholder="ana_lopez">
       </div>
       <div>
         <label for="password">Contraseña</label>
-        <input type="password" id="password" name="password" required minlength="8"
-          autocomplete="new-password" style="max-width:200px;">
+        <input class="u-maxw-200px" type="password" id="password" name="password" required minlength="8"
+          autocomplete="new-password">
       </div>
       <div>
         <label for="role">Rol</label>
@@ -43,7 +43,7 @@
       <button type="submit">Crear usuario</button>
     </div>
   </form>
-  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+  <p class="u-c-text-muted u-fs-0_85rem u-m-0_5rem-0-0">
     También puedes invitar por WhatsApp desde <a href="/invitations">Invitaciones</a>
     para que la persona elija su propia contraseña.
   </p>
@@ -60,7 +60,7 @@
       <tbody>
         {% for u in users %}
         <tr>
-          <td>{{ u.username }}{% if u.username == user %} <span style="color:var(--text-muted); font-size:.85rem;">(tú)</span>{% endif %}</td>
+          <td>{{ u.username }}{% if u.username == user %} <span class="u-c-text-muted u-fs-0_85rem">(tú)</span>{% endif %}</td>
           <td>{{ u.phone or '—' }}</td>
           <td>
             {% if u.is_admin and u.solo_su_oficina %}
@@ -73,8 +73,8 @@
           </td>
           <td>
             {% if admin_global and oficinas | length > 1 %}
-            <form method="post" action="/users/{{ u.username }}/oficina"
-              style="display:flex; gap:.35rem; align-items:center;">
+            <form class="u-d-flex u-gap-0_35rem u-items-center" method="post" action="/users/{{ u.username }}/oficina"
+             >
               <label class="sr-only" for="of-{{ u.username }}">Oficina de {{ u.username }}</label>
               <select name="office_id" id="of-{{ u.username }}">
                 {% for o in oficinas %}
@@ -98,32 +98,32 @@
             {# Solo sobre quien este admin puede gestionar (users._gestionable):
                el de oficina no toca a un admin global. #}
             {% if u.username in gestionables %}
-            <details id="pass-{{ u.username }}" style="display:inline-block; margin-right:.5rem;">
-              <summary class="btn-sm" style="cursor:pointer; display:inline-block;">Restablecer contraseña</summary>
-              <form method="post" action="/users/{{ u.username }}/password"
-                style="margin-top:.5rem; display:flex; gap:.5rem; align-items:center;">
-                <label for="pw-{{ u.username }}" class="sr-only" style="position:absolute; left:-9999px;">Nueva contraseña</label>
-                <input type="password" id="pw-{{ u.username }}" name="password" required minlength="8"
-                  autocomplete="new-password" placeholder="Nueva contraseña" style="max-width:180px;">
+            <details class="u-d-inline-block u-mr-0_5rem" id="pass-{{ u.username }}">
+              <summary class="btn-sm u-cursor-pointer u-d-inline-block">Restablecer contraseña</summary>
+              <form class="u-mt-0_5rem u-d-flex u-gap-0_5rem u-items-center" method="post" action="/users/{{ u.username }}/password"
+               >
+                <label for="pw-{{ u.username }}" class="sr-only u-pos-absolute u-left-n9999px">Nueva contraseña</label>
+                <input class="u-maxw-180px" type="password" id="pw-{{ u.username }}" name="password" required minlength="8"
+                  autocomplete="new-password" placeholder="Nueva contraseña">
                 <button type="submit" class="btn-sm">Guardar</button>
               </form>
             </details>
             {% if u.username != user %}
-            <form method="post" action="/users/{{ u.username }}/role" style="display:inline;"
-              onsubmit="return confirm('¿Cambiar el rol de {{ u.username }} a {{ 'colaborador' if u.is_admin else 'admin' }}?');">
+            <form class="u-d-inline" method="post" action="/users/{{ u.username }}/role"
+              data-confirm="¿Cambiar el rol de {{ u.username }} a {{ 'colaborador' if u.is_admin else 'admin' }}?">
               <button type="submit" class="btn-sm">
                 {{ 'Quitar admin' if u.is_admin else 'Hacer admin' }}
               </button>
             </form>
-            <form method="post" action="/users/{{ u.username }}/toggle" style="display:inline;"
-              onsubmit="return confirm('{{ '¿Deshabilitar' if u.habilitado else '¿Habilitar' }} a {{ u.username }}?');">
+            <form class="u-d-inline" method="post" action="/users/{{ u.username }}/toggle"
+              data-confirm="{{ '¿Deshabilitar' if u.habilitado else '¿Habilitar' }} a {{ u.username }}?">
               <button type="submit" class="btn-sm {{ 'btn-danger' if u.habilitado else '' }}">
                 {{ 'Deshabilitar' if u.habilitado else 'Habilitar' }}
               </button>
             </form>
             {% if admin_global and u.is_admin %}
-            <form method="post" action="/users/{{ u.username }}/solo-oficina" style="display:inline;"
-              onsubmit="return confirm('¿Cambiar a {{ u.username }} a admin {{ 'global' if u.solo_su_oficina else 'de oficina' }}?');">
+            <form class="u-d-inline" method="post" action="/users/{{ u.username }}/solo-oficina"
+              data-confirm="¿Cambiar a {{ u.username }} a admin {{ 'global' if u.solo_su_oficina else 'de oficina' }}?">
               <button type="submit" class="btn-sm">
                 {{ 'Hacer admin global' if u.solo_su_oficina else 'Limitar a su oficina' }}
               </button>

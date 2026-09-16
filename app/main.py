@@ -18,6 +18,7 @@ from app import (
     catalog_admin,
     clients,
     cobranza_panel,
+    crm,
     dashboard,
     inbox,
     kb,
@@ -95,8 +96,13 @@ if not session_secret:
     )
 
 # Cabeceras de seguridad en toda respuesta. El panel es interno: noindex para
-# que ningún buscador lo liste; CSP permite estilos/scripts embebidos (el panel
-# los usa) pero bloquea orígenes ajenos y el embebido en iframes (clickjacking).
+# que ningún buscador lo liste; CSP bloquea orígenes ajenos y el embebido en
+# iframes (clickjacking). script-src SIN 'unsafe-inline': todo el JS vive en
+# static/js y las plantillas solo le pasan datos (JSON inerte o data-*), así que
+# un texto que se cuele al HTML —el nombre que un cliente escribe por WhatsApp—
+# no puede ejecutarse. tests/test_separacion_front.py lo fija. style-src
+# conserva 'unsafe-inline' solo por los colores que llegan como dato
+# (style="--c: …") y por el SVG que JointJS arma con estilos en línea.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "SAMEORIGIN",
@@ -104,7 +110,7 @@ SECURITY_HEADERS = {
     "X-Robots-Tag": "noindex, nofollow",
     "Content-Security-Policy": (
         "default-src 'self'; img-src 'self' data:; "
-        "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self'; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     ),
     # HSTS: el navegador fuerza HTTPS por 1 año. Lo ignora en localhost/HTTP,
@@ -186,6 +192,7 @@ app.include_router(stripe_webhook.router)
 app.include_router(dashboard.router)
 app.include_router(cobranza_panel.router)
 app.include_router(inbox.router)
+app.include_router(crm.router)
 app.include_router(team_chat.router)
 app.include_router(activity.router)
 app.include_router(users.router)

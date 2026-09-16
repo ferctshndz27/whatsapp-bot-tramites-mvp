@@ -1,0 +1,1165 @@
+/* CRM Kanban del ERP (/crm) — port de crm-kanban/static/css/kanban.css.
+
+   TODO vive bajo el ancestro .crm: la página se pinta dentro del layout del
+   panel (sidebar + topbar de base.html), así que aquí no hay reglas globales
+   ni nada en :root. Las variables --wa-* se declaran en .crm y llevan su
+   prefijo a propósito: redefinir --text o --border aquí cambiaría de color los
+   .badge y las .bubble que el panel ya tiene y que este CRM reutiliza.
+
+   Reglas del panel que SÍ entran a .crm y se neutralizan abajo: `button`
+   (píldora oscura con borde oliva y 44 px), `label`, `input/select`
+   (44 px, 320 px de ancho), `.card` (radio 24 px + margen) y `h2`. */
+
+.crm {
+  --wa-green: #25D366;
+  --wa-teal: #075E54;
+  --wa-teal-2: #128C7E;
+  --wa-teal-hover: #0A7A6C;
+  --wa-bg: #ECE5DD;
+  --wa-panel: #F0F2F5;
+  --wa-text: #111B21;
+  --wa-muted: #667781;
+  --wa-muted-2: #54656F;    /* gris secundario: ≥ 4.5:1 sobre el panel */
+  --wa-border: #E9EDEF;
+  --wa-tick-read: #0A84C6;  /* azul «leído» con ≥ 3:1 sobre blanco */
+  --wa-out: #D9FDD3;        /* burbuja saliente de WhatsApp Web */
+  --wa-soft: #E7F8EE;
+  --wa-radius: 8px;
+  --wa-card-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+  --wa-tray-w: 320px;
+  --wa-column-w: 280px;
+
+  display: flex;
+  flex-direction: column;
+  /* Alto disponible bajo la topbar del panel (≈ 6 rem) y su padding inferior;
+     min-height manda en pantallas bajas y entonces la página scrollea. */
+  height: calc(100vh - 9.5rem);
+  min-height: 70vh;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--wa-text);
+}
+
+.crm > h1 { margin: 0 0 .75rem; }
+
+.crm [hidden] { display: none !important; }
+
+.crm :focus-visible,
+.crm [tabindex]:focus-visible {
+  outline: 2px solid var(--wa-teal-2);
+  outline-offset: 2px;
+}
+.crm .crm-toolbar :focus-visible { outline-color: #fff; }
+
+/* ---------- neutralizar los globales del panel ---------- */
+
+.crm button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  min-height: 0;
+  cursor: pointer;
+}
+.crm button:disabled { cursor: not-allowed; }
+
+.crm label {
+  display: inline-block;
+  margin: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* ---------- botones ---------- */
+
+.crm .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color .15s, box-shadow .15s;
+}
+
+/* El verde #25D366 queda como acento (badges, resaltados); bajo texto blanco
+   da 1.98:1, así que los botones usan el teal #075E54 (7.7:1). */
+.crm .btn-primary { background: var(--wa-teal); color: #fff; }
+.crm .btn-primary:hover { background: var(--wa-teal-hover); }
+
+.crm .btn-secondary { background: #fff; color: var(--wa-teal); border-color: #cfd6d9; }
+.crm .btn-secondary:hover { background: var(--wa-panel); }
+
+.crm .btn-ghost {
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+  border-color: rgba(255, 255, 255, .3);
+}
+.crm .btn-ghost:hover { background: rgba(255, 255, 255, .24); }
+
+/* Sobre la barra teal el primario teal desaparecería: ahí va en blanco. */
+.crm .crm-toolbar .btn-primary { background: #fff; color: var(--wa-teal); }
+.crm .crm-toolbar .btn-primary:hover { background: var(--wa-soft); }
+
+.crm .btn:disabled { opacity: .55; }
+
+/* Botones pequeños del encabezado del chat (Reactivar bot, Bloquear). */
+.crm .btn-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: .2rem .8rem;
+  border: 1px solid #cfd6d9;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--wa-teal);
+  font-size: .8rem;
+  font-weight: 600;
+}
+.crm .btn-sm:hover { background: var(--wa-panel); }
+.crm .btn-danger { background: #fde7ef; color: #be1e51; border-color: #f8cfdd; }
+.crm .btn-danger:hover { background: #fbd3e1; border-color: #f3b6cc; color: #a01141; }
+
+/* ---------- barra superior ---------- */
+
+.crm .crm-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 16px;
+  background: var(--wa-teal);
+  color: #fff;
+  border-radius: 12px 12px 0 0;
+}
+
+.crm .search-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  max-width: 480px;
+}
+
+.crm .search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  opacity: .85;
+  pointer-events: none;
+}
+
+.crm #crm-search {
+  width: 100%;
+  max-width: none;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 14px 0 36px;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .16);
+  color: #fff;
+  font-size: 14px;
+  font-family: inherit;
+}
+.crm #crm-search::placeholder { color: rgba(255, 255, 255, .72); }
+.crm #crm-search::-webkit-search-cancel-button { filter: invert(1); cursor: pointer; }
+.crm #crm-search:focus { outline: 2px solid #fff; outline-offset: 2px; box-shadow: none; }
+
+.crm .toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.crm #crm-btn-toggle-tray { display: none; }
+
+/* ---------- pestañas-filtro ---------- */
+
+/* La fila: primero el botón «← Tablero» (solo con un chat abierto) y después
+   la lista de pestañas. El scroll horizontal vive en la lista y no en la fila,
+   para que el botón nunca se salga de la vista cuando hay muchas etapas. */
+.crm .tabs-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--wa-border);
+}
+
+/* 4 px de relleno dentro del contenedor con scroll: el anillo de foco de una
+   pestaña (2 px + 2 px de separación) no se recorta en los bordes. Sumado al
+   relleno de la fila da los mismos 10 px / 16 px que tenía antes. */
+.crm .tabs-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+/* No encoge: con muchas etapas la que scrollea es la lista. Los 4 px lo dejan
+   a 16 px del borde, donde empieza la primera pestaña (relleno de la fila más
+   relleno de la lista), la tira de miembros y la cabecera del chat. */
+.crm .btn-board {
+  flex: 0 0 auto;
+  margin-left: 4px;
+}
+
+.crm .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--wa-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--wa-text);
+  white-space: nowrap;
+  transition: background-color .15s, color .15s;
+}
+.crm .tab:hover { background: var(--wa-panel); }
+
+.crm .tab.is-active {
+  background: var(--wa-teal);
+  border-color: var(--wa-teal);
+  color: #fff;
+}
+
+.crm .tab-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--wa-teal);
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .7);
+}
+
+.crm .tab-count {
+  min-width: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .08);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+.crm .tab.is-active .tab-count { background: rgba(0, 0, 0, .28); }
+
+/* ---------- miembros de la oficina ---------- */
+
+.crm #crm-miembros {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 8px 16px;
+  background: var(--wa-panel);
+  border-bottom: 1px solid var(--wa-border);
+}
+.crm #crm-miembros:empty { display: none; }
+
+.crm .miembros-oficina {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--wa-muted-2);
+}
+.crm .miembros-oficina:not(:first-child) { margin-left: 10px; }
+
+.crm .miembro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 10px 3px 4px;
+  border: 1px solid var(--wa-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--wa-text);
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background-color .15s, color .15s;
+}
+.crm .miembro:hover { background: var(--wa-soft); }
+.crm .miembro.is-active {
+  background: var(--wa-teal);
+  border-color: var(--wa-teal);
+  color: #fff;
+}
+.crm .miembro-avatar { width: 22px; height: 22px; font-size: 10px; }
+
+/* La disponibilidad (la de «Mi día») va en un punto de color, pero el
+   nombre accesible y el title la dicen con palabras. */
+.crm .miembro-estado {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa4ad;
+  flex: 0 0 auto;
+}
+.crm .miembro-estado.disponible { background: var(--wa-green); }
+.crm .miembro-estado.ocupado { background: #FFB300; }
+.crm .miembro-estado.ausente { background: #9aa4ad; }
+.crm .miembro.is-active .miembro-estado { box-shadow: 0 0 0 2px rgba(255, 255, 255, .8); }
+
+.crm .miembro-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .08);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+.crm .miembro.is-active .miembro-count { background: rgba(0, 0, 0, .28); }
+
+/* ---------- distribución bandeja + tablero / chat ---------- */
+
+.crm .crm-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--wa-tray-w) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  border-radius: 0 0 12px 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow, 0 2px 10px rgba(20, 22, 28, .06));
+  background: #fff;
+}
+
+/* ---------- bandeja de chats ---------- */
+
+.crm #crm-tray {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+  border-right: 1px solid var(--wa-border);
+}
+
+.crm .tray-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--wa-border);
+  color: var(--wa-teal);
+  font-weight: 700;
+}
+
+.crm .tray-count { font-size: 12px; color: var(--wa-muted-2); font-weight: 500; }
+
+.crm #crm-tray-list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.crm .tray-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--wa-border);
+  cursor: pointer;
+}
+.crm .tray-item:hover { background: var(--wa-panel); }
+/* El chat abierto: fondo suave y una barra verde al canto, no solo color. */
+.crm .tray-item.is-open {
+  background: var(--wa-soft);
+  box-shadow: inset 4px 0 0 var(--wa-green);
+}
+
+.crm .avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--wa-teal-2);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .5px;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.crm .tray-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.crm .tray-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.crm .tray-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm .tray-time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--wa-muted-2);
+}
+
+.crm .tray-preview {
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--wa-muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm .tray-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.crm .tray-pin, .crm .card-pin { font-size: 12px; }
+
+.crm .tray-unread, .crm .card-unread {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--wa-green);
+  color: #0B3D2E; /* texto oscuro sobre el verde de marca (≈ 8:1); blanco daba 1.98:1 */
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.crm .tray-empty, .crm .column-empty, .crm .board-loading {
+  margin: 0;
+  padding: 24px 16px;
+  color: var(--wa-muted-2);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------- insignias cortas (tarjeta y bandeja) ---------- */
+
+.crm .card-badges, .crm .tray-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.crm .card-badges:empty, .crm .tray-badges:empty { display: none; }
+.crm .tray-badges { margin-top: 2px; }
+
+.crm .chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--wa-soft);
+  color: var(--wa-teal);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* Mismos tonos que los .badge del panel; el texto ya dice el estado, el color
+   solo acompaña (WCAG 1.4.1). */
+.crm .chip-nuevo      { background: #fde7ef; color: #be1e51; }
+.crm .chip-tomado     { background: #fdeedd; color: #92590a; }
+.crm .chip-en_proceso { background: #e6ecfd; color: #1d4fd7; }
+.crm .chip-cerrado    { background: #e3f7f0; color: #0b6e5d; }
+.crm .chip-bot        { background: #22242a; color: #9fd8ff; }
+.crm .chip-twilio     { background: #e6ecfd; color: #1d4fd7; }
+.crm .chip-caduco     { background: #fde7ef; color: #be1e51; }
+.crm .chip-bloqueado  { background: #22242a; color: #fff; }
+
+/* ---------- tablero ---------- */
+
+.crm #crm-board {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-height: 0;
+  min-width: 0;
+  padding: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background-color: var(--wa-bg);
+  /* Patrón sutil tipo WhatsApp en CSS puro. */
+  background-image: radial-gradient(rgba(0, 0, 0, .045) 1px, transparent 1.3px);
+  background-size: 18px 18px;
+}
+
+.crm .board-loading { width: 100%; }
+
+.crm .column {
+  --col-color: var(--wa-green);
+  --col-soft: rgba(37, 211, 102, .14);
+  flex: 0 0 var(--wa-column-w);
+  width: var(--wa-column-w);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--wa-panel);
+  border: 2px solid transparent;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+  transition: box-shadow .15s, background-color .15s, border-color .15s;
+}
+
+.crm .column.is-over {
+  border: 2px dashed var(--col-color);
+  background: var(--col-soft);
+}
+
+.crm .column.is-focused {
+  box-shadow: 0 0 0 3px var(--col-color), 0 4px 12px rgba(0, 0, 0, .12);
+}
+
+.crm .column-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, .05);
+}
+
+.crm .column-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--col-color);
+  flex: 0 0 auto;
+}
+
+.crm .column-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm .column-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  max-width: none;
+  min-height: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--wa-teal-2);
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  background: #fff;
+}
+
+.crm .column-count {
+  min-width: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .08);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.crm .column-menu-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--wa-muted-2);
+  font-size: 18px;
+  line-height: 1;
+}
+.crm .column-menu-btn:hover { background: rgba(0, 0, 0, .06); }
+
+.crm .column-menu {
+  position: absolute;
+  top: 42px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 6px 0;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+}
+
+.crm .column-menu button {
+  padding: 9px 14px;
+  text-align: left;
+  border-radius: 0;
+}
+.crm .column-menu button:hover:not(:disabled) { background: var(--wa-panel); }
+.crm .column-menu button:disabled { color: #9aa5ab; }
+
+.crm .column-body {
+  flex: 1 1 auto;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.crm .column-footer {
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(0, 0, 0, .05);
+}
+
+.crm .btn-add-contact {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px;
+  border-radius: 6px;
+  color: var(--wa-teal);
+  font-weight: 600;
+  text-align: left;
+}
+.crm .btn-add-contact:hover { background: rgba(18, 140, 126, .08); }
+
+.crm .add-contact-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.crm .add-contact-form label { display: block; }
+
+.crm .add-contact-form input {
+  width: 100%;
+  max-width: none;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid #cfd6d9;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+}
+
+.crm .form-actions, .crm .dlg-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ---------- selector de color ---------- */
+
+.crm .color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.crm .column .color-picker {
+  padding: 8px 12px;
+  background: #fff;
+  border-bottom: 1px solid rgba(0, 0, 0, .05);
+}
+
+.crm .swatch {
+  width: 28px;
+  height: 28px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .15);
+}
+.crm .swatch:hover { transform: scale(1.08); }
+.crm .swatch.is-selected { box-shadow: 0 0 0 2px var(--wa-teal); }
+
+.crm .color-picker input[type="color"] {
+  width: 36px;
+  height: 30px;
+  min-height: 0;
+  max-width: none;
+  padding: 2px;
+  border: 1px solid #cfd6d9;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.crm .picker-close {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--wa-muted-2);
+}
+.crm .picker-close:hover { background: rgba(0, 0, 0, .06); }
+
+/* ---------- tarjetas ---------- */
+
+/* .card también es el panel blanco del ERP (radio 24 px, margen inferior):
+   aquí se reescribe entera. */
+.crm .card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px 8px;
+  background: #fff;
+  border-top: 4px solid var(--col-color);
+  border-radius: var(--wa-radius);
+  box-shadow: var(--wa-card-shadow);
+  cursor: grab;
+  transition: box-shadow .15s, opacity .15s;
+}
+.crm .card:hover { box-shadow: 0 2px 6px rgba(0, 0, 0, .14); }
+.crm .card.is-dragging { opacity: .5; cursor: grabbing; }
+.crm .card.is-open { box-shadow: 0 0 0 2px var(--wa-green), var(--wa-card-shadow); }
+
+.crm .card-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.crm .card .avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 13px;
+}
+
+.crm .card-id { flex: 1 1 auto; min-width: 0; }
+
+.crm .card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.crm .card-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm .card-phone {
+  display: block;
+  font-size: 12px;
+  color: var(--wa-muted-2);
+}
+
+.crm .card-preview {
+  margin: 0;
+  font-size: 13px;
+  color: var(--wa-muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm .ticks {
+  color: var(--wa-muted-2);
+  letter-spacing: -1px;
+}
+.crm .ticks.read { color: var(--wa-tick-read); }
+
+.crm .card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.crm .card-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--wa-muted-2);
+  white-space: nowrap;
+}
+
+.crm .card-move {
+  width: 100%;
+  max-width: none;
+  min-height: 32px;
+  padding: 5px 6px;
+  border: 1px solid var(--wa-border);
+  border-radius: 6px;
+  background: var(--wa-panel);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ---------- panel de chat ---------- */
+
+.crm #crm-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: #fff;
+}
+
+.crm .chat-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  background: var(--wa-panel);
+  border-bottom: 1px solid var(--wa-border);
+}
+
+.crm .chat-id { flex: 1 1 200px; min-width: 0; }
+
+.crm .chat-name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crm .chat-name:focus { outline: none; }
+
+.crm .chat-phone {
+  display: block;
+  font-size: 12px;
+  color: var(--wa-muted-2);
+}
+
+.crm .chat-close {
+  width: 36px;
+  height: 36px;
+  margin-left: auto;
+  border-radius: 50%;
+  color: var(--wa-muted-2);
+  font-size: 18px;
+  line-height: 1;
+}
+.crm .chat-close:hover { background: rgba(0, 0, 0, .06); }
+
+.crm .chat-badges {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+/* Los enlaces de navegación del panel (folio, ficha) se compactan aquí. */
+.crm .chat-badges .btn-nav {
+  min-height: 32px;
+  padding: .2rem .8rem;
+  font-size: .8rem;
+  border-width: 1px;
+  border-color: #cfd6d9;
+  box-shadow: none;
+}
+
+.crm .chat-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background-color: var(--wa-bg);
+  background-image: radial-gradient(rgba(0, 0, 0, .045) 1px, transparent 1.3px);
+  background-size: 18px 18px;
+}
+.crm .chat-thread:focus-visible { outline-offset: -2px; }
+
+.crm .chat-vacio, .crm .chat-cargando, .crm .chat-error {
+  margin: auto;
+  padding: 16px;
+  color: var(--wa-muted-2);
+  font-size: 13px;
+  text-align: center;
+}
+.crm .chat-error { color: #be1e51; }
+
+/* Burbujas: las clases .bubble.in/.out vienen de components.css; aquí solo se
+   les da el tono de WhatsApp Web (entrante blanca, saliente verde claro). */
+.crm .bubble {
+  max-width: 75%;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .08);
+}
+.crm .bubble.in { background: #fff; }
+.crm .bubble.out { background: var(--wa-out); }
+.crm .bubble-text { white-space: pre-wrap; }
+.crm .bubble .meta { color: var(--wa-muted-2); }
+.crm .bubble-adjunto { display: block; margin-top: .3rem; }
+.crm .msg-delete {
+  color: inherit;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+.crm .chat-composer {
+  flex: 0 0 auto;
+  padding: 10px 12px 12px;
+  background: var(--wa-panel);
+  border-top: 1px solid var(--wa-border);
+}
+
+.crm .chat-composer .error {
+  margin: 0 0 .5rem;
+  padding: .5rem .75rem;
+  font-size: .85rem;
+}
+
+.crm .chat-composer .window-note { margin: 0 0 .5rem; }
+
+.crm .qr {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: .25rem .9rem;
+  border: 1px solid #cfd6d9;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--wa-text);
+  font-size: .8rem;
+}
+.crm .qr:hover { background: var(--wa-soft); border-color: var(--wa-green); }
+
+.crm .composer-bar .field { background: #fff; }
+.crm .composer-bar textarea { min-height: 40px; }
+
+/* El clip de adjuntar es un <label>: el reset de .crm label le quitaba el
+   inline-flex y el color. */
+.crm .attach {
+  display: inline-flex;
+  color: var(--wa-muted-2);
+  border: 1px solid transparent;
+}
+.crm .attach:hover { background: var(--wa-soft); border-color: var(--wa-soft); color: var(--wa-teal); }
+
+.crm .btn-send {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: .55rem 1.2rem;
+  border-radius: 999px;
+  background: var(--wa-teal);
+  color: #fff;
+  font-weight: 600;
+}
+.crm .btn-send:hover { background: var(--wa-teal-hover); }
+.crm .btn-send:disabled { opacity: .55; }
+
+.crm .attach-chip .chip-x {
+  min-height: 28px;
+  padding: .15rem .6rem;
+  border: 1px solid var(--wa-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--wa-text);
+  font-size: .8rem;
+}
+
+.crm .composer-hint { margin: .4rem 0 0; }
+
+.crm .banner-warn { margin: 0; }
+
+/* ---------- aviso (toast) ---------- */
+
+.crm #crm-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 50;
+  max-width: min(90vw, 440px);
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: var(--wa-text);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+  opacity: 0;
+  transform: translate(-50%, 12px);
+  transition: opacity .2s, transform .2s;
+  pointer-events: none;
+}
+.crm #crm-toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ---------- diálogo nueva etapa ---------- */
+
+.crm dialog {
+  width: min(92vw, 380px);
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .28);
+  color: var(--wa-text);
+}
+.crm dialog::backdrop { background: rgba(17, 27, 33, .45); }
+
+.crm dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+}
+
+.crm dialog h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: var(--wa-teal);
+}
+
+.crm .field-label {
+  display: block;
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wa-muted-2);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+
+.crm #crm-column-name {
+  width: 100%;
+  max-width: none;
+  min-height: 38px;
+  padding: 9px 10px;
+  border: 1px solid #cfd6d9;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.crm .dlg-actions { margin-top: 12px; }
+
+/* ---------- con el chat abierto ---------- */
+
+/* Por debajo de 1280 px bandeja y chat no caben juntos: se queda el chat. */
+@media (max-width: 1279px) {
+  /* De la fila de pestañas se oculta solo la lista: el botón «Tablero» se
+     queda, que es justo cuando hace falta. */
+  .crm.chat-abierto .tabs-list,
+  .crm.chat-abierto #crm-miembros,
+  .crm.chat-abierto #crm-tray { display: none; }
+  .crm.chat-abierto .crm-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- pantallas angostas ---------- */
+
+@media (max-width: 900px) {
+  .crm { height: auto; }
+
+  .crm .crm-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .crm .search-wrap {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .crm #crm-btn-toggle-tray { display: inline-flex; }
+
+  .crm .crm-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .crm.chat-abierto .crm-layout { grid-template-rows: minmax(0, 1fr); }
+
+  .crm #crm-tray {
+    max-height: 38vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--wa-border);
+  }
+  .crm #crm-tray.is-collapsed { display: none; }
+
+  .crm #crm-board {
+    flex-direction: column;
+    align-items: stretch;
+    overflow-x: hidden;
+    overflow-y: visible;
+  }
+
+  .crm .column {
+    flex: 0 0 auto;
+    width: auto;
+    max-height: none;
+  }
+
+  .crm .column-body { overflow-y: visible; }
+
+  /* El hilo necesita un alto definido para scrollear con el compositor a la vista. */
+  .crm #crm-chat {
+    height: calc(100vh - 8rem);
+    min-height: 420px;
+  }
+}
+
+/* Teléfonos: las acciones pasan a su propia fila y se compactan; la barra
+   nunca debe provocar scroll horizontal. */
+@media (max-width: 560px) {
+  .crm .toolbar-actions {
+    order: 2;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .crm .toolbar-actions .btn {
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  .crm .bubble { max-width: 90%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm *, .crm *::before, .crm *::after { transition: none !important; }
+}

@@ -686,12 +686,12 @@ def test_apagado_el_nodo_no_regana(session, monkeypatch):
 
 
 def _claves_del_mapa(nombre: str) -> set[str]:
-    """Claves del literal `BASE`/`ICONO` del lienzo, leídas de la plantilla."""
+    """Claves del literal `BASE`/`ICONO` del lienzo, leídas de static/js/agente.js."""
     import re
 
-    html = pathlib.Path("templates/agente.html").read_text()
+    html = pathlib.Path("static/js/agente.js").read_text()
     bloque = re.search(rf"const {nombre} = \{{(.*?)\}};", html, re.S)
-    assert bloque, f"no se encontró el literal {nombre} en agente.html"
+    assert bloque, f"no se encontró el literal {nombre} en agente.js"
     return set(re.findall(r"(\w+)\s*:", bloque.group(1)))
 
 

@@ -3,8 +3,8 @@
 {% block content %}
 {# `volver` trae la lista de origen con filtros y página (validado en la
    ruta); el texto del botón dice a DÓNDE regresa. #}
-{% set volver_texto = '← Volver a cobros' if volver.startswith('/cobros') else ('← Volver al chat' if volver.startswith('/inbox') else '← Volver a solicitudes') %}
-<p style="margin-top:0;"><a class="btn-nav" href="{{ volver or '/' }}">{{ volver_texto }}</a></p>
+{% set volver_texto = '← Volver a cobros' if volver.startswith('/cobros') else ('← Volver al chat' if volver.startswith('/inbox') or volver.startswith('/crm') else '← Volver a solicitudes') %}
+<p class="u-mt-0"><a class="btn-nav" href="{{ volver or '/' }}">{{ volver_texto }}</a></p>
 <h1>Solicitud #{{ ticket.id }}</h1>
 
 {% if not ticket.habilitado %}
@@ -22,8 +22,8 @@
     </span>
     {% endif %}
     {% if is_admin(user) %}
-    <form method="post" action="/tickets/{{ ticket.id }}/delete" style="display:inline;"
-      onsubmit="return confirm('{{ '¿Restaurar' if not ticket.habilitado else '¿Eliminar' }} esta solicitud?');">
+    <form class="u-d-inline" method="post" action="/tickets/{{ ticket.id }}/delete"
+      data-confirm="{{ '¿Restaurar' if not ticket.habilitado else '¿Eliminar' }} esta solicitud?">
       <button type="submit" class="btn-sm {{ '' if not ticket.habilitado else 'btn-danger' }}">
         {{ 'Restaurar' if not ticket.habilitado else 'Eliminar' }}
       </button>
@@ -39,7 +39,7 @@
     <strong>Conversación:</strong>
     {# Con ?folio: abrir el chat desde el folio #30 debe mostrar el #30, no el
        último del cliente. #}
-    <a class="btn-nav" href="/inbox/{{ ticket.phone }}?folio={{ ticket.id }}">💬 Abrir chat</a>
+    <a class="btn-nav" href="/crm?chat={{ ticket.phone }}">💬 Abrir chat</a>
     <a class="btn-nav" href="/clients/{{ ticket.phone }}?volver={{ ('/tickets/' ~ ticket.id) | urlencode }}">👤 Ficha del cliente</a>
   </p>
 </div>
@@ -51,35 +51,35 @@
 <div class="card">
   <h2>Requisitos del trámite</h2>
   {% if requisitos %}
-  <p style="color:var(--text-muted); font-size:.85rem; margin:-.4rem 0 .6rem;">
+  <p class="u-c-text-muted u-fs-0_85rem u-m-n0_4rem-0-0_6rem">
     Capturados por el agente al registrar la solicitud.
     Lo que no diga “Recibido” hay que pedírselo al cliente.
   </p>
   {% if cotizacion %}
   {# Estimado, NO el precio final: el monto que se cobra lo tecleas tú. #}
-  <p style="background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:.6rem .9rem; margin:0 0 .75rem; font-size:.9rem;">
+  <p class="u-bg-amber-50 u-b-1px-solid-amber-200 u-r-6px u-p-0_6rem-0_9rem u-m-0-0-0_75rem u-fs-0_9rem">
     <strong>{{ cotizacion.cuantos }} datos recibidos</strong> para este trámite ({{ ticket.price_info }} c/u).
     {% if cotizacion.total %}
     Estimado: <strong>{{ cotizacion.total }}</strong>.
     {% endif %}
-    <span style="color:var(--text-muted);">— verifícalo antes de generar el cobro.</span>
+    <span class="u-c-text-muted">— verifícalo antes de generar el cobro.</span>
   </p>
   {% endif %}
-  <ul style="list-style:none; padding:0; margin:0 0 .75rem; display:flex; flex-direction:column; gap:.5rem;">
+  <ul class="u-list-none u-p-0 u-m-0-0-0_75rem u-d-flex u-dir-column u-gap-0_5rem">
     {% for r in requisitos %}
-    <li style="background:#f8fafc; border-radius:6px; padding:.6rem .9rem; display:flex; gap:.6rem; align-items:baseline; flex-wrap:wrap;">
+    <li class="u-bg-slate-50 u-r-6px u-p-0_6rem-0_9rem u-d-flex u-gap-0_6rem u-items-baseline u-wrap-wrap">
       {% if r.valor %}
       <span class="badge cerrado">Recibido</span>
       <strong>{{ r.req }}</strong>
-      <span style="word-break:break-word;">{{ r.valor }}</span>
+      <span class="u-wb-break-word">{{ r.valor }}</span>
       {% elif r.pedido %}
       <span class="badge nuevo">Sin respuesta</span>
       <strong>{{ r.req }}</strong>
-      <span style="color:var(--text-muted);">— se le preguntó y no lo dio</span>
+      <span class="u-c-text-muted">— se le preguntó y no lo dio</span>
       {% else %}
       <span class="badge tomado">Sin preguntar</span>
       <strong>{{ r.req }}</strong>
-      <span style="color:var(--text-muted);">— el agente no llegó a pedirlo</span>
+      <span class="u-c-text-muted">— el agente no llegó a pedirlo</span>
       {% endif %}
     </li>
     {% endfor %}
@@ -88,7 +88,7 @@
   {% if requirements %}
   {# Referencia siempre visible: el catálogo puede tener más requisitos que los
      congelados en el folio (tope de captura o ediciones posteriores). #}
-  <p style="white-space: pre-line; background:#f8fafc; border-radius:6px; padding:.75rem 1rem; {% if requisitos %}color:var(--text-muted); font-size:.9rem;{% endif %}">
+  <p class="u-ws-pre-line u-bg-slate-50 u-r-6px u-p-0_75rem-1rem {% if requisitos %}u-c-text-muted u-fs-0_9rem{% endif %}">
     {%- if requisitos %}<strong>Según el catálogo:</strong>{{ '\n' }}{% endif -%}
     {{ requirements }}
   </p>
@@ -98,21 +98,21 @@
 
 <div class="card">
   <h2>Etiquetas</h2>
-  <div style="display:flex; flex-wrap:wrap; gap:.4rem; align-items:center;">
+  <div class="u-d-flex u-wrap-wrap u-gap-0_4rem u-items-center">
     {% for et in etiquetas %}
-    <form method="post" action="/tickets/{{ ticket.id }}/labels/{{ et.id }}/remove" style="display:inline;">
-      <button type="submit" aria-label="Quitar etiqueta {{ et.nombre }}" title="Quitar etiqueta {{ et.nombre }}"
-              style="border:1px solid #d1d5db; border-radius:999px; padding:.2rem .7rem; background:{{ et.color }}; cursor:pointer; font-size:.85rem;">
+    <form class="u-d-inline" method="post" action="/tickets/{{ ticket.id }}/labels/{{ et.id }}/remove">
+      <button class="u-b-1px-solid-gray-300 u-r-999px u-p-0_2rem-0_7rem u-cursor-pointer u-fs-0_85rem u-bg-c" type="submit" aria-label="Quitar etiqueta {{ et.nombre }}" title="Quitar etiqueta {{ et.nombre }}"
+              style="--c: {{ et.color }}">
         {{ et.nombre }} ✕
       </button>
     </form>
     {% else %}
-    <span style="color:var(--text-muted); font-size:.9rem;">Sin etiquetas todavía.</span>
+    <span class="u-c-text-muted u-fs-0_9rem">Sin etiquetas todavía.</span>
     {% endfor %}
-    <form method="post" action="/tickets/{{ ticket.id }}/labels" style="display:inline;">
-      <label for="nueva-etiqueta" style="position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0);">Agregar etiqueta</label>
-      <input id="nueva-etiqueta" name="nombre" list="lista-etiquetas" placeholder="+ etiqueta" maxlength="80" required
-             style="width:9rem; padding:.2rem .6rem; border:1px dashed #d1d5db; border-radius:999px; font-size:.85rem;">
+    <form class="u-d-inline" method="post" action="/tickets/{{ ticket.id }}/labels">
+      <label class="u-pos-absolute u-w-1px u-h-1px u-ov-hidden u-clip-rect-0-0-0-0" for="nueva-etiqueta">Agregar etiqueta</label>
+      <input class="u-w-9rem u-p-0_2rem-0_6rem u-b-1px-dashed-gray-300 u-r-999px u-fs-0_85rem" id="nueva-etiqueta" name="nombre" list="lista-etiquetas" placeholder="+ etiqueta" maxlength="80" required
+            >
       <datalist id="lista-etiquetas">
         {% for n in todas_las_etiquetas %}<option value="{{ n }}">{% endfor %}
       </datalist>
@@ -123,13 +123,13 @@
 {% if ticket.notes %}
 <div class="card">
   <h2>Notas del trámite</h2>
-  <p style="white-space: pre-line; background:#f8fafc; border-radius:6px; padding:.75rem 1rem; margin-bottom:0;">{{ ticket.notes }}</p>
+  <p class="u-ws-pre-line u-bg-slate-50 u-r-6px u-p-0_75rem-1rem u-mb-0">{{ ticket.notes }}</p>
 </div>
 {% endif %}
 
   {# El aviso de resultado no es una sección: va suelto entre paneles. #}
   {% if err or ok %}
-  <p style="margin:.75rem 0;">
+  <p class="u-m-0_75rem-0">
     {% if err == 'monto' %}<span class="badge caducada">El monto no es válido. Usa algo como 1,250.00</span>
     {% elif err == 'monto-minimo' %}<span class="badge caducada">El monto es demasiado bajo (mínimo $10.00)</span>
     {% elif err == 'monto-maximo' %}<span class="badge caducada">El monto supera el tope permitido. Revisa que no sobre un cero.</span>
@@ -169,7 +169,7 @@
 {% elif ticket.assigned_to == user %}
 <div class="card">
   <h2>Gestión</h2>
-  <form method="post" action="/tickets/{{ ticket.id }}/status" style="display:inline-block; margin-right:.75rem;">
+  <form class="u-d-inline-block u-mr-0_75rem" method="post" action="/tickets/{{ ticket.id }}/status">
     <label for="status">Cambiar estado</label>
     <select name="status" id="status">
       {% for s in statuses %}
@@ -179,24 +179,24 @@
     <button type="submit">Actualizar</button>
   </form>
   {% if ticket.status.value != 'cerrado' %}
-  <form method="post" action="/tickets/{{ ticket.id }}/finish" style="display:inline-block; margin-right:.5rem;"
-        onsubmit="return confirm({% if cobros_vivos_del_telefono or cobros|selectattr('llave_cobro_vivo')|list %}'OJO: este cliente tiene un cobro SIN LIQUIDAR. Si cierras, se le avisa que su pago sigue pendiente. ¿Continuar?'{% else %}'¿Terminar esta solicitud? Se cierra el ticket y se le avisa al cliente.'{% endif %});">
+  <form class="u-d-inline-block u-mr-0_5rem" method="post" action="/tickets/{{ ticket.id }}/finish"
+        data-confirm="{% if cobros_vivos_del_telefono or cobros|selectattr('llave_cobro_vivo')|list %}OJO: este cliente tiene un cobro SIN LIQUIDAR. Si cierras, se le avisa que su pago sigue pendiente. ¿Continuar?{% else %}¿Terminar esta solicitud? Se cierra el ticket y se le avisa al cliente.{% endif %}">
     {# Con un cobro vivo el backend exige esta confirmación explícita: cerrar
        a ciegas con dinero en la calle es como se pierde el cobro. #}
     <input type="hidden" name="confirm" value="1">
     <button type="submit" class="btn-sm">✔ Terminar solicitud</button>
   </form>
   {% endif %}
-  <form method="post" action="/tickets/{{ ticket.id }}/release" style="display:inline-block;">
+  <form class="u-d-inline-block" method="post" action="/tickets/{{ ticket.id }}/release">
     <button type="submit" class="btn-danger">Soltar solicitud</button>
   </form>
   {% if ticket.escalado %}
-  <form method="post" action="/tickets/{{ ticket.id }}/agent-toggle" style="display:inline-block; margin-left:.5rem;">
+  <form class="u-d-inline-block u-ml-0_5rem" method="post" action="/tickets/{{ ticket.id }}/agent-toggle">
     <button type="submit" class="btn-sm {{ '' if not ticket.agent_active else 'btn-danger' }}">
       {{ 'Reanudar agente IA' if not ticket.agent_active else 'Apagar agente IA' }}
     </button>
   </form>
-  <p style="color:var(--text-muted); font-size:.85rem; margin:.35rem 0 0;">
+  <p class="u-c-text-muted u-fs-0_85rem u-m-0_35rem-0-0">
     Mientras el agente esté activo, le sigue respondiendo al cliente en automático mientras esperas.
   </p>
   {% endif %}
@@ -205,9 +205,9 @@
 <div class="card">
   <h2>Agregar nota</h2>
   <form method="post" action="/tickets/{{ ticket.id }}/notes">
-    <textarea name="note" required placeholder="Detalles del trámite, avances, pendientes…"
-      style="width:100%; min-height:60px; padding:.6rem .75rem; border:1px solid var(--border); border-radius:6px; font:inherit;"></textarea>
-    <button type="submit" class="btn-sm" style="margin-top:.5rem;">Guardar nota</button>
+    <textarea class="u-w-100pct u-minh-60px u-p-0_6rem-0_75rem u-b-1px-solid-border u-r-6px u-font-inherit" name="note" required placeholder="Detalles del trámite, avances, pendientes…"
+     ></textarea>
+    <button type="submit" class="btn-sm u-mt-0_5rem">Guardar nota</button>
   </form>
 </div>
 
@@ -218,10 +218,10 @@
 
 <div class="card">
   <h2>Seguimiento</h2>
-  <form method="post" action="/tickets/{{ ticket.id }}/followup" style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:flex-end;">
+  <form class="u-d-flex u-gap-0_5rem u-wrap-wrap u-items-flex-end" method="post" action="/tickets/{{ ticket.id }}/followup">
     <div>
       <label for="fu-days">Recordarme en</label>
-      <select name="days" id="fu-days" style="max-width:160px;">
+      <select class="u-maxw-160px" name="days" id="fu-days">
         <option value="0">hoy mismo</option>
         <option value="1" selected>1 día</option>
         <option value="2">2 días</option>
@@ -230,15 +230,15 @@
         <option value="15">15 días</option>
       </select>
     </div>
-    <div style="flex:1; min-width:220px;">
+    <div class="u-flex-1 u-minw-220px">
       <label for="fu-note">Motivo (opcional)</label>
-      <input type="text" id="fu-note" name="note" maxlength="500"
-        placeholder="Ej. recontactar por documentos" style="max-width:none;">
+      <input class="u-maxw-none" type="text" id="fu-note" name="note" maxlength="500"
+        placeholder="Ej. recontactar por documentos">
     </div>
     <button type="submit" class="btn-sm">Crear recordatorio</button>
   </form>
   {% if followups %}
-  <p style="color:var(--text-muted); font-size:.85rem; margin:.5rem 0 0;">
+  <p class="u-c-text-muted u-fs-0_85rem u-m-0_5rem-0-0">
     Pendientes:
     {% for f in followups %}
     <span class="badge asignada">{{ f.due_at.strftime('%d %b') }} · {{ f.username }}{% if f.note %} — {{ f.note }}{% endif %}</span>
@@ -257,22 +257,22 @@
       <option value="{{ u }}">{{ u }}{{ '' if estado == 'disponible' else ' — ' + estado }}</option>
       {% endfor %}
     </select>
-    <label for="note" style="margin-top:.5rem;">Nota de contexto para quien recibe (opcional)</label>
-    <textarea name="note" id="note" placeholder="Qué se ha hecho, qué falta, acuerdos con el cliente…"
-      style="width:100%; min-height:60px; padding:.6rem .75rem; border:1px solid var(--border); border-radius:6px; font:inherit;"></textarea>
-    <button type="submit" style="margin-top:.5rem;">Transferir</button>
+    <label class="u-mt-0_5rem" for="note">Nota de contexto para quien recibe (opcional)</label>
+    <textarea class="u-w-100pct u-minh-60px u-p-0_6rem-0_75rem u-b-1px-solid-border u-r-6px u-font-inherit" name="note" id="note" placeholder="Qué se ha hecho, qué falta, acuerdos con el cliente…"
+     ></textarea>
+    <button class="u-mt-0_5rem" type="submit">Transferir</button>
   </form>
 </div>
 {% endif %}
 {% else %}
 <div class="card">
   {% if asignacion_provisional %}
-  <p class="empty" style="text-align:left; padding:.5rem 0; margin:0;">
+  <p class="empty u-text-left u-p-0_5rem-0 u-m-0">
     Repartida a <strong>{{ ticket.assigned_to }}</strong>, que todavía no la abre.
     Si le contestas al cliente desde la Bandeja, la solicitud pasa a ti.
   </p>
   {% else %}
-  <p class="empty" style="text-align:left; padding:.5rem 0; margin:0;">
+  <p class="empty u-text-left u-p-0_5rem-0 u-m-0">
     La está atendiendo <strong>{{ ticket.assigned_to }}</strong> — solo esa persona puede cambiar el estado.
   </p>
   {% endif %}

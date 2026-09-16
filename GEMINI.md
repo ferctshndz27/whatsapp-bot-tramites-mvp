@@ -11,7 +11,7 @@ tests/test_harness.py. -->
 - **Trust the folder first.** Gemini ignores project settings, hooks, skills and
   this file in an untrusted workspace, and says so in one easy-to-miss line. The
   `/permissions` command only exists when folder trust is enabled.
-- **Skills** are the same thirteen, linked from `.agents/skills/` — the
+- **Skills** are the same fourteen, linked from `.agents/skills/` — the
   customization root Antigravity and Gemini CLI both scan, so one set of links
   serves both. The routing table in AGENTS.md applies unchanged; Gemini picks a
   skill by its `description:`, and `/skills list` shows them. Skills of the
