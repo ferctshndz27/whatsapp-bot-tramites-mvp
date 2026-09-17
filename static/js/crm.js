@@ -43,6 +43,10 @@
   /* Miembros: la disponibilidad es la de «Mi día» (User.estado). */
   var ESTADOS_MIEMBRO = { disponible: "disponible", ocupado: "ocupado", ausente: "ausente" };
   var SIN_ASESOR = "__sin_asesor__"; // chip virtual: contactos sin folio asignado
+  /* Pestaña «Folios cerrados»: no es una etapa sino otro CONJUNTO. Una conversación con
+     todos sus folios cerrados sale del panel (app/crm.py, _tablero) y solo se ve aquí,
+     en la búsqueda o abriéndola por enlace, hasta que se abra otro folio. */
+  var CERRADAS = "__cerradas__";
 
   var DATOS = leerDatos();
   var USUARIO = DATOS.usuario || "";
@@ -66,7 +70,9 @@
     filter: "all", search: "",
     miembro: null,     // username del asesor por el que se filtra (o SIN_ASESOR); null = todos
     chat: null,        // teléfono de la conversación abierta; null = tablero
-    chatDatos: null    // última respuesta de GET /crm/api/chat/{phone}
+    chatDatos: null,   // última respuesta de GET /crm/api/chat/{phone}
+    conteoAbiertas: null // {counts, total} de la última carga ABIERTA: lo que muestran las
+                         // pestañas de etapa mientras se ve «Folios cerrados»
   };
 
   var els = {};
@@ -379,8 +385,13 @@
   function load(opts) {
     opts = opts || {};
     var seq = ++loadSeq;
-    var q = state.search ? "?q=" + encodeURIComponent(state.search) : "";
-    return api("GET", API + "/tablero" + q)
+    /* El conjunto se fija al pedir y viaja con la respuesta: se aplica como lo que se
+       pidió aunque la pestaña cambie mientras tanto (loadSeq descarta la vieja igual). */
+    var cerradas = state.filter === CERRADAS;
+    var params = [];
+    if (state.search) params.push("q=" + encodeURIComponent(state.search));
+    if (cerradas) params.push("cerradas=1");
+    return api("GET", API + "/tablero" + (params.length ? "?" + params.join("&") : ""))
       .then(function (data) {
         if (seq !== loadSeq) return; // llegó una carga más nueva
         var firma = JSON.stringify(data);
@@ -389,11 +400,11 @@
            color, menú, arrastre). Una respuesta que llega a media edición —la
            recarga tras mover una tarjeta, o el sondeo— espera a que termine. */
         if (tableroOcupado()) {
-          tableroPendiente = { data: data, firma: firma };
+          tableroPendiente = { data: data, firma: firma, cerradas: cerradas };
           programarPendiente();
           return;
         }
-        aplicarTablero(data, firma);
+        aplicarTablero(data, firma, cerradas);
       })
       .catch(function (err) {
         if (seq !== loadSeq || opts.silencioso) return;
@@ -408,7 +419,7 @@
       });
   }
 
-  function aplicarTablero(data, firma) {
+  function aplicarTablero(data, firma, cerradas) {
     tableroPendiente = null;
     ultimoTablero = firma;
     state.etapas = (data && Array.isArray(data.etapas)) ? data.etapas : [];
@@ -417,7 +428,8 @@
     state.total = (data && isFinite(Number(data.total))) ? Number(data.total) : state.contactos.length;
     state.miembros = (data && Array.isArray(data.miembros)) ? data.miembros : [];
     state.oficinas = (data && Array.isArray(data.oficinas)) ? data.oficinas : [];
-    if (state.filter !== "all" && !etapaById(state.filter)) state.filter = "all";
+    if (!cerradas) state.conteoAbiertas = { counts: state.counts, total: state.total };
+    if (state.filter !== "all" && state.filter !== CERRADAS && !etapaById(state.filter)) state.filter = "all";
     if (state.miembro !== null && state.miembro !== SIN_ASESOR && !miembroPorNombre(state.miembro)) state.miembro = null;
     render();
   }
@@ -429,7 +441,7 @@
       if (!tableroPendiente) return;
       if (tableroOcupado()) { programarPendiente(); return; }
       var p = tableroPendiente;
-      aplicarTablero(p.data, p.firma);
+      aplicarTablero(p.data, p.firma, p.cerradas);
     }, 400);
   }
 
@@ -454,10 +466,18 @@
     clear(nav);
     var frag = document.createDocumentFragment();
     var visibles = contactosVisibles();
-    frag.appendChild(makeTab("all", "Todos", state.miembro === null ? state.total : visibles.length, "var(--wa-teal)"));
+    var enCerradas = state.filter === CERRADAS;
+    /* En «Folios cerrados» el tablero muestra otro conjunto: las pestañas de etapa siguen
+       contando la cola ABIERTA, o «Todos 2» ahí diría algo falso. */
+    var abiertas = enCerradas ? state.conteoAbiertas : null;
+    var total = abiertas ? abiertas.total : (state.miembro === null ? state.total : visibles.length);
+    frag.appendChild(makeTab("all", "Todos", total, "var(--wa-teal)"));
     state.etapas.forEach(function (etapa) {
-      frag.appendChild(makeTab(String(etapa.id), etapa.nombre, conteoEtapa(etapa.id, visibles), etapa.color));
+      var n = abiertas ? (Number(abiertas.counts[String(etapa.id)]) || 0) : conteoEtapa(etapa.id, visibles);
+      frag.appendChild(makeTab(String(etapa.id), etapa.nombre, n, etapa.color));
     });
+    /* Sin conteo mientras no se abre: contarlas costaría una consulta más en cada sondeo. */
+    frag.appendChild(makeTab(CERRADAS, "Folios cerrados", enCerradas ? visibles.length : null, "var(--wa-muted)"));
     nav.appendChild(frag);
   }
 
@@ -467,7 +487,11 @@
     var dot = $(".tab-dot", tab);
     if (dot) dot.style.background = color;
     setText(tab, ".tab-name", name);
-    setText(tab, ".tab-count", String(count));
+    var num = $(".tab-count", tab);
+    if (num) {
+      num.hidden = count === null;
+      num.textContent = count === null ? "" : String(count);
+    }
     var active = state.filter === filter;
     tab.classList.toggle("is-active", active);
     tab.setAttribute("aria-selected", active ? "true" : "false");
@@ -510,8 +534,16 @@
   }
 
   function setFilter(filter) {
+    var cambiaConjunto = (filter === CERRADAS) !== (state.filter === CERRADAS);
     state.filter = filter;
     updateTabs();
+    if (cambiaConjunto) {
+      /* Entrar o salir de «Folios cerrados» cambia QUÉ conversaciones hay, no solo cuáles
+         se ven: se vuelve a pedir el tablero y lo repinta aplicarTablero. */
+      ultimoTablero = null;
+      load();
+      return;
+    }
     renderTray();
     marcarChatAbierto();
     if (!els.board) return;
@@ -634,7 +666,7 @@
     if (!list) return;
     clear(list);
     var visibles = contactosVisibles();
-    var items = state.filter === "all"
+    var items = state.filter === "all" || state.filter === CERRADAS
       ? visibles
       : visibles.filter(function (c) { return String(c.etapa_id) === state.filter; });
     if (els.trayCount) {
@@ -643,7 +675,9 @@
     if (!items.length) {
       var li = document.createElement("li");
       li.className = "tray-empty";
-      if (!ES_ADMIN && !state.contactos.length && !state.search) {
+      if (state.filter === CERRADAS) {
+        li.textContent = state.search ? "Sin folios cerrados que coincidan" : "Sin folios cerrados";
+      } else if (!ES_ADMIN && !state.contactos.length && !state.search) {
         li.textContent = "Sin conversaciones todavía: aquí aparecen las de las solicitudes que tomas.";
       } else {
         li.textContent = (state.search || state.miembro !== null) ? "Sin contactos que coincidan" : "Sin contactos en esta etapa";

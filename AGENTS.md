@@ -249,6 +249,13 @@ ve solo las conversaciones de las solicitudes que toma** (clientes cuyo folio vi
 asignado), sin tira de miembros ni alta de contactos; los admins (global o de oficina) ven todos
 los clientes de su alcance y a los **miembros de la oficina** (`User.estado` y cuántos chats
 atiende cada uno), agrupados por oficina para el admin global.
+**Un folio cerrado saca la conversación del panel, para todos** (regla del operador,
+2026-09-16): cuando TODOS los folios de un cliente están cerrados, sale del tablero y la bandeja
+—el filtro va en SQL, antes del tope de contactos— y vuelve sola cuando se abre otro folio; si el
+cliente escribe sin pedir trámite, lo atiende el bot y la conversación sigue oculta. Vive en la
+pestaña «Folios cerrados» (`?cerradas=1`), la búsqueda también la alcanza, y **ocultar no es
+prohibir**: `/crm/api/chat/{phone}` no cambia, así que los enlaces «Abrir chat» siguen abriendo.
+Los clientes sin ningún folio se quedan en el panel: son leads y altas manuales.
 **El cajón lateral del chat** unifica lo que antes obligaba a salir a `/tickets/{id}`: gestión del
 folio, etiquetas, notas —del trámite y del cliente—, cobro, seguimiento y transferencia. Lee de
 `GET /crm/api/panel/{phone}` (aparte del hilo a propósito: el chat se sondea cada 8 s y no tiene por
@@ -265,7 +272,7 @@ lo trata como éxito y devuelve al tablero.
 `GET /inbox/{phone}` solo reenvía a `/crm?chat=` conservando `?err=`, y las tarjetas de
 Solicitudes, Mi día, la ficha del cliente y el folio abren el chat del CRM. El JS no tiene pruebas
 unitarias: su verificación es el juez de navegador `node scripts/qa_crm_navegador.mjs` (uvicorn con
-una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 29 criterios de
+una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 30 criterios de
 aceptación como admin global, colaborador y admin de oficina; termina en 1 si alguno falla y
 `--capturas=DIR` guarda capturas de pantalla). Córrelo tras tocar `crm.js`, `crm-panel.js`,
 `crm.html`, `crm.css` o `crm-panel.css`.

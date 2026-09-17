@@ -14,6 +14,9 @@ oficina en Puebla (jefe2) y un colaborador por oficina. Aquí se afirma:
 - las etapas las administra SOLO el admin global; dar de baja una mueve a sus clientes a la
   primera restante y la última no se puede dar de baja.
 - la API contesta 403 JSON a un anónimo, nunca 200.
+- una conversación con TODOS sus folios cerrados sale del panel para todos (admins incluidos)
+  hasta que se abra otro; vive en «Folios cerrados» (?cerradas=1), la búsqueda la alcanza y
+  su chat sigue abriendo por enlace. Los clientes sin folio no cuentan como cerrados.
 - el panel del folio (el cajón del chat) trae folio, permisos, etiquetas, notas, cobro,
   seguimiento y compañeros con la MISMA visibilidad que el chat, y sus permisos son los de
   los endpoints —no los de ticket_detail.html, que esconde de más.
@@ -726,3 +729,89 @@ def test_el_token_del_formulario_de_cobro_es_nuevo_en_cada_consulta():
     uno = cliente.get(f"/crm/api/panel/{ANA}").json()["cobro"]["token_form"]
     dos = cliente.get(f"/crm/api/panel/{ANA}").json()["cobro"]["token_form"]
     assert uno and dos and uno != dos
+
+
+# ---------------------------------------------------------------------------
+# Folios cerrados: salen del panel, viven en su pestaña
+# ---------------------------------------------------------------------------
+
+def _cerrar_folio_de_ana() -> None:
+    with Session(db.engine) as s:
+        folio = s.exec(select(Ticket).where(Ticket.phone == ANA)).first()
+        folio.status = TicketStatus.CERRADO
+        s.add(folio)
+        s.commit()
+
+
+def _telefonos(tablero: dict) -> list[str]:
+    return [c["phone"] for c in tablero["contactos"]]
+
+
+def test_un_folio_cerrado_saca_la_conversacion_del_panel_para_todos():
+    _cerrar_folio_de_ana()
+    for quien in ("jefa1", "colab1"):
+        assert ANA not in _telefonos(_tablero(quien)), quien
+        cerradas = _tablero(quien, cerradas=1)["contactos"]
+        assert [c["phone"] for c in cerradas] == [ANA], quien
+        assert cerradas[0]["cerrada"] is True
+
+
+def test_un_cliente_sin_folio_sigue_en_el_panel_y_no_cuenta_como_cerrado():
+    """Sin esto, dar de alta un contacto desde el tablero lo haría desaparecer."""
+    _cerrar_folio_de_ana()
+    beto = _contacto(_tablero("jefa1"), BETO)
+    assert beto["ticket"] is None and beto["cerrada"] is False
+    assert BETO not in _telefonos(_tablero("jefa1", cerradas=1))
+
+
+def test_un_folio_nuevo_devuelve_la_conversacion_al_panel():
+    _cerrar_folio_de_ana()
+    with Session(db.engine) as s:
+        s.add(Ticket(phone=ANA, client_name="Ana Lucía Ramírez", category="CURP",
+                     service_id="curp", service_name="CURP certificada", price_info="$80",
+                     status=TicketStatus.NUEVO, assigned_to="colab1", office_id=1))
+        s.commit()
+    for quien in ("jefa1", "colab1"):
+        ana = _contacto(_tablero(quien), ANA)
+        assert ana["cerrada"] is False and ana["ticket"]["status"] == "nuevo", quien
+        assert ANA not in _telefonos(_tablero(quien, cerradas=1)), quien
+
+
+def test_la_busqueda_encuentra_tambien_las_conversaciones_cerradas():
+    _cerrar_folio_de_ana()
+    por_nombre = _tablero("jefa1", q="ramirez")["contactos"]
+    assert [c["phone"] for c in por_nombre] == [ANA] and por_nombre[0]["cerrada"] is True
+    assert _telefonos(_tablero("colab1", q="0011")) == [ANA]
+
+
+def test_ocultar_no_es_prohibir_el_chat_de_un_folio_cerrado_abre_por_enlace():
+    """«💬 Abrir chat» del folio, la ficha y Mi día enlazan a /crm?chat=: no pueden romperse."""
+    _cerrar_folio_de_ana()
+    for quien in ("jefa1", "colab1"):
+        r = _sesion(quien).get(f"/crm/api/chat/{ANA}")
+        assert r.status_code == 200, (quien, r.text)
+        assert r.json()["contacto"]["cerrada"] is True
+
+
+def test_los_conteos_del_panel_solo_cuentan_lo_que_se_ve():
+    antes = _tablero("jefa1")["total"]
+    _cerrar_folio_de_ana()
+    despues = _tablero("jefa1")
+    assert despues["total"] == antes - 1
+    assert sum(despues["counts"].values()) == despues["total"]
+
+
+def test_las_cerradas_se_filtran_antes_del_tope_de_contactos(monkeypatch):
+    """Si el filtro corriera después del tope, un histórico de cerradas más recientes
+    dejaría fuera a las conversaciones abiertas."""
+    monkeypatch.setattr(crm, "LIMITE_CONTACTOS", 1)
+    zoe = "525500000099"
+    with Session(db.engine) as s:
+        s.add(Client(phone=zoe, name="Zoe Cerrada", office_id=1))  # la alta más reciente
+        s.add(Ticket(phone=zoe, client_name="Zoe Cerrada", category="Actas", service_id="acta",
+                     service_name="Acta de nacimiento", price_info="$150",
+                     status=TicketStatus.CERRADO, assigned_to="jefa1", office_id=1))
+        s.commit()
+    telefonos = _telefonos(_tablero("jefa1"))
+    assert telefonos and zoe not in telefonos
+    assert _telefonos(_tablero("jefa1", cerradas=1)) == [zoe]

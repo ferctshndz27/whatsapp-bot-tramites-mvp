@@ -317,6 +317,8 @@ def _contacto_json(cliente: Client, a: dict, etapa_id: int | None) -> dict:
             "agent_active": bool(ticket.agent_active),
         },
         "ventana": _ventana_json(a["last_in"]),
+        # Folio vigente cerrado: fuera del panel salvo en «Folios cerrados» o en la búsqueda.
+        "cerrada": ticket is not None and ticket.status == TicketStatus.CERRADO,
         "bot_pausado": bool(conv and conv.state == "escalado"),
         "provider": conv.provider if conv else PROVIDER_META,
     }
@@ -363,7 +365,7 @@ def _conversacion_visible(session, phone: str, user: str):
     return cliente, agg
 
 
-def _tablero(session, vista, user: str, q: str = "") -> dict:
+def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> dict:
     etapas = etapas_activas(session)
     ids = [e.id for e in etapas]
     solo_mios = not is_admin(user)
@@ -380,6 +382,25 @@ def _tablero(session, vista, user: str, q: str = "") -> dict:
                 .where(Ticket.habilitado == True)  # noqa: E712
             )
         )
+    # Una conversación sale del panel cuando TODOS sus folios están cerrados —su folio
+    # vigente es uno cerrado— y vuelve sola cuando se abre otro (regla del operador,
+    # 2026-09-16: vale para todos, admins incluidos). Los clientes SIN folio se quedan:
+    # son leads y altas manuales, y ocultarlos haría desaparecer un contacto recién dado
+    # de alta. Va en SQL, antes del tope de LIMITE_CONTACTOS, para que el histórico
+    # cerrado no empuje fuera a las conversaciones abiertas. Ocultar no es prohibir:
+    # /crm/api/chat/{phone} no cambia, y los enlaces «Abrir chat» siguen abriendo.
+    folios = (
+        select(Ticket.id)
+        .where(Ticket.phone == Client.phone)
+        .where(Ticket.habilitado == True)  # noqa: E712
+    )
+    tiene_folio = folios.exists()
+    tiene_abierto = folios.where(Ticket.status != TicketStatus.CERRADO).exists()
+    if cerradas:
+        consulta = consulta.where(tiene_folio, ~tiene_abierto)
+    elif not q:
+        # La búsqueda sí alcanza a las cerradas: es como se encuentra una por nombre.
+        consulta = consulta.where(or_(~tiene_folio, tiene_abierto))
     digitos = re.sub(r"\D", "", q)
     if digitos:
         # Con dígitos se busca teléfono en SQL, antes del tope de LIMITE_CONTACTOS: un cliente
@@ -511,13 +532,13 @@ def crm_page(request: Request, chat: str = ""):
 # ---------------------------------------------------------------------------
 
 @router.get("/crm/api/tablero")
-def crm_tablero(request: Request, q: str = ""):
+def crm_tablero(request: Request, q: str = "", cerradas: bool = False):
     user = _current_user(request)
     if not user:
         return _sin_sesion()
     vista = alcance(user)
     with get_session() as session:
-        return JSONResponse(_tablero(session, vista, user, q.strip()))
+        return JSONResponse(_tablero(session, vista, user, q.strip(), cerradas))
 
 
 @router.get("/crm/api/etapas")

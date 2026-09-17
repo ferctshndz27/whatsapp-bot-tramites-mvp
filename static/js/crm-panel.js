@@ -533,10 +533,10 @@
       var ok = destino ? destino.searchParams.get("ok") : null;
       if (err) {
         toast(ERRORES[err] || "No se pudo completar la acción.");
-        return refrescar(false).then(function () { return false; });
+        return refrescar({ tocarChat: false }).then(function () { return false; });
       }
       if (!res.ok) { toast("No se pudo completar la acción (" + res.status + ")"); return false; }
-      return refrescar(true).then(function (datos) {
+      return refrescar({ tocarChat: true, salirSiCierra: !!opciones.salirSiCierra }).then(function (datos) {
         /* Transferir la solicitud propia quita el acceso a la conversación: el
            panel contesta «no existe» y eso ES el éxito. Se vuelve al tablero. */
         if (datos === PERDIDO) {
@@ -564,17 +564,20 @@
 
   /* Tras cada acción se repinta el cajón y se avisa al tablero y al chat: el
      estado del folio también vive en la cabecera y en la tarjeta. */
-  function refrescar(tocarChat) {
+  function refrescar(opciones) {
     estado.tocado = false;
-    if (window.CRMKanban && typeof window.CRMKanban.reload === "function") {
-      window.CRMKanban.reload();
-    }
+    var k = window.CRMKanban;
+    if (k && typeof k.reload === "function") k.reload();
     return cargar({ forzar: true }).then(function (datos) {
-      /* El chat se recarga DESPUÉS y solo si la conversación sigue siendo
-         nuestra: si no, su API contestaría 404 y ensuciaría la consola. */
-      if (datos !== PERDIDO && tocarChat && estado.phone
-          && window.CRMKanban && typeof window.CRMKanban.openChat === "function") {
-        window.CRMKanban.openChat(estado.phone);
+      /* El chat se toca DESPUÉS y solo si la conversación sigue siendo nuestra: si no,
+         su API contestaría 404 y ensuciaría la consola. */
+      if (datos === PERDIDO || !opciones.tocarChat || !estado.phone || !k) return datos;
+      /* Cerrar el folio saca la conversación del panel (regla del operador, 2026-09-16):
+         se vuelve al tablero en vez de repintar un chat que ya no está en la lista. */
+      if (opciones.salirSiCierra && datos && datos.ticket && datos.ticket.status === "cerrado") {
+        if (typeof k.closeChat === "function") k.closeChat();
+      } else if (typeof k.openChat === "function") {
+        k.openChat(estado.phone);
       }
       return datos;
     });
@@ -594,7 +597,8 @@
     var id = folioId();
     if (id === null) return;
     ejecutar("/tickets/" + id + "/status", campos([["status", nuevo]]), {
-      exito: "Estado actualizado",
+      exito: nuevo === "cerrado" ? "Solicitud cerrada: sale del panel" : "Estado actualizado",
+      salirSiCierra: nuevo === "cerrado",
       fallo: "Solo quien atiende la solicitud puede cambiarle el estado",
       verifica: function (d) { return !!d.ticket && d.ticket.status === nuevo; }
     });
@@ -672,7 +676,8 @@
       var id = folioId();
       if (id === null) return;
       ejecutar("/tickets/" + id + "/finish", campos([["confirm", "1"]]), {
-        exito: "Solicitud terminada",
+        exito: "Solicitud terminada: sale del panel",
+        salirSiCierra: true,
         verifica: function (d) { return !!d.ticket && d.ticket.status === "cerrado"; }
       });
     });
