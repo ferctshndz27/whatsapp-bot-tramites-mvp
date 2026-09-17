@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}CRM — Embudo{% endblock %}
+{# La pestaña dice lo mismo que el menú lateral y el <h1>: «WhatsApp». #}
+{% block title %}WhatsApp{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ static('css/crm.css') }}">
 <link rel="stylesheet" href="{{ static('css/crm-panel.css') }}">{% endblock %}
 {% block content %}
@@ -21,6 +22,9 @@
     </div>
     <div class="toolbar-actions">
       <button id="crm-btn-toggle-tray" class="btn btn-ghost" type="button" aria-controls="crm-tray" aria-expanded="true">Ocultar bandeja</button>
+      {# Para todos: las respuestas guardadas son de cada quien. Llega sin chat abierto, que es
+         justo cuando la fila del compositor no se ve. #}
+      <button id="crm-btn-respuestas" class="btn btn-ghost" type="button" aria-haspopup="dialog"><span aria-hidden="true">⚡</span> Mis respuestas</button>
       {# Solo el admin global administra etapas: si no lo es, crm.js lo quita del DOM. #}
       <button id="crm-btn-new-column" class="btn btn-primary" type="button">Nueva etapa</button>
     </div>
@@ -110,7 +114,12 @@
             la ventana de {{ horas }} h cierra en <strong id="crm-window-left"></strong>.
             <span class="si-urgente" hidden>Después solo podrás responder cuando el cliente vuelva a escribir.</span>
           </p>
-          <div class="qr-bar" id="crm-qr-bar" role="toolbar" aria-label="Respuestas rápidas"></div>
+          {# Las respuestas las pinta crm.js DELANTE de este botón, que se queda al final: abre
+             «Mis respuestas» con lo escrito en el compositor ya puesto como texto. #}
+          <div class="qr-bar" id="crm-qr-bar" role="toolbar" aria-label="Respuestas rápidas">
+            <button id="crm-btn-respuestas-chat" class="qr-gestionar" type="button" aria-haspopup="dialog"
+                    title="Guardar lo que escribiste o administrar tus respuestas"><span aria-hidden="true">⚡</span> Mis respuestas</button>
+          </div>
           <form method="post" enctype="multipart/form-data" id="crm-composer">
             <div class="composer-bar">
               <input type="file" id="crm-file" name="file" class="sr-only"
@@ -412,7 +421,60 @@
     </form>
   </dialog>
 
+  {# Mis respuestas: las guardadas personales (app/replies.py), antes la vista /replies. Solo
+     las ve quien las guarda. Lee y escribe por /crm/api/respuestas; guardar o eliminar repinta
+     también la fila de respuestas rápidas del compositor, sin recargar. El aviso de resultado
+     vive DENTRO del diálogo: con un modal abierto, el toast de la página queda detrás del velo
+     y fuera de lo que anuncia un lector de pantalla. #}
+  {% set lim = datos.respuestas_limites %}
+  <dialog id="crm-dlg-respuestas" class="dlg-respuestas" aria-labelledby="crm-dlg-respuestas-title">
+    <div class="dlg-cuerpo">
+      <header class="dlg-cabeza">
+        <h2 id="crm-dlg-respuestas-title">Mis respuestas guardadas</h2>
+        <button class="dlg-cerrar" id="crm-resp-cerrar" type="button" aria-label="Cerrar «Mis respuestas»">✕</button>
+      </header>
+      <p class="dlg-nota">
+        Aparecen como botones en el chat, después de las respuestas rápidas del negocio.
+        Solo tú las ves.
+      </p>
+
+      <form id="crm-form-respuesta" method="post" novalidate>
+        <label class="field-label" for="crm-resp-titulo">Título (para ti)</label>
+        <input id="crm-resp-titulo" name="title" type="text" maxlength="{{ lim.titulo }}"
+               placeholder="Ej. saludo inicial" autocomplete="off" required>
+        <label class="field-label" for="crm-resp-texto">Texto que se enviará al cliente</label>
+        <textarea id="crm-resp-texto" name="text" maxlength="{{ lim.texto }}" rows="4"
+                  placeholder="Hola, gracias por escribirnos…" required></textarea>
+        <p class="error" id="crm-resp-error" role="alert" hidden></p>
+        <p class="dlg-nota" id="crm-resp-tope" hidden>
+          Llegaste al máximo de {{ lim.max }} respuestas: elimina alguna para guardar otra.
+        </p>
+        <div class="dlg-actions">
+          <button class="btn btn-primary" id="crm-resp-guardar" type="submit">Guardar</button>
+        </div>
+      </form>
+
+      <p class="dlg-estado" id="crm-resp-estado" role="status" aria-live="polite"></p>
+      <h3 class="dlg-sub">Guardadas <span id="crm-resp-cuenta"></span></h3>
+      <p class="dlg-nota" id="crm-resp-cargando" hidden>Cargando tus respuestas…</p>
+      <ul class="resp-lista" id="crm-resp-lista"></ul>
+      <p class="dlg-nota" id="crm-resp-vacio" hidden>
+        Aún no guardas respuestas. La primera te ahorrará teclear la número cien.
+      </p>
+    </div>
+  </dialog>
+
   {# Plantillas: todo el DOM con datos se construye con cloneNode + textContent. #}
+
+  <template id="crm-tpl-respuesta">
+    <li class="resp-item">
+      <div class="resp-main">
+        <strong class="resp-titulo"></strong>
+        <p class="resp-texto"></p>
+      </div>
+      <button class="btn-sm btn-danger resp-borrar" type="button">Eliminar</button>
+    </li>
+  </template>
 
   <template id="crm-tpl-tab">
     <button class="tab" type="button" role="tab" aria-selected="false">

@@ -424,7 +424,9 @@ def test_actividad_le_da_los_reportes_al_admin_de_oficina():
 
 
 def test_una_respuesta_guardada_nace_en_la_oficina_de_quien_la_guarda():
-    _sesion("colab2").post("/replies", data={"title": "saludo", "body": "Hola"})
+    # Se guarda desde «Mis respuestas» del CRM; el formulario viejo de /replies se retiró.
+    r = _sesion("colab2").post("/crm/api/respuestas", json={"title": "saludo", "text": "Hola"})
+    assert r.status_code == 201, r.text
     with Session(db.engine) as s:
         assert s.exec(select(SavedReply.office_id)).one() == 2
 

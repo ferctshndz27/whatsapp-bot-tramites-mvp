@@ -785,9 +785,11 @@
 
     /* Escape cierra PRIMERO el cajón: en captura, para que el de crm.js —que
        cierra el chat entero— no llegue a correr. Escribiendo no hace nada, que
-       es el mismo criterio del chat. */
+       es el mismo criterio del chat. Con un diálogo modal abierto encima («Mis
+       respuestas») la tecla es del diálogo: cerrarlo no debe cerrar el cajón. */
     document.addEventListener("keydown", function (e) {
       if (e.key !== "Escape" || !estado.seccion) return;
+      if (document.querySelector("#crm dialog[open]")) return;
       var a = document.activeElement;
       if (a && els.panel.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
       e.stopPropagation();

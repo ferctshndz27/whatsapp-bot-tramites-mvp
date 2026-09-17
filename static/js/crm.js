@@ -21,6 +21,11 @@
  * resultado se lee de res.url (?err=window|tipo|peso, /login si la sesión
  * caducó, / si no hay acceso a esa conversación).
  *
+ * «Mis respuestas» (las guardadas personales, antes /replies) es un <dialog> de
+ * esta página: lo abren la barra superior y el final de la fila de respuestas
+ * rápidas, y habla con GET/POST/DELETE /crm/api/respuestas. Cada alta o baja
+ * devuelve la lista nueva y la fila del compositor, que se repinta sin recargar.
+ *
  * Nada aquí recarga la página: el tablero se sondea cada 20 s y el chat abierto
  * cada 8 s, solo con la pestaña visible, nunca a media edición (arrastre,
  * formulario de alta, renombrado, selector de color, menú abierto) y sin tocar
@@ -53,6 +58,8 @@
   var ES_ADMIN = !!DATOS.admin;
   var ES_ADMIN_GLOBAL = !!DATOS.admin_global;
   var VENTANA_HORAS = DATOS.ventana_horas || 24;
+  /* Largos de app/replies.py; la plantilla ya los puso de maxlength. */
+  var LIMITES_RESPUESTAS = DATOS.respuestas_limites || {};
   /* Mismos textos que templates/inbox_chat.html: el asesor ve el mismo aviso
      desde cualquiera de las dos vistas mientras conviven. */
   var ERRORES_ENVIO = {
@@ -88,6 +95,11 @@
   var ultimaCabecera = null; // firma de la cabecera del chat pintada
   var ultimasRespuestas = null;
   var enviando = false;
+  var respuestasSeq = 0;     // ignora una lista de «Mis respuestas» ya superada
+  var guardandoRespuesta = false;
+  var totalRespuestas = 0;   // cuántas guardadas pinta el diálogo…
+  var topeRespuestas = LIMITES_RESPUESTAS.max || 0; // …y cuántas caben (lo repite cada respuesta del servidor)
+  var abridorRespuestas = null; // a quién le vuelve el foco al cerrar el diálogo
 
   var rtf = (typeof Intl !== "undefined" && typeof Intl.RelativeTimeFormat === "function")
     ? new Intl.RelativeTimeFormat("es-MX", { numeric: "auto", style: "short" })
@@ -1310,14 +1322,14 @@
   /* Nueva etapa (dialog)                                                */
   /* ------------------------------------------------------------------ */
 
-  function dialogSupported() {
-    return !!els.dlgColumn
+  function dialogSupported(dlg) {
+    return !!dlg
       && typeof window.HTMLDialogElement === "function"
-      && typeof els.dlgColumn.showModal === "function";
+      && typeof dlg.showModal === "function";
   }
 
   function openNewColumnDialog() {
-    if (dialogSupported()) {
+    if (dialogSupported(els.dlgColumn)) {
       var dlg = els.dlgColumn;
       if (els.formColumn) els.formColumn.reset();
       var picker = $(".color-picker", dlg);
@@ -1376,6 +1388,212 @@
         });
       });
     }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Mis respuestas (dialog)                                             */
+  /* ------------------------------------------------------------------ */
+
+  /* Las respuestas guardadas de quien tiene la sesión (app/replies.py). La lista
+     se pide cada vez que se abre —otra pestaña pudo cambiarla— y el servidor es
+     quien decide: nada se pinta antes de que conteste. */
+
+  function abrirRespuestas(desdeChat) {
+    var dlg = els.dlgRespuestas;
+    if (!dlg || dlg.open) return;
+    abridorRespuestas = document.activeElement;
+    if (els.formRespuesta) els.formRespuesta.reset();
+    avisoRespuesta(null);
+    estadoRespuesta("");
+    /* Desde el chat, lo escrito en el compositor llega ya como texto: guardar lo
+       que se acaba de redactar es el uso más común. El compositor no se toca. */
+    var borrador = desdeChat && els.body ? els.body.value.trim() : "";
+    if (borrador && els.respTexto) els.respTexto.value = borrador.slice(0, LIMITES_RESPUESTAS.texto || borrador.length);
+    if (dialogSupported(dlg)) dlg.showModal();
+    else dlg.setAttribute("open", "");
+    if (els.respTitulo) els.respTitulo.focus();
+    cargarRespuestas();
+  }
+
+  function cerrarRespuestas() {
+    var dlg = els.dlgRespuestas;
+    if (!dlg) return;
+    if (dialogSupported(dlg)) {
+      if (dlg.open) dlg.close();
+    } else {
+      dlg.removeAttribute("open");
+      alCerrarRespuestas();
+    }
+  }
+
+  /* Al cerrarse —✕ o Escape—: el foco vuelve a quien lo abrió y se quita el
+     ?respuestas=1 con que llega la ruta vieja, para que recargar no lo reabra. */
+  function alCerrarRespuestas() {
+    /* El evento close llega en una tarea aparte: si para entonces el diálogo ya se
+       reabrió, es el cierre anterior y no debe invalidar la carga de la nueva
+       apertura (el «Cargando…» se quedaba para siempre). Lo cazó el juez. */
+    if (els.dlgRespuestas && els.dlgRespuestas.open) return;
+    respuestasSeq++;
+    try {
+      var url = new URL(window.location.href);
+      if (url.searchParams.has("respuestas")) {
+        url.searchParams.delete("respuestas");
+        window.history.replaceState(null, "", url);
+      }
+    } catch (_) { /* URL no manipulable: se sigue sin ella */ }
+    var a = abridorRespuestas;
+    abridorRespuestas = null;
+    if (a && a !== document.body && typeof a.focus === "function" && document.contains(a) && a.getClientRects().length) {
+      try { a.focus({ preventScroll: true }); } catch (_) { a.focus(); }
+    }
+  }
+
+  function cargarRespuestas(conservarAviso) {
+    var seq = ++respuestasSeq;
+    if (els.respCargando) els.respCargando.hidden = false;
+    return api("GET", API + "/respuestas")
+      .then(function (data) {
+        if (seq === respuestasSeq) aplicarRespuestas(data);
+      }, function (err) {
+        if (seq === respuestasSeq && !conservarAviso) avisoRespuesta(mensajeDe(err, "No se pudieron cargar tus respuestas"));
+      })
+      .then(function () {
+        if (seq === respuestasSeq && els.respCargando) els.respCargando.hidden = true;
+      });
+  }
+
+  /* Una respuesta del servidor trae la lista del diálogo Y la fila del compositor.
+     Con `superar`, la lista que pidió abrirRespuestas y siga en vuelo ya no cuenta:
+     llegaría con lo de antes de guardar o eliminar y lo pintaría encima. */
+  function aplicarRespuestas(data, superar) {
+    if (!data || !Array.isArray(data.mias)) return;
+    if (superar) {
+      respuestasSeq++;
+      if (els.respCargando) els.respCargando.hidden = true;
+    }
+    pintarListaRespuestas(data.mias, data.max || topeRespuestas);
+    if (Array.isArray(data.respuestas_rapidas)) {
+      DATOS.respuestas_rapidas = data.respuestas_rapidas;
+      pintarRespuestasRapidas(data.respuestas_rapidas);
+    }
+  }
+
+  function pintarListaRespuestas(mias, max) {
+    if (!els.respLista) return;
+    clear(els.respLista);
+    mias.forEach(function (r) {
+      var li = tpl("crm-tpl-respuesta");
+      if (!li || !r) return;
+      li.dataset.replyId = String(r.id);
+      setText(li, ".resp-titulo", r.title || "");
+      setText(li, ".resp-texto", r.text || "");
+      var b = $(".resp-borrar", li);
+      if (b) {
+        b.setAttribute("aria-label", "Eliminar «" + (r.title || "") + "»");
+        b.addEventListener("click", function () { eliminarRespuesta(r, b); });
+      }
+      els.respLista.appendChild(li);
+    });
+    totalRespuestas = mias.length;
+    if (max) topeRespuestas = max;
+    if (els.respVacio) els.respVacio.hidden = mias.length > 0;
+    if (els.respCuenta) els.respCuenta.textContent = max ? "(" + mias.length + " de " + max + ")" : "(" + mias.length + ")";
+    var llenas = respuestasLlenas();
+    if (els.respTope) els.respTope.hidden = !llenas;
+    if (els.respGuardar) els.respGuardar.disabled = llenas || guardandoRespuesta;
+  }
+
+  function respuestasLlenas() {
+    return topeRespuestas > 0 && totalRespuestas >= topeRespuestas;
+  }
+
+  function avisoRespuesta(texto) {
+    if (!els.respError) return;
+    els.respError.textContent = texto || "";
+    els.respError.hidden = !texto;
+  }
+
+  function estadoRespuesta(texto) {
+    if (els.respEstado) els.respEstado.textContent = texto;
+  }
+
+  /* Pide el chat abierto otra vez: invalida (chatSeq) un sondeo en vuelo que traería
+     la fila de respuestas de antes del cambio y la repintaría encima de la nueva. */
+  function refrescarChatAbierto() {
+    if (state.chat !== null) cargarChat(state.chat, { silencioso: true });
+  }
+
+  function guardarRespuesta(e) {
+    e.preventDefault();
+    if (guardandoRespuesta || !els.respTitulo || !els.respTexto) return;
+    var titulo = els.respTitulo.value.trim();
+    var texto = els.respTexto.value.trim();
+    avisoRespuesta(null);
+    estadoRespuesta("");
+    if (!titulo || !texto) {
+      avisoRespuesta("Escribe el título y el texto de la respuesta.");
+      (titulo ? els.respTexto : els.respTitulo).focus();
+      return;
+    }
+    guardandoRespuesta = true;
+    if (els.respGuardar) els.respGuardar.disabled = true;
+    api("POST", API + "/respuestas", { title: titulo, text: texto })
+      .then(function (data) {
+        guardandoRespuesta = false;
+        if (els.formRespuesta) els.formRespuesta.reset();
+        aplicarRespuestas(data, true);
+        estadoRespuesta("Respuesta «" + titulo + "» guardada.");
+        refrescarChatAbierto();
+        if (els.dlgRespuestas && els.dlgRespuestas.open) els.respTitulo.focus();
+      }, function (err) {
+        guardandoRespuesta = false;
+        avisoRespuesta(mensajeDe(err, "No se pudo guardar la respuesta"));
+        if (els.respGuardar) els.respGuardar.disabled = respuestasLlenas();
+      });
+  }
+
+  function eliminarRespuesta(r, boton) {
+    if (!window.confirm("¿Eliminar «" + (r.title || "") + "»?")) return;
+    avisoRespuesta(null);
+    estadoRespuesta("");
+    boton.disabled = true;
+    /* El botón pulsado desaparece y dentro de un modal el foco no puede quedar en el
+       aire: pasa a la respuesta de al lado o, si no queda ninguna, al título. */
+    var li = boton.closest ? boton.closest(".resp-item") : null;
+    var vecino = li ? (li.nextElementSibling || li.previousElementSibling) : null;
+    var vecinoId = vecino ? vecino.dataset.replyId : null;
+    api("DELETE", API + "/respuestas/" + encodeURIComponent(r.id))
+      .then(function (data) {
+        aplicarRespuestas(data, true);
+        estadoRespuesta("Respuesta «" + (r.title || "") + "» eliminada.");
+        refrescarChatAbierto();
+        var destino = vecinoId ? $('.resp-item[data-reply-id="' + vecinoId + '"] .resp-borrar', els.respLista) : null;
+        destino = destino || els.respTitulo;
+        if (destino && els.dlgRespuestas && els.dlgRespuestas.open) destino.focus();
+      }, function (err) {
+        boton.disabled = false;
+        avisoRespuesta(mensajeDe(err, "No se pudo eliminar la respuesta"));
+        /* Si ya no existía (otra pestaña la borró), la lista se pone al día sin
+           tapar el aviso con otro. */
+        cargarRespuestas(true);
+      });
+  }
+
+  function wireRespuestas() {
+    var dlg = els.dlgRespuestas;
+    if (!dlg || !document.getElementById("crm-tpl-respuesta")) {
+      /* Sin el diálogo no hay qué abrir: mejor sin botones que con botones muertos. */
+      quitar(els.btnRespuestas);
+      quitar(els.btnRespuestasChat);
+      els.btnRespuestas = null;
+      els.btnRespuestasChat = null;
+      return;
+    }
+    if (els.btnRespuestas) els.btnRespuestas.addEventListener("click", function () { abrirRespuestas(false); });
+    if (els.btnRespuestasChat) els.btnRespuestasChat.addEventListener("click", function () { abrirRespuestas(true); });
+    if (els.respCerrar) els.respCerrar.addEventListener("click", cerrarRespuestas);
+    if (els.formRespuesta) els.formRespuesta.addEventListener("submit", guardarRespuesta);
+    dlg.addEventListener("close", alCerrarRespuestas);
   }
 
   /* ------------------------------------------------------------------ */
@@ -1684,7 +1902,10 @@
     var firma = JSON.stringify(lista);
     if (firma === ultimasRespuestas) return;
     ultimasRespuestas = firma;
-    clear(els.qrBar);
+    /* Solo se cambian las respuestas: «⚡ Mis respuestas», marcado en la plantilla,
+       se queda al final de la fila. */
+    $$(".qr", els.qrBar).forEach(quitar);
+    var fin = els.btnRespuestasChat && els.btnRespuestasChat.parentNode === els.qrBar ? els.btnRespuestasChat : null;
     lista.forEach(function (q) {
       if (!q || typeof q.text !== "string") return;
       var b = document.createElement("button");
@@ -1693,7 +1914,7 @@
       b.dataset.text = q.text;
       b.textContent = q.title || q.text.slice(0, 24);
       if (String(q.title || "").indexOf("★") === 0) b.title = "Respuesta guardada personal";
-      els.qrBar.appendChild(b);
+      els.qrBar.insertBefore(b, fin);
     });
   }
 
@@ -1955,7 +2176,9 @@
     });
     document.addEventListener("keydown", function (e) {
       if (e.key !== "Escape") return;
-      if (els.dlgColumn && els.dlgColumn.open) return; // el dialog se cierra solo
+      /* Con un diálogo abierto (nueva etapa, mis respuestas) Escape es suyo: lo cierra
+         el navegador y el chat de atrás se queda donde estaba. */
+      if (els.root && $("dialog[open]", els.root)) return;
       var habiaMenu = !!(els.board && $(".column-menu:not([hidden]), .column .color-picker", els.board));
       closeAllMenus();
       closeColorPickers();
@@ -2019,7 +2242,22 @@
       formColumn: document.getElementById("crm-form-column"),
       columnName: document.getElementById("crm-column-name"),
       columnColor: document.getElementById("crm-column-color"),
-      btnColumnCancel: document.getElementById("crm-btn-column-cancel")
+      btnColumnCancel: document.getElementById("crm-btn-column-cancel"),
+      btnRespuestas: document.getElementById("crm-btn-respuestas"),
+      btnRespuestasChat: document.getElementById("crm-btn-respuestas-chat"),
+      dlgRespuestas: document.getElementById("crm-dlg-respuestas"),
+      formRespuesta: document.getElementById("crm-form-respuesta"),
+      respTitulo: document.getElementById("crm-resp-titulo"),
+      respTexto: document.getElementById("crm-resp-texto"),
+      respError: document.getElementById("crm-resp-error"),
+      respTope: document.getElementById("crm-resp-tope"),
+      respGuardar: document.getElementById("crm-resp-guardar"),
+      respEstado: document.getElementById("crm-resp-estado"),
+      respCuenta: document.getElementById("crm-resp-cuenta"),
+      respCargando: document.getElementById("crm-resp-cargando"),
+      respLista: document.getElementById("crm-resp-lista"),
+      respVacio: document.getElementById("crm-resp-vacio"),
+      respCerrar: document.getElementById("crm-resp-cerrar")
     };
     var templates = ["crm-tpl-tab", "crm-tpl-miembro", "crm-tpl-tray-item", "crm-tpl-column", "crm-tpl-card", "crm-tpl-bubble"];
     var missing = templates.filter(function (id) { return !document.getElementById(id); });
@@ -2035,8 +2273,11 @@
     wireDialog();
     wireChat();
     wireComposer();
+    wireRespuestas();
     load();
     if (DATOS.chat_inicial) abrirChat(DATOS.chat_inicial);
+    /* /crm?respuestas=1 es a donde reenvía la ruta vieja /replies. */
+    if (DATOS.abrir_respuestas) abrirRespuestas(false);
     setInterval(sondearTablero, SONDEO_TABLERO_MS);
     setInterval(sondearChat, SONDEO_CHAT_MS);
   }

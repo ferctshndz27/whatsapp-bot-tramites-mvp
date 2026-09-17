@@ -8,8 +8,8 @@
  * sembrada (scripts/qa_crm_seed.py), abre Chrome sin cabeza, entra con la sesión del panel como
  * admin global, colaborador y admin de oficina, y ejecuta los criterios de aceptación del CRM
  * (tablero, drag & drop persistente, pestañas, búsqueda, chat, envío por los endpoints de
- * app/inbox.py, bot, bloqueo, etapas, alta de contacto, alcance por oficina) más una pasada
- * responsiva. Imprime una línea ✅/❌ por criterio (⚠️ = observación) y termina con código 1 si
+ * app/inbox.py, bot, bloqueo, etapas, alta de contacto, alcance por oficina, cajón del folio,
+ * folios cerrados y «Mis respuestas», que sustituye a /replies) más una pasada responsiva. Imprime una línea ✅/❌ por criterio (⚠️ = observación) y termina con código 1 si
  * hay algún ❌. Node 22 sin dependencias npm; requiere google-chrome.
  *
  * Uso: node scripts/qa_crm_navegador.mjs [--verbose] [--keep] [--capturas=DIR]
@@ -829,6 +829,96 @@ const enPagina = {
     if (!chip) return { error: `no hay chip de la etiqueta «${nombre}»` };
     chip.click();
     return { ok: true };
+  },
+
+  // ---- Mis respuestas (el diálogo que sustituye a /replies) ----
+
+  respuestasEstado: () => {
+    const visible = (el) => !!el && !el.hidden && getComputedStyle(el).display !== "none" && el.getClientRects().length > 0;
+    const d = document.querySelector("dialog#crm-dlg-respuestas");
+    const bar = document.querySelector("#crm-qr-bar");
+    const chip = document.querySelector("#crm-btn-respuestas-chat");
+    const error = document.querySelector("#crm-resp-error");
+    const a = document.activeElement;
+    return {
+      abierto: d?.open === true,
+      modal: !!d && d.open && d.matches(":modal"),
+      titulo: document.querySelector("#crm-resp-titulo")?.value ?? null,
+      texto: document.querySelector("#crm-resp-texto")?.value ?? null,
+      items: [...document.querySelectorAll("#crm-resp-lista .resp-item")].map((li) => ({
+        id: li.dataset.replyId,
+        titulo: li.querySelector(".resp-titulo")?.textContent ?? "",
+        texto: li.querySelector(".resp-texto")?.textContent ?? "",
+        etiqueta: li.querySelector(".resp-borrar")?.getAttribute("aria-label") ?? "",
+      })),
+      cuenta: document.querySelector("#crm-resp-cuenta")?.textContent.trim() ?? "",
+      vacio: visible(document.querySelector("#crm-resp-vacio")),
+      cargando: visible(document.querySelector("#crm-resp-cargando")),
+      estado: document.querySelector("#crm-resp-estado")?.textContent.trim() ?? "",
+      error: visible(error) ? error.textContent.trim() : null,
+      foco: a ? (a.id || a.className || a.tagName) : null,
+      chipAlFinal: !!chip && chip.parentElement === bar && bar.lastElementChild === chip,
+      qr: [...document.querySelectorAll("#crm-qr-bar .qr")].map((b) => b.textContent),
+      chatAbierto: document.querySelector("#crm")?.classList.contains("chat-abierto") ?? false,
+      url: location.pathname + location.search,
+      anchoDialogo: d?.open ? Math.round(d.getBoundingClientRect().width) : 0,
+      anchoVentana: document.documentElement.clientWidth,
+      scrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      menuReplies: !!document.querySelector('a[href="/replies"]'),
+    };
+  },
+
+  // Foco + clic, como quien lo activa con el teclado: el diálogo le devuelve el foco al cerrar.
+  activarBoton: (id) => {
+    const b = document.getElementById(id);
+    if (!b) return { error: `no existe #${id}` };
+    b.focus();
+    b.click();
+    return { ok: true };
+  },
+
+  escribirBorrador: (texto) => {
+    const ta = document.querySelector("#crm-body");
+    if (!ta) return { error: "no hay compositor" };
+    ta.value = texto;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    return { ok: true };
+  },
+
+  guardarRespuesta: (titulo, texto) => {
+    const t = document.querySelector("#crm-resp-titulo");
+    const x = document.querySelector("#crm-resp-texto");
+    const form = document.querySelector("#crm-form-respuesta");
+    if (!t || !x || !form) return { error: "el diálogo no tiene título, texto o form" };
+    t.value = titulo;
+    if (texto !== undefined) x.value = texto;
+    form.requestSubmit();
+    return { ok: true };
+  },
+
+  // Con foco, como un clic real: así se comprueba a dónde va el foco cuando el botón desaparece.
+  eliminarRespuesta: (titulo) => {
+    const li = [...document.querySelectorAll("#crm-resp-lista .resp-item")]
+      .find((x) => x.querySelector(".resp-titulo")?.textContent === titulo);
+    if (!li) return { error: `«${titulo}» no está en la lista` };
+    const b = li.querySelector(".resp-borrar");
+    b.focus();
+    b.click();
+    return { ok: true };
+  },
+
+  enfocar: (selector) => {
+    const el = document.querySelector(selector);
+    if (!el) return { error: `no existe ${selector}` };
+    el.focus();
+    return { ok: document.activeElement === el };
+  },
+
+  pulsarQrTitulo: (titulo) => {
+    const b = [...document.querySelectorAll("#crm-qr-bar .qr")].find((x) => x.textContent === titulo);
+    if (!b) return { error: `no hay respuesta rápida «${titulo}»` };
+    b.click();
+    return { texto: document.querySelector("#crm-body").value, esperado: b.dataset.text };
   },
 };
 
@@ -2004,6 +2094,150 @@ async function criterioFoliosCerrados(ctx) {
   return "terminar la solicitud desde el cajón cierra el chat y la saca del panel; «Folios cerrados» trae a Ana y a Diego con sus insignias y se abren desde ahí; «Todos» vuelve a la cola abierta";
 }
 
+// ---- Mis respuestas (antes /replies) -----------------------------------------
+
+// Una tecla de verdad por CDP: un KeyboardEvent sintético no cierra un <dialog> modal.
+async function teclaReal(ctx, key, codigo) {
+  const base = { key, code: key, windowsVirtualKeyCode: codigo, nativeVirtualKeyCode: codigo };
+  await ctx.cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
+  await ctx.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+}
+
+// Si la espera se agota, el error dice qué estaba viendo: sin eso un tiempo agotado no explica nada.
+async function esperarRespuestas(ctx, condicion, label) {
+  let visto = null;
+  try {
+    return await waitFor(async () => {
+      visto = await ctx.cdp.evaluate(enPagina.respuestasEstado);
+      return condicion(visto) ? visto : null;
+    }, { timeout: 8000, label });
+  } catch (e) {
+    const { abierto, cargando, items, error, estado, foco, url, chatAbierto, qr } = visto ?? {};
+    throw new Error(`${e.message} — visto: ${JSON.stringify({ abierto, cargando, items: items?.length, error, estado, foco, url, chatAbierto, qr: qr?.length })}`);
+  }
+}
+
+async function criterioMisRespuestas(ctx) {
+  const fallos = [];
+  let resumen;
+  try {
+    resumen = await recorridoMisRespuestas(ctx, fallos);
+  } catch (e) {
+    // Lo que ya había fallado antes de la excepción también se reporta.
+    throw new Error(fallos.length ? `${e.message}; antes: ${fallos.join("; ")}` : e.message);
+  }
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return resumen;
+}
+
+async function recorridoMisRespuestas(ctx, fallos) {
+  const TITULO = "Pedir CURP QA";
+  const BORRADOR = "Para continuar necesito tu CURP y una identificación ✓";
+  const MAX = 30;
+  // Tras el criterio 26 el folio de Ana está cerrado, pero su chat abre por enlace y su ventana sigue viva.
+  await ctx.cdp.send("Emulation.clearDeviceMetricsOverride");
+  await ctx.login("jefa1");
+  await abrirChatDe(ctx, ANA);
+  // Con el cajón del folio abierto detrás: su Escape (en captura) no debe robarle la tecla al diálogo.
+  await esperarCajon(ctx);
+  await abrirSeccion(ctx, "notas");
+  let s = await ctx.cdp.evaluate(enPagina.respuestasEstado);
+  if (s.menuReplies) fallos.push("la página sigue enlazando a /replies");
+  if (!s.chipAlFinal) fallos.push("«⚡ Mis respuestas» no es el último botón de la fila de respuestas rápidas");
+  const nQr = s.qr.length;
+  if (!nQr) throw new Error("la fila de respuestas rápidas está vacía: el compositor no se pintó");
+
+  // Desde el chat: lo escrito en el compositor llega como texto de la respuesta.
+  await ctx.cdp.evaluate(enPagina.escribirBorrador, BORRADOR);
+  let r = await ctx.cdp.evaluate(enPagina.activarBoton, "crm-btn-respuestas-chat");
+  if (r.error) throw new Error(r.error);
+  s = await esperarRespuestas(ctx, (e) => e.abierto && !e.cargando, "«Mis respuestas» abierto y cargado");
+  if (!s.modal) fallos.push("el diálogo no se abrió como modal");
+  if (s.texto !== BORRADOR) fallos.push(`el texto no trae el borrador del compositor: ${JSON.stringify(s.texto)}`);
+  if (s.foco !== "crm-resp-titulo") fallos.push(`al abrir, el foco quedó en ${s.foco} y no en el título`);
+  if (!s.vacio || s.items.length || s.cuenta !== `(0 de ${MAX})`) fallos.push(`lista inicial: ${JSON.stringify({ vacio: s.vacio, items: s.items.length, cuenta: s.cuenta })}`);
+  await ctx.capturar("09-mis-respuestas-1400");
+
+  // Guardar: la lista y la fila del compositor se repintan sin recargar.
+  r = await ctx.cdp.evaluate(enPagina.guardarRespuesta, TITULO);
+  if (r.error) throw new Error(r.error);
+  s = await esperarRespuestas(ctx, (e) => e.items.length === 1 && e.qr.length === nQr + 1, "la respuesta en la lista y en la fila del compositor");
+  const item = s.items[0];
+  if (item.titulo !== TITULO || item.texto !== BORRADOR) fallos.push(`ítem guardado: ${JSON.stringify(item)}`);
+  if (item.etiqueta !== `Eliminar «${TITULO}»`) fallos.push(`aria-label de «Eliminar»: ${JSON.stringify(item.etiqueta)}`);
+  if (s.qr[s.qr.length - 1] !== `★ ${TITULO}`) fallos.push(`la fila del compositor termina en ${JSON.stringify(s.qr.slice(-1))}`);
+  if (!s.chipAlFinal) fallos.push("tras repintar la fila, «⚡ Mis respuestas» dejó de ser el último botón");
+  if (s.estado !== `Respuesta «${TITULO}» guardada.`) fallos.push(`aviso de guardado: ${JSON.stringify(s.estado)}`);
+  if (s.cuenta !== `(1 de ${MAX})` || s.vacio || s.titulo !== "" || s.texto !== "") fallos.push(`tras guardar: ${JSON.stringify({ cuenta: s.cuenta, vacio: s.vacio, titulo: s.titulo, texto: s.texto })}`);
+  if (s.foco !== "crm-resp-titulo") fallos.push(`tras guardar, el foco quedó en ${s.foco}`);
+  const api = await ctx.api("/crm/api/respuestas");
+  if (api.mias.length !== 1 || api.mias[0].title !== TITULO) fallos.push(`la API tras guardar: ${JSON.stringify(api.mias)}`);
+  await ctx.capturar("09b-mis-respuestas-guardada-1400");
+
+  // Escape cierra solo el diálogo: el chat y el cajón siguen abiertos y el foco vuelve a quien lo abrió.
+  // Con el foco en un BOTÓN del diálogo: en un campo de texto el chat ya ignora Escape por sí solo
+  // (se está escribiendo) y el guardia del diálogo no se pondría a prueba.
+  r = await ctx.cdp.evaluate(enPagina.enfocar, "#crm-resp-lista .resp-borrar");
+  if (r.error || !r.ok) throw new Error(r.error ?? "no se pudo enfocar «Eliminar»");
+  await teclaReal(ctx, "Escape", 27);
+  s = await esperarRespuestas(ctx, (e) => !e.abierto, "que Escape cierre «Mis respuestas»");
+  if (!s.chatAbierto) fallos.push("Escape en el diálogo cerró también el chat");
+  if (!(await ctx.cdp.evaluate(enPagina.panelEstado)).abierto) fallos.push("Escape en el diálogo cerró también el cajón del folio");
+  if (s.foco !== "crm-btn-respuestas-chat") fallos.push(`al cerrar, el foco quedó en ${s.foco} y no en el botón que lo abrió`);
+  // La respuesta nueva se usa como cualquier otra.
+  const qr = await ctx.cdp.evaluate(enPagina.pulsarQrTitulo, `★ ${TITULO}`);
+  if (qr.error || qr.texto !== BORRADOR) fallos.push(`usar la respuesta guardada: ${JSON.stringify(qr)}`);
+
+  // Desde la barra superior: sin borrador, y se elimina con confirm.
+  r = await ctx.cdp.evaluate(enPagina.activarBoton, "crm-btn-respuestas");
+  if (r.error) throw new Error(r.error);
+  s = await esperarRespuestas(ctx, (e) => e.abierto && !e.cargando && e.items.length === 1, "el diálogo abierto desde la barra superior");
+  if (s.texto !== "") fallos.push("abierto desde la barra superior, el texto no debía traer el borrador");
+  const desde = ctx.dialogos.length;
+  r = await ctx.cdp.evaluate(enPagina.eliminarRespuesta, TITULO);
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarDialogo({ desde, prefijo: `¿Eliminar «${TITULO}»?` });
+  s = await esperarRespuestas(ctx, (e) => e.items.length === 0 && e.qr.length === nQr, "que la respuesta salga de la lista y de la fila");
+  if (!s.vacio || s.cuenta !== `(0 de ${MAX})`) fallos.push(`tras eliminar: ${JSON.stringify({ vacio: s.vacio, cuenta: s.cuenta })}`);
+  if (s.estado !== `Respuesta «${TITULO}» eliminada.`) fallos.push(`aviso de baja: ${JSON.stringify(s.estado)}`);
+  if (s.foco !== "crm-resp-titulo") fallos.push(`tras eliminar la única, el foco quedó en ${s.foco} y no en el título`);
+  if ((await ctx.api("/crm/api/respuestas")).mias.length) fallos.push("la API sigue listando la respuesta eliminada");
+  r = await ctx.cdp.evaluate(enPagina.activarBoton, "crm-resp-cerrar");
+  if (r.error) throw new Error(r.error);
+  s = await esperarRespuestas(ctx, (e) => !e.abierto, "que ✕ cierre el diálogo");
+  if (s.foco !== "crm-btn-respuestas") fallos.push(`al cerrar con ✕, el foco quedó en ${s.foco}`);
+
+  // La ruta vieja aterriza con el diálogo abierto; al cerrarlo la URL queda limpia.
+  await navegar(ctx.cdp, ctx.base + "/replies");
+  s = await esperarRespuestas(ctx, (e) => e.abierto && !e.cargando, "/replies con «Mis respuestas» abierto");
+  if (s.url !== "/crm?respuestas=1") fallos.push(`/replies aterrizó en ${s.url}`);
+  await teclaReal(ctx, "Escape", 27);
+  s = await esperarRespuestas(ctx, (e) => !e.abierto, "cerrar el diálogo que abrió la ruta vieja");
+  if (s.url !== "/crm") fallos.push(`al cerrar, la URL quedó en ${s.url} (recargar lo reabriría)`);
+
+  // Teléfono: el diálogo cabe sin scroll horizontal.
+  await ctx.ancho(400, 800);
+  await ctx.abrirCrm("?respuestas=1");
+  s = await esperarRespuestas(ctx, (e) => e.abierto && !e.cargando, "el diálogo a 400 px");
+  if (s.scrollX || s.anchoDialogo > s.anchoVentana) fallos.push(`a 400 px: ${JSON.stringify({ scrollX: s.scrollX, dialogo: s.anchoDialogo, ventana: s.anchoVentana })}`);
+  await ctx.capturar("10-mis-respuestas-400");
+  await ctx.cdp.send("Emulation.clearDeviceMetricsOverride");
+
+  // Un colaborador sin conversaciones también llega desde la barra superior y guarda la suya.
+  await ctx.login("colab2");
+  await ctx.abrirCrm();
+  r = await ctx.cdp.evaluate(enPagina.activarBoton, "crm-btn-respuestas");
+  if (r.error) throw new Error(r.error);
+  await esperarRespuestas(ctx, (e) => e.abierto && !e.cargando, "«Mis respuestas» de colab2");
+  r = await ctx.cdp.evaluate(enPagina.guardarRespuesta, "Saludo de colab2", "Hola, soy tu asesora.");
+  if (r.error) throw new Error(r.error);
+  await esperarRespuestas(ctx, (e) => e.items.length === 1, "la respuesta de colab2 en su lista");
+  const suyas = await ctx.api("/crm/api/respuestas");
+  if (suyas.mias.length !== 1 || suyas.mias[0].title !== "Saludo de colab2") fallos.push(`la API de colab2: ${JSON.stringify(suyas.mias)}`);
+
+  return "guardada desde el chat con el borrador del compositor, aparece en la lista y en la fila sin recargar, se usa, Escape y ✕ cierran sin tocar el chat ni el cajón y devuelven el foco, se elimina con confirm; /replies abre el diálogo y limpia la URL al cerrar; cabe a 400 px; colab2 sin chats guarda la suya desde la barra";
+}
+
 function criterioConsola(recolector) {
   const titulo = "Consola y red limpias durante todo el recorrido";
   if (recolector.fallos.length) {
@@ -2091,6 +2325,7 @@ async function main() {
     await criterio(ctx, "24. Sin folio, admin que no atiende y resumen del cobro", criterioCajonPermisos);
     await criterio(ctx, "25. Transferir la solicitud desde el cajón", criterioCajonTransferir);
     await criterio(ctx, "26. Folios cerrados: salen del panel y viven en su pestaña", criterioFoliosCerrados);
+    await criterio(ctx, "27. Mis respuestas: guardar desde el chat, usar, eliminar y la ruta vieja /replies", criterioMisRespuestas);
     criterioConsola(recolector);
 
     const ok = resultados.filter((r) => r.ok).length;
