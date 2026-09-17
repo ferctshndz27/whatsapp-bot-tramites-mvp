@@ -1076,6 +1076,106 @@
 
 .crm .dlg-actions { margin-top: 12px; }
 
+/* ---------- mis respuestas (diálogo y botón del compositor) ---------- */
+
+/* Al final de la fila de respuestas rápidas: punteado para que no se confunda con
+   una respuesta más (esas, al pulsarlas, llenan el compositor). */
+.crm .qr-gestionar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: .25rem .9rem;
+  border: 1px dashed #8fa5a0;
+  border-radius: 999px;
+  color: var(--wa-teal);
+  font-size: .8rem;
+  font-weight: 600;
+}
+.crm .qr-gestionar:hover { background: var(--wa-soft); border-color: var(--wa-teal-2); }
+
+/* Sin tope de alto propio: el <dialog> modal ya se limita a la ventana y scrollea solo. */
+.crm .dlg-respuestas { width: min(92vw, 560px); }
+
+.crm .dlg-respuestas .dlg-cuerpo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+}
+
+/* .crm dialog form le da 20 px de relleno al único form del diálogo de etapas;
+   aquí el relleno ya lo pone .dlg-cuerpo. */
+.crm .dlg-respuestas form { gap: 6px; padding: 0; }
+
+.crm .dlg-cabeza { display: flex; align-items: center; gap: 8px; }
+.crm .dlg-cabeza h2 { flex: 1 1 auto; margin: 0; }
+
+.crm .dlg-cerrar {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: var(--wa-muted-2);
+  font-size: 16px;
+}
+.crm .dlg-cerrar:hover { background: var(--wa-panel); color: var(--wa-text); }
+
+.crm .dlg-nota { margin: 0; font-size: 13px; color: var(--wa-muted-2); }
+
+.crm .dlg-respuestas input,
+.crm .dlg-respuestas textarea {
+  width: 100%;
+  max-width: none;
+  min-height: 38px;
+  padding: 9px 10px;
+  border: 1px solid #cfd6d9;
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 14px;
+}
+.crm .dlg-respuestas textarea { min-height: 96px; resize: vertical; }
+
+.crm .dlg-respuestas .error { margin: 0; padding: .5rem .75rem; font-size: .85rem; }
+
+/* El teal oscuro y no el #128C7E: sobre blanco ese queda en 3.97:1. */
+.crm .dlg-estado { margin: 0; font-size: 13px; font-weight: 600; color: var(--wa-teal); }
+
+.crm .dlg-sub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wa-muted-2);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+
+.crm .resp-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crm .resp-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--wa-border);
+  border-radius: var(--wa-radius);
+  background: var(--wa-panel);
+}
+/* A 400 px el botón baja a su propio renglón en vez de estrujar el texto. */
+.crm .resp-main { flex: 1 1 220px; min-width: 0; }
+.crm .resp-titulo { display: block; overflow-wrap: anywhere; }
+.crm .resp-texto { margin: 2px 0 0; font-size: 13px; white-space: pre-line; overflow-wrap: anywhere; }
+.crm .resp-borrar { flex: 0 0 auto; margin-left: auto; }
+
 /* ---------- con el chat abierto ---------- */
 
 /* Por debajo de 1280 px bandeja y chat no caben juntos: se queda el chat. */

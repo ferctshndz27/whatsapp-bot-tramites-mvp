@@ -7,7 +7,7 @@ from app.clients import add_client_note, client_profile, delete_client_note
 from app.kb import knowledge_base
 from app.models import Client, ClientNote, FollowUp, SavedReply, Ticket, User
 from app.my import complete_followup, create_followup, my_day, set_estado
-from app.replies import replies_create, replies_delete
+from app.replies import borrar_respuesta, crear_respuesta
 
 PHONE = "5215500002222"
 
@@ -98,15 +98,16 @@ def test_saved_reply_create_and_owner_only_delete(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     _seed(session)
 
-    replies_create(_request("ana"), title="saludo", body="Hola, gracias por escribir")
+    # Las reglas viven en app/replies.py; la API del CRM (tests/test_crm.py) solo las expone.
+    crear_respuesta(session, "ana", "saludo", "Hola, gracias por escribir")
     reply = session.exec(select(SavedReply)).one()
     assert reply.username == "ana"
 
-    replies_delete(_request("bob"), reply.id)  # ajeno: no borra
+    assert borrar_respuesta(session, "bob", reply.id) is False  # ajeno: no borra
     session.refresh(reply)
     assert reply.habilitado is True
 
-    replies_delete(_request("ana"), reply.id)
+    assert borrar_respuesta(session, "ana", reply.id) is True
     session.refresh(reply)
     assert reply.habilitado is False
 

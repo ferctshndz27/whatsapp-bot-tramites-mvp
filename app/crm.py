@@ -33,6 +33,12 @@ por qué cargar cobros ni compañeros— y ESCRIBE por los mismos POST de app/da
 app/my.py, app/cobranza_panel.py y app/clients.py, llamados por fetch. Ni un endpoint de
 escritura nuevo: quien decide sigue siendo el dueño de cada regla.
 
+«Mis respuestas» —las respuestas guardadas personales que antes vivían en /replies— es un diálogo
+de esta página: la barra superior y la fila de respuestas rápidas del compositor lo abren, y lee
+y escribe por /crm/api/respuestas. Aquí SÍ hay endpoints de escritura propios, a diferencia del
+cajón: la vista que era dueña de los POST se retiró, y el diálogo necesita el motivo exacto de
+un rechazo (tope, campo vacío) que un 303 no trae. Las reglas siguen en app/replies.py.
+
 La API contesta 403 JSON a un anónimo (como el chat de equipo, app/team_chat.py) en vez de
 redirigir a /login: quien la llama es el JS de la página, no un navegador que pueda seguir la
 redirección con sentido.
@@ -74,7 +80,15 @@ from app.models import (
     User,
     utcnow,
 )
-from app.replies import personal_replies
+from app.replies import (
+    MAX_REPLIES,
+    MAX_TEXTO,
+    MAX_TITULO,
+    RespuestasAlTope,
+    borrar_respuesta,
+    crear_respuesta,
+    personal_replies,
+)
 from app.templating import local_dt, templates
 from app.utils import normalize_phone
 
@@ -493,7 +507,17 @@ def _respuestas_rapidas(session, user: str) -> list[dict]:
     return globales + mias
 
 
-def _datos_bootstrap(session, user: str, telefono: str | None) -> dict:
+def _mis_respuestas_json(session, user: str) -> dict:
+    """Lo que pinta el diálogo «Mis respuestas» y, de paso, la fila del compositor: así una
+    alta o una baja repinta las dos con una sola respuesta del servidor."""
+    return {
+        "mias": [{"id": r.id, "title": r.title, "text": r.body} for r in personal_replies(session, user)],
+        "max": MAX_REPLIES,
+        "respuestas_rapidas": _respuestas_rapidas(session, user),
+    }
+
+
+def _datos_bootstrap(session, user: str, telefono: str | None, abrir_respuestas: bool = False) -> dict:
     # Import diferido: app.my importa app.inbox al cargar (ver _ventana_json).
     from app.my import EXPIRING_HOURS
 
@@ -505,6 +529,9 @@ def _datos_bootstrap(session, user: str, telefono: str | None) -> dict:
         "ventana_horas": ventana.WINDOW_HOURS,
         "urgente_horas": EXPIRING_HOURS,
         "respuestas_rapidas": _respuestas_rapidas(session, user),
+        "abrir_respuestas": abrir_respuestas,
+        # Los largos de app/replies.py: la plantilla los pone de maxlength en el diálogo.
+        "respuestas_limites": {"max": MAX_REPLIES, "titulo": MAX_TITULO, "texto": MAX_TEXTO},
     }
 
 
@@ -513,15 +540,16 @@ def _datos_bootstrap(session, user: str, telefono: str | None) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("/crm")
-def crm_page(request: Request, chat: str = ""):
+def crm_page(request: Request, chat: str = "", respuestas: str = ""):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     # `chat` abre esa conversación al cargar. Solo dígitos: el JS lo mete en una URL de la
     # API y el alcance lo comprueba el endpoint del chat, no esta página.
     telefono = chat if re.fullmatch(r"\d{8,15}", chat or "") else None
+    # `respuestas=1` abre «Mis respuestas» al cargar: es a donde reenvía la ruta vieja /replies.
     with get_session() as session:
-        datos = _datos_bootstrap(session, user, telefono)
+        datos = _datos_bootstrap(session, user, telefono, abrir_respuestas=respuestas == "1")
     return templates.TemplateResponse(
         request, "crm.html", {"request": request, "user": user, "datos": datos}
     )
@@ -785,6 +813,50 @@ def crm_chat(request: Request, phone: str):
             "bloqueado": contacto["bloqueado"],
             "respuestas_rapidas": _respuestas_rapidas(session, user),
         })
+
+
+# ---------------------------------------------------------------------------
+# API: mis respuestas (el diálogo que sustituye a /replies)
+# ---------------------------------------------------------------------------
+
+# Son de quien las guarda y de nadie más, admins incluidos: no hay alcance por oficina que
+# aplicar, cada endpoint filtra por el usuario de la sesión.
+
+@router.get("/crm/api/respuestas")
+def crm_respuestas(request: Request):
+    user = _current_user(request)
+    if not user:
+        return _sin_sesion()
+    with get_session() as session:
+        return JSONResponse(_mis_respuestas_json(session, user))
+
+
+@router.post("/crm/api/respuestas")
+def crm_respuesta_crear(request: Request, payload: dict = Body(default={})):
+    user = _current_user(request)
+    if not user:
+        return _sin_sesion()
+    with get_session() as session:
+        try:
+            respuesta = crear_respuesta(session, user, payload.get("title"), payload.get("text"))
+        except RespuestasAlTope as e:
+            return _error(409, str(e))
+        except ValueError as e:
+            return _error(400, str(e))
+        datos = _mis_respuestas_json(session, user)
+        datos["creada"] = respuesta.id
+        return JSONResponse(datos, status_code=201)
+
+
+@router.delete("/crm/api/respuestas/{reply_id}")
+def crm_respuesta_borrar(request: Request, reply_id: int):
+    user = _current_user(request)
+    if not user:
+        return _sin_sesion()
+    with get_session() as session:
+        if not borrar_respuesta(session, user, reply_id):
+            return _error(404, "Esa respuesta ya no existe")
+        return JSONResponse(_mis_respuestas_json(session, user))
 
 
 # ---------------------------------------------------------------------------

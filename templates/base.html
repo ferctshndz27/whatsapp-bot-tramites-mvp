@@ -34,7 +34,8 @@
         <a href="/clients" {% if request.url.path.startswith('/clients') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👤</span>Clientes</a>
         <a href="/team" {% if request.url.path.startswith('/team') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💬</span>Equipo</a>
         <a href="/activity" {% if request.url.path.startswith('/activity') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📈</span>Actividad</a>
-        <a href="/replies" {% if request.url.path.startswith('/replies') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">⚡</span>Respuestas</a>
+        {# Sin entrada «Respuestas»: las guardadas se administran dentro de WhatsApp (/crm,
+           diálogo «Mis respuestas») y /replies solo reenvía ahí. #}
         <a href="/kb" {% if request.url.path.startswith('/kb') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📚</span>Guía de trámites</a>
         {% if is_admin(user) %}
         <span class="nav-label">Administración</span>

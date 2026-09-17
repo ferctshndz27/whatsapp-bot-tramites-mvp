@@ -20,6 +20,10 @@ oficina en Puebla (jefe2) y un colaborador por oficina. Aquí se afirma:
 - el panel del folio (el cajón del chat) trae folio, permisos, etiquetas, notas, cobro,
   seguimiento y compañeros con la MISMA visibilidad que el chat, y sus permisos son los de
   los endpoints —no los de ticket_detail.html, que esconde de más.
+- «Mis respuestas» (antes la vista /replies) se guarda, lista y elimina por
+  /crm/api/respuestas: son solo de quien las guarda —ni el admin global las ve ni las borra—,
+  respetan el tope y los largos de app/replies.py, cada cambio devuelve ya la fila del
+  compositor, y /replies solo reenvía a /crm?respuestas=1, que abre el diálogo al cargar.
 """
 
 from datetime import timedelta
@@ -32,8 +36,10 @@ from sqlmodel import Session, create_engine, select
 
 import app.db as db
 from app.config import settings
+from app.inbox import QUICK_REPLIES
 from app.main import app
 import app.crm as crm
+from app.replies import MAX_REPLIES, MAX_TEXTO, MAX_TITULO
 from app.models import (
     ETAPAS_CRM_DEFAULT,
     Client,
@@ -46,6 +52,7 @@ from app.models import (
     Label,
     Message,
     Office,
+    SavedReply,
     Ticket,
     TicketLabel,
     TicketStatus,
@@ -166,6 +173,8 @@ def test_la_pagina_abre_para_cualquier_usuario_con_sesion_y_no_para_un_anonimo()
         r = _sesion(quien).get("/crm")
         assert r.status_code == 200, quien
         assert 'id="crm-datos"' in r.text and "crm.js" in r.text
+        # La pestaña del navegador se llama como la entrada del menú.
+        assert "<title>WhatsApp</title>" in r.text
     anonimo = TestClient(app, base_url="https://testserver")
     r = anonimo.get("/crm", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/login"
@@ -185,6 +194,10 @@ def test_la_api_contesta_403_json_a_un_anonimo():
         ("POST", "/crm/api/etapas"),
         ("PUT", f"/crm/api/contactos/{ANA}/etapa"),
         ("POST", "/crm/api/contactos"),
+        ("GET", "/crm/api/respuestas"),
+        ("POST", "/crm/api/respuestas"),
+        # DELETE no entra en el barrido de anónimos de tests/test_authz.py (solo GET y POST).
+        ("DELETE", "/crm/api/respuestas/1"),
     ):
         r = anonimo.request(metodo, ruta, json={}, follow_redirects=False)
         assert r.status_code == 403, (metodo, ruta, r.status_code)
@@ -815,3 +828,126 @@ def test_las_cerradas_se_filtran_antes_del_tope_de_contactos(monkeypatch):
     telefonos = _telefonos(_tablero("jefa1"))
     assert telefonos and zoe not in telefonos
     assert _telefonos(_tablero("jefa1", cerradas=1)) == [zoe]
+
+
+# ---------------------------------------------------------------------------
+# Mis respuestas: el diálogo que sustituye a la vista /replies
+# ---------------------------------------------------------------------------
+
+def _guardar(quien: str, titulo: str = "Saludo", texto: str = "Hola, ¿en qué te ayudo?") -> dict:
+    r = _sesion(quien).post("/crm/api/respuestas", json={"title": titulo, "text": texto})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _guardadas(username: str) -> list[SavedReply]:
+    """Todas las filas de esa persona, también las dadas de baja."""
+    with Session(db.engine) as s:
+        return s.exec(select(SavedReply).where(SavedReply.username == username)).all()
+
+
+def _datos_de(html: str) -> dict:
+    import json
+    import re
+
+    return json.loads(re.search(r'id="crm-datos">(.*?)</script>', html, re.S).group(1))
+
+
+def test_guardar_una_respuesta_la_pone_en_el_dialogo_y_en_el_compositor():
+    """El JS repinta la lista del diálogo Y la fila de respuestas rápidas con esta sola
+    respuesta, sin recargar; y el chat, que se sondea cada 8 s, ya la trae igual."""
+    d = _guardar("colab1", "Pedir CURP", "Para seguir necesito tu CURP.")
+    assert [(r["title"], r["text"]) for r in d["mias"]] == [("Pedir CURP", "Para seguir necesito tu CURP.")]
+    assert d["creada"] == d["mias"][0]["id"] and d["max"] == MAX_REPLIES
+    assert len(d["respuestas_rapidas"]) == len(QUICK_REPLIES) + 1, "las del negocio van completas"
+    assert d["respuestas_rapidas"][-1] == {"title": "★ Pedir CURP", "text": "Para seguir necesito tu CURP."}
+    colab = _sesion("colab1")
+    assert colab.get(f"/crm/api/chat/{ANA}").json()["respuestas_rapidas"] == d["respuestas_rapidas"]
+    lista = colab.get("/crm/api/respuestas").json()
+    assert lista == {"mias": d["mias"], "max": MAX_REPLIES, "respuestas_rapidas": d["respuestas_rapidas"]}
+
+
+def test_mis_respuestas_son_solo_de_quien_las_guarda_aunque_mire_el_admin_global():
+    """Ni el admin global las lista ni las borra. Contesta el mismo 404 que a una que no
+    existe, para no confirmar que la de otra persona está ahí."""
+    rid = _guardar("colab1")["creada"]
+    jefa = _sesion("jefa1")
+    assert jefa.get("/crm/api/respuestas").json()["mias"] == []
+    rapidas = jefa.get(f"/crm/api/chat/{ANA}").json()["respuestas_rapidas"]
+    assert not any(q["title"].startswith("★") for q in rapidas), "el chat del admin trae la de colab1"
+    r = jefa.delete(f"/crm/api/respuestas/{rid}")
+    assert r.status_code == 404 and r.json() == {"error": "Esa respuesta ya no existe"}
+    assert _guardadas("colab1")[0].habilitado is True, "el admin borró la respuesta de otra persona"
+    # Control positivo: su dueña sí la borra, y la segunda vez ya no existe.
+    colab = _sesion("colab1")
+    r = colab.delete(f"/crm/api/respuestas/{rid}")
+    assert r.status_code == 200 and r.json()["mias"] == []
+    assert not any(q["title"].startswith("★") for q in r.json()["respuestas_rapidas"])
+    assert _guardadas("colab1")[0].habilitado is False, "la baja es lógica: la fila sigue para el espejo"
+    assert colab.delete(f"/crm/api/respuestas/{rid}").status_code == 404
+    assert colab.delete("/crm/api/respuestas/999999").status_code == 404
+
+
+@pytest.mark.parametrize("cuerpo", [
+    {"title": "", "text": "Hola"},
+    {"title": "Saludo", "text": "   "},
+    {"title": None, "text": "Hola"},
+    {"title": ["Saludo"], "text": "Hola"},
+    {},
+])
+def test_guardar_rechaza_titulo_o_texto_vacios_sin_crear_nada(cuerpo):
+    r = _sesion("colab1").post("/crm/api/respuestas", json=cuerpo)
+    assert r.status_code == 400 and r.json() == {"error": "Título y texto son obligatorios."}
+    assert _guardadas("colab1") == []
+
+
+def test_guardar_recorta_los_largos_como_lo_hacia_el_formulario_viejo():
+    d = _guardar("colab1", "  " + "t" * (MAX_TITULO + 50) + "  ", "x" * (MAX_TEXTO + 500))
+    fila = _guardadas("colab1")[0]
+    assert (len(fila.title), len(fila.body)) == (MAX_TITULO, MAX_TEXTO)
+    assert d["mias"][0]["title"] == "t" * MAX_TITULO
+
+
+def test_el_tope_cuenta_solo_las_vigentes_y_contesta_409_sin_guardar_otra():
+    with Session(db.engine) as s:
+        for i in range(MAX_REPLIES - 1):
+            s.add(SavedReply(username="colab1", title=f"r{i:02d}", body="hola", office_id=1))
+        s.add(SavedReply(username="colab1", title="vieja", body="hola", office_id=1, habilitado=False))
+        s.commit()
+    _guardar("colab1", "la que cabe")  # la dada de baja no ocupa lugar
+    r = _sesion("colab1").post("/crm/api/respuestas", json={"title": "una más", "text": "hola"})
+    assert r.status_code == 409
+    assert r.json() == {"error": f"Máximo {MAX_REPLIES} respuestas guardadas — elimina alguna."}
+    assert len(_guardadas("colab1")) == MAX_REPLIES + 1
+    _guardar("jefa1")  # el tope es por persona
+
+
+def test_la_ruta_vieja_de_respuestas_reenvia_al_dialogo_del_crm():
+    """/replies ya no pinta nada: reenvía a /crm?respuestas=1, que abre «Mis respuestas» al
+    cargar. Su formulario se retiró: nadie guarda respuestas por otro camino."""
+    colab = _sesion("colab1")
+    r = colab.get("/replies", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/crm?respuestas=1"
+    anonimo = TestClient(app, base_url="https://testserver")
+    assert anonimo.get("/replies", follow_redirects=False).headers["location"] == "/login"
+    assert colab.post("/replies", data={"title": "x", "body": "y"}).status_code == 405
+    assert _guardadas("colab1") == []
+
+
+def test_la_pagina_trae_mis_respuestas_y_las_abre_con_el_parametro():
+    colab = _sesion("colab1")
+    html = colab.get("/crm").text
+    d = _datos_de(html)
+    assert d["abrir_respuestas"] is False
+    assert d["respuestas_limites"] == {"max": MAX_REPLIES, "titulo": MAX_TITULO, "texto": MAX_TEXTO}
+    # Los dos accesos, el diálogo y su plantilla; los largos son los de app/replies.py.
+    for marca in (
+        'id="crm-btn-respuestas"', 'id="crm-btn-respuestas-chat"',
+        'id="crm-dlg-respuestas"', 'id="crm-tpl-respuesta"',
+        f'id="crm-resp-titulo" name="title" type="text" maxlength="{MAX_TITULO}"',
+        f'id="crm-resp-texto" name="text" maxlength="{MAX_TEXTO}"',
+    ):
+        assert marca in html, marca
+    assert 'href="/replies"' not in html, "el menú lateral sigue llevando a la vista retirada"
+    assert _datos_de(colab.get("/crm?respuestas=1").text)["abrir_respuestas"] is True
+    assert _datos_de(colab.get("/crm?respuestas=<script>").text)["abrir_respuestas"] is False

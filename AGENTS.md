@@ -270,9 +270,15 @@ lo trata como éxito y devuelve al tablero.
 **Enviar, reactivar el bot, bloquear y ocultar mensajes siguen siendo los endpoints POST de
 `app/inbox.py`**, llamados por `fetch` desde el JS. El chat viejo ya no existe (fase B hecha):
 `GET /inbox/{phone}` solo reenvía a `/crm?chat=` conservando `?err=`, y las tarjetas de
-Solicitudes, Mi día, la ficha del cliente y el folio abren el chat del CRM. El JS no tiene pruebas
+Solicitudes, Mi día, la ficha del cliente y el folio abren el chat del CRM.
+**«Mis respuestas»** (las guardadas personales, antes la vista `/replies`) es un `<dialog>` del CRM
+que abren la barra superior y el final de la fila de respuestas rápidas; lee y escribe por
+`/crm/api/respuestas`, que devuelve también la fila del compositor para repintarla sin recargar.
+Las reglas —largos, tope, dueño, oficina de nacimiento— siguen en `app/replies.py`; son de quien
+las guarda y de nadie más (ni el admin global las ve), y `GET /replies` solo reenvía a
+`/crm?respuestas=1`. El JS no tiene pruebas
 unitarias: su verificación es el juez de navegador `node scripts/qa_crm_navegador.mjs` (uvicorn con
-una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 30 criterios de
+una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 31 criterios de
 aceptación como admin global, colaborador y admin de oficina; termina en 1 si alguno falla y
 `--capturas=DIR` guarda capturas de pantalla). Córrelo tras tocar `crm.js`, `crm-panel.js`,
 `crm.html`, `crm.css` o `crm-panel.css`.
