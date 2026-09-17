@@ -33,6 +33,8 @@ const CLAVE = "clave-qa-123";
 const ANA = "525500000011";
 const BETO = "525500000012";
 const DIEGO = "525500000013";
+// Filtro de la pestaña «Folios cerrados» en static/js/crm.js.
+const CERRADAS = "__cerradas__";
 const CARLA = "522200000021";
 const ALTA = { name: "Prueba Alta QA", phone: "+52 55 0000 9999", canonico: "525500009999" };
 // Peticiones cuyo 404 es esperado y no cuenta como fallo.
@@ -957,7 +959,10 @@ async function criterioCarga(ctx) {
   const fallos = [];
   if (t.columnas !== api.etapas.length) fallos.push(`${t.columnas} columnas en el DOM vs ${api.etapas.length} etapas en la API`);
   if (t.tarjetas !== api.contactos.length) fallos.push(`${t.tarjetas} tarjetas vs ${api.contactos.length} contactos`);
-  if (t.tabs.length !== api.etapas.length + 1) fallos.push(`${t.tabs.length} pestañas (esperaba ${api.etapas.length + 1})`);
+  // «Todos», una por etapa y «Folios cerrados» al final, sin conteo mientras no se abre.
+  if (t.tabs.length !== api.etapas.length + 2) fallos.push(`${t.tabs.length} pestañas (esperaba ${api.etapas.length + 2})`);
+  const ultima = t.tabs[t.tabs.length - 1];
+  if (ultima?.nombre !== "Folios cerrados" || ultima?.conteo !== "") fallos.push(`la última pestaña dice ${JSON.stringify(ultima)}`);
   if (t.tabs[0]?.nombre !== "Todos" || t.tabs[0]?.conteo !== String(api.total)) fallos.push(`la pestaña «Todos» dice ${JSON.stringify(t.tabs[0])}`);
   if (!mismoConjunto(t.bandeja, api.contactos.map((c) => c.phone))) fallos.push(`la bandeja trae ${JSON.stringify(t.bandeja)}`);
   if (!t.nuevaEtapa) fallos.push("el admin global no ve el botón «Nueva etapa»");
@@ -1002,12 +1007,9 @@ async function criterioTarjetas(ctx) {
     if (ana.preview !== "Y ¿cuánto tarda?") fallos.push(`preview de Ana: ${JSON.stringify(ana.preview)}`);
     if (ana.telefono !== "+52 55 0000 0011") fallos.push(`teléfono de Ana: ${JSON.stringify(ana.telefono)}`);
   }
-  const diego = tarjetas.find((x) => x.id === DIEGO);
-  if (diego) {
-    if (!diego.badges.includes("caducó")) fallos.push(`Diego sin «caducó»: ${JSON.stringify(diego.badges)}`);
-    if (!diego.badges.includes("cerrado · jefa1")) fallos.push(`Diego sin «cerrado · jefa1»: ${JSON.stringify(diego.badges)}`);
-    if (diego.ticks !== "✓✓ " || diego.ticksRead) fallos.push(`palomitas de Diego (delivered): ${JSON.stringify([diego.ticks, diego.ticksRead])}`);
-  }
+  // Diego tiene su único folio cerrado: ya no está en el panel. Sus insignias y palomitas
+  // se revisan donde vive ahora, en «Folios cerrados» (criterio 26).
+  if (tarjetas.some((x) => x.id === DIEGO)) fallos.push("Diego, con su folio cerrado, sigue en el tablero");
   const beto = tarjetas.find((x) => x.id === BETO);
   if (beto && beto.preview !== "Sin mensajes") fallos.push(`preview de Beto: ${JSON.stringify(beto.preview)}`);
   const felipe = tarjetas.find((x) => x.id === "525500000015");
@@ -1253,18 +1255,33 @@ async function criterioVentanaCerrada(ctx) {
   if (!beto.badges.includes("ventana de 24 h cerrada")) fallos.push(`Beto: insignias ${JSON.stringify(beto.badges)}`);
   if (!beto.badges.includes("bot activo")) fallos.push("Beto: sin «bot activo»");
   if (beto.botones.some((b) => b.clase.includes("chat-bot-on"))) fallos.push("Beto: no debía haber «Reactivar bot»");
-  // Diego: la ventana caducó (variante «cerrada»).
-  r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, DIEGO, "bandeja");
-  if (r.error) throw new Error(r.error);
-  const diego = await waitFor(async () => {
-    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
-    return s.nombre === "Diego Solís" && s.burbujas.length === 2 ? s : null;
-  }, { timeout: 6000, label: "el chat de Diego" });
-  if (diego.composerVisible || !diego.bannerVisible) fallos.push("Diego: compositor visible o aviso oculto");
-  if (diego.siNunca || !diego.siCerrada) fallos.push(`Diego: variante equivocada del aviso ${JSON.stringify([diego.siNunca, diego.siCerrada])}`);
-  await ctx.capturar("03-chat-diego-ventana-cerrada-1400");
-  if (!diego.burbujas[1].meta.includes("· delivered")) fallos.push(`Diego: meta del saliente ${JSON.stringify(diego.burbujas[1].meta)}`);
-  if (!diego.burbujas[1].eliminar) fallos.push("Diego: el saliente de jefa1 debía traer «eliminar» (es de quien tiene la sesión)");
+  // Diego: la ventana caducó (variante «cerrada»). Su único folio está cerrado, así que ya no
+  // está en el panel: vive en «Folios cerrados» y se abre desde esa pestaña.
+  if (!(await ctx.cdp.evaluate(enPagina.pulsarTab, CERRADAS))) throw new Error("no hay pestaña «Folios cerrados»");
+  try {
+    await waitFor(async () => {
+      const e = await ctx.cdp.evaluate(enPagina.estadoTab, CERRADAS);
+      return e.items.includes(DIEGO) ? true : null;
+    }, { timeout: 6000, label: "a Diego en «Folios cerrados»" });
+    r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, DIEGO, "bandeja");
+    if (r.error) throw new Error(r.error);
+    const diego = await waitFor(async () => {
+      const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+      return s.nombre === "Diego Solís" && s.burbujas.length === 2 ? s : null;
+    }, { timeout: 6000, label: "el chat de Diego" });
+    if (diego.composerVisible || !diego.bannerVisible) fallos.push("Diego: compositor visible o aviso oculto");
+    if (diego.siNunca || !diego.siCerrada) fallos.push(`Diego: variante equivocada del aviso ${JSON.stringify([diego.siNunca, diego.siCerrada])}`);
+    await ctx.capturar("03-chat-diego-ventana-cerrada-1400");
+    if (!diego.burbujas[1].meta.includes("· delivered")) fallos.push(`Diego: meta del saliente ${JSON.stringify(diego.burbujas[1].meta)}`);
+    if (!diego.burbujas[1].eliminar) fallos.push("Diego: el saliente de jefa1 debía traer «eliminar» (es de quien tiene la sesión)");
+  } finally {
+    // Los criterios siguientes trabajan sobre la cola abierta.
+    await ctx.cdp.evaluate(enPagina.pulsarTab, "all");
+    await waitFor(async () => {
+      const e = await ctx.cdp.evaluate(enPagina.estadoTab, "all");
+      return e.items.includes(ANA) ? true : null;
+    }, { timeout: 6000, label: "volver a «Todos»" }).catch(() => null);
+  }
   if (fallos.length) throw new Error(fallos.join("; "));
   return "Beto (nunca escribió) y Diego (ventana caducada) muestran el aviso correcto en lugar del compositor";
 }
@@ -1923,6 +1940,70 @@ async function criterioCajonTransferir(ctx) {
   return "colab1 transfiere su solicitud a jefa1 con nota de contexto, pierde el acceso y el CRM lo devuelve al tablero; jefa1 la recibe con la nota";
 }
 
+async function criterioFoliosCerrados(ctx) {
+  // Tras el criterio 25 el folio de Ana es de jefa1 y sigue abierto (tiene un cobro vivo).
+  await ctx.login("jefa1");
+  await abrirChatDe(ctx, ANA);
+  await esperarCajon(ctx);
+  const fallos = [];
+
+  // Terminar la solicitud desde el cajón la saca del panel y devuelve al tablero.
+  await abrirSeccion(ctx, "gestion");
+  const desde = ctx.dialogos.length;
+  await ctx.cdp.evaluate(enPagina.ocultarToast);
+  const r = await ctx.cdp.evaluate(enPagina.panelBoton, "crm-g-terminar");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarDialogo({ desde, prefijo: "OJO: este cliente tiene un cobro SIN LIQUIDAR" });
+  await ctx.esperarToast("Solicitud terminada", 10000);
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    const t = await ctx.cdp.evaluate(enPagina.estadoTab, "all");
+    return !e.abierto && t.items.length > 0 && !t.items.includes(ANA) ? true : null;
+  }, { timeout: 10000, label: "que el chat se cierre y Ana salga de la bandeja" });
+  const api = await ctx.tablero();
+  if (api.contactos.some((c) => c.phone === ANA)) fallos.push("la API del tablero todavía trae a Ana");
+  if (api.contactos.some((c) => c.phone === DIEGO)) fallos.push("la API del tablero trae a Diego, con su folio cerrado");
+
+  // «Folios cerrados»: ahí viven Ana y Diego, con la insignia de su folio.
+  if (!(await ctx.cdp.evaluate(enPagina.pulsarTab, CERRADAS))) throw new Error("no hay pestaña «Folios cerrados»");
+  try {
+    const tab = await waitFor(async () => {
+      const e = await ctx.cdp.evaluate(enPagina.estadoTab, CERRADAS);
+      return mismoConjunto(e.items, [ANA, DIEGO]) ? e : null;
+    }, { timeout: 8000, label: "a Ana y Diego en «Folios cerrados»" });
+    if (!tab.clase || !tab.aria) fallos.push("la pestaña «Folios cerrados» no quedó activa");
+    const tarjetas = await ctx.cdp.evaluate(enPagina.tarjetas);
+    const diego = tarjetas.find((x) => x.id === DIEGO);
+    if (!diego) {
+      fallos.push("Diego no está en el tablero de «Folios cerrados»");
+    } else {
+      if (!diego.badges.includes("caducó")) fallos.push(`Diego sin «caducó»: ${JSON.stringify(diego.badges)}`);
+      if (!diego.badges.includes("cerrado · jefa1")) fallos.push(`Diego sin «cerrado · jefa1»: ${JSON.stringify(diego.badges)}`);
+      if (diego.ticks !== "✓✓ " || diego.ticksRead) fallos.push(`palomitas de Diego (delivered): ${JSON.stringify([diego.ticks, diego.ticksRead])}`);
+    }
+    // Ocultar no es prohibir: una conversación cerrada se sigue abriendo desde aquí.
+    const abrir = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "bandeja");
+    if (abrir.error) throw new Error(abrir.error);
+    await waitFor(async () => {
+      const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+      return e.abierto && e.nombre === "Ana Lucía Ramírez" && e.burbujas.length > 0 ? true : null;
+    }, { timeout: 8000, label: "el chat de Ana desde «Folios cerrados»" });
+    await ctx.capturar("12-folios-cerrados");
+    await ctx.cdp.evaluate(enPagina.cerrarChat, "x");
+  } finally {
+    await ctx.cdp.evaluate(enPagina.pulsarTab, "all");
+  }
+
+  // De vuelta en «Todos», ninguna de las dos.
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoTab, "all");
+    return e.items.length > 0 && !e.items.includes(ANA) && !e.items.includes(DIEGO) ? true : null;
+  }, { timeout: 8000, label: "que «Todos» vuelva a la cola abierta" });
+
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "terminar la solicitud desde el cajón cierra el chat y la saca del panel; «Folios cerrados» trae a Ana y a Diego con sus insignias y se abren desde ahí; «Todos» vuelve a la cola abierta";
+}
+
 function criterioConsola(recolector) {
   const titulo = "Consola y red limpias durante todo el recorrido";
   if (recolector.fallos.length) {
@@ -2009,6 +2090,7 @@ async function main() {
     await criterio(ctx, "23. Notas del folio, del cliente y recordatorio", criterioCajonNotas);
     await criterio(ctx, "24. Sin folio, admin que no atiende y resumen del cobro", criterioCajonPermisos);
     await criterio(ctx, "25. Transferir la solicitud desde el cajón", criterioCajonTransferir);
+    await criterio(ctx, "26. Folios cerrados: salen del panel y viven en su pestaña", criterioFoliosCerrados);
     criterioConsola(recolector);
 
     const ok = resultados.filter((r) => r.ok).length;
