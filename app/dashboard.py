@@ -453,26 +453,32 @@ def ticket_list(
     conv_counts = conversation_counts(conversaciones)
     conversaciones = filter_conversations(conversaciones, conv)
 
+    # Un folio cerrado solo se lista en su chip, «cerrado» (regla del operador,
+    # 2026-09-16): en «todas», «sin asignar», «escalados» o una etiqueta sola se
+    # revolvía con lo que todavía hay que atender. Cerrar no apaga `escalado`,
+    # así que sin esto «escalados» también los seguía arrastrando.
+    abiertos = [t for t in all_tickets if t.status != TicketStatus.CERRADO]
+
     stats = {
         "total": len(all_tickets),
         "nuevos": sum(1 for t in all_tickets if t.status == TicketStatus.NUEVO),
         "activos": sum(1 for t in all_tickets if t.status in (TicketStatus.TOMADO, TicketStatus.EN_PROCESO)),
-        "escalados": sum(1 for t in all_tickets if t.escalado),
+        "escalados": sum(1 for t in abiertos if t.escalado),
     }
-    # Conteo de cada chip de folio, siempre sobre el total: el número dice
-    # cuántos hay, no cuántos quedan dentro del filtro activo — si se contaran
-    # sobre lo ya filtrado, todos los chips menos el activo dirían 0.
+    # Conteo de cada chip de folio, nunca sobre el filtro activo: el número dice
+    # cuántos hay, no cuántos quedan dentro del filtro — si se contaran sobre lo
+    # ya filtrado, todos los chips menos el activo dirían 0.
     ticket_counts = {s.value: 0 for s in TicketStatus}
     for t in all_tickets:
         ticket_counts[t.status.value] += 1
-    ticket_counts["todas"] = len(all_tickets)
-    ticket_counts["sin_asignar"] = sum(1 for t in all_tickets if t.assigned_to is None)
+    ticket_counts["todas"] = len(abiertos)
+    ticket_counts["sin_asignar"] = sum(1 for t in abiertos if t.assigned_to is None)
     # La bandera escalado cruza estados (un folio escalado puede estar nuevo,
     # tomado o en proceso): la tarjeta de arriba ya la contaba, pero sin chip
     # no había forma de LISTAR esos folios.
     ticket_counts["escalados"] = stats["escalados"]
 
-    tickets = all_tickets
+    tickets = all_tickets if status == TicketStatus.CERRADO.value else abiertos
     if status == "escalados":
         tickets = [t for t in tickets if t.escalado]
     elif status:
@@ -481,6 +487,18 @@ def ticket_list(
         tickets = [t for t in tickets if t.assigned_to is None]
     if ids_con_etiqueta is not None:
         tickets = [t for t in tickets if t.id in ids_con_etiqueta]
+    if not status and not assigned:
+        # «todas» abre con las nuevas sin dueño (regla del operador, 2026-09-16):
+        # por fecha, una nueva que nadie tomó quedaba debajo de las ya tomadas,
+        # a veces en otra página. Cuentan las dos condiciones: la nueva que
+        # repartió el bot ya tiene dueño, y la tomada que perdió al suyo en
+        # users.mover_de_oficina no es nueva. sorted() es estable, así que cada
+        # grupo conserva la más reciente primero; va antes de paginar para que
+        # encabecen la página 1.
+        tickets = sorted(
+            tickets,
+            key=lambda t: 0 if t.status == TicketStatus.NUEVO and t.assigned_to is None else 1,
+        )
 
     # ponytail: paginación en memoria — el filtrado ya trae todo para las
     # stats; pasar a OFFSET/LIMIT en SQL si los folios crecen a decenas de miles.
