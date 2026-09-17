@@ -181,7 +181,8 @@ def con_folios(http):
 
 @pytest.mark.parametrize(
     "etiqueta,esperado",
-    [("todas", 4), ("nuevo", 2), ("tomado", 1), ("en proceso", 0), ("cerrado", 1),
+    # «todas» no cuenta el cerrado: vive solo en su chip (test_solicitudes_todas.py).
+    [("todas", 3), ("nuevo", 2), ("tomado", 1), ("en proceso", 0), ("cerrado", 1),
      ("sin asignar", 2)],
 )
 def test_cada_chip_de_folio_muestra_su_conteo(con_folios, etiqueta, esperado):
@@ -193,7 +194,7 @@ def test_cada_chip_de_folio_muestra_su_conteo(con_folios, etiqueta, esperado):
 
 @pytest.mark.parametrize(
     "url,esperado",
-    [("/", 4), ("/?status=nuevo", 2), ("/?status=tomado", 1), ("/?status=cerrado", 1),
+    [("/", 3), ("/?status=nuevo", 2), ("/?status=tomado", 1), ("/?status=cerrado", 1),
      ("/?assigned=none", 2)],
 )
 def test_cada_chip_de_folio_filtra_lo_que_promete(con_folios, url, esperado):
