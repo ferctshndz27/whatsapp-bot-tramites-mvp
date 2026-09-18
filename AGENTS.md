@@ -217,7 +217,11 @@ human approves them in `/unmatched`. A mis-learned synonym would mis-quote a rea
 `app/catalog.py` is SQLite-backed (`CatalogCategory`, `CatalogService`, with field-level auditing in
 `CatalogAudit`). `app/catalog.json` (and `/data/catalog.json` in prod) is **only the one-time seed**
 loaded on first access when the tables are empty — editing the JSON does nothing after seeding. Edits
-go through the `/catalog` admin grid, which writes audit rows. `PAGE_SIZE = 8` so a category's
+go through the `/catalog` grid, which writes audit rows — open to **every collaborator** since
+2026-09-18, not just admins. The catalog stays **global** (one for all offices); what is per person is
+`CatalogAsesor`: each collaborator declares in `/catalog` which products they attend, and
+`asignacion.elegir` narrows its pool to them before the sticky rule and the load split (nobody
+subscribed = the pool of always). `PAGE_SIZE = 8` so a category's
 services fit one native WhatsApp list (8 rows + "Ver más" + "Volver" ≤ 10-row cap).
 
 ### The MSSQL mirror — the main footgun

@@ -49,6 +49,7 @@
           <th>Servicio</th>
           <th class="col-price">Precio</th>
           <th>Sinónimos <span class="u-cursor-help" title="Frases con que los clientes lo piden; el bot las usa para entender.">ⓘ</span></th>
+          <th class="col-asesores">Lo atienden <span class="u-cursor-help" title="La asignación le manda los folios de este producto a quien lo atiende, dentro de su oficina.">ⓘ</span></th>
           <th class="col-state">Estado</th>
           <th class="col-actions">Acciones</th>
         </tr>
@@ -68,6 +69,24 @@
             <input type="text" form="f-{{ svc.id }}" name="synonyms" value="{{ svc.synonyms }}"
               placeholder="separados, por, comas" aria-label="Sinónimos de {{ svc.name }}">
           </td>
+          <td class="col-asesores">
+            {% set yo = user in svc.asesores %}
+            {% if svc.asesores %}
+            <ul class="asesores" aria-label="Quién atiende {{ svc.name }}">
+              {% for a in svc.asesores %}<li class="badge{% if a == user %} asesor-yo{% endif %}">{{ a }}</li>{% endfor %}
+            </ul>
+            {% else %}
+            <span class="u-c-text-muted u-fs-0_85rem">nadie aún</span>
+            {% endif %}
+            {# Fija el estado, no lo alterna: un doble clic no deshace lo que se hizo. #}
+            <form method="post" action="/catalog/services/{{ svc.id }}/atencion">
+              <input type="hidden" name="atiende" value="{{ 'no' if yo else 'si' }}">
+              <button type="submit" class="btn-sm" aria-pressed="{{ 'true' if yo else 'false' }}"
+                aria-label="{{ 'Dejar de atenderlo' if yo else 'Lo atiendo' }}: {{ svc.name }}">
+                {{ 'Dejar de atenderlo' if yo else 'Lo atiendo' }}
+              </button>
+            </form>
+          </td>
           <td class="col-state">
             {% if svc.habilitado %}
             <span class="badge cerrado">visible</span>
@@ -86,7 +105,7 @@
           </td>
         </tr>
         <tr class="req-row" data-form="f-{{ svc.id }}">
-          <td colspan="5">
+          <td colspan="6">
             {# id estable = la sección abierta sobrevive a guardar un servicio.
                Por id del servicio y no por posición: al filtrar el catálogo la
                posición cambia y se abriría la sección equivocada. #}

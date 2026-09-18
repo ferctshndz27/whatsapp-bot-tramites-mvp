@@ -153,8 +153,10 @@ into an abstraction because it looks cleaner.
   the internal host. That is also the cross-provider firewall: a Meta payload posted to the Twilio
   route is rejected whole, not half-processed.
 - Secrets and infra URLs never enter `CONFIG_EDITABLE` (agent_settings.py:8-9); free-text knobs use
-  an allowlist regex, not a denylist (`_MODELO_RE`:24). Admin surfaces (`/agente`, `/unmatched`,
-  `/catalog`) gate on `is_admin` and write `AdminAudit`.
+  an allowlist regex, not a denylist (`_MODELO_RE`:24). Admin surfaces (`/agente`, `/unmatched`)
+  gate on `is_admin` and write `AdminAudit`. `/catalog` is NOT one of them since 2026-09-18: every
+  collaborator edits the (global) catalog and declares there which products they attend
+  (`CatalogAsesor`, read by `asignacion._por_producto`); it still writes `AdminAudit` + `CatalogAudit`.
 - `SECURITY_HEADERS` (main.py:60-73) is the single place for CSP/HSTS/noindex; the CSP allows inline
   style/script and nothing cross-origin — do not add a CDN.
 - Soft deletes are semantic: `_latest_open_ticket`:384 filters `habilitado == True` — otherwise

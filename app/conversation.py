@@ -770,7 +770,11 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         # y partirlo entre asesores es justo lo que la asignación pegajosa
         # existe para evitar. Efecto secundario asumido: el tope de carga se
         # sobrepasa por los folios extra de este mismo mensaje.
-        asesor, motivo_asignacion = asignacion.elegir(session, client.phone)
+        # Con los productos pedidos: la asignación le da el folio a quien los
+        # atiende (lo declara cada colaborador en /catalog).
+        asesor, motivo_asignacion = asignacion.elegir(
+            session, client.phone, [s.id for s in services]
+        )
         for service in services:
             requisitos_json = requisitos_iniciales(service.requirements)
             con_codigos = _requisitos_con_codigos(requisitos_json, detectados)

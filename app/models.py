@@ -498,10 +498,34 @@ class CatalogAudit(SQLModel, table=True):
     entity: str  # "categoria" | "servicio"
     entity_id: str = Field(index=True)
     # "name" | "price_info" | "synonyms" | "requirements" | "habilitado" | "creado"
+    # | "asesores"
     field: str
     old_value: str | None = None
     new_value: str | None = None
     created_at: datetime = Field(default_factory=utcnow, index=True)
+    habilitado: bool = True
+
+
+class CatalogAsesor(SQLModel, table=True):
+    """Quién atiende qué producto: puente servicio-colaborador.
+
+    Lo declara el propio colaborador desde /catalog, y lo consume la asignación
+    (`asignacion.elegir`) para mandarle a cada quien los folios de lo que atiende.
+    Mismo patrón que TicketLabel: dejar de atender deshabilita la fila (soft
+    delete) —así el espejo MSSQL se entera vía after_update sin un listener de
+    DELETE— y volver a atenderlo la reactiva; el índice único parcial
+    ux_catalogasesor_vivo (db.init_db) impide dos filas vivas iguales.
+
+    Sin office_id A PROPÓSITO, como TicketLabel: el catálogo es global
+    (SPEC-MULTI-OFICINA §11.3) y la oficina es la del usuario — duplicarla aquí
+    abriría la puerta a que las dos discrepen.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    service_id: str = Field(index=True)
+    username: str = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    created_by: str | None = None
     habilitado: bool = True
 
 

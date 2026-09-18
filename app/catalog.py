@@ -21,11 +21,12 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from app.config import settings
 from app.db import get_session
-from app.models import CatalogAudit, CatalogCategory, CatalogService
+from app.models import CatalogAsesor, CatalogAudit, CatalogCategory, CatalogService, User
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ FIELD_LABELS = {
     "requirements": "requisitos",
     "habilitado": "visible",
     "creado": "creación",
+    "asesores": "quién lo atiende",
 }
 
 
@@ -428,9 +430,82 @@ class Catalog:
         self._refresh()
         return None
 
+    # ---- Quién atiende qué producto (CatalogAsesor) ----
+    #
+    # Lo declara cada colaborador por sí mismo en /catalog y lo lee la asignación
+    # (asignacion._por_producto) para mandarle los folios de lo que atiende. El
+    # catálogo sigue siendo global; lo que es de cada quien es su inscripción.
+
+    def asesores_por_servicio(self, visibles: set[str] | None = None) -> dict[str, list[str]]:
+        """{service_id: [usernames]} de las inscripciones vivas de usuarios
+        habilitados, restringido a `visibles` si llega. `None` = todos.
+
+        El catálogo no sabe de oficinas ni de sesiones, y no debe aprenderlo aquí:
+        es global por decisión (SPEC-MULTI-OFICINA §11.3; los candados SEIS_DIFERIDO
+        y SIN_SESION de tests/test_alcance_oficina.py lo vigilan leyendo este
+        archivo). A quién puede ver cada quien lo decide el panel
+        (catalog_admin._visibles) y llega ya resuelto como `visibles`.
+        """
+        consulta = (
+            select(CatalogAsesor.service_id, CatalogAsesor.username)
+            .join(User, User.username == CatalogAsesor.username)
+            .where(CatalogAsesor.habilitado == True)  # noqa: E712
+            .where(User.habilitado == True)  # noqa: E712
+            .order_by(CatalogAsesor.username)
+        )
+        with get_session() as session:
+            filas = session.exec(consulta).all()
+        por_servicio: dict[str, list[str]] = {}
+        for service_id, username in filas:
+            if visibles is None or username in visibles:
+                por_servicio.setdefault(service_id, []).append(username)
+        return por_servicio
+
+    def fijar_atencion(self, service_id: str, username: str, atiende: bool) -> str | None:
+        """Inscribe o da de baja a `username` como quien atiende el servicio.
+
+        Se FIJA el estado y no se alterna: la página manda el que quiere, así un
+        doble clic o un reenvío del formulario no deshace lo que se acaba de hacer.
+        Dar de baja apaga la fila y volver a inscribirse reactiva la misma (patrón
+        TicketLabel), de modo que el espejo lo ve todo por after_update.
+        """
+        with get_session() as session:
+            if session.get(CatalogService, service_id) is None:
+                return "Servicio no encontrado."
+            filas = session.exec(
+                select(CatalogAsesor)
+                .where(CatalogAsesor.service_id == service_id)
+                .order_by(CatalogAsesor.id.desc())  # type: ignore[union-attr]
+            ).all()
+            antes = sorted({f.username for f in filas if f.habilitado})
+            # La viva primero: es la que hay que apagar al darse de baja. Si no
+            # hay viva, la más reciente apagada, que es la que se reactiva.
+            propias = [f for f in filas if f.username == username]
+            mia = next((f for f in propias if f.habilitado), None) or next(iter(propias), None)
+            if atiende == (username in antes):
+                return None  # ya estaba así: nada que escribir ni auditar
+            if mia is None:
+                session.add(CatalogAsesor(service_id=service_id, username=username,
+                                          created_by=username))
+            else:
+                mia.habilitado = atiende
+                session.add(mia)
+            # Solo el cambio de quien lo hizo, NUNCA la lista entera: la lista
+            # mezcla gente de todas las oficinas y el historial se ve desde todas.
+            self._audit(session, "servicio", service_id, "asesores",
+                        "lo atiende" if not atiende else "no lo atiende",
+                        "lo atiende" if atiende else "no lo atiende", username)
+            try:
+                session.commit()
+            except IntegrityError:
+                # Dos envíos simultáneos del mismo colaborador: el índice
+                # ux_catalogasesor_vivo dejó entrar uno. El estado pedido ya está.
+                session.rollback()
+        return None
+
     # ---- Vistas del panel (incluyen lo deshabilitado) ----
 
-    def admin_view(self) -> list[dict]:
+    def admin_view(self, visibles: set[str] | None = None) -> list[dict]:
         self._refresh()  # dispara la importación inicial si hiciera falta
         with get_session() as session:
             cats = session.exec(
@@ -439,6 +514,7 @@ class Catalog:
             svcs = session.exec(
                 select(CatalogService).order_by(CatalogService.position)
             ).all()
+        asesores = self.asesores_por_servicio(visibles)
         by_cat: dict[str, list[dict]] = {}
         for s in svcs:
             by_cat.setdefault(s.category_id, []).append(
@@ -449,6 +525,7 @@ class Catalog:
                     "synonyms": ", ".join(json.loads(s.synonyms_json or "[]")),
                     "requirements": s.requirements or "",
                     "habilitado": s.habilitado,
+                    "asesores": asesores.get(s.id, []),
                 }
             )
         return [
@@ -461,13 +538,25 @@ class Catalog:
             for c in cats
         ]
 
-    def recent_changes(self, limit: int = 50) -> list[dict]:
+    def recent_changes(self, limit: int = 50, visibles: set[str] | None = None) -> list[dict]:
+        """Lo último que se cambió del catálogo, con quién lo hizo.
+
+        Los cambios al catálogo se ven desde todas las oficinas con su autor: el
+        catálogo es de todas y quien le cambia el precio a un trámite se lo
+        cambia a todas. Las inscripciones («quién lo atiende») NO: son de la
+        gente, y la gente de cada oficina es de su oficina — con `visibles`, solo
+        las de quien se puede ver.
+        """
         with get_session() as session:
-            rows = session.exec(
-                select(CatalogAudit)
-                .order_by(CatalogAudit.created_at.desc(), CatalogAudit.id.desc())
-                .limit(limit)
-            ).all()
+            consulta = select(CatalogAudit).order_by(
+                CatalogAudit.created_at.desc(), CatalogAudit.id.desc()
+            )
+            if visibles is not None:
+                consulta = consulta.where(
+                    (CatalogAudit.field != "asesores")
+                    | CatalogAudit.admin.in_(sorted(visibles))  # type: ignore[union-attr]
+                )
+            rows = session.exec(consulta.limit(limit)).all()
             names = {c.id: c.name for c in session.exec(select(CatalogCategory)).all()}
             names.update({s.id: s.name for s in session.exec(select(CatalogService)).all()})
         return [

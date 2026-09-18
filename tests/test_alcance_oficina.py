@@ -142,7 +142,10 @@ def test_el_alcance_de_cobros_existe_pero_hoy_es_inerte():
 SIN_ACOTAR = {
     # El catálogo es COMPARTIDO por decisión (SPEC §11.3, operador 2026-09-03):
     # editarlo y consultarlo es igual para todas; los sinónimos van detrás.
-    "catalog_admin.py", "kb.py", "synonym_miner.py",
+    # catalog_admin.py salió el 2026-09-18: el catálogo sigue compartido
+    # (SEIS_DIFERIDO lo amarra), pero ahora muestra QUIÉN atiende cada producto,
+    # y eso sí se acota — cada oficina ve a su gente, como en /users.
+    "kb.py", "synonym_miner.py",
     # /oficinas ES la vista de todas las oficinas: acotarla sería impedirle al
     # admin administrar la que no es la suya, que es su función entera.
     "offices.py",

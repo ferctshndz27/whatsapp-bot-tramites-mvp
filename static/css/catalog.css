@@ -14,3 +14,7 @@
 .svc-off td { opacity: .55; }
 .hist-old { color: var(--text-muted); text-decoration: line-through; }
 .hist-new { font-weight: 600; }
+.catalog-grid .col-asesores { width: 190px; }
+.asesores { list-style: none; margin: 0 0 .35rem; padding: 0; display: flex; flex-wrap: wrap; gap: .25rem; }
+/* El propio nombre se distingue por el borde además del color: no depende solo del tono. */
+.asesores .asesor-yo { outline: 2px solid currentColor; outline-offset: -2px; font-weight: 600; }

@@ -37,6 +37,9 @@
         {# Sin entrada «Respuestas»: las guardadas se administran dentro de WhatsApp (/crm,
            diálogo «Mis respuestas») y /replies solo reenvía ahí. #}
         <a href="/kb" {% if request.url.path.startswith('/kb') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📚</span>Guía de trámites</a>
+        {# En Operación y no en Administración: el catálogo lo editan todos los
+           colaboradores, y aquí cada quien declara qué productos atiende. #}
+        <a href="/catalog" {% if request.url.path.startswith('/catalog') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🗂️</span>Catálogo</a>
         {% if is_admin(user) %}
         <span class="nav-label">Administración</span>
         {# Admin de oficina: solo lo que ya acota por oficina. Lo de todas las
@@ -51,7 +54,6 @@
         <a href="/cobros" {% if request.url.path.startswith('/cobros') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💳</span>Cobros</a>
         <a href="/logins" {% if request.url.path.startswith('/logins') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🔐</span>Accesos</a>
         {% if admin_global %}
-        <a href="/catalog" {% if request.url.path.startswith('/catalog') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🗂️</span>Catálogo</a>
         {% set st = request.state | default(none) %}{% set pp = (st.pending_proposals | default(0)) if st else 0 %}
         <a href="/unmatched" {% if request.url.path.startswith('/unmatched') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🤖</span>Agente WhatsApp{% if pp %}<span class="nav-badge" aria-label="{{ pp }} propuestas por revisar">{{ pp }}</span>{% endif %}</a>
         <a href="/agente" {% if request.url.path.startswith('/agente') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🧠</span>Estudio del Agente</a>

@@ -116,9 +116,14 @@ def test_los_usuarios_que_lista_son_solo_los_de_su_oficina():
 
 # Bitácora, accesos y reportes CSV salieron de aquí en la parte 2: ya acotan
 # por oficina (ver la sección de abajo). Lo que queda es de TODAS las oficinas.
+# /catalog salió el 2026-09-18 por regla del operador: lo editan todos los
+# colaboradores y ahí declara cada quien qué productos atiende. No enseña nada
+# de otra oficina por la puerta de atrás: el catálogo es UNO para todas (§11.3)
+# y los nombres de quién atiende salen acotados a la oficina de quien mira — lo
+# amarran las pruebas de tests/test_catalog_asesores.py.
 GLOBALES = [
     "/oficinas", "/oficinas/1", "/system", "/unmatched",
-    "/export/no-entendidos.csv", "/catalog", "/agente",
+    "/export/no-entendidos.csv", "/agente",
 ]
 
 
@@ -155,7 +160,8 @@ def test_ver_a_alguien_de_otra_oficina_en_actividad_cae_a_la_propia():
 def test_el_menu_no_le_ofrece_lo_global():
     menu = _sesion("jefe2").get("/users").text
     assert 'href="/users"' in menu and 'href="/cobros"' in menu
-    for global_ in ('href="/oficinas"', 'href="/system"', 'href="/catalog"', 'href="/agente"'):
+    # Sin /catalog desde el 2026-09-18: es de todos los colaboradores.
+    for global_ in ('href="/oficinas"', 'href="/system"', 'href="/agente"'):
         assert global_ not in menu, f"el menú le ofrece {global_}"
     assert 'href="/oficinas"' in _sesion("jefa1").get("/users").text
 

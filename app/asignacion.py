@@ -1,21 +1,28 @@
 """Reparto del trabajo (fase 3b): quién se queda un folio recién nacido.
 
-Dos reglas, en este orden:
+Dos reglas, en este orden, sobre un pool que ya sale acotado por producto:
 
+0. **Quién atiende el producto** — el pool es la gente de la oficina que se
+   inscribió en /catalog para lo que el cliente pidió (`CatalogAsesor`). Si
+   nadie de la oficina lo atiende, el pool es la oficina entera, igual que
+   antes: un producto sin inscritos no deja folios sin dueño, y mientras nadie
+   se inscriba en nada este módulo se comporta exactamente como antes.
 1. **Pegajosa** — un cliente que regresa cae con el último asesor que ya lo
-   atendió. Es la continuidad que los usuarios de la competencia reclaman
-   cuando no existe (§2.6 del análisis de brechas): volver a explicar el caso
-   desde cero es la queja, no la espera.
+   atendió, **si esa persona atiende lo que ahora pide**. Es la continuidad que
+   los usuarios de la competencia reclaman cuando no existe (§2.6 del análisis
+   de brechas): volver a explicar el caso desde cero es la queja, no la espera.
+   Pero mandarle un trámite a quien no lo lleva no es continuidad, es un pase
+   de mano diferido.
 2. **Reparto** — sin historial, al asesor con menos folios vivos que todavía
    quepa bajo el tope.
 
 Lo que este módulo NO hace, a propósito:
 
-- **No inventa un catálogo de asesores.** El pool es `User.habilitado` de la
-  oficina del folio, la misma pregunta que contesta la lista de transferencia
-  (`dashboard.py`). El código no distingue hoy «asesor» de «usuario dado de
-  alta», y fabricar aquí esa distinción sería una regla nueva escondida en un
-  módulo de reparto.
+- **No decide quién atiende qué.** Lo declara cada colaborador en /catalog
+  (regla del operador, 2026-09-18) y vive en el catálogo, que es donde está el
+  producto; aquí solo se lee. El pool de partida sigue siendo `User.habilitado`
+  de la oficina del folio —la misma pregunta que contesta la lista de
+  transferencia (`dashboard.py`)—, y la inscripción solo lo estrecha.
 - **No cuenta la carga por su cuenta.** Reusa `activity.carga_abierta`, que la
   fase 3a construyó justamente para esto. Un segundo contador con su propio
   criterio de «vivo» es la copia que se desincroniza.
@@ -31,6 +38,7 @@ repartir solo entre quien está de verdad conectado, la señal ya existe y es
 """
 
 import logging
+from collections.abc import Sequence
 
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -38,7 +46,15 @@ from sqlmodel import Session, select
 from app import horario
 from app.activity import carga_abierta
 from app.config import settings
-from app.models import OFICINA_TLAXCALA_ID, Client, Ticket, TicketActivity, TicketStatus, User
+from app.models import (
+    OFICINA_TLAXCALA_ID,
+    CatalogAsesor,
+    Client,
+    Ticket,
+    TicketActivity,
+    TicketStatus,
+    User,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +73,40 @@ def _elegibles(session: Session, office_id: int | None = None) -> list[str]:
     if office_id is not None:
         consulta = consulta.where(User.office_id == office_id)
     return list(session.exec(consulta.order_by(User.username)).all())
+
+
+def _por_producto(
+    session: Session, elegibles: list[str], service_ids: Sequence[str]
+) -> list[str]:
+    """Los elegibles que mejor cubren lo que se pidió; todos si nadie atiende nada.
+
+    «Mejor cubren» porque un mensaje puede pedir varios trámites y el folio de
+    todos va a UNA persona (un cliente que pide tres trámites es un cliente, no
+    tres — ver conversation). Gana quien atiende más de los productos pedidos:
+    si alguien los atiende todos, solo esa gente; si nadie los atiende todos, los
+    que atienden alguno. Con un solo producto es simplemente «quien lo atiende».
+
+    Consulta con la sesión que recibe y no con una propia: esto corre dentro de
+    la conversación, que puede traer escrituras sin confirmar, y una sesión
+    anidada con el engine de la suite comparte la conexión y las deshace en su
+    close() (lo documenta cobranza.aplicar_evento).
+    """
+    if not service_ids or not elegibles:
+        return elegibles
+    cobertura = dict(
+        session.exec(
+            select(CatalogAsesor.username, func.count())
+            .where(CatalogAsesor.service_id.in_(list(service_ids)))  # type: ignore[union-attr]
+            .where(CatalogAsesor.habilitado == True)  # noqa: E712
+            .group_by(CatalogAsesor.username)
+        ).all()
+    )
+    mejor = max((cobertura.get(u, 0) for u in elegibles), default=0)
+    if mejor == 0:
+        # Nadie de ESTA oficina atiende lo pedido: el pool de siempre. Que en
+        # otra oficina alguien lo atienda no cuenta — el folio es de aquí.
+        return elegibles
+    return [u for u in elegibles if cobertura.get(u, 0) == mejor]
 
 
 def _oficina_del_telefono(session: Session, phone: str) -> int:
@@ -111,9 +161,17 @@ def _reparto(session: Session, elegibles: list[str]) -> str | None:
     return min(libres, key=lambda u: (carga.get(u, 0), ultimo.get(u, 0), u))
 
 
-def elegir(session: Session, phone: str) -> tuple[str | None, str]:
+def elegir(
+    session: Session, phone: str, service_ids: Sequence[str] = ()
+) -> tuple[str | None, str]:
     """A quién le toca este folio. Devuelve `(asesor, motivo)`; `asesor` es
     `None` cuando el folio debe quedarse sin dueño.
+
+    `service_ids` son los productos del mensaje (vacío en la escalada, que no
+    trae ninguno): estrechan el pool a quien los atiende ANTES de la pegajosa y
+    del reparto, que no cambian — reciben la lista ya acotada. Por eso la
+    pegajosa respeta el producto sin una línea propia: el asesor anterior solo
+    gana si sigue en el pool.
 
     **El reparto solo corre en horario de atención; la pegajosa siempre.**
     Repartir de madrugada llena el panel de cada asesor con folios que nadie
@@ -131,6 +189,7 @@ def elegir(session: Session, phone: str) -> tuple[str | None, str]:
     elegibles = _elegibles(session, _oficina_del_telefono(session, phone))
     if not elegibles:
         return None, "sin-asesores"
+    elegibles = _por_producto(session, elegibles, service_ids)
 
     pegado = _pegajoso(session, phone, set(elegibles))
     if pegado is not None:

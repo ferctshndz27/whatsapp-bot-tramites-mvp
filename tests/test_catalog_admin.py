@@ -118,19 +118,33 @@ def test_toggle_is_audited(tmp_path):
     assert (row.field, row.old_value, row.new_value) == ("habilitado", "sí", "no")
 
 
-def test_non_admin_route_redirected(monkeypatch, session, tmp_path):
+def test_un_colaborador_edita_y_el_anonimo_no(monkeypatch, session, tmp_path):
+    """Regla del operador (2026-09-18): el catálogo lo editan TODOS los
+    colaboradores, no solo el admin global. Antes esta prueba afirmaba lo
+    contrario —que el colaborador era expulsado— y cambió porque cambiar eso era
+    la tarea. Lo que no cambia: sin sesión no se toca nada, y lo que hace un
+    colaborador queda con su nombre en el historial, igual que lo de un admin."""
     monkeypatch.setattr(db, "engine", session.get_bind())
     cat = _make_catalog(tmp_path)
     monkeypatch.setattr(catalog_admin, "catalog", cat)
     session.add(User(username="colab", password_hash="x", is_admin=False))
     session.commit()
 
-    response = catalog_admin.service_update(
-        _request("colab"), "curp", name="Hack", price_info="$0", synonyms="", requirements=""
+    anonimo = catalog_admin.service_update(
+        _request(None), "curp", name="Hack", price_info="$0", synonyms="", requirements=""
     )
-
-    assert response.headers["location"] == "/"
+    assert anonimo.headers["location"] == "/login"
     assert cat.service_by_id("curp").name == "CURP certificada"  # sin cambios
+
+    colaborador = catalog_admin.service_update(
+        _request("colab"), "curp", name="CURP certificada", price_info="$95",
+        synonyms="", requirements="",
+    )
+    assert colaborador.headers["location"] == "/catalog"
+    assert cat.service_by_id("curp").price_info == "$95"
+    with get_session() as s:
+        cambio = s.exec(select(CatalogAudit).where(CatalogAudit.field == "price_info")).one()
+    assert (cambio.admin, cambio.old_value, cambio.new_value) == ("colab", "$80", "$95")
 
 
 def test_admin_update_persists_and_audits(monkeypatch, session, tmp_path):

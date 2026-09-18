@@ -314,6 +314,19 @@ _SCHEMA_DDL = [
         created_at DATETIME2     NOT NULL
     )
     """,
+    # Quién atiende qué producto (CatalogAsesor): el puente servicio-colaborador
+    # que consume la asignación. Mismo molde que ticket_labels.
+    """
+    IF OBJECT_ID('catalog_asesores', 'U') IS NULL
+    CREATE TABLE catalog_asesores (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        service_id NVARCHAR(64) NOT NULL,
+        username   NVARCHAR(64) NOT NULL,
+        created_by NVARCHAR(64) NULL,
+        habilitado BIT          NOT NULL DEFAULT 1,
+        created_at DATETIME2    NOT NULL
+    )
+    """,
     """
     IF OBJECT_ID('synonym_proposals', 'U') IS NULL
     CREATE TABLE synonym_proposals (
@@ -1313,6 +1326,19 @@ def archive_catalog_service(s) -> None:
     )
 
 
+def archive_catalog_asesor(a) -> None:
+    _upsert(
+        "catalog_asesores", "source_id", a.id,
+        {
+            "service_id": a.service_id,
+            "username": a.username,
+            "created_by": a.created_by,
+            "habilitado": a.habilitado,
+            "created_at": _naive_utc(a.created_at),
+        },
+    )
+
+
 def archive_catalog_audit(a) -> None:
     _upsert(
         "catalog_audit", "source_id", a.id,
@@ -1811,6 +1837,7 @@ def backfill() -> None:
     from app.models import (
         AdminAudit,
         Alert,
+        CatalogAsesor,
         CatalogAudit,
         CatalogCategory,
         CatalogService,
@@ -1901,6 +1928,8 @@ def backfill() -> None:
                 archive_catalog_service(cs)
             for ca in session.exec(select(CatalogAudit)).all():
                 archive_catalog_audit(ca)
+            for cas in session.exec(select(CatalogAsesor)).all():
+                archive_catalog_asesor(cas)
             for ne in session.exec(select(NluEvent)).all():
                 archive_nlu_event(ne)
             for ac in session.exec(select(AgentConfig)).all():
@@ -1961,6 +1990,7 @@ def _register_listeners() -> None:
     from app.models import (
         AdminAudit,
         Alert,
+        CatalogAsesor,
         CatalogAudit,
         CatalogCategory,
         CatalogService,
@@ -2130,6 +2160,11 @@ def _register_listeners() -> None:
     @event.listens_for(CatalogAudit, "after_update")
     def _catalog_audit_upsert(mapper, connection, target):
         _safe(archive_catalog_audit, target)
+
+    @event.listens_for(CatalogAsesor, "after_insert")
+    @event.listens_for(CatalogAsesor, "after_update")
+    def _catalog_asesor_upsert(mapper, connection, target):
+        _safe(archive_catalog_asesor, target)
 
     @event.listens_for(NluEvent, "after_insert")
     @event.listens_for(NluEvent, "after_update")

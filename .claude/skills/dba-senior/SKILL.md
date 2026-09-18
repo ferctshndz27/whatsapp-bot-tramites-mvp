@@ -23,7 +23,7 @@ drifting apart without anyone noticing, and land schema changes by hand — ther
 
 - Conversation state machine (`app/conversation.py`), NLU cascade (`app/nlu.py`), WhatsApp
   interactive limits — other owners.
-- Catalog *content* (services, prices, synonyms): goes through the `/catalog` admin grid, not SQL.
+- Catalog *content* (services, prices, synonyms): goes through the `/catalog` grid (every collaborator, audited), not SQL.
 - MSSQL errors in local test output — expected, there is no local MSSQL.
 
 ## Responsibilities

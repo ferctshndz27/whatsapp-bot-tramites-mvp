@@ -194,39 +194,11 @@ RUTAS: list[Ruta] = [
         data={"office_id": 2},
         sonda=_campo(User, 3, "office_id"), tras_admin=2,  # 3 = VICTIMA en _sembrar
     ),
-    # --- Catálogo: quien lo edita decide el precio que se le cotiza al cliente ---
-    Ruta(
-        "GET /catalog", "GET", "/catalog", "/",
-        filtracion=PRECIO_SEMBRADO,
-    ),
-    Ruta(
-        "POST /catalog/categories", "POST", "/catalog/categories", "/",
-        data={"name": "Categoria Nueva"},
-        sonda=_conteo(CatalogCategory, CatalogCategory.id == "categoria_nueva"), tras_admin=1,
-    ),
-    Ruta(
-        "POST /catalog/categories/{id}/rename", "POST", "/catalog/categories/basicos/rename", "/",
-        data={"name": "Renombrada por intruso"},
-        sonda=_campo(CatalogCategory, "basicos", "name"), tras_admin="Renombrada por intruso",
-    ),
-    Ruta(
-        "POST /catalog/categories/{id}/toggle", "POST", "/catalog/categories/basicos/toggle", "/",
-        sonda=_campo(CatalogCategory, "basicos", "habilitado"), tras_admin=False,
-    ),
-    Ruta(
-        "POST /catalog/services", "POST", "/catalog/services", "/",
-        data={"category_id": "basicos", "name": "Servicio Nuevo", "price_info": "$1"},
-        sonda=_conteo(CatalogService, CatalogService.id == "servicio_nuevo"), tras_admin=1,
-    ),
-    Ruta(
-        "POST /catalog/services/{id}/update", "POST", "/catalog/services/curp/update", "/",
-        data={"name": "CURP", "price_info": "$0", "synonyms": "", "requirements": ""},
-        sonda=_campo(CatalogService, "curp", "price_info"), tras_admin="$0",
-    ),
-    Ruta(
-        "POST /catalog/services/{id}/toggle", "POST", "/catalog/services/curp/toggle", "/",
-        sonda=_campo(CatalogService, "curp", "habilitado"), tras_admin=False,
-    ),
+    # --- Catálogo: SALIÓ de esta lista el 2026-09-18 (regla del operador) ---
+    # Lo editan todos los colaboradores y ahí declara cada quien qué productos
+    # atiende. Lo que sigue protegido: el anónimo no entra (lo cubre la
+    # enumeración de rutas al final de este archivo) y nadie inscribe a otro (la
+    # ruta toma el usuario de la sesión) — ver tests/test_catalog_asesores.py.
     # --- Agente WhatsApp: la REGLA DE ORO (nada auto-aprende) se defiende aquí ---
     Ruta(
         "GET /unmatched", "GET", "/unmatched", "/",

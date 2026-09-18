@@ -708,3 +708,116 @@ def test_todo_nodo_del_servidor_tiene_su_lugar_en_el_lienzo(session, mapa):
     assert ids <= _claves_del_mapa(mapa), (
         f"nodos sin entrada en {mapa}: {sorted(ids - _claves_del_mapa(mapa))}"
     )
+
+
+# --- Quién atiende qué producto (CatalogAsesor, declarado en /catalog) --------
+#
+# Regla del operador (2026-09-18): cada colaborador declara en /catalog qué
+# productos atiende, y la asignación le manda esos folios. El pool se estrecha
+# ANTES de la pegajosa y del reparto, que no cambiaron: reciben la lista acotada.
+
+ACTA = "sb-acta-nacimiento"
+MATRIMONIO = "sb-acta-matrimonio"
+OTRO_TEL = "5215599990000"  # solo para cargar a alguien sin tocar el historial de PHONE
+
+
+@pytest.fixture
+def misma_base(session, monkeypatch):
+    """El catálogo (y sus inscripciones) en la MISMA base que la sesión de la prueba.
+
+    El fixture `session` de conftest crea su propia base en memoria, distinta de
+    `db.engine`: sin esto las inscripciones se escribían en una y la asignación
+    las buscaba en otra, y varias de estas pruebas pasaban en verde sin medir
+    nada. En producción hay una sola base; esto la reproduce.
+    """
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    return session
+
+
+def _atiende(username: str, *service_ids: str) -> None:
+    catalog.categories  # la semilla del catálogo se importa en el primer acceso
+    for sid in service_ids:
+        assert catalog.fijar_atencion(sid, username, True) is None
+
+
+def test_sin_inscritos_la_asignacion_es_la_de_siempre(misma_base):
+    """El candado de «desplegar esto no cambia nada»: mientras nadie se inscriba,
+    el producto no estrecha el pool y gana el de menos carga, como antes."""
+    session = misma_base
+    _usuarios(session, "ana", "beto")
+    _folio(session, phone=OTRO_TEL, assigned_to="ana")  # ana carga 1, beto 0
+    assert asignacion.elegir(session, PHONE, [ACTA]) == ("beto", "reparto")
+
+
+def test_el_folio_va_a_quien_atiende_el_producto_aunque_cargue_mas(misma_base):
+    session = misma_base
+    _usuarios(session, "ana", "beto")
+    _folio(session, phone=OTRO_TEL, assigned_to="beto")  # beto carga 1, ana 0
+    _atiende("beto", ACTA)
+    assert asignacion.elegir(session, PHONE, [ACTA]) == ("beto", "reparto")
+    # Control: sin producto —la escalada no trae ninguno— gana la carga, como siempre.
+    assert asignacion.elegir(session, PHONE) == ("ana", "reparto")
+
+
+def test_la_pegajosa_no_le_manda_un_producto_a_quien_no_lo_atiende(misma_base):
+    """Mandarle un trámite a quien no lo lleva no es continuidad: es un pase de
+    mano que el cliente sufre después."""
+    session = misma_base
+    _usuarios(session, "ana", "beto")
+    _folio(session, assigned_to="ana")  # este cliente ya fue de ana
+    _atiende("beto", ACTA)
+    assert asignacion.elegir(session, PHONE, [ACTA]) == ("beto", "reparto")
+
+
+def test_la_pegajosa_sigue_ganando_si_el_anterior_atiende_el_producto(misma_base, monkeypatch):
+    """Y gana aunque esté al tope, como siempre (§7bis.3): la continuidad vale
+    más que el equilibrio de la carga. beto también lo atiende y está libre."""
+    session = misma_base
+    monkeypatch.setattr(settings, "carga_maxima_asesor", 1)
+    _usuarios(session, "ana", "beto")
+    _folio(session, assigned_to="ana")  # el cliente fue de ana, y eso la pone al tope
+    _atiende("ana", ACTA)
+    _atiende("beto", ACTA)
+    assert asignacion.elegir(session, PHONE, [ACTA]) == ("ana", "pegajosa")
+
+
+def test_con_varios_productos_gana_quien_mas_cubre(misma_base):
+    """Un mensaje, un asesor (no se parte al cliente): el que atiende más de lo
+    pedido, aunque cargue más."""
+    session = misma_base
+    _usuarios(session, "ana", "beto")
+    _folio(session, phone=OTRO_TEL, assigned_to="beto")  # beto carga más
+    _atiende("ana", ACTA)
+    _atiende("beto", ACTA, MATRIMONIO)
+    assert asignacion.elegir(session, PHONE, [ACTA, MATRIMONIO]) == ("beto", "reparto")
+
+
+def test_quien_lo_atiende_en_otra_oficina_no_se_lleva_el_folio(misma_base):
+    """El folio es de la oficina del cliente. Que en otra alguien atienda el
+    producto no cuenta: sin inscritos aquí, el reparto de siempre."""
+    session = misma_base
+    _usuarios(session, "ana")
+    session.add(User(username="carla", password_hash="x", office_id=2))
+    session.commit()
+    _atiende("carla", ACTA)
+    assert asignacion.elegir(session, PHONE, [ACTA]) == ("ana", "reparto")
+
+
+def test_darse_de_baja_devuelve_al_pool_de_siempre(misma_base):
+    session = misma_base
+    _usuarios(session, "ana", "beto")
+    _folio(session, phone=OTRO_TEL, assigned_to="beto")
+    _atiende("beto", ACTA)
+    assert asignacion.elegir(session, PHONE, [ACTA]) == ("beto", "reparto")
+    assert catalog.fijar_atencion(ACTA, "beto", False) is None
+    assert asignacion.elegir(session, PHONE, [ACTA]) == ("ana", "reparto")
+
+
+def test_la_conversacion_le_pasa_los_productos_a_la_asignacion(misma_base):
+    """Por el camino de verdad. Sin esta prueba, borrar el argumento en
+    conversation.py dejaba la regla entera muerta con todas las de arriba en verde."""
+    session = misma_base
+    _usuarios(session, "ana", "beto")
+    _folio(session, phone=OTRO_TEL, assigned_to="beto")  # beto carga más
+    _atiende("beto", ACTA)
+    assert [t.assigned_to for t in _alta_real(session)] == ["beto"]

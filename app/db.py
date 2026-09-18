@@ -202,6 +202,16 @@ def init_db() -> None:
                 "ON ticketlabel(ticket_id, label_id) WHERE habilitado = 1"
             )
         )
+        # Quién atiende qué producto: mismo patrón que la etiqueta. Una fila VIVA
+        # por (servicio, colaborador); dejar de atender apaga la fila y volver a
+        # atender la reactiva. Sin el índice, dos clics seguidos sobre «Atiendo»
+        # crearían dos filas vivas y el colaborador contaría doble en el reparto.
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_catalogasesor_vivo "
+                "ON catalogasesor(service_id, username) WHERE habilitado = 1"
+            )
+        )
         # Llaves por oficina: una fila VIVA por (oficina, proveedor, clave).
         # Parcial sobre habilitado, como ux_ticketlabel_viva: dar de baja es
         # apagar la fila, y volver a dar de alta la misma llave no choca con la
