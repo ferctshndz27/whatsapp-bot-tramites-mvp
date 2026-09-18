@@ -205,6 +205,13 @@ def test_una_ficha_vigente_de_oxxo_no_es_un_webhook_roto():
                        voucher_expira_at=_dentro_de_horas(48))
         assert "cobro:sin-eventos" not in _codigos(s)
 
+        # SPEI: la ficha NO trae vencimiento propio (se transfiere mientras viva el PI), así
+        # que mirar solo la fecha daba por caducada la única ficha que nunca caduca.
+        cobro.voucher_expira_at = None
+        s.add(cobro)
+        s.commit()
+        assert "cobro:sin-eventos" not in _codigos(s)
+
         cobro.voucher_expira_at = _hace_horas(1)  # la ficha venció: ya no hay a quién esperar
         s.add(cobro)
         s.commit()

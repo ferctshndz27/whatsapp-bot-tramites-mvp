@@ -314,7 +314,18 @@ def _tipo_desde_objeto(objeto: dict) -> str | None:
             return "cobro.vencido"
         return _ESTADO_PI_A_EVENTO.get(estado)
     if clase == "checkout.session":
-        if objeto.get("payment_status") == "paid":
+        # `complete` con payment_status != paid NO es un pago: es el checkout terminado con un
+        # método diferido (SPEI/OXXO) y la ficha ya emitida. El aplicador distingue los dos
+        # casos DENTRO de checkout.session.completed —`absorber_datos` se queda el
+        # payment_intent y la rama de unpaid marca `detalle_pendiente_at` para que
+        # `completar_voucher` traiga la CLABE—; el que no distinguía era esto, que devolvía
+        # None y dejaba el cobro clavado en `pendiente` para siempre.
+        #
+        # Pasó de verdad (cobro #7, sep-2026): se perdió el checkout.session.completed, el
+        # cobro se quedó sin payment_intent, y como el barrido solo mira la sesión, cada noche
+        # la veía «viva» y devolvía sin-cambio. Una transferencia SPEI esperando siete días sin
+        # que nadie supiera que existía.
+        if objeto.get("payment_status") == "paid" or objeto.get("status") == "complete":
             return "checkout.session.completed"
         if objeto.get("status") == "expired":
             return "checkout.session.expired"

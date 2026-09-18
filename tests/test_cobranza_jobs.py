@@ -547,3 +547,37 @@ def test_la_reconciliacion_sin_respuesta_deja_rastro(monkeypatch, caplog):
     with Session(db.engine) as s:
         # Se sella igual: es lo que rota la cola y evita matar de hambre a los demás.
         assert s.get(Cobro, cobro.id).reconciliado_at is not None
+
+
+def test_una_sesion_completada_con_pago_diferido_rescata_el_payment_intent(monkeypatch):
+    """El caso del cobro #7 (sep-2026): se perdió el `checkout.session.completed`.
+
+    Sin ese evento el cobro se queda sin `payment_intent`, y como la reconciliación solo miraba
+    la sesión —que ya no dice ni «pagado» ni «expirado»— la daba por viva y devolvía sin-cambio
+    cada noche. Siete días con una transferencia SPEI esperando que nadie sabía que existía.
+    `complete` es la señal: el checkout terminó y la ficha está emitida.
+    """
+    sesion = {
+        "object": "checkout.session", "id": "cs_test_diferido",
+        "status": "complete", "payment_status": "unpaid",
+        "payment_intent": "pi_test_spei", "url": "https://checkout.stripe.com/c/pay/cs_test",
+    }
+    monkeypatch.setattr(jobs.stripe_client, "obtener_session", lambda _id: _ok(sesion))
+    with Session(db.engine) as s:
+        cobro = _cobro(s, estado="pendiente", stripe_checkout_session_id="cs_test_diferido",
+                       metodos_ofrecidos="card,spei",
+                       updated_at=utcnow() - timedelta(days=3))
+
+    assert jobs._reconciliar_uno(cobro.id) == "aplicado"
+
+    with Session(db.engine) as s:
+        rescatado = s.get(Cobro, cobro.id)
+        assert rescatado.stripe_payment_intent_id == "pi_test_spei"
+        # Sigue esperando el depósito —el estado no sube—, pero ahora el sistema sabe que hay
+        # una ficha que buscar: es lo que dispara a completar_voucher.
+        assert rescatado.estado == "pendiente"
+        assert rescatado.detalle_pendiente_at is not None
+        evento = s.exec(select(EventoPasarela)
+                        .where(EventoPasarela.cobro_id == cobro.id)).all()[-1]
+        assert evento.tipo == "checkout.session.completed"
+        assert evento.resultado == "aplicado" and "voucher" in (evento.detalle or "")

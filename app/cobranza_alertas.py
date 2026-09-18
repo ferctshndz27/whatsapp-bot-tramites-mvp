@@ -18,7 +18,7 @@ noticia.
 import logging
 from datetime import timedelta, timezone
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from app.cobranza import ESTADOS_VIVOS
@@ -72,10 +72,17 @@ def _sin_ficha_vigente(ahora_naive):
     Un OXXO o un SPEI con ficha viva se queda `pendiente` días sin que Stripe mande nada, y
     eso es el funcionamiento normal del pago diferido mexicano: tratarlo como «el webhook no
     responde» encendía una crítica cada noche mientras todo estaba bien.
+
+    La ficha es `voucher_url`, no `voucher_expira_at`: el SPEI **no trae vencimiento propio**
+    (se puede transferir mientras viva el PaymentIntent), así que mirar solo la fecha daba por
+    caducada la ficha que nunca caduca.
     """
     return or_(
-        Cobro.voucher_expira_at.is_(None),  # type: ignore[union-attr]
-        Cobro.voucher_expira_at < ahora_naive,
+        Cobro.voucher_url.is_(None),  # type: ignore[union-attr]
+        and_(
+            Cobro.voucher_expira_at.is_not(None),  # type: ignore[union-attr]
+            Cobro.voucher_expira_at < ahora_naive,
+        ),
     )
 
 
