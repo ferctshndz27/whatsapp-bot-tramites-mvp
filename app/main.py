@@ -2,7 +2,7 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -20,6 +20,7 @@ from app import (
     cobranza_panel,
     crm,
     dashboard,
+    eventos,
     inbox,
     kb,
     my,
@@ -54,7 +55,11 @@ async def lifespan(_app: FastAPI):
     con que `/health` no responda para disparar el rollback.
     """
     on_startup()
+    # Lo único que sí vive aquí y no en on_startup(): el bus de avisos del CRM necesita el event
+    # loop, y este envoltorio es lo primero que corre dentro de él (app/eventos.py).
+    eventos.capturar_loop()
     yield
+    eventos.soltar_loop()
 
 
 # Sin `/docs`, `/redoc` ni `/openapi.json`: los tres nacen abiertos en FastAPI y
@@ -123,6 +128,32 @@ async def _security_headers(request, call_next):
     response = await call_next(request)
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
+    if request.url.path.startswith("/crm/api/"):
+        # Conversaciones de clientes: ni el navegador ni el proxy del VPS deben guardarlas. Sin
+        # ninguna directiva, la frescura queda al criterio heurístico de quien esté en medio, y
+        # así es como un asesor acaba mirando un hilo viejo sin enterarse. `setdefault` respeta
+        # el no-store que el stream de avisos ya manda por su cuenta.
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+async def _fetch_sin_html(request, call_next):
+    """Un POST hecho por fetch no necesita la página a la que redirige, solo saber cuál es.
+
+    Los POST del panel contestan 303 para que el formulario siga sirviendo sin JS. Pero quien los
+    llama es `fetch` (static/js/crm.js::accionBandeja), que sigue el redirect y termina
+    descargando /crm entero —32 KB medidos, en dos peticiones más— únicamente para leer el `?err=`
+    de la URL final. Con `X-Requested-With: fetch` la respuesta se convierte en 204 y el destino
+    viaja en `X-Destino`: el mismo contrato, sin el HTML.
+
+    Va aquí y no en app/inbox.py a propósito: ahí habría que tocar los doce `RedirectResponse`
+    del módulo dueño de la pausa del bot, la ventana de 24 h y el sellado de first_response_at, y
+    reescribir las aserciones de seis archivos de pruebas. El 303 se queda intacto para todos:
+    esto solo lo reescribe para quien pide explícitamente que no le manden la página.
+    """
+    response = await call_next(request)
+    if response.status_code == 303 and request.headers.get("x-requested-with") == "fetch":
+        return Response(status_code=204, headers={"X-Destino": response.headers.get("location", "")})
     return response
 
 
@@ -178,6 +209,7 @@ app.add_middleware(
     same_site="lax",                     # mitiga CSRF cross-site
     max_age=SESSION_MAX_AGE,             # la sesión caduca (no vive para siempre)
 )
+app.middleware("http")(_fetch_sin_html)  # dentro de _security_headers: su 204 también se sella
 app.middleware("http")(_security_headers)
 
 # ponytail: routers SIN `prefix` ni `tags`, cada archivo con sus rutas absolutas.

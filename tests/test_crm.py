@@ -26,6 +26,7 @@ oficina en Puebla (jefe2) y un colaborador por oficina. Aquí se afirma:
   compositor, y /replies solo reenvía a /crm?respuestas=1, que abre el diálogo al cargar.
 """
 
+import asyncio
 from datetime import timedelta
 
 import bcrypt
@@ -35,6 +36,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine, select
 
 import app.db as db
+from app import eventos
 from app.config import settings
 from app.inbox import QUICK_REPLIES
 from app.main import app
@@ -66,6 +68,7 @@ HASH = bcrypt.hashpw(CLAVE.encode(), bcrypt.gensalt(rounds=4)).decode()
 ANA = "525500000011"      # Tlaxcala, con conversación: 1 saliente y 2 entrantes después
 BETO = "525500000012"     # Tlaxcala, sin mensajes ni folio
 CARLA = "522200000021"    # Puebla
+DORA = "525500000013"     # Tlaxcala, la siembra su propio test: entrantes sin un solo saliente
 
 
 @pytest.fixture(autouse=True)
@@ -283,6 +286,33 @@ def test_forma_del_contacto_no_leidos_ventana_folio_y_etapa_por_defecto():
     assert t["counts"] == {str(ids[0]): 2, str(ids[1]): 0, str(ids[2]): 0, str(ids[3]): 0}
     assert t["total"] == 2
     assert t["etapas"][0]["count"] == 2
+
+
+def test_no_leidos_sin_ningun_saliente_y_sin_contar_los_mensajes_ocultos():
+    """Los dos casos que _agregar deriva en SQL y que un recorrido en Python daba gratis.
+
+    Sin un solo saliente no hay corte del cual contar: TODO lo entrante está sin contestar —es
+    el COALESCE a 0 del agregado, y sin él `id > NULL` devolvería cero no leídos en silencio,
+    justo en la conversación más urgente, la que nadie ha contestado nunca—. Y un mensaje
+    oculto (lo que hace /inbox/{phone}/messages/{id}/delete) no cuenta ni como no leído ni como
+    último mensaje: son dos filtros distintos de la consulta, y es fácil poner solo uno.
+    """
+    ahora = utcnow()
+    visible = ahora - timedelta(minutes=10)
+    with Session(db.engine) as s:
+        s.add(Client(phone=DORA, name="Dora Solís", office_id=1))
+        s.add(Message(phone=DORA, direction=Direction.IN, body="Buenas tardes",
+                      created_at=ahora - timedelta(minutes=20)))
+        s.add(Message(phone=DORA, direction=Direction.IN, body="¿Siguen abiertos?",
+                      created_at=visible))
+        s.add(Message(phone=DORA, direction=Direction.IN, body="Mensaje retirado",
+                      created_at=ahora - timedelta(minutes=1), habilitado=False))
+        s.commit()
+    dora = _contacto(_tablero("jefe1"), DORA)
+    assert dora["unread"] == 2
+    assert dora["last_message"]["body"] == "¿Siguen abiertos?"
+    assert dora["last_seen"] == crm._iso(visible)
+    assert dora["ventana"]["abierta"] is True
 
 
 def test_la_busqueda_ignora_acentos_y_formato_del_telefono():
@@ -951,3 +981,117 @@ def test_la_pagina_trae_mis_respuestas_y_las_abre_con_el_parametro():
     assert 'href="/replies"' not in html, "el menú lateral sigue llevando a la vista retirada"
     assert _datos_de(colab.get("/crm?respuestas=1").text)["abrir_respuestas"] is True
     assert _datos_de(colab.get("/crm?respuestas=<script>").text)["abrir_respuestas"] is False
+
+
+# ---------------------------------------------------------------------------
+# Avisos en vivo (SSE)
+# ---------------------------------------------------------------------------
+
+def _stream_de_avisos(cliente: TestClient, disparar, segundos: float = 5.0) -> list[str]:
+    """Consume /crm/api/eventos por ASGI y devuelve los eventos que llegan tras `disparar()`.
+
+    Sin TestClient a propósito: el suyo espera a que la respuesta TERMINE antes de entregar
+    nada, y este stream no termina nunca (colgaba la suite entera). Llamar a la app por ASGI
+    entrega los trozos conforme salen y, sobre todo, los hace pasar por los cuatro middlewares
+    reales — que es justo lo que hay que comprobar: si alguno bufferea, el aviso no sale jamás
+    y el stream queda de adorno mientras el panel sigue sondeando.
+    """
+    cookie = "; ".join(f"{k}={v}" for k, v in cliente.cookies.items())
+
+    async def principal():
+        eventos.capturar_loop()  # lo hace el lifespan; aquí la app se invoca sin él
+        scope = {
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1", "method": "GET", "scheme": "https",
+            "path": "/crm/api/eventos", "raw_path": b"/crm/api/eventos", "query_string": b"",
+            "root_path": "", "headers": [(b"host", b"testserver"), (b"cookie", cookie.encode())],
+            "client": ("127.0.0.1", 50000), "server": ("testserver", 443),
+        }
+        trozos: list[bytes] = []
+        cabecera: dict = {}
+        hay_trozo = asyncio.Event()
+
+        async def receive():
+            await asyncio.Event().wait()  # el cliente no manda nada ni se va
+
+        async def send(mensaje):
+            if mensaje["type"] == "http.response.start":
+                cabecera.update(mensaje)
+            elif mensaje["type"] == "http.response.body":
+                trozos.append(mensaje.get("body", b""))
+                hay_trozo.set()
+
+        tarea = asyncio.ensure_future(app(scope, receive, send))
+        try:
+            await asyncio.wait_for(hay_trozo.wait(), segundos)  # ": conectado"
+            assert cabecera["status"] == 200, cabecera
+            cabeceras = {k.decode(): v.decode() for k, v in cabecera["headers"]}
+            assert cabeceras["content-type"].startswith("text/event-stream")
+            assert cabeceras["cache-control"] == "no-store"
+            assert cabeceras["x-accel-buffering"] == "no"
+            trozos.clear()
+            hay_trozo.clear()
+            disparar()
+            await asyncio.wait_for(hay_trozo.wait(), segundos)
+            crudo = b"".join(trozos).decode()
+        finally:
+            tarea.cancel()
+            await asyncio.sleep(0)  # deja correr el `finally` del generador
+        return [l.removeprefix("event: ") for l in crudo.splitlines() if l.startswith("event: ")]
+
+    return asyncio.run(principal())
+
+
+def test_el_stream_de_avisos_exige_sesion_como_el_resto_de_la_api():
+    r = TestClient(app, base_url="https://testserver").get("/crm/api/eventos")
+    assert r.status_code == 403 and r.json() == {"error": "Sesi\u00f3n requerida"}
+
+
+def test_un_mensaje_nuevo_llega_al_stream_y_al_cerrarse_deja_de_haber_suscriptores():
+    def entra_un_mensaje():
+        with Session(db.engine) as s:
+            s.add(Message(phone=ANA, direction=Direction.IN, body="\u00bfHay alguien?"))
+            s.commit()
+
+    assert _stream_de_avisos(_sesion("jefe1"), entra_un_mensaje) == ["mensajes"]
+    assert eventos.conectados() == 0, "el generador no se dio de baja al cerrarse"
+
+
+def test_un_commit_que_no_toca_mensajes_no_despierta_al_panel():
+    """El aviso es mudo, pero no indiscriminado: guardar una etiqueta no cuesta un refetch."""
+
+    def nada_de_mensajes():
+        with Session(db.engine) as s:
+            s.add(Label(nombre="urgente", color="#F4511E", office_id=1))
+            s.commit()
+
+    with pytest.raises(TimeoutError):
+        _stream_de_avisos(_sesion("jefe1"), nada_de_mensajes, segundos=0.6)
+
+
+# ---------------------------------------------------------------------------
+# Cabeceras: caché y el 303 que el fetch no necesita
+# ---------------------------------------------------------------------------
+
+def test_la_api_del_crm_no_se_guarda_en_ninguna_cache():
+    """Hilos de clientes: sin directiva, la frescura la decide el proxy que haya en medio."""
+    cliente = _sesion("jefe1")
+    for ruta in (f"/crm/api/chat/{ANA}", "/crm/api/tablero", "/crm/api/respuestas"):
+        assert cliente.get(ruta).headers["cache-control"] == "no-store", ruta
+
+
+def test_un_post_por_fetch_recibe_204_con_el_destino_y_no_la_pagina_entera():
+    """El 303 se queda intacto para el formulario sin JS: eso es lo que lo hace seguro.
+
+    Seguir el redirect le costaba al panel descargar /crm completo —32 KB— por cada acción, solo
+    para leer el `?err=` de la URL final. El destino es el mismo por los dos caminos.
+    """
+    cliente = _sesion("jefe1")
+    con_js = cliente.post(f"/inbox/{ANA}/bot-on", headers={"X-Requested-With": "fetch"},
+                          follow_redirects=False)
+    sin_js = cliente.post(f"/inbox/{ANA}/bot-on", follow_redirects=False)
+    assert con_js.status_code == 204 and con_js.content == b""
+    assert sin_js.status_code == 303
+    assert con_js.headers["x-destino"] == sin_js.headers["location"] == f"/inbox/{ANA}"
+    # Y sigue sellado por las cabeceras de seguridad, que envuelven a este middleware.
+    assert con_js.headers["x-content-type-options"] == "nosniff"

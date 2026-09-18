@@ -493,6 +493,14 @@ const enPagina = {
     return { ok: true };
   },
 
+  /* Apaga TODOS los setInterval de la página: es lo que vuelve determinista al criterio 7c.
+     Sin sondeo de 8/20 s, lo único que puede refrescar el hilo es el stream de avisos. */
+  matarSondeos: () => {
+    const alto = setInterval(() => {}, 1000000);
+    for (let i = 1; i <= alto; i++) clearInterval(i);
+    return alto;
+  },
+
   estadoChat: () => {
     const root = document.querySelector("#crm");
     const chat = document.querySelector("#crm-chat");
@@ -1329,6 +1337,51 @@ async function criterioAbrirChat(ctx) {
   if (qr.error || qr.texto !== qr.esperado) fallos.push(`respuesta rápida: ${JSON.stringify(qr)}`);
   if (fallos.length) throw new Error(fallos.join("; "));
   return `chat de Ana: cabecera, ${e.burbujas.length} burbujas, insignias (${e.badges.length}), enlaces, compositor con ventana «${e.windowLeft}» y ${e.qr} respuestas rápidas; URL ${e.url}`;
+}
+
+async function sesionHttp(ctx, usuario) {
+  // Sesión fuera del navegador: el POST tiene que venir de OTRO panel, no del JS de la pestaña
+  // que estamos mirando (ese ya se refresca solo al enviar).
+  const r = await fetch(`${ctx.base}/login`, {
+    method: "POST", redirect: "manual",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ username: usuario, password: CLAVE }),
+  });
+  if (r.status !== 303) throw new Error(`login HTTP de ${usuario} → HTTP ${r.status}`);
+  const cookies = (r.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]);
+  if (!cookies.length) throw new Error("el login HTTP no devolvió cookie de sesión");
+  return cookies.join("; ");
+}
+
+async function criterioAvisoEnVivo(ctx) {
+  // El stream de avisos (GET /crm/api/eventos, app/eventos.py). Un compañero contesta desde su
+  // propio panel: ese POST corre DENTRO del proceso de uvicorn —como el webhook—, así que el
+  // listener publica y esta pestaña debe enterarse por el stream.
+  //
+  // Los sondeos se apagan antes a propósito: con ellos vivos, ver la burbuja no probaría nada
+  // (el de 8 s la traería igual). Apagados, si aparece es porque el aviso llegó. Al final se
+  // recarga la página para devolverlos, que es como sigue el resto del recorrido.
+  const antes = await ctx.cdp.evaluate(enPagina.estadoChat);
+  if (!antes.abierto || antes.nombre !== "Ana Lucía Ramírez") throw new Error("hace falta el chat de Ana abierto");
+  const ids = await ctx.cdp.evaluate(enPagina.matarSondeos);
+  const texto = `Aviso en vivo QA ${Date.now()}`;
+  const cookie = await sesionHttp(ctx, "jefa1");
+  const t0 = Date.now();
+  const envio = await fetch(`${ctx.base}/inbox/${ANA}/send`, {
+    method: "POST", redirect: "manual",
+    headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ body: texto }),
+  });
+  if (envio.status !== 303) throw new Error(`el envío del compañero devolvió HTTP ${envio.status}`);
+  await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.burbujas.some((b) => b.texto === texto) ? true : null;
+  }, { timeout: 6000, interval: 100, label: "la burbuja del compañero traída por el stream (sin sondeos)" });
+  const ms = Date.now() - t0;
+  await ctx.abrirCrm(`?chat=${ANA}`);  // devuelve los sondeos
+  const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+  if (!s.abierto) throw new Error("la página no volvió al chat de Ana tras recargar");
+  return `con los ${ids} temporizadores apagados, el mensaje de otro panel se vio en ${ms} ms (el sondeo del hilo es de 8000 ms)`;
 }
 
 async function criterioVentanaCerrada(ctx) {
@@ -2305,6 +2358,7 @@ async function main() {
     await criterio(ctx, "6. Select «Mover a…»", criterioSelectMover);
     await criterio(ctx, "7. Abrir el chat de un contacto", criterioAbrirChat);
     await criterio(ctx, "7b. Un mensaje entrante aparece en el chat y en la tarjeta sin recargar", criterioEntranteEnVivo);
+    await criterio(ctx, "7c. El stream avisa: un mensaje de otro panel entra sin sondeo", criterioAvisoEnVivo);
     await criterio(ctx, "8. Ventana cerrada: variantes «nunca» y «caducó»", criterioVentanaCerrada);
     await criterio(ctx, "9. Enviar un mensaje y ocultarlo", criterioEnviar);
     await criterio(ctx, "10. Reactivar el bot", criterioReactivarBot);

@@ -46,6 +46,7 @@ redirección con sentido.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import unicodedata
@@ -53,11 +54,12 @@ import zlib
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Request
-from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import or_
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from sqlalchemy import and_, case, func, or_
+from sqlalchemy.orm import aliased
 from sqlmodel import select
 
-from app import ventana
+from app import eventos, ventana
 from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
 from app.clients import MAX_NOMBRE, _cliente_visible
@@ -97,11 +99,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_NOMBRE_ETAPA = 40
+# Cada cuánto el stream de avisos manda señal de vida si no hay nada que contar (§3.3 de
+# docs/SPEC-EVENTOS-CRM.md): por debajo del minuto que cortan los proxys por omisión.
+LATIDO_SEGUNDOS = 25
 HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 COLOR_ETAPA_DEFAULT = "#25D366"
-# ponytail: el tablero carga hasta este número de clientes (los más recientes de la oficina) y
-# agrega sus mensajes en Python, igual que build_conversation_items en app/inbox.py; pasar a
-# una consulta agregada y paginar si una oficina pasa de unos cientos de clientes.
+# ponytail: el tablero carga hasta este número de clientes (los más recientes de la oficina).
+# La mitad de este marcador ya se cobró: sus mensajes se agregan EN SQL (_agregar), no en
+# Python como todavía hace build_conversation_items en app/inbox.py. Falta paginar, cuando una
+# oficina pase de unos cientos de clientes y el tope empiece a esconder conversaciones vivas.
 LIMITE_CONTACTOS = 500
 # ponytail: el hilo del chat trae los últimos N mensajes; sin «cargar más» todavía.
 MAX_MENSAJES_CHAT = 300
@@ -228,7 +234,7 @@ def _agregar(session, clientes: list[Client]) -> dict[str, dict]:
     """
     agg = {
         c.phone: {
-            "last": None, "unread": 0, "last_in": None, "contestado": False,
+            "last": None, "unread": 0, "last_in": None,
             "ticket": None, "labels": [], "conv": None,
         }
         for c in clientes
@@ -237,25 +243,63 @@ def _agregar(session, clientes: list[Client]) -> dict[str, dict]:
     if not telefonos:
         return agg
 
-    mensajes = session.exec(
-        select(Message)
+    # Los tres datos que salen de `message` se calculan EN SQL. Traerse el histórico de los
+    # LIMITE_CONTACTOS teléfonos para derivarlos en Python costaba 961 ms y 100 000 filas
+    # materializadas con un año de operación; el agregado sobre ix_message_phone cuesta ~48 ms
+    # y trae 500 (medido, docs/SPEC-EVENTOS-CRM.md §0 y §6). Importa porque esto se sirve cada
+    # 20 s a CADA panel abierto, así que era el consumidor de CPU dominante del proceso.
+    #
+    # El último mensaje se elige por `MAX(id)` y no por `created_at`: el ORDER BY que había
+    # aquí ya desempataba por id, y el id es el único criterio que no depende de un reloj
+    # (en la base real no hay un solo mensaje cuyo created_at rompa el orden de inserción).
+    corte_saliente = func.coalesce(
+        func.max(case((Message.direction == Direction.OUT, Message.id))), 0
+    )
+    cortes = (
+        select(
+            Message.phone.label("phone"),
+            func.max(Message.id).label("ult_id"),
+            corte_saliente.label("corte"),
+            func.max(
+                case((Message.direction == Direction.IN, Message.created_at))
+            ).label("last_in"),
+        )
         .where(Message.habilitado == True)  # noqa: E712
         .where(Message.phone.in_(telefonos))
-        .order_by(Message.created_at.desc(), Message.id.desc())  # type: ignore[union-attr]
+        .group_by(Message.phone)
+        .cte("cortes")
+    )
+    # Los no leídos son los entrantes posteriores al corte de CADA teléfono. El JOIN va contra
+    # el CTE en vez de repetir el IN: con 500 contactos serían 1 000 parámetros enlazados y el
+    # tope de variables de SQLite es 999 en las versiones que todavía trae alguna imagen vieja.
+    nuevos = aliased(Message)
+    filas = session.exec(
+        select(cortes.c.phone, cortes.c.ult_id, cortes.c.last_in, func.count(nuevos.id))
+        .select_from(cortes)
+        .outerjoin(
+            nuevos,
+            and_(
+                nuevos.phone == cortes.c.phone,
+                nuevos.habilitado == True,  # noqa: E712
+                nuevos.direction == Direction.IN,
+                nuevos.id > cortes.c.corte,
+            ),
+        )
+        .group_by(cortes.c.phone, cortes.c.ult_id, cortes.c.last_in)
     ).all()
-    for m in mensajes:
-        a = agg.get(m.phone)
+    ultimos: dict[int, dict] = {}
+    for phone, ult_id, last_in, no_leidos in filas:
+        a = agg.get(phone)
         if a is None:
             continue
-        if a["last"] is None:
-            a["last"] = m
-        if not a["contestado"]:
-            if m.direction == Direction.IN:
-                a["unread"] += 1
-            else:
-                a["contestado"] = True
-        if a["last_in"] is None and m.direction == Direction.IN:
-            a["last_in"] = m.created_at
+        a["unread"] = no_leidos
+        a["last_in"] = last_in
+        if ult_id is not None:
+            ultimos[ult_id] = a
+    if ultimos:
+        # El cuerpo del último mensaje, por PK: una fila por contacto, no el histórico.
+        for m in session.exec(select(Message).where(Message.id.in_(list(ultimos)))).all():
+            ultimos[m.id]["last"] = m
 
     tickets = session.exec(
         select(Ticket)
@@ -813,6 +857,69 @@ def crm_chat(request: Request, phone: str):
             "bloqueado": contacto["bloqueado"],
             "respuestas_rapidas": _respuestas_rapidas(session, user),
         })
+
+
+# ---------------------------------------------------------------------------
+# API: avisos en vivo (SSE)
+# ---------------------------------------------------------------------------
+
+@router.get("/crm/api/eventos")
+async def crm_eventos(request: Request):
+    """Stream que avisa de mensajes nuevos para que el panel no dependa solo del reloj.
+
+    `async def` es OBLIGATORIO. Los demás endpoints del CRM son `def` y FastAPI los corre en el
+    threadpool; un stream síncrono se quedaría con un hilo de ese pool PARA SIEMPRE, y con diez
+    pestañas abiertas se come el que el webhook necesita para atender a Meta. No se ve en
+    desarrollo y en producción aparece como «el bot dejó de contestar».
+
+    El aviso es mudo a propósito (app/eventos.py): quién ve qué lo siguen decidiendo los
+    endpoints que el navegador vuelve a pedir, no este stream.
+
+    SSE y no WebSocket: el tráfico es de ida, las escrituras ya tienen sus POST con su sesión y
+    su alcance, y un socket obligaría a inventar un protocolo y a re-autorizar cada acción
+    dentro de él. Esto es un GET normal que pasa por SessionMiddleware, por la CSP
+    (`default-src 'self'` ya cubre EventSource) y por las cabeceras de seguridad sin tocar nada.
+    """
+    if not _current_user(request):
+        return _sin_sesion()
+    cola = eventos.suscribir()
+
+    async def flujo():
+        pendiente = None
+        try:
+            yield ": conectado\n\n"
+            while True:
+                # La espera vive FUERA del ciclo a propósito: con `asyncio.wait_for` cada latido
+                # cancelaría el `get()`, y un aviso que llegara en esa rendija se perdería.
+                if pendiente is None:
+                    pendiente = asyncio.ensure_future(cola.get())
+                listas, _ = await asyncio.wait({pendiente}, timeout=LATIDO_SEGUNDOS)
+                if pendiente not in listas:
+                    # El latido es un evento y no un comentario `:` porque el navegador lo usa
+                    # para saber que el stream sigue vivo; y va por debajo del minuto que corta
+                    # cualquier proxy por omisión.
+                    yield "event: latido\ndata: 1\n\n"
+                    continue
+                pendiente.result()
+                pendiente = None
+                while not cola.empty():  # una ráfaga de mensajes es UN aviso
+                    cola.get_nowait()
+                yield "event: mensajes\ndata: 1\n\n"
+        finally:
+            if pendiente is not None:
+                pendiente.cancel()
+            eventos.desuscribir(cola)
+
+    return StreamingResponse(
+        flujo(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-store",
+            # Apaga el buffering de nginx desde la respuesta: sin esto el proxy se queda con los
+            # eventos hasta llenar su búfer, y el despliegue no tiene que cambiar de config.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

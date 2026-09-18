@@ -43,6 +43,10 @@
   var SEARCH_DEBOUNCE_MS = 250;
   var SONDEO_TABLERO_MS = 20000;
   var SONDEO_CHAT_MS = 8000;
+  /* Agrupan la ráfaga de avisos del stream (/crm/api/eventos): cinco mensajes seguidos son un
+     refetch, no cinco. El chat es lo que se está mirando; el tablero es contexto y pesa más. */
+  var COALESCENCIA_CHAT_MS = 350;
+  var COALESCENCIA_TABLERO_MS = 2000;
   var ZONA_HORARIA = "America/Mexico_City";
   var ESTADOS_FOLIO = { nuevo: "nuevo", tomado: "tomado", en_proceso: "en proceso", cerrado: "cerrado" };
   /* Miembros: la disponibilidad es la de «Mi día» (User.estado). */
@@ -93,6 +97,8 @@
   var timerPendiente = null;
   var ultimoHilo = null;     // firma del hilo pintado
   var ultimaCabecera = null; // firma de la cabecera del chat pintada
+  var timerAvisoChat = null;    // agrupan los avisos del stream (conectarEventos)
+  var timerAvisoTablero = null;
   var ultimasRespuestas = null;
   var enviando = false;
   var respuestasSeq = 0;     // ignora una lista de «Mis respuestas» ya superada
@@ -194,11 +200,21 @@
   /* Acciones de la bandeja (app/inbox.py): POST con redirección 303 que fetch
      sigue. Devuelve {ok, err} leído de la URL final, nunca lanza. */
   function accionBandeja(url, cuerpo) {
-    var opts = { method: "POST", credentials: "same-origin", headers: { Accept: "text/html" } };
+    /* X-Requested-With: fetch → el servidor contesta 204 con el destino en una cabecera en vez
+       del 303 (app/main.py::_fetch_sin_html). Sin eso, seguir el redirect descargaba /crm
+       entero, 32 KB, por cada acción, solo para leer el ?err= de la URL final. */
+    var opts = {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "text/html", "X-Requested-With": "fetch" }
+    };
     if (cuerpo !== undefined) opts.body = cuerpo;
     return fetch(url, opts).then(function (res) {
       var destino;
-      try { destino = new URL(res.url, window.location.href); } catch (_) { destino = null; }
+      /* Si el 204 no llegara —un proxy que se coma la cabecera, el middleware apagado—, res.url
+         sigue siendo la URL final del redirect seguido y todo lo de abajo funciona igual. */
+      var anunciado = res.headers.get("X-Destino");
+      try { destino = new URL(anunciado || res.url, window.location.href); } catch (_) { destino = null; }
       if (destino && destino.pathname === "/login") return { ok: false, err: "sesion" };
       if (destino && destino.pathname === "/") return { ok: false, err: "acceso" };
       var err = destino ? destino.searchParams.get("err") : null;
@@ -2145,6 +2161,32 @@
     cargarChat(state.chat, { silencioso: true });
   }
 
+  /* Avisos en vivo (SSE, app/crm.py::crm_eventos). Es ADITIVO: los dos sondeos de arriba siguen
+     corriendo con sus mismos tiempos, porque por el stream solo viajan los mensajes — mover una
+     tarjeta de etapa, tomar un folio o cerrarlo los sigue trayendo el reloj, igual que hoy. El
+     aviso no trae datos: dispara las mismas funciones de siempre, con sus mismas guardas. */
+  function conectarEventos() {
+    if (!window.EventSource) return;
+    /* Sin onerror: EventSource reconecta solo, y mientras no lo logre el sondeo cubre. */
+    var fuente = new EventSource("/crm/api/eventos");
+    fuente.addEventListener("mensajes", function () {
+      if (timerAvisoChat === null) {
+        timerAvisoChat = setTimeout(function () {
+          timerAvisoChat = null;
+          sondearChat();
+        }, COALESCENCIA_CHAT_MS);
+      }
+      /* Con el chat abierto el tablero está oculto: lo mantiene al día el reloj y no hay por qué
+         pagar su descarga entera por cada mensaje que entra. */
+      if (timerAvisoTablero === null && els.board && !els.board.hidden) {
+        timerAvisoTablero = setTimeout(function () {
+          timerAvisoTablero = null;
+          sondearTablero();
+        }, COALESCENCIA_TABLERO_MS);
+      }
+    });
+  }
+
   /* ------------------------------------------------------------------ */
   /* Arranque                                                            */
   /* ------------------------------------------------------------------ */
@@ -2280,6 +2322,7 @@
     if (DATOS.abrir_respuestas) abrirRespuestas(false);
     setInterval(sondearTablero, SONDEO_TABLERO_MS);
     setInterval(sondearChat, SONDEO_CHAT_MS);
+    conectarEventos();
   }
 
   window.openChat = window.openChat || abrirChat;
