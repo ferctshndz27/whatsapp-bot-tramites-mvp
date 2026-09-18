@@ -168,3 +168,46 @@ def test_non_admin_redirected(monkeypatch, session):
     response = miner.unmatched_view(_request("colab"))
 
     assert response.headers["location"] == "/"
+
+
+def test_la_mineria_pide_su_propia_ventana_y_su_propio_plazo(monkeypatch):
+    """Lo que la tenía muerta cada noche: corría con los valores del clasificador.
+
+    `OLLAMA_TIMEOUT` (12 s) está calibrado para el prompt corto del clasificador, donde un
+    cliente espera al otro lado. La minería corre a las 3:30, pide hasta 1024 tokens y a los
+    ~10 tokens/s de la CPU de labs eso son minutos: moría con «The read operation timed out» y
+    dejaba el job nocturno en código 1, tapando cualquier otro fallo. Y sin `num_ctx` el
+    servidor recorta el prompt por el principio —el system con el catálogo— sin decir nada.
+    """
+    svc = next(s for c in miner.catalog.categories for s in c.services)
+    vistos: dict = {}
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "http://labs.fake")
+
+    def _captura(messages, **kw):
+        vistos.update(kw)
+        vistos["mensajes"] = messages
+        return {"content": json.dumps({"proposals": [{"service_id": svc.id, "synonym": "x"}]})}
+
+    monkeypatch.setattr(nlu, "ollama_chat", _captura)
+    miner.mine_synonyms(["mensaje de prueba"])
+
+    assert vistos["timeout"] == miner.MINE_TIMEOUT
+    assert vistos["num_ctx"] == miner.MINE_NUM_CTX
+    assert vistos["timeout"] > settings.ollama_timeout, "el plazo del chat no le sirve"
+
+
+def test_el_cuerpo_se_recorta_por_mensajes_enteros_para_caber_en_la_ventana():
+    """Cien mensajes largos no caben, y el tope por cantidad no lo impide: prefiere minar menos
+    material antes que minar sobre un prompt al que le falta el catálogo."""
+    largos = ["x" * 200] * miner.MAX_MESSAGES
+    # Un catálogo que ya se come media ventana: es el caso que fuerza el recorte.
+    cuerpo = miner._cuerpo_acotado(largos, reservado=miner.MINE_MAX_CHARS // 2)
+
+    assert len(cuerpo) <= miner.MINE_MAX_CHARS // 2
+    assert len(cuerpo.splitlines()) < miner.MAX_MESSAGES, "no recortó nada"
+    assert all(linea.startswith(f"{i}. ") for i, linea in enumerate(cuerpo.splitlines(), start=1))
+    # Lo que entra, entra completo: ninguna línea queda a medias.
+    assert all(len(linea.split(". ", 1)[1]) == 200 for linea in cuerpo.splitlines())
+    # Y con pocos mensajes no toca nada.
+    assert miner._cuerpo_acotado(["hola", "que tal"]) == "1. hola\n2. que tal"

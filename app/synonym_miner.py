@@ -35,6 +35,21 @@ router = APIRouter()
 
 DAYS_BACK = 30
 MAX_MESSAGES = 100
+# Ventana del modelo, igual que las demás capas de prompt largo (rag.OLLAMA_NUM_CTX). Sin
+# fijarla, el servidor usa 4096 y TRUNCA EN SILENCIO por el principio: se lleva por delante el
+# system con el catálogo y el modelo devuelve service_id inventados que luego se descartan.
+MINE_NUM_CTX = 8192
+# Presupuesto de caracteres del PROMPT ENTERO (system + cuerpo) para que quepa junto con la
+# respuesta: a ~3.5 caracteres por token en español, (8192 - 1024 de salida) × 3.5 ≈ 25 000.
+# El system crece con el catálogo, y es justo la parte que el servidor recorta primero, así que
+# el cuerpo se ajusta a lo que el catálogo deje libre — no a un número fijo.
+MINE_MAX_CHARS = 25000
+# La minería NO es una capa del chat: corre a las 3:30 y nadie la espera. Pide hasta 1024
+# tokens de salida y a los ~10 tokens/s de la CPU de labs eso son minutos, no los 12 s de
+# OLLAMA_TIMEOUT —calibrado para el clasificador, que sí hace esperar a un cliente—. Con el
+# default moría cada noche con «The read operation timed out», y de paso dejaba el job nocturno
+# en código 1, tapando cualquier otro fallo que apareciera ahí.
+MINE_TIMEOUT = 600.0
 
 # Se busca por el fragmento estable del aviso, no por su inicio: así los
 # mensajes ya enviados siguen contando aunque se retoque la cortesía inicial.
@@ -115,6 +130,29 @@ def unmatched_messages(session: Session, days: int = DAYS_BACK, limit: int = MAX
     return results
 
 
+def _cuerpo_acotado(texts: list[str], reservado: int = 0) -> str:
+    """Los mensajes numerados que caben en lo que el system deje libre, por mensajes enteros.
+
+    El tope de cantidad (MAX_MESSAGES) no basta: con un catálogo grande, cien mensajes pasan de
+    la ventana y el servidor recorta por el principio sin avisar —se lleva el catálogo y el
+    modelo responde sin haberlo visto—. Se prefiere minar menos material que minar a ciegas.
+    """
+    lineas: list[str] = []
+    usados = 0
+    disponible = MINE_MAX_CHARS - reservado
+    for i, texto in enumerate(texts[:MAX_MESSAGES], start=1):
+        linea = f"{i}. {texto[:200]}"
+        if usados + len(linea) + 1 > disponible:
+            logger.info(
+                "Minería: %s de %s mensajes entran en la ventana del modelo",
+                len(lineas), min(len(texts), MAX_MESSAGES),
+            )
+            break
+        lineas.append(linea)
+        usados += len(linea) + 1
+    return "\n".join(lineas)
+
+
 def mine_synonyms(texts: list[str]) -> list[dict]:
     """Pide al LLM propuestas de sinónimos y las valida contra el catálogo.
 
@@ -126,8 +164,8 @@ def mine_synonyms(texts: list[str]) -> list[dict]:
     listing = "\n".join(
         f"- {s.id}: {s.name}" for c in catalog.categories for s in c.services
     )
-    body = "\n".join(f"{i}. {t[:200]}" for i, t in enumerate(texts[:MAX_MESSAGES], start=1))
     system = _MINE_SYSTEM.format(listing=listing)
+    body = _cuerpo_acotado(texts, reservado=len(system))
 
     if settings.ollama_url:
         message = nlu.ollama_chat(
@@ -137,6 +175,8 @@ def mine_synonyms(texts: list[str]) -> list[dict]:
             ],
             format=_MINE_SCHEMA,
             num_predict=1024,
+            num_ctx=MINE_NUM_CTX,
+            timeout=MINE_TIMEOUT,
         )
         data = json.loads(message["content"])
     else:
