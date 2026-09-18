@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
+import threading
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session as SesionSQLAlchemy
@@ -54,14 +56,57 @@ TOPE_COLA = 8
 
 MARCA = "hay_mensajes"  # bandera en Session.info entre el flush y el commit
 
+# Centinela: no es un aviso, es «cierra el stream». Viaja por la misma cola que todo lo demás
+# para no tener que vigilar dos cosas a la vez dentro del generador.
+CIERRE = object()
+
 _loop: asyncio.AbstractEventLoop | None = None
 _suscriptores: set[asyncio.Queue] = set()
+_apagado_encadenado = False
 
 
 def capturar_loop() -> None:
     """Lo llama el lifespan (app/main.py), que es quien corre dentro del event loop."""
     global _loop
     _loop = asyncio.get_running_loop()
+    _encadenar_apagado()
+
+
+def _encadenar_apagado() -> None:
+    """Que los streams se cierren solos cuando el proceso recibe la señal de apagado.
+
+    No basta con la librería: uvicorn instala sus manejadores de señal ANTES de importar la app
+    —`serve()` abre `capture_signals()` y es `_serve()`, ya dentro, quien hace `config.load()`—,
+    y registra el método ligado `self.handle_exit` de ese instante. Cualquier parche que llegue
+    con el import de la app (el de sse-starlette, por ejemplo) queda apuntando a una referencia
+    que ya nadie usa. Medido en este repo: con un panel abierto, SIGTERM dejaba a uvicorn en
+    «Waiting for connections to close» hasta el SIGKILL de Docker.
+
+    Desde el lifespan sí se llega a tiempo: para entonces el manejador de uvicorn ya está
+    puesto, así que se toma con `getsignal`, se encadena el nuestro delante y se le llama
+    después — uvicorn sigue apagándose exactamente igual.
+    """
+    global _apagado_encadenado
+    if _apagado_encadenado or threading.current_thread() is not threading.main_thread():
+        return  # una sola vez por proceso, y solo desde el hilo principal
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previo = signal.getsignal(sig)
+
+        def manejar(num, marco, previo=previo):
+            loop = _loop  # el vigente, no el que hubiera al encadenar
+            if loop is not None and not loop.is_closed():
+                loop.call_soon_threadsafe(cerrar_suscriptores)
+            if callable(previo):
+                previo(num, marco)
+
+        signal.signal(sig, manejar)
+    _apagado_encadenado = True
+
+
+def cerrar_suscriptores() -> None:
+    """Le dice a cada stream abierto que termine. Corre ya dentro del loop."""
+    for cola in list(_suscriptores):
+        cola.put_nowait(CIERRE)  # sin pasar por el tope: esto no es un aviso que se pueda tirar
 
 
 def soltar_loop() -> None:

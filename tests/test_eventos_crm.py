@@ -144,3 +144,25 @@ def test_el_suscriptor_que_se_va_deja_de_recibir():
         return cola.qsize(), eventos.conectados()
 
     assert asyncio.run(principal()) == (0, 0)
+
+
+def test_el_cierre_pasa_por_encima_del_tope_de_la_cola():
+    """Un aviso se puede tirar; el cierre no.
+
+    Si el centinela se perdiera porque la cola está llena, ese stream no terminaría y uvicorn
+    volvería a quedarse en «Waiting for connections to close» hasta el SIGKILL de Docker.
+    """
+
+    async def principal():
+        eventos.capturar_loop()
+        cola = eventos.suscribir()
+        for _ in range(eventos.TOPE_COLA * 2):
+            eventos.publicar()
+        await asyncio.sleep(0.05)
+        eventos.cerrar_suscriptores()
+        return [cola.get_nowait() for _ in range(cola.qsize())]
+
+    avisos = asyncio.run(principal())
+    assert avisos.count(eventos.CIERRE) == 1
+    assert avisos[-1] is eventos.CIERRE
+    assert len(avisos) == eventos.TOPE_COLA + 1

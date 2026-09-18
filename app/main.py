@@ -209,6 +209,10 @@ app.add_middleware(
     same_site="lax",                     # mitiga CSRF cross-site
     max_age=SESSION_MAX_AGE,             # la sesión caduca (no vive para siempre)
 )
+# OJO al agregar middlewares: GZipMiddleware rompe el stream de avisos del CRM
+# (/crm/api/eventos) — comprime por bloques y los eventos se quedan en el búfer hasta llenarlo.
+# Es un fallo mudo: el panel no da error, simplemente vuelve a enterarse tarde. Si algún día se
+# comprime el panel, hay que excluir text/event-stream.
 app.middleware("http")(_fetch_sin_html)  # dentro de _security_headers: su 204 también se sella
 app.middleware("http")(_security_headers)
 

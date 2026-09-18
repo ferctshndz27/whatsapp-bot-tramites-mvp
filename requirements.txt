@@ -1,5 +1,8 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
+# Stream de avisos del CRM (/crm/api/eventos). La 2.4.x es la última que NO exige
+# subir starlette por encima de lo que fija fastapi 0.115.6 (la 3.x pide starlette 1.x).
+sse-starlette==2.4.1
 sqlmodel==0.0.22
 httpx==0.28.1
 jinja2==3.1.5

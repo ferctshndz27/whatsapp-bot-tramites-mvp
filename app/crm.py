@@ -46,7 +46,6 @@ redirección con sentido.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import unicodedata
@@ -54,10 +53,11 @@ import zlib
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Request
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import select
+from sse_starlette.sse import EventSourceResponse
 
 from app import eventos, ventana
 from app.audit import log_admin
@@ -102,6 +102,9 @@ MAX_NOMBRE_ETAPA = 40
 # Cada cuánto el stream de avisos manda señal de vida si no hay nada que contar (§3.3 de
 # docs/SPEC-EVENTOS-CRM.md): por debajo del minuto que cortan los proxys por omisión.
 LATIDO_SEGUNDOS = 25
+# Tope para escribir en un navegador que dejó de leer: pasado eso se le corta la conexión y
+# EventSource reconecta por su cuenta. Sin tope, esa tarea se queda en el servidor para siempre.
+ENVIO_MAX_SEGUNDOS = 15
 HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 COLOR_ETAPA_DEFAULT = "#25D366"
 # ponytail: el tablero carga hasta este número de clientes (los más recientes de la oficina).
@@ -885,40 +888,31 @@ async def crm_eventos(request: Request):
     cola = eventos.suscribir()
 
     async def flujo():
-        pendiente = None
         try:
-            yield ": conectado\n\n"
             while True:
-                # La espera vive FUERA del ciclo a propósito: con `asyncio.wait_for` cada latido
-                # cancelaría el `get()`, y un aviso que llegara en esa rendija se perdería.
-                if pendiente is None:
-                    pendiente = asyncio.ensure_future(cola.get())
-                listas, _ = await asyncio.wait({pendiente}, timeout=LATIDO_SEGUNDOS)
-                if pendiente not in listas:
-                    # El latido es un evento y no un comentario `:` porque el navegador lo usa
-                    # para saber que el stream sigue vivo; y va por debajo del minuto que corta
-                    # cualquier proxy por omisión.
-                    yield "event: latido\ndata: 1\n\n"
-                    continue
-                pendiente.result()
-                pendiente = None
-                while not cola.empty():  # una ráfaga de mensajes es UN aviso
-                    cola.get_nowait()
-                yield "event: mensajes\ndata: 1\n\n"
+                aviso = await cola.get()
+                # Una ráfaga de mensajes es UN aviso; y si el cierre viene en medio de la
+                # ráfaga, gana él — tirarlo al drenar volvería a colgar el apagado.
+                while aviso is not eventos.CIERRE and not cola.empty():
+                    aviso = cola.get_nowait()
+                if aviso is eventos.CIERRE:
+                    # El proceso se apaga: terminar el generador cierra la conexión y deja que
+                    # uvicorn pare en el acto, en vez de esperar a un stream que no acaba nunca.
+                    return
+                yield {"event": "mensajes", "data": "1"}
         finally:
-            if pendiente is not None:
-                pendiente.cancel()
             eventos.desuscribir(cola)
 
-    return StreamingResponse(
+    # EventSourceResponse en vez de un StreamingResponse a mano: pone `Cache-Control: no-store`
+    # y `X-Accel-Buffering: no` (sin lo segundo, nginx retiene los eventos hasta llenar su
+    # búfer), manda el latido solo, detecta que el cliente se fue y —lo que de verdad importa—
+    # CIERRA el stream cuando el proceso recibe la señal de apagado. Medido en este repo: sin eso
+    # el contenedor con un panel abierto no paraba con SIGTERM y moría por SIGKILL a los 10 s.
+    return EventSourceResponse(
         flujo(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-store",
-            # Apaga el buffering de nginx desde la respuesta: sin esto el proxy se queda con los
-            # eventos hasta llenar su búfer, y el despliegue no tiene que cambiar de config.
-            "X-Accel-Buffering": "no",
-        },
+        ping=LATIDO_SEGUNDOS,
+        # Un navegador que deja de leer no puede colgar su tarea del servidor para siempre.
+        send_timeout=ENVIO_MAX_SEGUNDOS,
     )
 
 

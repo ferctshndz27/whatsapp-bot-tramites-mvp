@@ -115,6 +115,23 @@ def _base(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _sse_entre_loops():
+    """sse-starlette 2.4.1 guarda su evento de apagado en una variable de CLASE y lo reutiliza.
+
+    Cada prueba del stream corre su propio `asyncio.run()`, así que la segunda se encuentra un
+    `anyio.Event` ligado a un loop ya cerrado y revienta con «bound to a different event loop».
+    Es un artefacto de la suite y no de producción, donde el proceso tiene un solo loop de
+    principio a fin; la 3.x lo arregla, pero pide starlette 1.x y con ella habría que mover el
+    pin de fastapi.
+    """
+    from sse_starlette.sse import AppStatus
+
+    AppStatus.should_exit_event = None
+    AppStatus.should_exit = False
+    yield
+
+
 def _sesion(username: str) -> TestClient:
     cliente = TestClient(app, base_url="https://testserver")
     r = cliente.post("/login", data={"username": username, "password": CLAVE},
@@ -987,7 +1004,8 @@ def test_la_pagina_trae_mis_respuestas_y_las_abre_con_el_parametro():
 # Avisos en vivo (SSE)
 # ---------------------------------------------------------------------------
 
-def _stream_de_avisos(cliente: TestClient, disparar, segundos: float = 5.0) -> list[str]:
+def _stream_de_avisos(cliente: TestClient, disparar, segundos: float = 5.0,
+                      esperar_cierre: bool = False) -> list[str]:
     """Consume /crm/api/eventos por ASGI y devuelve los eventos que llegan tras `disparar()`.
 
     Sin TestClient a propósito: el suyo espera a que la respuesta TERMINE antes de entregar
@@ -1009,6 +1027,7 @@ def _stream_de_avisos(cliente: TestClient, disparar, segundos: float = 5.0) -> l
         }
         trozos: list[bytes] = []
         cabecera: dict = {}
+        hay_cabecera = asyncio.Event()
         hay_trozo = asyncio.Event()
 
         async def receive():
@@ -1017,13 +1036,16 @@ def _stream_de_avisos(cliente: TestClient, disparar, segundos: float = 5.0) -> l
         async def send(mensaje):
             if mensaje["type"] == "http.response.start":
                 cabecera.update(mensaje)
+                hay_cabecera.set()
             elif mensaje["type"] == "http.response.body":
                 trozos.append(mensaje.get("body", b""))
                 hay_trozo.set()
 
         tarea = asyncio.ensure_future(app(scope, receive, send))
         try:
-            await asyncio.wait_for(hay_trozo.wait(), segundos)  # ": conectado"
+            # A las cabeceras y no al primer trozo: el stream no dice nada hasta que hay algo
+            # que contar (el latido lo manda EventSourceResponse cada LATIDO_SEGUNDOS).
+            await asyncio.wait_for(hay_cabecera.wait(), segundos)
             assert cabecera["status"] == 200, cabecera
             cabeceras = {k.decode(): v.decode() for k, v in cabecera["headers"]}
             assert cabeceras["content-type"].startswith("text/event-stream")
@@ -1032,7 +1054,10 @@ def _stream_de_avisos(cliente: TestClient, disparar, segundos: float = 5.0) -> l
             trozos.clear()
             hay_trozo.clear()
             disparar()
-            await asyncio.wait_for(hay_trozo.wait(), segundos)
+            if esperar_cierre:
+                await asyncio.wait_for(tarea, segundos)  # la respuesta termina por sí sola
+            else:
+                await asyncio.wait_for(hay_trozo.wait(), segundos)
             crudo = b"".join(trozos).decode()
         finally:
             tarea.cancel()
@@ -1095,3 +1120,16 @@ def test_un_post_por_fetch_recibe_204_con_el_destino_y_no_la_pagina_entera():
     assert con_js.headers["x-destino"] == sin_js.headers["location"] == f"/inbox/{ANA}"
     # Y sigue sellado por las cabeceras de seguridad, que envuelven a este middleware.
     assert con_js.headers["x-content-type-options"] == "nosniff"
+
+
+def test_al_apagarse_el_proceso_el_stream_se_cierra_solo():
+    """Lo que uvicorn necesita para poder pararse, y que no da la librería por sí sola.
+
+    uvicorn registra sus manejadores de señal ANTES de importar la app, así que el parche de
+    sse-starlette apunta a una referencia que ya nadie usa y su apagado cooperativo no llega a
+    correr (medido: SIGTERM con un panel abierto dejaba al contenedor en «Waiting for
+    connections to close» hasta el SIGKILL). El cierre viaja por la misma cola que los avisos.
+    """
+    assert _stream_de_avisos(_sesion("jefe1"), eventos.cerrar_suscriptores,
+                             esperar_cierre=True) == []
+    assert eventos.conectados() == 0
