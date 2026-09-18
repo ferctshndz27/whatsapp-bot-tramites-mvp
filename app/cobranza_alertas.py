@@ -18,7 +18,7 @@ noticia.
 import logging
 from datetime import timedelta, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.cobranza import ESTADOS_VIVOS
@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 # Sin un solo evento en 24 h teniendo cobros vivos, el webhook está roto o
 # rotaron el secreto: es el fallo más caro porque el sistema se ve sano.
 SIN_EVENTOS_HORAS = 24
+# Los ids que pone Stripe. Los sintéticos de casa llevan prefijo propio
+# (`panel:`, `cron:recon:`) y NO cuentan como señal de vida del endpoint.
+PREFIJO_EVENTO_STRIPE = "evt_"
+# El barrido corre una vez por noche: con 26 h, «lo revisó» sigue siendo cierto
+# aunque el cron se haya retrasado, y deja de serlo si dejó de correr.
+RECONCILIADO_RECIENTE_HORAS = 26
+# Dos noches sin que el cobro cambie, teniendo quien lo consulte, ya no es espera.
+ATASCADO_HORAS = 48
 # Un evento sin procesar recién llegado es normal (lo toma el barrido); a la
 # hora ya es señal de que el aplicador está fallando.
 EVENTO_ATORADO_HORAS = 1
@@ -58,6 +66,19 @@ VENTANA_TRANSITORIA_DIAS = 7
 ESTADOS_COBRABLES = tuple(sorted(ESTADOS_VIVOS)) + ("pagado",)
 
 
+def _sin_ficha_vigente(ahora_naive):
+    """Excluye al cobro que legítimamente espera al CLIENTE, no a Stripe.
+
+    Un OXXO o un SPEI con ficha viva se queda `pendiente` días sin que Stripe mande nada, y
+    eso es el funcionamiento normal del pago diferido mexicano: tratarlo como «el webhook no
+    responde» encendía una crítica cada noche mientras todo estaba bien.
+    """
+    return or_(
+        Cobro.voucher_expira_at.is_(None),  # type: ignore[union-attr]
+        Cobro.voucher_expira_at < ahora_naive,
+    )
+
+
 def _contar(session: Session, modelo, *condiciones) -> int:
     consulta = select(func.count()).select_from(modelo)
     for condicion in condiciones:
@@ -71,12 +92,24 @@ def reglas_cobranza(session: Session) -> list[tuple[str, str, str, str, float | 
     disparadas: list[tuple[str, str, str, str, float | None]] = []
 
     # 1) El webhook está mudo teniendo dinero en la calle.
+    ahora_naive = _naive(ahora)
     vivos = _contar(session, Cobro, Cobro.estado == "pendiente",
-                    Cobro.habilitado == True)  # noqa: E712
+                    Cobro.habilitado == True,  # noqa: E712
+                    _sin_ficha_vigente(ahora_naive))
     if vivos:
         corte = _naive(ahora - timedelta(hours=SIN_EVENTOS_HORAS))
-        eventos_recientes = _contar(session, EventoPasarela,
-                                    EventoPasarela.recibido_at >= corte)
+        eventos_recientes = _contar(
+            session, EventoPasarela,
+            EventoPasarela.recibido_at >= corte,
+            # SOLO los de Stripe. `eventopasarela` guarda también los sintéticos que escriben
+            # el panel y el barrido (`panel:…`, `cron:recon:…`), y contarlos convertía esta
+            # alerta en un mentiroso en las dos direcciones: cualquier toque en el panel la
+            # apagaba con el endpoint igual de muerto, y su ausencia la encendía cuando lo
+            # único que pasaba es que nadie había hecho nada.
+            EventoPasarela.stripe_event_id.startswith(  # type: ignore[union-attr]
+                PREFIJO_EVENTO_STRIPE, autoescape=True
+            ),
+        )
         if not eventos_recientes:
             disparadas.append((
                 "cobro:sin-eventos", "critical",
@@ -86,6 +119,30 @@ def reglas_cobranza(session: Session) -> list[tuple[str, str, str, str, float | 
                 "de alta y que STRIPE_WEBHOOK_SECRET sea el del modo correcto.",
                 float(vivos),
             ))
+
+    # 1bis) El cobro no se mueve AUNQUE el barrido lo esté consultando cada noche.
+    corte_revisado = _naive(ahora - timedelta(hours=RECONCILIADO_RECIENTE_HORAS))
+    corte_quieto = _naive(ahora - timedelta(hours=ATASCADO_HORAS))
+    atascados = _contar(
+        session, Cobro,
+        Cobro.estado == "pendiente",
+        Cobro.habilitado == True,  # noqa: E712
+        _sin_ficha_vigente(ahora_naive),
+        Cobro.reconciliado_at.is_not(None),  # type: ignore[union-attr]
+        Cobro.reconciliado_at >= corte_revisado,
+        Cobro.updated_at < corte_quieto,
+    )
+    if atascados:
+        disparadas.append((
+            "cobro:atascado", "warn",
+            "Un cobro no se mueve pese a la reconciliación",
+            f"{atascados} cobro(s) llevan más de {ATASCADO_HORAS} h sin cambiar aunque el "
+            "barrido nocturno los consulta contra Stripe. Junto con la alerta de arriba dice "
+            "de qué lado está el problema: si tampoco llegan eventos, sospecha del endpoint; "
+            "si llegan, es ESE cobro — búscalo en el panel de Stripe. Y si el barrido no "
+            "obtiene respuesta, lo dice el log del cron ('Reconciliación sin respuesta').",
+            float(atascados),
+        ))
 
     # 2) Eventos que llegaron pero nadie pudo aplicar.
     corte = _naive(ahora - timedelta(hours=EVENTO_ATORADO_HORAS))

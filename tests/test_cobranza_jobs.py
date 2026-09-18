@@ -519,3 +519,31 @@ def test_41_una_excepcion_por_intento_no_se_disfraza_de_sin_resolver(monkeypatch
     assert app_jobs.errores({"cobranza": {"intentos_huerfanos": resultado}}) == [
         "cobranza.intentos_huerfanos"
     ], "el fallo no llega al código de salida del cron"
+
+
+def test_la_reconciliacion_sin_respuesta_deja_rastro(monkeypatch, caplog):
+    """`reconciliado_at` se sella en los dos caminos, así que sin este log «pregunté y Stripe
+    no contestó» y «pregunté y sigue igual» son indistinguibles desde fuera. Costó cinco días
+    de diagnóstico: el cobro clavado, el panel culpando al webhook —que es la dirección
+    contraria, esta consulta SALE hacia Stripe— y ninguna forma de saber cuál de las dos era.
+    """
+    monkeypatch.setattr(jobs.stripe_client, "obtener_session",
+                        lambda _id: stripe_client.RespuestaStripe(
+                            ok=False, http_status=None, indeterminado=True,
+                            error_mensaje="timeout"))
+    with Session(db.engine) as s:
+        cobro = _cobro(s, estado="pendiente",
+                       stripe_checkout_session_id="cs_test_mudo",
+                       updated_at=utcnow() - timedelta(days=3))
+
+    with caplog.at_level("WARNING"):
+        resultado = jobs.reconciliar_pendientes()
+
+    assert resultado["revisados"] == 1 and resultado["fallidos"] == 1
+    rastro = [r.getMessage() for r in caplog.records if "sin respuesta" in r.getMessage()]
+    assert rastro, "el barrido consultó, no obtuvo nada y no lo dijo en ninguna parte"
+    assert f"id={cobro.id}" in rastro[0] and "cs_test_mudo" in rastro[0]
+
+    with Session(db.engine) as s:
+        # Se sella igual: es lo que rota la cola y evita matar de hambre a los demás.
+        assert s.get(Cobro, cobro.id).reconciliado_at is not None

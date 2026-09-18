@@ -164,3 +164,68 @@ def test_las_derivadas_con_ventana_se_apagan_solas():
         assert "cobro:pago-tardio" not in codigos
         assert "cobro:disputa-perdida" not in codigos
         assert "cobro:metadata-no-coincide" not in codigos
+
+
+def _hace_horas(horas: int):
+    return cobranza.naive_utc(utcnow() - timedelta(hours=horas))
+
+
+def _dentro_de_horas(horas: int):
+    return cobranza.naive_utc(utcnow() + timedelta(hours=horas))
+
+
+def test_los_eventos_sinteticos_de_casa_no_son_senal_de_vida_del_webhook():
+    """La regla contaba CUALQUIER fila de eventopasarela, y ahí caen los sintéticos.
+
+    Con el endpoint muerto bastaba un toque en el panel —que escribe `panel:…`— para apagar la
+    crítica; y al revés, su ausencia la encendía cuando lo único cierto era que nadie había
+    hecho nada. Solo un `evt_…` prueba que Stripe nos habla.
+    """
+    with Session(db.engine) as s:
+        _cobro(s, id=1, estado="pendiente", token_verificacion="tok-a")
+        s.add(EventoPasarela(stripe_event_id="panel:cancel:1:2026-09-17",
+                             tipo="cobro.cancelado", recibido_at=_hace_horas(2)))
+        s.add(EventoPasarela(stripe_event_id="cron:recon:1:2026-09-17",
+                             tipo="checkout.session.expired", recibido_at=_hace_horas(1)))
+        s.commit()
+        assert "cobro:sin-eventos" in _codigos(s)
+
+        s.add(EventoPasarela(stripe_event_id="evt_1Nabc", tipo="checkout.session.expired",
+                             recibido_at=_hace_horas(3)))
+        s.commit()
+        assert "cobro:sin-eventos" not in _codigos(s)
+
+
+def test_una_ficha_vigente_de_oxxo_no_es_un_webhook_roto():
+    """El pago diferido mexicano espera al CLIENTE, no a Stripe: mientras el voucher viva,
+    Stripe no tiene nada que mandar y la crítica sería ruido cada noche."""
+    with Session(db.engine) as s:
+        cobro = _cobro(s, id=1, estado="pendiente", token_verificacion="tok-b",
+                       voucher_url="https://pay.stripe.com/voucher/x",
+                       voucher_expira_at=_dentro_de_horas(48))
+        assert "cobro:sin-eventos" not in _codigos(s)
+
+        cobro.voucher_expira_at = _hace_horas(1)  # la ficha venció: ya no hay a quién esperar
+        s.add(cobro)
+        s.commit()
+        assert "cobro:sin-eventos" in _codigos(s)
+
+
+def test_un_cobro_que_no_se_mueve_pese_a_la_reconciliacion_se_avisa_aparte():
+    """El caso que costó cinco días de diagnóstico: el cobro clavado y el panel culpando al
+    webhook. Son dos cosas distintas y ahora tienen dos alertas distintas — esta solo dispara
+    si ALGUIEN lo está consultando, así que un `reconciliado_at` vacío no la enciende."""
+    with Session(db.engine) as s:
+        cobro = _cobro(s, id=1, estado="pendiente", token_verificacion="tok-c",
+                       updated_at=_hace(3))
+        assert "cobro:atascado" not in _codigos(s), "sin reconciliar, el culpable es otro"
+
+        cobro.reconciliado_at = _hace_horas(2)  # el barrido sí lo revisó anoche
+        s.add(cobro)
+        s.commit()
+        assert "cobro:atascado" in _codigos(s)
+
+        cobro.reconciliado_at = _hace(4)  # el barrido dejó de correr
+        s.add(cobro)
+        s.commit()
+        assert "cobro:atascado" not in _codigos(s)

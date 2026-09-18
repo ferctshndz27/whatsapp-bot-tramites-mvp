@@ -350,6 +350,17 @@ def _reconciliar_uno(cobro_id: int) -> str:
         session.add(cobro)
         if objeto is None:
             session.commit()
+            # El único rastro de que se intentó: `reconciliado_at` se sella igual que en el
+            # camino bueno, así que sin esta línea «pregunté y Stripe no contestó» y «pregunté
+            # y sigue igual» son indistinguibles desde fuera. Pasó de verdad: un cobro llevaba
+            # días clavado, el panel culpaba al webhook —que es la dirección CONTRARIA, este
+            # GET sale de aquí hacia Stripe— y no había forma de saber cuál de las dos era.
+            logger.warning(
+                "Reconciliación sin respuesta de Stripe: cobro id=%s estado=%s instrumento=%s",
+                cobro.id,
+                cobro.estado,
+                cobro.stripe_checkout_session_id or cobro.stripe_payment_intent_id or "ninguno",
+            )
             return "sin-respuesta"
 
         tipo = _tipo_desde_objeto(objeto)
