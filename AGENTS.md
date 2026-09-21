@@ -1,18 +1,58 @@
 
 This file provides guidance to ANY agent working in this repository. Antigravity (`agy`) reads it
 natively; Claude Code through `CLAUDE.md` and Gemini CLI through `GEMINI.md`, both a one-line import
-of this file. It holds the **global rules**. Domain knowledge lives in `.claude/skills/` — linked
-from `.agents/skills/`, the directory both Google agents scan — and loads on demand.
+of this file. It holds the **global rules**. The harness has two layers: the **process** comes from
+rsc-harness (pinned in `.rsc.json`, Claude Code only), and the **domain knowledge** lives in this
+repo's own skills under `.claude/skills/` — linked from `.agents/skills/`, the directory both Google
+agents scan — and loads on demand.
 
 ## How to work here
+
+### Process: rsc-harness picks the lane, this repo sets the rules
+
+Since 2026-09-21 the process layer is [rsc-harness](https://github.com/ericrisco/rsc-harness). Every
+turn takes exactly one lane, and names it in a line:
+
+- **Answer** — the request asks for information. Read-only: nothing is written.
+- **FTD** — the request authorises a change. The default. One feature document under
+  `02-DOCS/wiki/ftd/`, tasks checked off only against observed proof, a branch if it writes code.
+- **SDD** — the ten-phase chain (`specify` → … → `ship`). Never entered by the agent alone: only
+  when the operator asks for it or accepts a proposal. Size and risk never select it.
+
+Under Claude Code the rsc hooks inject the full decisor and its skills (`ftd`, `sdd`, `verify`,
+`review`, `debug`…) load on demand. Gemini CLI and Antigravity have no rsc layer — the operator
+installed it for Claude only — so there these three bullets *are* the process.
+
+rsc's chain reads a constitution at `02-DOCS/wiki/sdd/constitution.md` (local, like the rest of
+`02-DOCS/`). Here it is **minimal on purpose**: it legislates only *how work is done* — branches,
+who pushes, commit format, what stays local — and defers to this file for everything about the bot.
+**The product's rules live here and in the domain skills, once.** `verify` and `review` judge a
+diff against this file. rsc is a generic catalog written for any project; **where one of its
+skills disagrees with this file, this file wins.** The known disagreements:
+
+- **`ship` offers to merge or open a PR; here the operator runs every `git push`, `ssh` and
+  deploy.** Landing is handed over as copy-paste commands (see *Deploy*), and `deny` enforces it.
+- **`ship` says authorship is "Eric's".** Read "the operator's": the repo's configured `user.name`
+  and `user.email`, never `--author`. Its other half stands as written: **no AI trailer** on any
+  commit message — no `Co-Authored-By` for a model, no "Generated with" footer (operator's call,
+  2026-09-21; older commits that carry one stay as they are).
+- **`suggest` offers `npx @ericrisco/rsc add <id>`; `harness` and `init` offer `sync`, `repair` and
+  `onboard`.** Every one of them rewrites `.claude/settings.json`, which the agent may not touch.
+  Prepare the command pinned to the `catalogVersion` of `.rsc.json`; the operator runs it.
+- **rsc wants `02-DOCS/` and `01-TOOLS/` committed.** Here they are local, like `docs/`: no `git add`
+  ever includes them.
+- **Commits are gitmoji + Conventional Commits, in Spanish** (`✨ feat(crm): …`). On this one rsc
+  and the repo agree: its `PreToolUse` guard rejects a `git commit` without the emoji.
+
+### Role routing: the domain knowledge rsc does not have
 
 You are a **senior engineering team**, not a single generalist: architect, backend, frontend, DBA,
 DevOps, security, QA, performance, integration and AI/ML. **Pick only the roles the task actually
 needs** — loading all of them is how a small change turns into a rewrite.
 
 The user never has to say "act as a DBA". Infer it from the task and invoke the matching skill.
-
-### Role routing
+rsc's skills say *how* to work (spec, verify, review); these fourteen say *what is true about this
+system* — a lane without its domain skill is method applied to a guess.
 
 | The task touches… | Skill |
 |---|---|
@@ -47,8 +87,10 @@ file. Resolve conflicts in this order, most specific first:
 
 1. What the user asks for in the conversation.
 2. The user's own global rules.
-3. This file and the skills it routes to — they are scoped to this repo.
-4. A parent file, only where it applies here. Its tables of .NET/Flutter skills and its mandatory
+3. This file, the constitution and the skills this file routes to — they are scoped to this repo.
+4. rsc's managed skills and the text its hooks inject. They are method, written for any project,
+   and they yield to 3 wherever the two disagree (the list above).
+5. A parent file, only where it applies here. Its tables of .NET/Flutter skills and its mandatory
    `gitnexus_*` calls describe other projects; a FastAPI bot is not one of them. Its graphify wiki
    table lists other projects too: this repo's graph is local, code-only and has no wiki, and it is
    used through the `code-graph` skill, never through `/graphify`.
@@ -58,9 +100,10 @@ and move on, don't silently obey and don't argue about it every turn.
 
 ### Before changing code
 
-Understand → inspect **only the relevant files** → identify the domain → load those skills → plan →
-implement → `pytest -q` → review → verify. Don't read the whole repo, and don't edit before you
-understand. Both failures cost the same.
+Whatever the lane: understand → inspect **only the relevant files** → identify the domain → load
+those skills → then the lane's own method (the FTD document, or the SDD phase you are in) →
+`pytest -q` → review → verify. Don't read the whole repo, and don't edit before you understand.
+Both failures cost the same.
 
 `pytest -q` runs even when the change looks like it cannot break anything. A docs-only edit still
 touches `AGENTS.md`, and `tests/test_harness.py` is precisely the test that goes red on a citation
@@ -77,21 +120,34 @@ MSSQL, no Ollama), `❌` fail. A check that was skipped is reported as skipped, 
 
 Skills load on demand and cost nothing until invoked — that is the whole point of keeping this file
 short. Don't paste framework documentation, don't restate these global rules inside a skill, and
-don't open files the task doesn't touch.
+don't open files the task doesn't touch. The rsc layer is not free, and the number is measured, not
+guessed: `rsc doctor` reports ~7 KB injected per session start, ~1 KB per turn and ~12 KB of skill
+descriptions under Claude Code. That is the price of the lanes; don't add to it by restating here
+what the hooks already inject.
 
 ### The harness is tested, not just described
 
-This routing table is a contract, not documentation: `tests/test_harness.py` asserts —in both
-directions— that every skill on disk has a row and every row points at a skill that exists, that
-each `name:` matches its folder, that every skill still carries a `description:` and the eleven
-shared sections in order, and that every repo path a skill cites still resolves. Adding a skill is
-five places: the file, the row, its relative link in `.agents/skills/`, its `!` line in `.gitignore`,
-and a green harness test **in the same commit**.
+Two kinds of skill share `.claude/skills/`, and the difference is load-bearing. **Own skills** are
+the fourteen of the routing table: real directories, versioned, written for this repo. **Managed
+skills** are the ones `.rsc.json` lists: symlinks into `.rsc/`, git-ignored one by one and rebuilt by
+`rsc sync`. They do not exist in a clean clone — so nothing versioned may cite a file inside one,
+and a check that counts them is green in CI and red on the operator's machine.
+
+The routing table is a contract, not documentation: `tests/test_harness.py` asserts —in both
+directions— that every own skill has a row and every row points at an own skill, that each `name:`
+matches its folder, that every own skill still carries a `description:` and the eleven shared
+sections in order, and that every repo path the harness cites still resolves. For the rsc side it
+asserts what a clone needs: `.rsc.json` still says what the operator decided (target, pinned
+version), every managed skill is ignored and none shadows an own one, and every rsc hook in
+`.claude/settings.json` goes through the committed `.claude/rsc-bootstrap.mjs`. Adding an own skill
+is five places: the file, the row, its relative link in `.agents/skills/`, its `!` line in
+`.gitignore`, and a green harness test **in the same commit**.
 
 `.claude/settings.json` carries the permission policy the agent works under: the operator runs every
-`git push`, `ssh` and deploy, and `deny` now enforces that instead of trusting memory. The agent
+`git push`, `ssh` and deploy, and `deny` now enforces that instead of trusting memory. It also
+carries the rsc hooks, which the installer merges in without touching `permissions`. The agent
 cannot edit that file — the platform refuses — so changes to it are handed over as a copy-paste
-block. Why the harness looks like this, and how it measures up against a reference harness, is in
+block, and every rsc command that rewrites it is the operator's to run. Why the harness looks like this, and how it measures up against a reference harness, is in
 `docs/HARNESS.md`.
 
 The same harness is operable from the Google agents without a second copy of anything:
