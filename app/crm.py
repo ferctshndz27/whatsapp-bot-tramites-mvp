@@ -92,7 +92,7 @@ from app.replies import (
     personal_replies,
 )
 from app.templating import local_dt, templates
-from app.utils import normalize_phone
+from app.utils import mask_phone, normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -772,7 +772,7 @@ def crm_mover_contacto(request: Request, phone: str, payload: dict = Body(defaul
             session.add(cliente)
             session.commit()
             session.refresh(cliente)
-            logger.info("Cliente %s movido a la etapa %s por %s", phone, etapa_id, user)
+            logger.info("Cliente %s movido a la etapa %s por %s", mask_phone(phone), etapa_id, user)
         agg = _agregar(session, [cliente])
         return JSONResponse(_contacto_json(cliente, agg[cliente.phone], etapa_id))
 

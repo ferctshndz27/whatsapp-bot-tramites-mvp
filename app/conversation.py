@@ -1205,7 +1205,9 @@ def _log_nlu(
         return
     session.add(
         NluEvent(
-            phone=phone, text=text[:200], capa=capa,
+            # Enmascarado: la bitácora se espeja a MSSQL y alimenta la minería;
+            # ninguna de las dos necesita la CURP (auditoría 2026-09, IA-7).
+            phone=phone, text=codigos.enmascarar(text)[:200], capa=capa,
             service_id=service_id, confianza=confianza,
             office_id=_oficina_de(session, phone),
         )

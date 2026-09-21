@@ -223,9 +223,17 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
 
     vago = es_vago(cleaned)
 
+    # Lo que sale hacia un modelo va sin CURP/RFC/NSS/correo/teléfono: el
+    # trámite se deduce de "quiero mi acta", no de la clave de al lado
+    # (auditoría 2026-09, IA-6). Se enmascara ANTES de cortar: una CURP partida
+    # por el tope ya no tiene forma de CURP. Import local: codigos importa nlu.
+    from app.codigos import enmascarar
+
+    para_modelo = enmascarar(cleaned)[:MAX_INPUT_CHARS]
+
     if settings.ollama_url:
         try:
-            service, category = _deduce_ollama(cleaned[:MAX_INPUT_CHARS])
+            service, category = _deduce_ollama(para_modelo)
             if service is not None and vago:
                 # Tema, no trámite: la categoría del servicio que eligió es la
                 # respuesta honesta; si no la hay, decide la cascada barata.
@@ -246,7 +254,7 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
 
     if settings.anthropic_api_key:
         try:
-            service, category = _deduce_llm(cleaned[:MAX_INPUT_CHARS])
+            service, category = _deduce_llm(para_modelo)
             if service is not None and vago:
                 # Tema, no trámite: la categoría del servicio que eligió es la
                 # respuesta honesta; si no la hay, decide la cascada barata.
