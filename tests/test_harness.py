@@ -32,6 +32,18 @@ SKILLS = RAIZ / ".claude" / "skills"
 AGENTS_MD = RAIZ / "AGENTS.md"
 SETTINGS = RAIZ / ".claude" / "settings.json"
 
+# Desde el 2026-09-21 la capa de proceso es rsc-harness. `.rsc.json` es su
+# declaración versionada: qué asistentes, qué versión del catálogo y QUÉ SKILLS
+# gestiona. Esas skills comparten `.claude/skills/` con las del repo pero son
+# enlaces hacia `.rsc/`, que git ignora: en la máquina del operador existen y en
+# un clone limpio —o sea, en CI— no. Un assert que las cuente sale verde en CI y
+# rojo en local, que es la peor combinación: el candado que gatea el deploy diría
+# que todo va bien justo donde no mira. Por eso todo lo de abajo habla de skills
+# PROPIAS, y la frontera la pone el archivo versionado, no la forma del enlace
+# (en Windows rsc copia en vez de enlazar).
+RSC_JSON = RAIZ / ".rsc.json"
+RSC_BOOTSTRAP = RAIZ / ".claude" / "rsc-bootstrap.mjs"
+
 # El mismo harness visto desde los agentes de Google. Antigravity (`agy`, el
 # que usa el operador) y Gemini CLI escanean `.agents/skills/` —Antigravity
 # NO mira `.gemini/skills/`, de ahí que los enlaces vivan en el primero, que
@@ -63,7 +75,7 @@ _FILA_RUTEO = re.compile(r"^\|.+\|\s*`([a-z0-9-]+)`\s*\|\s*$", re.M)
 _CITA = re.compile(
     r"((?:\b(?:app|tests|scripts|templates|deploy|docs)"
     r"|(?<![A-Za-z0-9_./-])\.(?:claude|gemini))"
-    r"/[A-Za-z0-9_./-]+\.(?:py|html|sh|json|md|yml|toml))(?::(\d+))?"
+    r"/[A-Za-z0-9_./-]+\.(?:py|html|sh|json|md|yml|toml|mjs))(?::(\d+))?"
 )
 
 # Ejemplos genéricos en prosa, no citas de un archivo real.
@@ -104,8 +116,27 @@ _SECCIONES_SKILL = (
 _H2 = re.compile(r"^##\s+(.+?)\s*$", re.M)
 
 
+def _rsc() -> dict:
+    """La declaración de rsc, o {} si el repo todavía no la tiene: sin ella no
+    hay skills gestionadas y todo lo de `.claude/skills/` es del repo, que es
+    exactamente como se comportaba este módulo antes de rsc."""
+    return json.loads(RSC_JSON.read_text(encoding="utf-8")) if RSC_JSON.is_file() else {}
+
+
+def _skills_gestionadas() -> set[str]:
+    return set(_rsc().get("skills", []))
+
+
+def _carpetas_propias() -> list[Path]:
+    gestionadas = _skills_gestionadas()
+    return sorted(
+        d for d in SKILLS.iterdir() if (d / "SKILL.md").is_file() and d.name not in gestionadas
+    )
+
+
 def _skills_en_disco() -> set[str]:
-    return {d.name for d in SKILLS.iterdir() if (d / "SKILL.md").is_file()}
+    """Las skills PROPIAS: las que viven en `.claude/skills/` y rsc no declara."""
+    return {d.name for d in _carpetas_propias()}
 
 
 def _skills_en_tabla() -> set[str]:
@@ -121,7 +152,7 @@ def _documentos() -> list[Path]:
     rojo el CI —y con él el deploy del bot— por un archivo que el repo decidió
     no versionar. Mismo criterio que `_LOCALES` con `scripts/ship.sh`."""
     portadas = [p for p in (CLAUDE_MD, GEMINI_MD) if p.is_file()]
-    return [AGENTS_MD, *portadas, *sorted(SKILLS.glob("*/SKILL.md"))]
+    return [AGENTS_MD, *portadas, *(d / "SKILL.md" for d in _carpetas_propias())]
 
 
 def _citas(doc: Path) -> list[tuple[str, str]]:
@@ -132,10 +163,8 @@ def test_cada_skill_declara_el_nombre_de_su_carpeta():
     """El `name:` del frontmatter es con lo que se invoca la skill. Si no
     coincide con la carpeta, la tabla rutea a un nombre que no existe y la
     skill jamás carga — falla en silencio, que es la peor manera de fallar."""
-    for carpeta in sorted(SKILLS.iterdir()):
+    for carpeta in _carpetas_propias():
         skill = carpeta / "SKILL.md"
-        if not skill.is_file():
-            continue
         declarado = ""
         for linea in skill.read_text(encoding="utf-8").splitlines()[:10]:
             if linea.startswith("name:"):
@@ -221,11 +250,12 @@ def test_cada_skill_conserva_la_forma_del_harness():
     y las secciones son el esqueleto que vuelve comparables a catorce roles
     distintos. Una skill sin `description:` existe pero no la elige nadie; una sin
     `When NOT to use` deja que una tarea de dos líneas cargue cuatro roles. Las dos
-    fallan tan calladas como una skill mal nombrada, así que se verifican igual."""
-    for carpeta in sorted(SKILLS.iterdir()):
+    fallan tan calladas como una skill mal nombrada, así que se verifican igual.
+
+    Solo las propias: las de rsc traen la forma de SU catálogo, y exigirles las
+    once secciones sería vigilar un archivo que ni es nuestro ni está en el repo."""
+    for carpeta in _carpetas_propias():
         skill = carpeta / "SKILL.md"
-        if not skill.is_file():
-            continue
         texto = skill.read_text(encoding="utf-8")
 
         descripcion = ""
@@ -250,6 +280,117 @@ def test_cada_skill_conserva_la_forma_del_harness():
             f"{skill.relative_to(RAIZ)} tiene las secciones comunes desordenadas o "
             f"repetidas: se leen {propias}, se esperaban {list(_SECCIONES_SKILL)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# La capa de proceso: rsc-harness
+# ---------------------------------------------------------------------------
+#
+# De rsc no se vigila el contenido —es un catálogo ajeno, fijado por versión— sino
+# las tres cosas que un clone necesita para no romperse en silencio: que la
+# declaración siga diciendo lo que decidió el operador, que lo gestionado no
+# entre al repo ni le pise el nombre a una skill propia, y que los hooks
+# versionados apunten a algo que el clone sí trae.
+
+
+def _gitignore() -> set[str]:
+    """Las reglas de `.gitignore`, normalizadas como las compara git: `.rsc`,
+    `/.rsc` y `.rsc/` son la misma regla."""
+    lineas = GITIGNORE.read_text(encoding="utf-8").splitlines()
+    return {l.strip().lstrip("/").rstrip("/") for l in lineas if l.strip() and not l.startswith("#")}
+
+
+def test_rsc_json_sigue_diciendo_lo_que_decidio_el_operador():
+    """`.rsc.json` es la decisión que viaja por git. Quien clona reconstruye el
+    harness con `npx @ericrisco/rsc@<catalogVersion> sync`, así que una versión
+    sin fijar le daría a cada máquina el catálogo del día en que clonó.
+
+    El target es solo `claude` a propósito: `AGENTS.md` les dice a Gemini CLI y a
+    Antigravity que no tienen capa de rsc. Si esto se pone rojo porque se agregó
+    un target, lo que sigue no es relajar el assert: es reescribir esa sección."""
+    rsc = _rsc()
+    assert rsc, (
+        "falta .rsc.json: el harness de proceso es rsc-harness y sin su declaración "
+        "un clone no sabe qué reconstruir"
+    )
+    assert rsc.get("targets") == ["claude"], (
+        f".rsc.json declara targets {rsc.get('targets')!r}; el operador decidió solo 'claude' "
+        "y AGENTS.md lo afirma en su sección de proceso"
+    )
+    version = str(rsc.get("catalogVersion") or "")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version), (
+        f".rsc.json no fija una versión exacta del catálogo (catalogVersion={version!r})"
+    )
+
+
+def test_lo_que_gestiona_rsc_no_entra_al_repo_ni_pisa_a_las_propias():
+    """Una skill gestionada es un enlace hacia `.rsc/`, que git ignora: si el
+    enlace se versionara, cada clone recibiría un enlace roto. rsc agrega la
+    línea de `.gitignore` por cada una; este assert nota el día que falte.
+
+    Y el choque de nombres: rsc se niega a instalar una skill del catálogo que
+    se llame igual que una propia, pero esa defensa vive en SU instalador y en la
+    máquina del operador. Aquí se afirma desde el repo: un mismo nombre en la
+    tabla de ruteo y en `.rsc.json` es una fila que ya no se sabe a cuál de las
+    dos manda."""
+    gestionadas = _skills_gestionadas()
+    assert gestionadas, ".rsc.json no declara ninguna skill gestionada"
+    ignoradas = _gitignore()
+    assert ".rsc" in ignoradas, ".gitignore dejó de ignorar .rsc/ (estado local de la máquina)"
+    sin_ignorar = sorted(g for g in gestionadas if f".claude/skills/{g}" not in ignoradas)
+    assert not sin_ignorar, (
+        "skills gestionadas por rsc que .gitignore no excluye —un `git add .` versionaría "
+        f"enlaces hacia un directorio ignorado—: {sin_ignorar}"
+    )
+    pisadas = sorted(gestionadas & _skills_en_tabla())
+    assert not pisadas, (
+        f"la tabla de ruteo de AGENTS.md usa nombres que rsc gestiona: {pisadas}. "
+        "Renombra la skill propia: la fila no puede mandar a dos skills distintas"
+    )
+    enlazadas = sorted(d.name for d in AGENTS_SKILLS.iterdir() if d.name in gestionadas)
+    assert not enlazadas, (
+        f".agents/skills/ enlaza skills gestionadas por rsc: {enlazadas}. El operador instaló "
+        "rsc solo para Claude; para los agentes de Google serían enlaces rotos en cada clone"
+    )
+
+
+def test_el_cerebro_de_rsc_se_queda_local():
+    """rsc recomienda versionar `02-DOCS/` y `01-TOOLS/`; el operador decidió que
+    no —nada de documentos se sube, igual que `docs/`—. Ahí viven su perfil, el
+    plan aceptado, la constitución y los documentos de FTD en curso."""
+    faltan = sorted({"02-DOCS", "01-TOOLS"} - _gitignore())
+    assert not faltan, f".gitignore dejó de ignorar lo que el operador decidió mantener local: {faltan}"
+
+
+def test_los_hooks_de_rsc_pasan_por_el_bootstrap_versionado():
+    """Los scripts de los hooks viven en `.rsc/`, que un clone no trae. Si
+    `settings.json` los llamara directo, cada sesión en un clone abriría con el
+    stack trace del cargador de módulos en vez de un hook. Por eso pasan por
+    `.claude/rsc-bootstrap.mjs`, el único archivo del harness que sí se versiona:
+    delega cuando `.rsc/` está montado y avisa una vez cuando no.
+
+    Y sin rutas absolutas: un `settings.json` versionado con la carpeta de esta
+    máquina horneada está roto en cualquier otro checkout."""
+    hooks = json.loads(SETTINGS.read_text(encoding="utf-8")).get("hooks", {})
+    de_rsc = [
+        h.get("command", "")
+        for entradas in hooks.values()
+        for entrada in entradas
+        for h in entrada.get("hooks", [])
+        if h.get("type") == "command" and ".rsc/" in h.get("command", "")
+    ]
+    assert de_rsc, (
+        ".rsc.json declara el target claude pero .claude/settings.json no registra ningún "
+        "hook de rsc: el operador corre `npx @ericrisco/rsc@<catalogVersion> sync`"
+    )
+    directos = [c for c in de_rsc if ".claude/rsc-bootstrap.mjs" not in c]
+    assert not directos, f"hooks de rsc que no pasan por el bootstrap versionado: {directos}"
+    absolutos = [c for c in de_rsc if "${CLAUDE_PROJECT_DIR}" not in c or str(RAIZ) in c]
+    assert not absolutos, f"hooks de rsc con la ruta de esta máquina horneada: {absolutos}"
+    assert RSC_BOOTSTRAP.is_file(), (
+        ".claude/settings.json llama a .claude/rsc-bootstrap.mjs y el archivo no está: "
+        "se versiona junto con .rsc.json y settings.json, los tres o ninguno"
+    )
 
 
 # ---------------------------------------------------------------------------

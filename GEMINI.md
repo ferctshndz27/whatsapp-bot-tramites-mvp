@@ -11,6 +11,12 @@ tests/test_harness.py. -->
 - **Trust the folder first.** Gemini ignores project settings, hooks, skills and
   this file in an untrusted workspace, and says so in one easy-to-miss line. The
   `/permissions` command only exists when folder trust is enabled.
+- **No rsc layer here.** The process layer AGENTS.md describes (rsc-harness: the
+  lane hooks, `ftd`, `sdd`, `verify`, the subagents) is installed for Claude Code
+  only, by the operator's decision. Under Gemini the three lanes are the three
+  bullets of AGENTS.md and nothing injects them; the skills named there as rsc's
+  do not exist for you, so don't go looking for them. The constitution, the
+  routing table and the guardrails apply exactly the same.
 - **Skills** are the same fourteen, linked from `.agents/skills/` — the
   customization root Antigravity and Gemini CLI both scan, so one set of links
   serves both. The routing table in AGENTS.md applies unchanged; Gemini picks a

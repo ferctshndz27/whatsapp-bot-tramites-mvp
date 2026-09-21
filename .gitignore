@@ -28,7 +28,8 @@ docs/
 # `.agents/` es la raíz de personalización que escanean Antigravity y Gemini
 # CLI, y es del OPERADOR: sus propias skills viven ahí y no son de este repo
 # (hoy, tidyfactor-styler). De todo el árbol se versionan ÚNICAMENTE los
-# enlaces a las trece skills de `.claude/skills/`, uno por uno y por nombre.
+# enlaces a las catorce skills PROPIAS de `.claude/skills/`, uno por uno y por
+# nombre (las que gestiona rsc no se enlazan aquí: se instalaron solo para Claude).
 #
 # Se listan a mano a propósito: re-incluir `.agents/skills/*` entero metería
 # al repo la siguiente skill que el operador guarde ahí, y un `git add .`
@@ -52,3 +53,58 @@ docs/
 !.agents/skills/product-owner
 !.agents/skills/qa-senior
 !.agents/skills/security-senior
+
+# rsc local state (hooks, seals, logs) and managed skill links — machine-local
+.rsc/
+.claude/skills/analyze
+.claude/skills/automation-strategy
+.claude/skills/bro
+.claude/skills/clarify
+.claude/skills/constitution
+.claude/skills/debug
+.claude/skills/decision-challenge
+.claude/skills/deprecation
+.claude/skills/eli5
+.claude/skills/fable-operator
+.claude/skills/ftd
+.claude/skills/harness
+.claude/skills/idea-refinement
+.claude/skills/implement
+.claude/skills/init
+.claude/skills/orient
+.claude/skills/parallel
+.claude/skills/plan
+.claude/skills/python
+.claude/skills/review
+.claude/skills/sdd
+.claude/skills/sdd-init
+.claude/skills/ship
+.claude/skills/show-me
+.claude/skills/simplify-code
+.claude/skills/source-grounded-development
+.claude/skills/specify
+.claude/skills/suggest
+.claude/skills/tasks
+.claude/skills/ui-engineering
+.claude/skills/unslop
+.claude/skills/verify
+.claude/skills/worktrees
+.claude/skills/.rsc-state.json
+.claude/agents/developer.md
+.claude/agents/python-reviewer.md
+.claude/agents/refuter-correctness.md
+.claude/agents/refuter-security.md
+.claude/agents/refuter-tests.md
+.claude/commands/checkpoint.md
+.claude/commands/learn.md
+.claude/commands/python-review.md
+.claude/commands/resume-session.md
+.claude/commands/save-session.md
+
+# El cerebro de rsc (perfil, plan aceptado, constitución, specs de SDD, documentos
+# de FTD) y su capa de herramientas son LOCALES, igual que docs/: decisión del
+# operador del 2026-09-21. rsc recomienda versionarlos; aquí no se sube nada de
+# documentos. Lo que sí viaja por git es .rsc.json, .claude/rsc-bootstrap.mjs y
+# los hooks de .claude/settings.json.
+02-DOCS/
+01-TOOLS/
