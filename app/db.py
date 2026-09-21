@@ -14,7 +14,19 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-engine = create_engine(f"sqlite:///{settings.db_path}", connect_args={"check_same_thread": False})
+# `hide_parameters`: los errores de SQLAlchemy (IntegrityError, "database is
+# locked") llevan los parámetros ligados en el mensaje —teléfono, cuerpo del
+# mensaje, la CURP que el cliente tecleó— y varios sitios registran `exc`
+# completo (archive._safe, alerts). Con esto el mensaje dice
+# «[SQL parameters hidden]» y la línea del log queda sin dato personal
+# (auditoría 2026-09, INFRA-3). Mismo valor en los engines del espejo MSSQL.
+OPCIONES_ENGINE = {"hide_parameters": True}
+
+engine = create_engine(
+    f"sqlite:///{settings.db_path}",
+    connect_args={"check_same_thread": False},
+    **OPCIONES_ENGINE,
+)
 
 
 @event.listens_for(engine, "connect")

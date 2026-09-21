@@ -36,7 +36,7 @@ from app.auth import alcance, is_admin
 from app.config import settings
 from app.credenciales import credencial
 from app.db import get_session
-from app.utils import ruta_interna
+from app.utils import celda_csv, mask_phone, ruta_interna
 from app.dinero import MONTO_MIN_CENTAVOS, OXXO_MAX_CENTAVOS, formato_monto, parse_monto
 from app.models import (
     Cobro,
@@ -266,7 +266,7 @@ def _enviar_link(cobro_id: int, user: str, reemplazo: bool = False) -> bool:
         if cobro is None or not (cobro.url_pago or cobro.voucher_url):
             return False
         if not ventana.abierta_para(session, cobro.phone):
-            logger.info("Sin envío del link a %s: ventana de 24h cerrada", cobro.phone)
+            logger.info("Sin envío del link a %s: ventana de 24h cerrada", mask_phone(cobro.phone))
             return False
         texto = cobranza.mensaje_link(cobro, reemplazo=reemplazo)
         phone, ticket_id = cobro.phone, cobro.ticket_id
@@ -908,7 +908,9 @@ def _csv_stream(filename: str, header: list[str], filas) -> StreamingResponse:
         # BOM UTF-8: sin él Excel (es-MX) muestra mal los acentos.
         yield "﻿"
         for fila in (header, *filas):
-            writer.writerow(fila)
+            # Misma neutralización de fórmulas que los exportes de /system:
+            # concepto, referencia y nombre del cliente son texto libre.
+            writer.writerow([celda_csv(c) for c in fila])
             yield buffer.getvalue()
             buffer.seek(0)
             buffer.truncate(0)

@@ -55,16 +55,45 @@ def mask_phone(phone: str) -> str:
     return f"***{phone[-4:]}" if len(phone) > 4 else "***"
 
 
+# Caracteres de control (TAB, LF, CR, NUL…) y la barra invertida, en cualquier
+# posición. El parser de URL del navegador (WHATWG) DESCARTA tabuladores y
+# saltos de línea antes de interpretar la ruta, así que «/\t/evil.com» —que
+# empieza con una sola barra y pasaba el filtro— se convierte en «//evil.com»,
+# una URL protocolo-relativa. Auditoría 2026-09 (INJ-2).
+_CONTROL_O_BARRA_RE = re.compile(r"[\x00-\x1f\x7f\\]")
+
+
 def ruta_interna(ruta: str) -> str:
     """Acepta solo rutas del propio panel para enlaces de «volver».
 
     El valor viene de la URL, así que cualquiera puede fabricarlo. «//» y
     «/\\» son URLs protocolo-relativas para el navegador: aceptar cualquiera
-    de las dos convertiría el botón de volver en un open redirect.
+    de las dos convertiría el botón de volver en un open redirect. Lo mismo
+    vale para cualquier carácter de control en medio: el navegador los quita
+    al parsear y lo que queda vuelve a ser «//…».
     """
-    if ruta.startswith("/") and not ruta.startswith(("//", "/\\")):
-        return ruta
-    return ""
+    if not ruta.startswith("/") or ruta.startswith("//") or _CONTROL_O_BARRA_RE.search(ruta):
+        return ""
+    return ruta
+
+
+# Inyección de fórmulas en CSV: un texto que empieza con = + - @ (o con un
+# tabulador / retorno de carro, que Excel también interpreta como inicio de
+# celda activa) se EJECUTA al abrir el archivo en Excel o Sheets. Una comilla
+# inicial lo vuelve literal. Los números pasan intactos, incluidos los
+# negativos: convertirlos en texto rompería las sumas de quien abre el archivo.
+# Fuente única para todos los exportes (system, cobranza, no-entendidos).
+_INICIO_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+
+
+def celda_csv(valor):
+    """Neutraliza un valor antes de escribirlo en un CSV que abrirá una hoja de
+    cálculo. Devuelve el valor tal cual salvo cuando es texto con forma de
+    fórmula; entonces lo antepone con una comilla simple."""
+    if valor is None or isinstance(valor, (bool, int, float)):
+        return valor
+    s = str(valor)
+    return "'" + s if s[:1] in _INICIO_FORMULA else valor
 
 
 if __name__ == "__main__":  # pragma: no cover

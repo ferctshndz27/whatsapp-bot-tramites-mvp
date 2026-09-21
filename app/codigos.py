@@ -41,6 +41,43 @@ SUELTO = "codigo"
 # no debe acabar dentro del folio ni multiplicado en una cotización.
 MAX_CODIGOS = 10
 
+# ---- Enmascarado antes de que el texto salga de la aplicación ----
+#
+# El clasificador deduce el trámite de "quiero mi acta de nacimiento", no de la
+# CURP que viene al lado. Lo que viaja a un modelo (Ollama en otra máquina,
+# Claude si algún día se enciende), a la minería nocturna o a una bitácora no
+# necesita la clave, y una CURP en un log o en un prompt es una fuga aunque el
+# proveedor prometa no retenerla (auditoría 2026-09, IA-5/IA-6/IA-7).
+#
+# Mismos patrones que `detectar()` —aquí sin pasar el texto a mayúsculas, para
+# devolverlo tal cual— más un teléfono con separadores, que `detectar()` no
+# reconoce a propósito (no es un requisito de trámite) pero sí es dato personal.
+# Orden: CURP antes que RFC (los primeros 10 caracteres de una CURP tienen forma
+# de RFC) y NSS antes que teléfono (11 dígitos pegados son NSS por regla de casa).
+_TELEFONO_MASK_RE = re.compile(r"(?<!\d)(?:\d[\s().-]{0,2}){9,}\d(?!\d)")
+_MASCARAS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(CURP_RE.pattern, re.IGNORECASE), "[CURP]"),
+    (re.compile(RFC_RE.pattern, re.IGNORECASE), "[RFC]"),
+    (re.compile(EMAIL_RE.pattern, re.IGNORECASE), "[CORREO]"),
+    (NSS_RE, "[NSS]"),
+    (_TELEFONO_MASK_RE, "[TEL]"),
+)
+
+
+def enmascarar(text: str) -> str:
+    """El mismo texto con CURP, RFC, NSS, correos y teléfonos sustituidos por
+    un marcador entre corchetes. Idempotente: un texto ya enmascarado no cambia.
+
+    NO se usa en `clasificar_codigos` ni en `detectar()`: esos existen justo
+    para leer la clave. Se usa en todo lo que la clave no necesita y sale de
+    aquí: prompts, minería, NluEvent, líneas de log.
+    """
+    if not text:
+        return text
+    for patron, marcador in _MASCARAS:
+        text = patron.sub(marcador, text)
+    return text
+
 # Cómo se nombra cada dato en el texto libre de los requisitos del catálogo
 # ("clave curp", "Nss y curp", "CORREO"). Palabra completa, sobre el texto
 # normalizado por nlu._norm (minúsculas y sin acentos).

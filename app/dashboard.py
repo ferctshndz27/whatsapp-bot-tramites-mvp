@@ -12,7 +12,7 @@ from sqlalchemy import or_, update
 from sqlmodel import select
 
 from app import authlog, codigos, messaging, ventana
-from app.utils import ruta_interna
+from app.utils import mask_phone, ruta_interna
 from app.audit import log_admin
 from app.auth import alcance, is_admin
 from app.config import settings
@@ -896,7 +896,7 @@ def _notify_finish(ticket_id: int) -> None:
             return
         phone = ticket.phone
         if not ventana.abierta_para(session, phone):
-            logger.info("Sin aviso de cierre a %s: ventana de 24h cerrada", phone)
+            logger.info("Sin aviso de cierre a %s: ventana de 24h cerrada", mask_phone(phone))
             return
         cobro_vivo = next(iter(_cobros_vivos_del_folio(session, ticket)), None)
         if cobro_vivo is not None:
@@ -957,7 +957,7 @@ def _notify_finish(ticket_id: int) -> None:
         )
         session.commit()
     if wamid is None:
-        logger.warning("Aviso de cierre a %s sin confirmación de envío", phone)
+        logger.warning("Aviso de cierre a %s sin confirmación de envío", mask_phone(phone))
 
 
 def _notify_release(ticket_id: int) -> None:
@@ -969,7 +969,7 @@ def _notify_release(ticket_id: int) -> None:
             return
         phone = ticket.phone
         if not ventana.abierta_para(session, phone):
-            logger.info("Sin aviso de soltado a %s: ventana de 24h cerrada", phone)
+            logger.info("Sin aviso de soltado a %s: ventana de 24h cerrada", mask_phone(phone))
             return
         if ticket.service_id == "escalado":
             body = RELEASE_NOTICE_GENERIC
@@ -981,7 +981,7 @@ def _notify_release(ticket_id: int) -> None:
         )
         session.commit()
     if wamid is None:
-        logger.warning("Aviso de soltado a %s sin confirmación de envío", phone)
+        logger.warning("Aviso de soltado a %s sin confirmación de envío", mask_phone(phone))
 
 
 @router.post("/tickets/{ticket_id}/delete")

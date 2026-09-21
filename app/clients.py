@@ -21,7 +21,7 @@ from app.models import Client, ClientNote, Ticket, utcnow
 # El select de la ficha en client.html ofrece exactamente estos valores.
 _ORIGENES = {"meta", "twilio", "referido", "manual"}
 from app.utils import ruta_interna
-from app.utils import normalize_phone
+from app.utils import mask_phone, normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -276,7 +276,7 @@ def set_consent(request: Request, phone: str, accion: str = Form(...), fuente: s
         session.add(client)
         session.commit()
     log_admin(user, f"cliente:{accion}", phone)
-    logger.info("Consentimiento %s de %s por %s", accion, phone, user)
+    logger.info("Consentimiento %s de %s por %s", accion, mask_phone(phone), user)
     return RedirectResponse(f"/clients/{phone}", status_code=303)
 
 
@@ -294,7 +294,7 @@ def add_client_note(request: Request, phone: str, body: str = Form(...)):
         if cleaned:
             session.add(ClientNote(phone=phone, author=user, body=cleaned[:2000]))
             session.commit()
-            logger.info("Nota de cliente agregada a %s por %s", phone, user)
+            logger.info("Nota de cliente agregada a %s por %s", mask_phone(phone), user)
     return RedirectResponse(f"/clients/{phone}", status_code=303)
 
 

@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session as SASession
 from sqlalchemy.orm import object_session
 
 from app.config import settings
+from app.db import OPCIONES_ENGINE
 # Solo la constante: app.models no importa nada de app.*, así que no hay ciclo.
 # El resto de los modelos se importa dentro de las funciones (ver backfill).
 from app.models import OFICINA_TLAXCALA_ID
@@ -743,7 +744,10 @@ def _get_engine():
         # eventopasarela del webhook muriera con "database is locked" y
         # devolviera 503, quemando los reintentos de Stripe.
         _engine = create_engine(
-            url, pool_pre_ping=True, connect_args={"login_timeout": 5, "timeout": 3}
+            url,
+            pool_pre_ping=True,
+            connect_args={"login_timeout": 5, "timeout": 3},
+            **OPCIONES_ENGINE,  # sin parámetros ligados en los errores que _safe registra
         )
     return _engine
 
@@ -763,6 +767,7 @@ def init() -> None:
             master_url,
             isolation_level="AUTOCOMMIT",
             connect_args={"login_timeout": 5, "timeout": 10},
+            **OPCIONES_ENGINE,
         )
         with master.connect() as conn:
             conn.execute(

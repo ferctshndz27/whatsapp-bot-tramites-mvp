@@ -66,6 +66,7 @@ from app.models import (
     User,
     WebSession,
 )
+from app.utils import celda_csv
 
 logger = logging.getLogger(__name__)
 
@@ -346,12 +347,11 @@ def audit_view(request: Request, limit: int = 200):
     )
 
 
-def _celda_segura(valor):
-    # Inyección de fórmulas: un texto que empieza con = + - @ se ejecuta al
-    # abrir el CSV en Excel/Sheets; la comilla inicial lo vuelve literal.
-    # Los enteros pasan intactos (aquí ninguno es negativo).
-    s = str(valor)
-    return "'" + s if s[:1] in ("=", "+", "-", "@") else valor
+# Inyección de fórmulas: la regla vive en utils.celda_csv, compartida con el
+# CSV en streaming de cobranza — dos copias de la lista de caracteres es la
+# forma en que una de las dos se queda sin el tabulador (auditoría 2026-09,
+# INJ-1/INJ-3). El alias conserva el nombre que ya usan los exportes de aquí.
+_celda_segura = celda_csv
 
 
 def _csv_response(filename: str, header: list[str], rows) -> Response:

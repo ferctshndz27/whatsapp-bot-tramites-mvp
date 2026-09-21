@@ -18,6 +18,7 @@ from app.conversation import _latest_open_ticket
 from app.db import get_session
 from app.media_store import MEDIA_NAME_RE, save_upload, verify_media_token
 from app.team_chat import archivo_de_chat_visible
+from app.utils import mask_phone
 from app.models import (
     PROVIDER_META,
     Client,
@@ -52,7 +53,7 @@ def _verificar_acceso_oficina(session, phone: str, vista, user: str) -> bool:
     # Como los mensajes pueden llegar antes que un Ticket, Client es la fuente segura.
     client = session.get(Client, phone)
     if client and client.office_id != vista.office_id:
-        logger.warning("%s intentó acceder a la bandeja %s de otra oficina", user, phone)
+        logger.warning("%s intentó acceder a la bandeja %s de otra oficina", user, mask_phone(phone))
         return False
     return True
 
@@ -347,7 +348,7 @@ def inbox_send(
         _pause_bot(session, phone, user)
 
     if wamid is None:
-        logger.warning("Mensaje a %s registrado pero sin confirmación de envío", phone)
+        logger.warning("Mensaje a %s registrado pero sin confirmación de envío", mask_phone(phone))
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
 
@@ -394,7 +395,7 @@ def inbox_toggle_block(request: Request, phone: str):
             session.commit()
             state = "desbloqueado" if client.habilitado else "bloqueado"
             log_admin(user, f"cliente:{state}", phone)
-            logger.info("Cliente %s %s por %s", phone, state, user)
+            logger.info("Cliente %s %s por %s", mask_phone(phone), state, user)
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
 
@@ -424,7 +425,7 @@ def inbox_bot_on(request: Request, phone: str):
                 TicketActivity(ticket_id=ticket.id, username=user, action="agente:reanudado")
             )
         session.commit()
-        logger.info("Bot reactivado para %s por %s", phone, user)
+        logger.info("Bot reactivado para %s por %s", mask_phone(phone), user)
     return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
 

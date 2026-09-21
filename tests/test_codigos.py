@@ -204,3 +204,64 @@ def test_el_folio_cuenta_aunque_el_precio_no_sea_un_numero():
 )
 def test_trae_el_dato(requisito, respuesta, trae):
     assert codigos.trae_el_dato(requisito, respuesta) is trae
+
+
+# ---------------------------------------------------------------------------
+# enmascarar(): lo que sale de la aplicación (prompts, minería, NluEvent, logs)
+# viaja sin claves personales. Auditoría 2026-09 (IA-5/IA-6/IA-7).
+# ---------------------------------------------------------------------------
+
+
+def test_enmascarar_sustituye_cada_clave_por_su_marcador():
+    texto = (
+        f"quiero mi acta, mi curp es {CURP_VALIDA}, rfc PEGF900101AB3, "
+        "nss 12345678901, correo ana@correo.com y tel 55 1234 5678"
+    )
+    enmascarado = codigos.enmascarar(texto)
+
+    assert enmascarado == (
+        "quiero mi acta, mi curp es [CURP], rfc [RFC], nss [NSS], "
+        "correo [CORREO] y tel [TEL]"
+    )
+
+
+def test_enmascarar_conserva_lo_que_dice_el_tramite():
+    """El clasificador deduce el trámite de las palabras, no de la clave: el
+    texto útil se queda tal cual, incluida la palabra «curp»."""
+    assert codigos.enmascarar("necesito imprimir mi curp urgente") == (
+        "necesito imprimir mi curp urgente"
+    )
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "pegf900101hdfrrn09",  # CURP en minúsculas: el cliente no usa mayúsculas
+        "5215512345678",  # teléfono pegado, con lada
+        "55-1234-5678",
+        "(55) 1234 5678",
+        "mi nss es 12345678901",
+    ],
+)
+def test_enmascarar_cubre_las_formas_en_que_la_gente_teclea(texto):
+    enmascarado = codigos.enmascarar(texto)
+    assert not any(ch.isdigit() for ch in enmascarado), enmascarado
+
+
+def test_enmascarar_no_toca_cifras_cortas_ni_folios():
+    # Un folio, una fecha o un precio no son datos personales y el agente los
+    # necesita para responder "tu folio 1200 sigue en proceso".
+    texto = "folio 1200 del 18/09/2026, cuesta $1,500"
+    assert codigos.enmascarar(texto) == texto
+
+
+def test_enmascarar_es_idempotente_y_tolera_vacio():
+    assert codigos.enmascarar("") == ""
+    una_vez = codigos.enmascarar(f"curp {CURP_VALIDA}")
+    assert codigos.enmascarar(una_vez) == una_vez
+
+
+def test_enmascarar_no_afecta_a_detectar():
+    """`detectar()` sigue leyendo la clave: enmascarar es para lo que SALE, no
+    para lo que el folio necesita guardar."""
+    assert codigos.detectar(f"curp {CURP_VALIDA}") == {"CURP": [CURP_VALIDA]}

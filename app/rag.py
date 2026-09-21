@@ -39,6 +39,7 @@ import httpx
 
 from app import nlu
 from app.catalog import catalog, requisitos_texto
+from app.codigos import enmascarar
 from app.config import settings
 from app.models import OFICINA_TLAXCALA_ID
 
@@ -499,7 +500,8 @@ def answer_explained(text: str,
     if not settings.rag_enabled or not (settings.ollama_url or settings.anthropic_api_key):
         return None, None
     try:
-        pregunta = text.strip()[:MAX_INPUT_CHARS]
+        # Sin claves del cliente hacia el modelo (auditoría 2026-09, IA-6).
+        pregunta = enmascarar(text.strip())[:MAX_INPUT_CHARS]
         corpus = _retriever().contexto(pregunta, office_id)
         system = _SYSTEM_TEMPLATE.format(no_se=NO_SE, corpus=corpus)
         if settings.ollama_url:
@@ -541,9 +543,14 @@ def answer_explained(text: str,
         segura, motivo = _evaluar_respuesta(respuesta)
         if motivo in GUARDRAIL_MOTIVOS:
             # Sin esto, calibrar un guardrail es adivinar: el motivo solo
-            # dice QUE disparó, no QUÉ dijo el modelo. Corpus público y tope
-            # de 300 chars: no hay dato de cliente que fugar al log.
-            logger.info("Guardrail %s descartó: %r", motivo, respuesta[:300])
+            # dice QUE disparó, no QUÉ dijo el modelo. Con motivo `pii` lo que
+            # dijo ES el dato que se acaba de bloquear: ahí va solo el largo
+            # (auditoría 2026-09, IA-5). `enmascarar` cubre el resto por si un
+            # guardrail de otro motivo descarta un texto que además trae clave.
+            if motivo == "pii":
+                logger.info("Guardrail pii descartó una respuesta de %s caracteres", len(respuesta))
+            else:
+                logger.info("Guardrail %s descartó: %r", motivo, enmascarar(respuesta[:300]))
         return segura, motivo if motivo in GUARDRAIL_MOTIVOS else None
     except Exception as exc:
         logger.warning("Capa informativa falló, sigue el flujo normal: %s", exc)

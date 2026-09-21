@@ -48,6 +48,7 @@ from sqlmodel import Session
 
 from app import nlu, rag
 from app.catalog import catalog, requisitos_texto
+from app.codigos import enmascarar
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -195,7 +196,8 @@ def responder(session: Session, phone: str, text: str) -> str | None:
         # turno) — cualquier otro escritor (panel, cron, webhooks de estatus)
         # esperaría el busy_timeout y tronaría con "database is locked".
         session.commit()
-        recortado = text.strip()[: nlu.MAX_INPUT_CHARS]
+        # Sin claves del cliente hacia el modelo (auditoría 2026-09, IA-6).
+        recortado = enmascarar(text.strip())[: nlu.MAX_INPUT_CHARS]
         if settings.ollama_url:
             return _loop_ollama(session, phone, recortado)
         return _loop_anthropic(session, phone, recortado)
@@ -323,7 +325,7 @@ def _registrar_uso(session: Session, phone: str, texto: str, name: str, es_error
 
     try:
         session.add(NluEvent(
-            phone=phone, text=texto[:200],
+            phone=phone, text=enmascarar(texto)[:200],
             capa="tool_error" if es_error else "tool", service_id=name[:60],
         ))
     except Exception as exc:  # noqa: BLE001

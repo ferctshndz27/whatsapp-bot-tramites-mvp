@@ -23,6 +23,7 @@ from app import nlu
 from app.audit import log_admin
 from app.auth import is_admin
 from app.catalog import catalog
+from app.codigos import enmascarar
 from app.config import settings
 from app.conversation import NOT_RECOGNIZED_MARKER
 from app.db import get_session
@@ -141,7 +142,9 @@ def _cuerpo_acotado(texts: list[str], reservado: int = 0) -> str:
     usados = 0
     disponible = MINE_MAX_CHARS - reservado
     for i, texto in enumerate(texts[:MAX_MESSAGES], start=1):
-        linea = f"{i}. {texto[:200]}"
+        # Hasta cien mensajes de todas las oficinas viajan al modelo: sin
+        # claves del cliente (auditoría 2026-09, IA-6).
+        linea = f"{i}. {enmascarar(texto)[:200]}"
         if usados + len(linea) + 1 > disponible:
             logger.info(
                 "Minería: %s de %s mensajes entran en la ventana del modelo",

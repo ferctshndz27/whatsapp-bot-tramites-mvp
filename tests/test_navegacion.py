@@ -83,10 +83,36 @@ def http():
 
 @pytest.mark.parametrize(
     "maliciosa",
-    ["https://evil.com", "//evil.com", "/\\evil.com", "javascript:alert(1)", ""],
+    [
+        "https://evil.com",
+        "//evil.com",
+        "/\\evil.com",
+        "javascript:alert(1)",
+        "",
+        # Auditoría 2026-09 (INJ-2): el navegador DESCARTA tabuladores, saltos
+        # de línea y retornos de carro al parsear la URL, así que «/\t/evil.com»
+        # —una sola barra al inicio— llega al href y ahí se vuelve «//evil.com».
+        "/\t/evil.com",
+        "/\n/evil.com",
+        "/\r/evil.com",
+        "/\t\\evil.com",
+        "/\x00/evil.com",
+        "/inbox\t//evil.com",
+    ],
 )
 def test_ruta_interna_rechaza_destinos_externos(maliciosa):
     assert ruta_interna(maliciosa) == ""
+
+
+def test_un_volver_con_tabulador_no_llega_al_href(http):
+    """El caso real: ?volver=/%09/evil.example/login pasa el decodificador de la
+    URL como «/\t/evil.example/login» y, si llegara al href, el navegador lo
+    seguiría a evil.example."""
+    r = http.get("/tickets/1?volver=/%09/evil.example/login")
+
+    assert r.status_code == 200
+    assert "evil.example" not in r.text
+    assert "Volver a solicitudes" in r.text
 
 
 @pytest.mark.parametrize("interna", ["/", "/?status=NUEVO&page=2", "/inbox?filter=esperando"])
