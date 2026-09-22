@@ -21,6 +21,7 @@ from sqlmodel import select
 
 from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
+from app.authlog import revocar_sesiones
 from app.dashboard import PASSWORD_MIN, _validate_registration
 from app.db import get_session
 from app.models import OFICINA_TLAXCALA_ID, Office, User
@@ -205,6 +206,14 @@ def users_reset_password(request: Request, username: str, password: str = Form(.
             return _render_list(request, admin, error="Usuario no encontrado.")
         target.password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         session.add(target)
+        # Una contraseña se resetea porque se perdió o porque se filtró, y en el
+        # segundo caso quien la tiene ya está adentro: cambiarla sin cerrar lo
+        # abierto no saca a nadie (auditoría 2026-09, AUTH-1c). En la misma
+        # transacción que el hash: si esto falla, la contraseña tampoco cambia.
+        # Quien se la cambia a sí mismo conserva la sesión desde la que lo hizo.
+        revocar_sesiones(
+            session, username, excepto=request.session.get("sid") if username == admin else None
+        )
         session.commit()
 
     log_admin(admin, "usuario:password", username)
@@ -253,6 +262,13 @@ def users_toggle_enabled(request: Request, username: str):
             return _render_list(request, admin, error="Usuario no encontrado.")
         target.habilitado = not target.habilitado
         session.add(target)
+        if not target.habilitado:
+            # El guardia de authlog ya lo saca en su siguiente request por
+            # `habilitado`; esto cierra además sus websessions, para que /logins
+            # deje de mostrarlo conectado y para que rehabilitarlo no le devuelva
+            # una sesión vieja: vuelve a entrar con su contraseña. En la misma
+            # transacción que la baja, por lo mismo que en el reset.
+            revocar_sesiones(session, username)
         session.commit()
         state = "habilitado" if target.habilitado else "deshabilitado"
 

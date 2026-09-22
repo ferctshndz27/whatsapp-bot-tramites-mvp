@@ -290,6 +290,14 @@ def test_middleware_runs_inside_session_middleware(tmp_path, monkeypatch):
     )
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db, "engine", engine)
+    # Desde AUTH-1 (auditoría 2026-09) el mismo middleware es también el guardia
+    # de sesión, y la sesión de un usuario que no existe en la base se vacía. Sin
+    # esta fila el guardia sacaría a «ana» en el segundo request, el handler la
+    # volvería a poner y nacería una segunda websession: la prueba mediría el
+    # guardia, no que el sid persista. Lo que afirma no cambió; su siembra sí.
+    with Session(engine) as s:
+        s.add(User(username="ana", password_hash="x"))
+        s.commit()
 
     api = FastAPI()
     api.middleware("http")(authlog.session_activity_middleware)
