@@ -9,7 +9,8 @@ from app.models import Invitation, User, utcnow
 
 
 def _request() -> SimpleNamespace:
-    return SimpleNamespace(session={}, base_url="https://bot.esaumillan.cloud/")
+    # headers/client: el lockout del registro es por IP desde AUTH-2 y lee la IP del request.
+    return SimpleNamespace(session={}, base_url="https://bot.esaumillan.cloud/", headers={}, client=None)
 
 
 def test_short_password_rejected():
