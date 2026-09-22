@@ -60,6 +60,8 @@ NO_SON_CREDENCIALES = {
     "ANTHROPIC_API_KEY",
     "NLU_MODEL",
     "OLLAMA_URL",
+    # Cupo de generaciones a la vez: perilla de capacidad del despliegue, no secreto.
+    "OLLAMA_CONCURRENCIA",
     "OLLAMA_TOKEN",
     "OLLAMA_MODEL",
     "OLLAMA_TIMEOUT",

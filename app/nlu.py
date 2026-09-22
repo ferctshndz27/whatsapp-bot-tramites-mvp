@@ -94,8 +94,9 @@ def reiniciar_turno() -> None:
 #                 paso: turnos × timeout del Estudio no puede rebasar esto.
 #   pausa       — tras K timeouts seguidos, Ollama se da por caído P segundos
 #                 para TODOS los mensajes, en vez de que cada uno lo descubra.
-# ponytail: constantes, no perillas; la CPU de labs es una y conocida.
-OLLAMA_CONCURRENCIA = 4
+# ponytail: constantes salvo el cupo, que es OLLAMA_CONCURRENCIA en .env desde
+# que el modelo corre en el VPS (2 vCPU) y no en labs; se lee al importar.
+OLLAMA_CONCURRENCIA = settings.ollama_concurrencia
 OLLAMA_ESPERA_CUPO_SEGUNDOS = 1.0
 PRESUPUESTO_IA_SEGUNDOS = 25.0
 OLLAMA_TIMEOUTS_PARA_PAUSAR = 3

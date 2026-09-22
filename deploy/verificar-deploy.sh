@@ -70,6 +70,16 @@ entrar_al_repo() {
 sha_desplegado() { awk '{print $1}' data/deploy-info 2>/dev/null; }
 sha_completo()   { git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null; }
 arranque()       { docker inspect -f '{{.State.StartedAt}}' "$CONTENEDOR" 2>/dev/null; }
+# Ollama es opcional (perfil `ollama` en .env): ausente es aviso, no fallo;
+# presente y caído sí es fallo, porque `restart` debería haberlo levantado.
+revisar_ollama() {
+  local st; st=$(estado_de tramites-ollama)
+  case "$st" in
+    running) ok "contenedor tramites-ollama: running";;
+    ausente) aviso "contenedor tramites-ollama: ausente (sin COMPOSE_PROFILES=ollama en .env)";;
+    *)       fallo "contenedor tramites-ollama: $st";;
+  esac
+}
 estado_de()      { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || echo "ausente"; }
 log_del_cron()   { crontab -l 2>/dev/null | grep pull-deploy | sed -n 's/.*>>[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1; }
 
@@ -103,6 +113,7 @@ fase_antes() {
     local st; st=$(estado_de "$c")
     if [ "$st" = "running" ]; then ok "contenedor $c: running"; else fallo "contenedor $c: $st"; fi
   done
+  revisar_ollama
 
   intentar "/health responde" timeout 10 curl -sf "$SALUD" -o /dev/null
 
@@ -251,6 +262,7 @@ fase_despues() {
   fi
 
   [ "$(estado_de "$CONTENEDOR")" = "running" ] && ok "contenedor running" || fallo "contenedor $(estado_de "$CONTENEDOR")"
+  revisar_ollama
   intentar "/health responde" timeout 10 curl -sf "$SALUD" -o /dev/null
 
   pines_en_el_contenedor

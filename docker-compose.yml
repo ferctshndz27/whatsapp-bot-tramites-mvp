@@ -54,5 +54,49 @@ services:
       retries: 12
       start_period: 60s
 
+  ollama:
+    # Modelo abierto LOCAL (2026-09-22, tras el cierre de labs y sin OpenRouter):
+    # solo se levanta con COMPOSE_PROFILES=ollama en .env, y el bot lo usa si
+    # OLLAMA_URL=http://ollama:11434. Sin el perfil, este servicio no existe y
+    # el bot sigue con las capas baratas. Fijado por digest, como mssql (INFRA-6).
+    image: ollama/ollama:0.34.3@sha256:7ab595e4ead391f6818c7215297781282babe0701f6d9a9f8862ac591360a58b
+    container_name: tramites-ollama
+    profiles: ["ollama"]
+    restart: unless-stopped
+    stop_grace_period: 20s
+    environment:
+      - TZ=America/Mexico_City
+      # 2 vCPU compartidos con el bot y MSSQL: una generación a la vez y un solo
+      # modelo cargado. Residente siempre: sin KEEP_ALIVE=-1 se descarga de RAM a
+      # los 5 min ocioso y la siguiente clasificación paga ~20 s de recarga.
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_KEEP_ALIVE=-1
+      # Misma variable que lee el bot (.env): un solo lugar para elegir modelo.
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:1.7b}
+    # Tope de memoria (modelo cargado + contexto): 3g sobra para 1.7b; 4b pide 4g.
+    # Si se pasa, Docker lo mata y `restart` lo vuelve a levantar: mejor eso que
+    # dejarlo crecer sobre MSSQL, que no tiene tope.
+    mem_limit: ${OLLAMA_MEM_LIMIT:-3g}
+    ports:
+      # Solo loopback del servidor: para medir con scripts/eval_nlu.py por túnel
+      # SSH (igual que el 1433 de mssql), nunca desde internet.
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+      # El arranque vive en el repo, no en este YAML: sin `$$` que escapar y
+      # con banco de pruebas (tests/test_ollama_entrypoint.py). Solo lectura.
+      - ./deploy/ollama-entrypoint.sh:/deploy/ollama-entrypoint.sh:ro
+    # Servidor + descarga del modelo si falta; un fallo de descarga es
+    # advertencia, nunca tumba el servicio ni el deploy.
+    entrypoint: ["/bin/sh", "/deploy/ollama-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "/bin/ollama", "ls"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
 volumes:
   mssql_data:
+  ollama_models:
