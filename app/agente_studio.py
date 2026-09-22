@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
 import app.db as db
-from app import agent_settings, rag
+from app import agent_settings, nlu, rag
 from app.audit import log_admin
 from app.auth import alcance, is_admin_global
 from app.config import settings
@@ -213,16 +213,19 @@ def _avisos(
 
     if fallos:
         plural = "fallas" if fallos > 1 else "falla"
+        proveedor, _ = nlu.etiqueta_modelo_abierto()
+        donde = ("la cuenta de OpenRouter (llave, crédito o límite de peticiones)"
+                 if proveedor == "OpenRouter" else "el servidor de Ollama")
         anotar("ollama", f"{fallos} {plural} de conexión en las últimas "
-                         f"{HORAS_FALLA} h: revisa el servidor de labs.")
+                         f"{HORAS_FALLA} h: revisa {donde}.")
 
     if settings.rag_enabled:
         if not parrafos:
             anotar("rag", "Capa encendida con el corpus VACÍO: no tiene de dónde "
                           "responder. Agrega párrafos abajo.")
-        if not settings.ollama_url:
-            anotar("rag", "Capa encendida sin modelo: falta OLLAMA_URL en el .env "
-                          "del servidor (no se configura desde aquí).")
+        if not settings.modelo_abierto:
+            anotar("rag", "Capa encendida sin modelo: falta OPENROUTER_API_KEY u "
+                          "OLLAMA_URL en el .env del servidor (no se configura desde aquí).")
         descartes, pasadas = m.get("rag_descartado", 0), m.get("rag", 0)
         if descartes >= max(MINIMO_PARA_CONCLUIR, pasadas):
             anotar("rag", f"El guardrail descartó {descartes} respuestas y solo dejó "
@@ -232,9 +235,9 @@ def _avisos(
         if not any(h["activa"] for h in herramientas):
             anotar("tools", "Nodo encendido sin ninguna herramienta activa: el "
                             "modelo no tiene con qué responder.")
-        if not settings.ollama_url:
-            anotar("tools", "Nodo encendido sin modelo: falta OLLAMA_URL en el .env "
-                            "del servidor.")
+        if not settings.modelo_abierto:
+            anotar("tools", "Nodo encendido sin modelo: falta OPENROUTER_API_KEY u "
+                            "OLLAMA_URL en el .env del servidor.")
         for h in herramientas:
             if h["bloqueada"] and h["activa"]:
                 # Candado: hoy no puede pasar (una herramienta en deny no tiene
@@ -264,12 +267,20 @@ def _estado(session: Session) -> dict:
     literal = m.get("nombre", 0) + m.get("sinonimo", 0) + m.get("keyword", 0)
     repartidos = _folios_repartidos(session)
     asesores = _asesores_disponibles(session)
+    # El nodo "ollama" es el escalón de modelo abierto de la cascada; quién lo
+    # sirve (OpenRouter u Ollama propio) lo dice settings.modelo_abierto, y el
+    # lienzo pinta la perilla del proveedor vigente (`campos`).
+    proveedor, modelo = nlu.etiqueta_modelo_abierto()
     nodos = [
         {"id": "literal", "nombre": "Match literal", "activo": True, "fijo": True,
          "detalle": "nombre / sinónimo / keyword — gratis e instantáneo",
          "mensajes": literal, "entra_si": "todo mensaje"},
-        {"id": "ollama", "nombre": f"Ollama · {settings.ollama_model}", "activo": bool(settings.ollama_url),
-         "fijo": not settings.ollama_url, "detalle": "clasificador local en labs",
+        {"id": "ollama", "nombre": f"{proveedor} · {modelo}" if proveedor else "Modelo abierto",
+         "activo": bool(settings.modelo_abierto), "fijo": not settings.modelo_abierto,
+         "detalle": ("clasificador en OpenRouter (API, formato OpenAI)" if proveedor == "OpenRouter"
+                     else "clasificador en el Ollama propio"),
+         "campos": (["openrouter_model", "ollama_timeout"] if proveedor == "OpenRouter"
+                    else ["ollama_model", "ollama_timeout"]),
          "mensajes": m.get("ollama", 0), "entra_si": "sin coincidencia exacta"},
         # El nodo "Claude (respaldo)" ya no se dibuja: config.CLAUDE_HABILITADO
         # está en False, así que esa capa nunca puede encenderse y pintarla solo

@@ -57,8 +57,12 @@ grey `#64748b` in the donut and nobody knows what it is.
 
 ## Technical principles
 
-- **`ollama_chat()` (app/nlu.py) is the single funnel** for every Ollama call: classifier, code
-  typing, RAG, agentic node, miner. `temperature: 0`, `think: false` (a WhatsApp client feels every
+- **`ollama_chat()` (app/nlu.py) is the single funnel** for every open-model call: classifier, code
+  typing, RAG, agentic node, miner — whether the model is the self-hosted Ollama or OpenRouter
+  (`settings.modelo_abierto` picks `_chat_ollama` / `_chat_openrouter`; the same JSON schemas travel
+  as `response_format`, `strict` only when the schema closes its properties; callers always get
+  Ollama's message shape). Code typing (`clasificar_codigos`) stays Ollama-only: raw codes never
+  leave to a third party. `temperature: 0`, `think: false` (a WhatsApp client feels every
   second). Failures set the `_FALLO_OLLAMA` ContextVar — a ContextVar, not a global, because sync
   FastAPI endpoints run in a threadpool and a global would cross-attribute one client's outage to
   another. `conversation._log_fallo_ollama` consumes it, so one outage never logs twice.

@@ -72,8 +72,8 @@ def nightly() -> dict:
     if not texts:
         return {"propuestas": 0, "motivo": "sin mensajes pendientes",
                 "cobranza": cobranza, "alertas": _evaluate_alerts_safe()}
-    if not (settings.ollama_url or settings.anthropic_api_key):
-        return {"propuestas": 0, "motivo": "sin OLLAMA_URL ni ANTHROPIC_API_KEY",
+    if not (settings.modelo_abierto or settings.anthropic_api_key):
+        return {"propuestas": 0, "motivo": "sin OPENROUTER_API_KEY, OLLAMA_URL ni ANTHROPIC_API_KEY",
                 "cobranza": cobranza, "alertas": _evaluate_alerts_safe()}
 
     try:

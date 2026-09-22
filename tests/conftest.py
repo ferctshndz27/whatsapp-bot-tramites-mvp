@@ -35,14 +35,16 @@ def _stripe_en_modo_prueba(monkeypatch):
 @pytest.fixture(autouse=True)
 def _nlu_sin_red(monkeypatch):
     """Ningún test sale a la red por la cadena NLU por accidente: si el .env
-    del desarrollador trae ANTHROPIC_API_KEY u OLLAMA_URL reales, las capas
-    LLM se activarían solas (lentas, no deterministas y con costo). Las
-    pruebas que ejercitan esas capas las configuran explícitamente y ganan."""
+    del desarrollador trae ANTHROPIC_API_KEY, OPENROUTER_API_KEY u OLLAMA_URL
+    reales, las capas LLM se activarían solas (lentas, no deterministas y con
+    costo). Las pruebas que ejercitan esas capas las configuran
+    explícitamente y ganan."""
     from app.config import settings
 
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "ollama_url", "")
     monkeypatch.setattr(settings, "ollama_token", "")
+    monkeypatch.setattr(settings, "openrouter_api_key", "")
 
 
 @pytest.fixture(autouse=True)

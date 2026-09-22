@@ -91,8 +91,12 @@ Before editing an integration, answer these against the code:
   the two rows; `expires_at` comes from `intento.solicitado_at`, never from "now". Reusing a key
   with different params makes Stripe error instead of returning the original — which is exactly
   what the sweep's retry needs.
-- **Ollama has one call site**: `nlu.ollama_chat()` (used by the classifier, `clasificar_codigos`,
-  the informative layer and `agent_tools`). Bearer from `OLLAMA_TOKEN` behind nginx, `think: False`,
+- **The open model has one call site**: `nlu.ollama_chat()` (used by the classifier,
+  `clasificar_codigos`, the informative layer, `agent_tools` and the miner). It dispatches on
+  `settings.modelo_abierto`: OpenRouter (`OPENROUTER_API_KEY`, OpenAI format via `_chat_openrouter`,
+  wins when present — labs closed 2026-09-22) or the self-hosted Ollama (`_chat_ollama`); either way
+  callers get Ollama's message shape, and `clasificar_codigos` stays Ollama-only because it is the
+  one call that sends raw codes. Ollama side: Bearer from `OLLAMA_TOKEN` behind nginx, `think: False`,
   `temperature: 0`, `connect=2.0`, `OLLAMA_TIMEOUT` default 12 s. Transport failures land in the
   `_FALLO_OLLAMA` **ContextVar** (not a global: sync FastAPI endpoints run in a thread pool),
   consumed once by `limpiar_fallo_ollama()` and logged as layer `ollama_error`.

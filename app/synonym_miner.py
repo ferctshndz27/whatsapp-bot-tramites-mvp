@@ -159,9 +159,11 @@ def _cuerpo_acotado(texts: list[str], reservado: int = 0) -> str:
 def mine_synonyms(texts: list[str]) -> list[dict]:
     """Pide al LLM propuestas de sinónimos y las valida contra el catálogo.
 
-    Backend: el Ollama de labs si OLLAMA_URL está configurada (el negocio no
-    paga API, y el texto de clientes se queda en infra propia); Claude solo
-    como alternativa si hay ANTHROPIC_API_KEY."""
+    Backend: el modelo abierto (settings.modelo_abierto: OpenRouter con
+    OPENROUTER_API_KEY, proveedor externo con `data_collection: deny`, u
+    Ollama propio con OLLAMA_URL, donde el texto se queda en infra propia);
+    Claude solo como alternativa si hay ANTHROPIC_API_KEY. En todos los casos
+    los mensajes van enmascarados (_cuerpo_acotado)."""
     if not texts:
         return []
     listing = "\n".join(
@@ -170,7 +172,7 @@ def mine_synonyms(texts: list[str]) -> list[dict]:
     system = _MINE_SYSTEM.format(listing=listing)
     body = _cuerpo_acotado(texts, reservado=len(system))
 
-    if settings.ollama_url:
+    if settings.modelo_abierto:
         message = nlu.ollama_chat(
             [
                 {"role": "system", "content": system},
@@ -468,7 +470,7 @@ def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
             "metrics": nlu_metrics(),
             "alerts": alerts,
             "health": health,
-            "mining_available": bool(settings.ollama_url or settings.anthropic_api_key),
+            "mining_available": bool(settings.modelo_abierto or settings.anthropic_api_key),
             "error": error,
             "ok": ok,
         },

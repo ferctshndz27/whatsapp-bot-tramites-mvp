@@ -131,6 +131,26 @@ class Settings:
         # las respuestas buenas.
         # Mismo criterio y misma cota que la perilla de /agente (1-60 s).
         self.ollama_timeout = max(1.0, min(60.0, float(os.environ.get("OLLAMA_TIMEOUT", "12"))))
+        # OpenRouter (API con formato OpenAI): el modelo abierto desde que
+        # Oracle cerró la instancia de labs (2026-09-22). Con la llave presente
+        # MANDA sobre OLLAMA_URL (ver modelo_abierto). El id del modelo es el de
+        # openrouter.ai/models (autor/modelo); el default no razona, tiene
+        # salida estructurada y tools nativas, y a este volumen cuesta centavos.
+        # OLLAMA_TIMEOUT acota también estas llamadas: es el tope de la capa.
+        self.openrouter_api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        self.openrouter_model = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4.1-nano")
+        self.openrouter_base_url = os.environ.get(
+            "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+        ).rstrip("/")
+        # Por defecto la petición exige proveedores que NO guardan ni entrenan
+        # con los datos (provider.data_collection = "deny"): el texto va
+        # enmascarado, pero sigue siendo la historia de un cliente. Si el
+        # modelo elegido no tiene proveedor con esa política, OpenRouter
+        # contesta 404 y la capa degrada; relajarlo es una decisión escrita
+        # aquí, en el .env del servidor, no un toggle en una cuenta ajena.
+        self.openrouter_permitir_retencion = (
+            os.environ.get("OPENROUTER_PERMITIR_RETENCION", "0") == "1"
+        )
         # Umbral de la capa difusa (rapidfuzz) para aceptar un servicio con
         # faltas de ortografía. Barandal 70-95: bajarlo de más dispara falsos
         # positivos que cotizan el trámite equivocado a un cliente real.
@@ -208,6 +228,19 @@ class Settings:
         # está listo — no un despliegue. Con esto en False el alta sigue
         # dejando los folios sin dueño, exactamente como antes de la fase.
         self.reparto_automatico = os.environ.get("REPARTO_AUTOMATICO", "0") == "1"
+
+    @property
+    def modelo_abierto(self) -> str:
+        """Quién sirve la capa de modelo abierto: "openrouter", "ollama" o ""
+        (la capa no existe). Es lo que preguntan los gates de nlu, rag,
+        agent_tools, synonym_miner y jobs — nunca la URL directamente—, y por
+        eso una prueba que fija `ollama_url` u `openrouter_api_key` en
+        `settings` sigue mandando: se calcula al leer, no al arrancar."""
+        if self.openrouter_api_key:
+            return "openrouter"
+        if self.ollama_url:
+            return "ollama"
+        return ""
 
 
 settings = Settings()

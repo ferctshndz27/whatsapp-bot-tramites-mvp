@@ -533,8 +533,10 @@ function panelNodo(n) {
       b.onclick = () => guardar(clave, c[clave].valor ? 0 : 1);
     }), 0);
   }
+  // Las perillas del nodo las manda el servidor (`campos`): el modelo del
+  // proveedor vigente —Ollama u OpenRouter— y el timeout, que aplica a ambos.
   if (n.id === "ollama" && !n.fijo)
-    h += grupoCampos(["ollama_model", "ollama_timeout"]);
+    h += grupoCampos(n.campos || ["ollama_model", "ollama_timeout"]);
   if (n.id === "fuzzy") h += grupoCampos(["fuzzy_threshold"]);
   if (n.id === "literal") {
     // Esta capa no tiene flags: la alimentan los DATOS del catálogo.
@@ -561,7 +563,7 @@ function panelNodo(n) {
     }, 0);
   }
   if (n.id === "ollama" && n.fijo)
-    h += `<p class="muted mini">Apagado: falta OLLAMA_URL en el .env del servidor.</p>`;
+    h += `<p class="muted mini">Apagado: falta OPENROUTER_API_KEY u OLLAMA_URL en el .env del servidor.</p>`;
   if (n.id === "escalada")
     h += `<p class="muted mini">Siempre activa: es el último recurso de la cascada.</p>
       <p><a class="btn-mini" href="/?status=escalados">Ver folios escalados</a></p>`;

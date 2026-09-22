@@ -1,9 +1,10 @@
 """Nodo agéntico acotado: el LLM resuelve con HERRAMIENTAS de solo lectura.
 
-Backend: el Ollama de labs (qwen3, tool calling nativo) si OLLAMA_URL está
-configurada — el negocio no paga API; Claude solo como alternativa si hay
-ANTHROPIC_API_KEY. Permisos, herramientas y validación son los mismos con
-cualquier modelo.
+Backend: el modelo abierto (settings.modelo_abierto: OpenRouter con
+OPENROUTER_API_KEY, proveedor externo, u Ollama propio con OLLAMA_URL; el
+embudo nlu.ollama_chat traduce el protocolo y el tool calling); Claude solo
+como alternativa si hay ANTHROPIC_API_KEY. Permisos, herramientas y validación
+son los mismos con cualquier modelo, y el texto del cliente viaja enmascarado.
 
 Apagado por defecto (AGENT_TOOLS_ENABLED=1 lo enciende). Corre como ÚLTIMO
 recurso de _not_understood — cuando la cascada barata, la capa informativa y
@@ -182,10 +183,10 @@ def responder(session: Session, phone: str, text: str) -> str | None:
     """Respuesta del nodo agéntico validada, o None (= flujo normal).
 
     Nunca lanza: red, modelo, herramienta o validación fallando son un None."""
-    # Backend: el Ollama de labs si está configurado (el negocio no paga
-    # API); Claude solo como alternativa si hay ANTHROPIC_API_KEY.
+    # Backend: el modelo abierto (Ollama propio u OpenRouter) si está
+    # configurado; Claude solo como alternativa si hay ANTHROPIC_API_KEY.
     if not settings.agent_tools_enabled or not (
-        settings.ollama_url or settings.anthropic_api_key
+        settings.modelo_abierto or settings.anthropic_api_key
     ):
         return None
     try:
@@ -198,7 +199,7 @@ def responder(session: Session, phone: str, text: str) -> str | None:
         session.commit()
         # Sin claves del cliente hacia el modelo (auditoría 2026-09, IA-6).
         recortado = enmascarar(text.strip())[: nlu.MAX_INPUT_CHARS]
-        if settings.ollama_url:
+        if settings.modelo_abierto:
             return _loop_ollama(session, phone, recortado)
         return _loop_anthropic(session, phone, recortado)
     except Exception as exc:
@@ -207,9 +208,11 @@ def responder(session: Session, phone: str, text: str) -> str | None:
 
 
 def _loop_ollama(session: Session, phone: str, text: str) -> str | None:
-    """Bucle de tool calling contra el Ollama de labs (qwen3 soporta tools).
-    Mismos permisos, mismas herramientas y misma validación que el bucle de
-    Claude — solo cambia el protocolo del mensaje."""
+    """Bucle de tool calling contra el modelo abierto (Ollama propio u
+    OpenRouter: el embudo `nlu.ollama_chat` traduce el protocolo y aquí el
+    historial se arma siempre en la forma de Ollama). Mismos permisos, mismas
+    herramientas y misma validación que el bucle de Claude — solo cambia el
+    protocolo del mensaje."""
     system = _SYSTEM_TEMPLATE.format(listing=nlu.catalog_listing(), no_se=rag.NO_SE)
     messages: list[dict] = [
         {"role": "system", "content": system},
@@ -230,7 +233,10 @@ def _loop_ollama(session: Session, phone: str, text: str) -> str | None:
         )
         calls = message.get("tool_calls") or []
         if not calls:
-            respuesta = (message.get("content") or "").strip()
+            # Misma poda que rag: una cadena de razonamiento fugada al content
+            # (visto en producción con qwen3 el 2026-08-28) no es respuesta, y
+            # con OpenRouter el modelo lo elige un admin desde el panel.
+            respuesta = rag._THINK_RE.sub("", message.get("content") or "").strip()
             return _respuesta_valida(respuesta, salidas_tools, salidas_cotizar)
 
         messages.append(message)
