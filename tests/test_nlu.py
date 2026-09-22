@@ -593,6 +593,9 @@ def test_en_texto_concreto_el_servicio_del_llm_se_respeta(monkeypatch, tmp_path)
 
 
 def test_ollama_chat_propaga_num_ctx_y_timeout(monkeypatch):
+    # Sin presupuesto abierto: desde IA-4 (auditoría 2026-09) el timeout se recorta a lo
+    # que le queda al mensaje, y otra prueba del mismo hilo pudo dejar uno abierto.
+    nlu._DEADLINE.set(None)
     # num_ctx viaja en options (sin él, Ollama trunca prompts largos en
     # silencio) y el timeout por llamada desplaza a OLLAMA_TIMEOUT.
     import httpx

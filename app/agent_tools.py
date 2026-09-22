@@ -390,13 +390,22 @@ def _respuesta_valida(
         return None
     if len(respuesta.split()) > settings.agent_max_words:
         return None
-    if rag._CURP_RE.search(respuesta):
+    # Misma copia normalizada que la capa informativa (auditoría 2026-09, IA-2):
+    # sin ella «＄150», «GOMC 800101 HDFRRN09» o un teléfono con barras pasaban.
+    revisada = rag.normalizar_para_revision(respuesta)
+    if rag.hay_pii(revisada) or rag._LINEA_RE.search(revisada):
         return None
-    corridas_respuesta = _corridas(respuesta)
-    if not corridas_respuesta <= _corridas("\n".join(salidas_tools)):
+    # Las dos orillas pasan por la MISMA normalización: «$25.00» es «2500» en la
+    # respuesta y en el tool_result, o el subconjunto no cuadra nunca.
+    corridas_respuesta = _corridas(revisada)
+    if not corridas_respuesta <= _corridas(rag.normalizar_para_revision("\n".join(salidas_tools))):
         return None
-    if _MENCION_DINERO_RE.search(respuesta):
-        corridas_cotizar = _corridas("\n".join(salidas_cotizar))
-        if not (corridas_respuesta & corridas_cotizar):
+    if _MENCION_DINERO_RE.search(revisada) or rag._DINERO_RE.search(revisada):
+        # SUBCONJUNTO, no intersección: «$150 más $18 de gestión» compartía el
+        # 150 con cotizar_servicio y el 18 salía de «CURP (18 caracteres)» de
+        # otra herramienta; con la intersección pasaba. Si la respuesta habla de
+        # dinero, TODAS sus cifras tienen que venir de cotizar_servicio.
+        corridas_cotizar = _corridas(rag.normalizar_para_revision("\n".join(salidas_cotizar)))
+        if not corridas_respuesta or not corridas_respuesta <= corridas_cotizar:
             return None
     return respuesta

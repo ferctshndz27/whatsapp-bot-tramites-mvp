@@ -12,6 +12,8 @@ el bot jamás se queda sin responder por culpa de un servicio externo.
 import json
 import logging
 import re
+import threading
+import time
 import unicodedata
 from contextvars import ContextVar
 
@@ -65,13 +67,90 @@ def backend_degradado() -> bool:
 
 
 def reiniciar_turno() -> None:
-    """Arranca limpio el estado por mensaje (motivo del fallo + degradación).
+    """Arranca limpio el estado por mensaje (motivo del fallo + degradación) y
+    abre el presupuesto de IA del mensaje.
 
     El cron procesa muchos mensajes en el MISMO contexto: sin esto, un fallo
     de hace dos mensajes se registraría —y degradaría las capas— como si
     fuera de este."""
     _FALLO_OLLAMA.set(None)
     _BACKEND_CAIDO.set(False)
+    iniciar_presupuesto()
+
+
+# ---- Cupo global, presupuesto por mensaje y pausa (auditoría 2026-09, IA-4 / EXT-3) ----
+# `_BACKEND_CAIDO` es por mensaje; no había nada ENTRE mensajes ni alrededor de
+# Ollama: sin semáforo ni cola, con OLLAMA_TIMEOUT hasta 60 s y el webhook, el
+# panel y /health compartiendo un threadpool de 40 hilos en un solo worker, N
+# números con preguntas raras degradaban a todos los clientes y congelaban el
+# panel. Una pregunta no entendida con RAG + agente sumaba plazos
+# [12, 45, 45, 45, 45] = 192 s.
+# Tres piezas, todas en el ÚNICO embudo (`ollama_chat`), así cubren al
+# clasificador, los códigos, la capa informativa, el agente y el minero:
+#   cupo        — a lo más OLLAMA_CONCURRENCIA generaciones a la vez; quien no
+#                 alcanza cupo en un segundo cae a las capas baratas.
+#   presupuesto — un deadline por mensaje: cada llamada recibe como timeout lo
+#                 que quede, y sin resto ya no se llama. IA-8 queda cubierto de
+#                 paso: turnos × timeout del Estudio no puede rebasar esto.
+#   pausa       — tras K timeouts seguidos, Ollama se da por caído P segundos
+#                 para TODOS los mensajes, en vez de que cada uno lo descubra.
+# ponytail: constantes, no perillas; la CPU de labs es una y conocida.
+OLLAMA_CONCURRENCIA = 4
+OLLAMA_ESPERA_CUPO_SEGUNDOS = 1.0
+PRESUPUESTO_IA_SEGUNDOS = 25.0
+OLLAMA_TIMEOUTS_PARA_PAUSAR = 3
+OLLAMA_PAUSA_SEGUNDOS = 60.0
+_CUPO_OLLAMA = threading.BoundedSemaphore(OLLAMA_CONCURRENCIA)
+_DEADLINE: ContextVar[float | None] = ContextVar("deadline_ia", default=None)
+_candado_pausa = threading.Lock()
+_timeouts_seguidos = 0
+_pausado_hasta = 0.0
+
+
+class OllamaSinCupo(Exception):
+    """OLLAMA_CONCURRENCIA generaciones en curso y ninguna terminó en un segundo."""
+
+
+class OllamaSinPresupuesto(Exception):
+    """El mensaje ya gastó su presupuesto de IA: no se llama."""
+
+
+class OllamaEnPausa(Exception):
+    """K timeouts seguidos: Ollama se da por caído hasta que pase la pausa."""
+
+
+def iniciar_presupuesto(segundos: float = PRESUPUESTO_IA_SEGUNDOS) -> None:
+    _DEADLINE.set(time.monotonic() + segundos)
+
+
+def presupuesto_restante() -> float | None:
+    """Segundos que le quedan al mensaje, o None si nadie abrió presupuesto
+    (el minero nocturno, por ejemplo: ahí manda su propio timeout)."""
+    deadline = _DEADLINE.get()
+    return None if deadline is None else deadline - time.monotonic()
+
+
+def _en_pausa() -> bool:
+    with _candado_pausa:
+        return time.monotonic() < _pausado_hasta
+
+
+def _registrar_resultado(exc: Exception | None) -> None:
+    """Solo los timeouts cuentan para la pausa: un «sin cupo» o un «sin
+    presupuesto» no dicen nada de la salud del servidor."""
+    global _timeouts_seguidos, _pausado_hasta
+    import httpx
+
+    with _candado_pausa:
+        if exc is None:
+            _timeouts_seguidos = 0
+        elif isinstance(exc, httpx.TimeoutException):
+            _timeouts_seguidos += 1
+            if _timeouts_seguidos >= OLLAMA_TIMEOUTS_PARA_PAUSAR:
+                _pausado_hasta = time.monotonic() + OLLAMA_PAUSA_SEGUNDOS
+                _timeouts_seguidos = 0
+                logger.warning("Ollama en pausa %s s tras %s timeouts seguidos",
+                               OLLAMA_PAUSA_SEGUNDOS, OLLAMA_TIMEOUTS_PARA_PAUSAR)
 
 
 def _clasificar_fallo(exc: Exception) -> str:
@@ -83,6 +162,12 @@ def _clasificar_fallo(exc: Exception) -> str:
         return "timeout"
     if isinstance(exc, httpx.ConnectError):
         return "conexion"
+    if isinstance(exc, OllamaSinCupo):
+        return "sin_cupo"
+    if isinstance(exc, OllamaSinPresupuesto):
+        return "sin_presupuesto"
+    if isinstance(exc, OllamaEnPausa):
+        return "en_pausa"
     if isinstance(exc, httpx.HTTPStatusError):
         return f"http_{exc.response.status_code}"
     return type(exc).__name__.lower()[:60]
@@ -453,18 +538,33 @@ def ollama_chat(
     # repetir el except en cada una. Se re-lanza sin tocar: cada capa sigue
     # decidiendo por su cuenta cómo degradar.
     try:
-        response = httpx.post(
-            f"{settings.ollama_url}/api/chat",
-            headers=headers,
-            json=payload,
-            # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
-            # lento); conectar a un servidor caído corta a los 2s. Un float suelto
-            # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
-            # Las capas de prompt largo pasan su propio timeout: procesar miles de
-            # tokens en la CPU de labs tarda más que el clasificador.
-            timeout=httpx.Timeout(timeout or settings.ollama_timeout, connect=2.0),
-        )
+        if _en_pausa():
+            raise OllamaEnPausa("Ollama en pausa tras timeouts seguidos")
+        # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
+        # lento); conectar a un servidor caído corta a los 2s. Un float suelto
+        # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
+        # Las capas de prompt largo pasan su propio timeout: procesar miles de
+        # tokens en la CPU de labs tarda más que el clasificador. Y ninguno
+        # rebasa lo que le queda al mensaje.
+        tope = timeout or settings.ollama_timeout
+        restante = presupuesto_restante()
+        if restante is not None:
+            if restante < 1.0:
+                raise OllamaSinPresupuesto("el mensaje agotó su presupuesto de IA")
+            tope = min(tope, restante)
+        if not _CUPO_OLLAMA.acquire(timeout=OLLAMA_ESPERA_CUPO_SEGUNDOS):
+            raise OllamaSinCupo("sin cupo para otra generación")
+        try:
+            response = httpx.post(
+                f"{settings.ollama_url}/api/chat",
+                headers=headers,
+                json=payload,
+                timeout=httpx.Timeout(tope, connect=2.0),
+            )
+        finally:
+            _CUPO_OLLAMA.release()
         response.raise_for_status()
+        _registrar_resultado(None)
         return response.json()["message"]
     except Exception as exc:
         _FALLO_OLLAMA.set(_clasificar_fallo(exc))
@@ -472,6 +572,7 @@ def ollama_chat(
         # cuatro capas que hablan con Ollama pasan por este punto, y basta que
         # UNA falle para que reintentar con las otras solo alargue la espera.
         _BACKEND_CAIDO.set(True)
+        _registrar_resultado(exc)
         raise
 
 
