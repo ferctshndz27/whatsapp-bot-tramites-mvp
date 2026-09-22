@@ -124,7 +124,8 @@ def test_login_failure_reasons(monkeypatch, session, username, password, expecte
 def test_login_lockout_records_reason(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     _make_user(session)
-    dashboard._login_attempts["maria"] = [time.time()] * dashboard.LOGIN_MAX_ATTEMPTS
+    # La llave del lockout es (usuario, IP) desde AUTH-2; la IP es la del fake de arriba.
+    dashboard._login_attempts[dashboard._llaves("maria", "192.168.1.50")[0]] = [time.time()] * dashboard.LOGIN_MAX_ATTEMPTS
     req = _request()
 
     dashboard.login_submit(req, username="maria", password="clave-1234")

@@ -1,6 +1,7 @@
 import hmac
 import logging
 import secrets
+import threading
 import time
 
 import bcrypt
@@ -11,7 +12,7 @@ from app.templating import templates
 from sqlalchemy import or_, update
 from sqlmodel import select
 
-from app import authlog, codigos, messaging, ventana
+from app import archive, authlog, codigos, messaging, ventana
 from app.utils import mask_phone, ruta_interna
 from app.audit import log_admin
 from app.auth import alcance, is_admin
@@ -40,23 +41,127 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-LOGIN_MAX_ATTEMPTS = 5
+# ---- Lockout del login (auditoría 2026-09, AUTH-2) ----
+# Tres llaves y no una. El contador viejo era solo por usuario: cinco claves
+# malas a «jefa» —desde cualquier parte— la dejaban sin entrar cinco minutos
+# con su clave correcta (DoS de cuenta), y como el límite ignoraba la IP,
+# un mismo origen probaba 28 usuarios seguidos sin frenarse (spraying).
+#   (par)     usuario+IP: fuerza bruta a UNA cuenta desde UN origen. Es el
+#             límite que muerde primero y no le sirve a un tercero para
+#             bloquear a nadie: tendría que estar en su misma IP.
+#   (ip)      cualquier usuario desde una IP: spraying.
+#   (usuario) respaldo alto contra un ataque repartido en muchas IPs; que a un
+#             tercero le cueste 50 fallos, no 5, y quede en la bitácora.
+LOGIN_MAX_ATTEMPTS = 5          # por (usuario, IP)
+LOGIN_MAX_POR_IP = 20
+LOGIN_MAX_POR_USUARIO = 50
 LOGIN_WINDOW_SECONDS = 300
+# La llave se trunca: 200 POST anónimos con usernames de 500 KB retenían
+# 100 MB (AUTH-7). Mismo tope que la bitácora (authlog.USERNAME_MAX_LEN).
+_LLAVE_MAX = 64
+# Pasado esto, al registrar un fallo se barren las llaves sin intentos vivos.
+_PURGA_A_PARTIR_DE = 2000
 # ponytail: contador en memoria por proceso — se reinicia al reiniciar el
 # servidor y no se comparte entre instancias. Pasar a DB/Redis si se corre
 # con más de un worker o se necesita persistencia entre reinicios.
-_login_attempts: dict[str, list[float]] = {}
+_login_attempts: dict[tuple[str, str], list[float]] = {}
+# Chequear y registrar eran dos pasos sin candado: 30 intentos concurrentes
+# contra un usuario pasaban 28 por bcrypt (límite nominal 5). Ahora es UN paso
+# bajo este lock y el intento se reserva ANTES de evaluar la clave.
+_candado_login = threading.Lock()
 
 
-def _is_login_locked(username: str) -> bool:
-    now = time.time()
-    attempts = [t for t in _login_attempts.get(username, []) if now - t < LOGIN_WINDOW_SECONDS]
-    _login_attempts[username] = attempts
-    return len(attempts) >= LOGIN_MAX_ATTEMPTS
+def _llaves(username: str, ip: str | None) -> tuple[tuple[str, str], tuple[str, str], tuple[str, str]]:
+    u, i = (username or "")[:_LLAVE_MAX], ip or ""
+    return ("par", f"{u}|{i}"), ("ip", i), ("usuario", u)
 
 
-def _record_failed_login(username: str) -> None:
-    _login_attempts.setdefault(username, []).append(time.time())
+def _vivos(llave: tuple[str, str], ahora: float) -> list[float]:
+    vivos = [t for t in _login_attempts.get(llave, []) if ahora - t < LOGIN_WINDOW_SECONDS]
+    if vivos:
+        _login_attempts[llave] = vivos
+    else:
+        _login_attempts.pop(llave, None)
+    return vivos
+
+
+def _is_login_locked(username: str, ip: str | None = None) -> bool:
+    """¿Alguna de las tres llaves ya está en su tope? Solo lectura."""
+    with _candado_login:
+        ahora = time.time()
+        par, por_ip, por_usuario = _llaves(username, ip)
+        return (
+            len(_vivos(par, ahora)) >= LOGIN_MAX_ATTEMPTS
+            or len(_vivos(por_ip, ahora)) >= LOGIN_MAX_POR_IP
+            or len(_vivos(por_usuario, ahora)) >= LOGIN_MAX_POR_USUARIO
+        )
+
+
+def _intento_permitido(username: str, ip: str | None) -> float | None:
+    """Reserva un intento y devuelve su marca de tiempo, o None si no procede.
+
+    ATÓMICO: chequeo y registro bajo el mismo lock, así N intentos concurrentes
+    dejan pasar exactamente el cupo y ni uno más llega a bcrypt. La reserva
+    cuenta como fallo desde ya; si la clave resulta correcta, `_login_ok` la
+    retira de las tres llaves —un acierto no es un fallo en ninguna—. La
+    primera versión la dejaba en la llave de la IP, y veinte logins CORRECTOS
+    desde una misma IP cerraban el panel (lo cazó la suite, no producción)."""
+    with _candado_login:
+        ahora = time.time()
+        par, por_ip, por_usuario = _llaves(username, ip)
+        if (
+            len(_vivos(par, ahora)) >= LOGIN_MAX_ATTEMPTS
+            or len(_vivos(por_ip, ahora)) >= LOGIN_MAX_POR_IP
+            or len(_vivos(por_usuario, ahora)) >= LOGIN_MAX_POR_USUARIO
+        ):
+            return None
+        for llave in (par, por_ip, por_usuario):
+            _login_attempts.setdefault(llave, []).append(ahora)
+        if len(_login_attempts) > _PURGA_A_PARTIR_DE:
+            for llave in list(_login_attempts):
+                _vivos(llave, ahora)
+        return ahora
+
+
+def _record_failed_login(username: str, ip: str | None = None) -> None:
+    """Cuenta un fallo sin preguntar (el registro y el código de invitación no
+    evalúan bcrypt, así que no reservan: registran al fallar)."""
+    with _candado_login:
+        ahora = time.time()
+        for llave in _llaves(username, ip):
+            _login_attempts.setdefault(llave, []).append(ahora)
+        if len(_login_attempts) > _PURGA_A_PARTIR_DE:
+            for llave in list(_login_attempts):
+                _vivos(llave, ahora)
+
+
+def _login_ok(username: str, ip: str | None, marca: float) -> None:
+    """Clave correcta: se retira la reserva de la IP y se limpian las llaves del
+    usuario. Los fallos PREVIOS desde esa IP siguen contando: un acierto no
+    borra diecinueve intentos fallidos de spraying, solo deja de sumar uno."""
+    with _candado_login:
+        par, por_ip, por_usuario = _llaves(username, ip)
+        _login_attempts.pop(par, None)
+        _login_attempts.pop(por_usuario, None)
+        de_ip = _login_attempts.get(por_ip)
+        if de_ip and marca in de_ip:
+            de_ip.remove(marca)
+            if not de_ip:
+                _login_attempts.pop(por_ip, None)
+
+
+# Enumeración por tiempo (AUTH-3): bcrypt corría solo si el usuario existía y
+# estaba habilitado (219 ms) y no en los otros dos casos (5 ms), así que el
+# tiempo de respuesta decía qué nombres existen y cuáles están activos. Con
+# el usuario ausente o deshabilitado se evalúa la clave contra este hash
+# señuelo, del mismo costo que los reales, y el resultado se ignora.
+_HASH_SENUELO = bcrypt.hashpw(secrets.token_bytes(16), bcrypt.gensalt())
+
+
+def _log_user(username: str) -> str:
+    """Username para una línea de log: acotado y con repr, para que un CRLF
+    tecleado en el formulario no invente renglones en la bitácora (INJ-4)."""
+    return repr((username or "")[:_LLAVE_MAX])
 
 
 def seed_dashboard_user(settings) -> None:
@@ -95,8 +200,10 @@ def login_form(request: Request):
 
 @router.post("/login")
 def login_submit(request: Request, username: str = Form(""), password: str = Form("")):
-    if _is_login_locked(username):
-        logger.warning("Login bloqueado por intentos fallidos: %s", username)
+    ip = authlog.client_ip(request)
+    marca = _intento_permitido(username, ip)
+    if marca is None:
+        logger.warning("Login bloqueado por intentos fallidos: %s", _log_user(username))
         authlog.record_login(request, username, success=False, reason=authlog.REASON_LOCKED)
         return templates.TemplateResponse(
             request, "login.html",
@@ -106,9 +213,16 @@ def login_submit(request: Request, username: str = Form(""), password: str = For
     with get_session() as session:
         user = session.exec(select(User).where(User.username == username)).first()
 
-    if user and user.habilitado and bcrypt.checkpw(password.encode(), user.password_hash.encode()):
-        _login_attempts.pop(username, None)
-        logger.info("Login exitoso: %s", username)
+    if user and user.habilitado:
+        correcta = bcrypt.checkpw(password.encode(), user.password_hash.encode())
+    else:
+        # Mismo costo que un usuario real, para que el tiempo no diga si existe.
+        bcrypt.checkpw(password.encode(), _HASH_SENUELO)
+        correcta = False
+
+    if correcta:
+        _login_ok(username, ip, marca)
+        logger.info("Login exitoso: %s", _log_user(username))
         authlog.record_login(request, username, success=True)
         request.session["user"] = username
         request.session["sid"] = authlog.open_session(request, username)
@@ -123,8 +237,8 @@ def login_submit(request: Request, username: str = Form(""), password: str = For
     else:
         reason = authlog.REASON_BAD_PASSWORD
     authlog.record_login(request, username, success=False, reason=reason)
-    _record_failed_login(username)
-    logger.warning("Login fallido: %s", username)
+    # El intento ya quedó reservado en _intento_permitido; aquí no se cuenta otra vez.
+    logger.warning("Login fallido: %s", _log_user(username))
     return templates.TemplateResponse(
         request, "login.html", {"request": request, "error": "Usuario o contraseña incorrectos"}
     )
@@ -184,9 +298,11 @@ def register_submit(
     phone: str = Form(""),
 ):
     username = username.strip().lower()
-    # ponytail: reusa el lockout del login con una llave global para frenar
-    # fuerza bruta del código de invitación; pasar a llave por-IP si hace falta.
-    if _is_login_locked("__register__"):
+    # Reusa el lockout del login con la llave («__register__», IP): frena la
+    # fuerza bruta del código de invitación desde un origen sin que ese origen
+    # pueda dejar sin registro a todo el mundo, como hacía la llave global.
+    ip = authlog.client_ip(request)
+    if _is_login_locked("__register__", ip):
         return templates.TemplateResponse(
             request, "register.html",
             {"request": request, "error": "Demasiados intentos. Espera unos minutos."},
@@ -194,14 +310,14 @@ def register_submit(
 
     error = _validate_registration(username, password)
     if error:
-        _record_failed_login("__register__")
-        logger.warning("Registro rechazado para %s: %s", username, error)
+        _record_failed_login("__register__", ip)
+        logger.warning("Registro rechazado para %s: %s", _log_user(username), error)
         return templates.TemplateResponse(request, "register.html", {"request": request, "error": error})
 
     normalized_phone = _normalize_mx_phone(phone)
     if normalized_phone is None:
-        _record_failed_login("__register__")
-        logger.warning("Registro rechazado para %s: celular inválido", username)
+        _record_failed_login("__register__", ip)
+        logger.warning("Registro rechazado para %s: celular inválido", _log_user(username))
         return templates.TemplateResponse(
             request, "register.html",
             {"request": request, "error": "Celular inválido: escribe los 10 dígitos (ej. 3312345678)."},
@@ -210,8 +326,8 @@ def register_submit(
     with get_session() as session:
         code_ok, invitation = _code_grants_registration(session, code)
         if not code_ok:
-            _record_failed_login("__register__")
-            logger.warning("Registro rechazado para %s: código inválido", username)
+            _record_failed_login("__register__", ip)
+            logger.warning("Registro rechazado para %s: código inválido", _log_user(username))
             return templates.TemplateResponse(
                 request, "register.html",
                 {
@@ -232,17 +348,43 @@ def register_submit(
         # código siga siendo uno global del despliegue. Si algún día hace falta
         # un código maestro por oficina, el lugar es config, no aquí.
         office_id = invitation.office_id if invitation is not None else OFICINA_TLAXCALA_ID
+        if invitation is not None:
+            # «Un solo uso» de verdad (AUTH-4): la invitación se consume con un
+            # UPDATE condicionado a que siga sin usar, y el usuario se crea SOLO
+            # si ese UPDATE tocó una fila. Antes se marcaba usada DESPUÉS de
+            # crear el usuario y sin candado: cinco registros concurrentes con
+            # el mismo código creaban tres cuentas. El histórico de invitaciones
+            # muestra código + teléfono + quién lo usó.
+            consumida = session.exec(
+                update(Invitation)
+                .where(
+                    Invitation.id == invitation.id,
+                    Invitation.used_at.is_(None),
+                    Invitation.habilitado == True,  # noqa: E712
+                )
+                .values(used_at=utcnow(), used_by=username, phone=normalized_phone)
+            )
+            if consumida.rowcount != 1:
+                session.rollback()
+                _record_failed_login("__register__", ip)
+                logger.warning("Registro rechazado para %s: invitación ya consumida", _log_user(username))
+                return templates.TemplateResponse(
+                    request, "register.html",
+                    {
+                        "request": request,
+                        "error": "Código de invitación incorrecto, ya utilizado, o el registro está deshabilitado.",
+                    },
+                )
         session.add(User(username=username, password_hash=hashed.decode(),
                          phone=normalized_phone, office_id=office_id))
-        if invitation is not None:
-            invitation.used_at = utcnow()
-            invitation.used_by = username
-            # El histórico de invitaciones muestra código + teléfono + quién lo usó.
-            invitation.phone = normalized_phone
-            session.add(invitation)
         session.commit()
+        if invitation is not None:
+            # El UPDATE de Core no dispara el listener del espejo (archive.py):
+            # se le manda la fila ya consumida por el mismo camino seguro.
+            session.refresh(invitation)
+            archive.espejar(archive.archive_invitation, invitation)
 
-    logger.info("Usuario registrado: %s", username)
+    logger.info("Usuario registrado: %s", _log_user(username))
     request.session["user"] = username
     return RedirectResponse("/", status_code=303)
 
@@ -305,7 +447,9 @@ def invitations_toggle(request: Request, invitation_id: int):
             session.add(invitation)
             session.commit()
             state = "reactivada" if invitation.habilitado else "cancelada"
-            log_admin(user, f"invitacion:{state}", invitation.token)
+            # El id, nunca el token (AUTH-6): la bitácora la lee cualquier admin de
+            # oficina y se espeja a MSSQL; un código vivo ahí era una cuenta regalada.
+            log_admin(user, f"invitacion:{state}", f"#{invitation.id}")
             logger.info("Invitación #%s %s por %s", invitation_id, state, user)
     return RedirectResponse("/invitations", status_code=303)
 

@@ -1691,6 +1691,14 @@ def _safe(fn, target) -> None:
         logger.warning("No se pudo archivar en MSSQL (%s): %s", fn.__name__, exc)
 
 
+def espejar(fn, target) -> None:
+    """Para una escritura que el listener NO ve: un `update()` de Core, como el
+    que consume una invitación de forma atómica (dashboard.register_submit).
+    Mismo camino que el listener —`_safe`—: si MSSQL no está configurado o no
+    contesta, no pasa nada y backfill() lo repara después."""
+    _safe(fn, target)
+
+
 # Cola por sesión: los listeners de cobranza encolan aquí durante el flush y
 # el after_commit la drena, ya fuera de la transacción de SQLite.
 _COLA_ESPEJO = "_espejo_cobranza_pendiente"
