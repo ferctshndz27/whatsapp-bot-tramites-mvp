@@ -520,7 +520,7 @@ def proposal_reject(request: Request, proposal_id: int):
 
 
 @router.post("/unmatched/clusters/ignore")
-def cluster_ignore(request: Request, synonym: str = Form(...)):
+def cluster_ignore(request: Request, synonym: str = Form("")):
     """"Ignorar": el texto no era un trámite (saludo, cortesía, ruido). Soft
     delete — las filas se conservan en la base, pero salen del panel y de las
     estadísticas. Sirve desde los grupos (un clic) y desde el alta a mano
@@ -542,7 +542,7 @@ def cluster_ignore(request: Request, synonym: str = Form(...)):
 
 @router.post("/unmatched/synonyms")
 def unmatched_add_synonym(
-    request: Request, service_id: str = Form(...), synonym: str = Form(...)
+    request: Request, service_id: str = Form(""), synonym: str = Form("")
 ):
     admin, redirect = _admin_or_redirect(request)
     if redirect:

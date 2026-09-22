@@ -114,7 +114,7 @@ def clients_list(request: Request, q: str = "", alta: str = "", error: str = "")
 
 
 @router.post("/clients")
-def clients_upsert(request: Request, phone: str = Form(...), name: str = Form("")):
+def clients_upsert(request: Request, phone: str = Form(""), name: str = Form("")):
     """Alta manual, o actualización del nombre si el teléfono ya existe.
 
     Deliberadamente NO toca `habilitado`, `created_at` ni la conversación: dar
@@ -249,7 +249,7 @@ def update_client(
 
 
 @router.post("/clients/{phone}/consentimiento")
-def set_consent(request: Request, phone: str, accion: str = Form(...), fuente: str = Form("")):
+def set_consent(request: Request, phone: str, accion: str = Form(""), fuente: str = Form("")):
     """Opt-in / opt-out para mensajes iniciados por el negocio.
 
     Meta exige poder probar cuándo y cómo se dio el consentimiento; por eso el
@@ -281,7 +281,7 @@ def set_consent(request: Request, phone: str, accion: str = Form(...), fuente: s
 
 
 @router.post("/clients/{phone}/notes")
-def add_client_note(request: Request, phone: str, body: str = Form(...)):
+def add_client_note(request: Request, phone: str, body: str = Form("")):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)

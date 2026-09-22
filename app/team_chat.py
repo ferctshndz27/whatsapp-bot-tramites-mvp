@@ -265,7 +265,7 @@ def team_room_messages(request: Request, room_id: int):
     )
 
 @router.post("/team/rooms")
-def create_room(request: Request, room_type: str = Form(...), name: str = Form(""), members: List[str] = Form([])):
+def create_room(request: Request, room_type: str = Form(""), name: str = Form(""), members: List[str] = Form([])):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -315,7 +315,7 @@ def create_room(request: Request, room_type: str = Form(...), name: str = Form("
     return RedirectResponse(f"/team?room={room_id}", status_code=303)
 
 @router.post("/team/rooms/{room_id}/send")
-def team_send(request: Request, room_id: int, body: str = Form(...)):
+def team_send(request: Request, room_id: int, body: str = Form("")):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -406,7 +406,7 @@ def team_delete_room(request: Request, room_id: int):
     return RedirectResponse("/team", status_code=303)
 
 @router.post("/team/messages/{message_id}/react")
-def team_react(request: Request, message_id: int, reaction: str = Form(...)):
+def team_react(request: Request, message_id: int, reaction: str = Form("")):
     user = _current_user(request)
     if not user: return Response(status_code=403)
 
