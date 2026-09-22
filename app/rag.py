@@ -426,14 +426,16 @@ _retriever_hibrido = Hibrido(TopKLexical(), _retriever_vectorial)
 
 def _retriever() -> Retriever:
     """Híbrido cuando hay léxico Y embeddings (el caso de producción);
-    vectorial solo con EMBEDDINGS_URL; léxico acotado para el Ollama de labs
-    (su CPU no aguanta el corpus completo); corpus entero solo con Claude,
-    donde el prompt largo es barato (caché de prompts) y no hay prefill."""
-    if settings.embeddings_url and settings.ollama_url:
+    vectorial solo con EMBEDDINGS_URL; léxico acotado con el modelo abierto
+    (nació porque la CPU de labs no aguantaba el corpus completo; con
+    OpenRouter sigue acotando lo que viaja y se paga por mensaje); corpus
+    entero solo con Claude, donde el prompt largo es barato (caché de
+    prompts) y no hay prefill."""
+    if settings.embeddings_url and settings.modelo_abierto:
         return _retriever_hibrido
     if settings.embeddings_url:
         return _retriever_vectorial
-    if settings.ollama_url:
+    if settings.modelo_abierto:
         return TopKLexical()
     return CorpusCompleto()
 
@@ -538,20 +540,21 @@ def answer_explained(text: str,
     tumbó una respuesta candidata (GUARDRAIL_MOTIVOS); apagado, sin respuesta
     del modelo o error de red es (None, None).
 
-    Backend: el Ollama de labs si OLLAMA_URL está configurada (el negocio no
-    paga API); Claude solo como alternativa si hay ANTHROPIC_API_KEY. La
-    validación de la respuesta es la misma con cualquier modelo.
+    Backend: el modelo abierto (settings.modelo_abierto: OpenRouter con
+    OPENROUTER_API_KEY u Ollama propio con OLLAMA_URL); Claude solo como
+    alternativa si hay ANTHROPIC_API_KEY. La validación de la respuesta es la
+    misma con cualquier modelo, y la pregunta viaja enmascarada.
 
     Nunca lanza: cualquier falla (red, modelo, validación) es un None y el
     cliente recibe el aviso de siempre con su escalada a humano."""
-    if not settings.rag_enabled or not (settings.ollama_url or settings.anthropic_api_key):
+    if not settings.rag_enabled or not (settings.modelo_abierto or settings.anthropic_api_key):
         return None, None
     try:
         # Sin claves del cliente hacia el modelo (auditoría 2026-09, IA-6).
         pregunta = enmascarar(text.strip())[:MAX_INPUT_CHARS]
         corpus = _retriever().contexto(pregunta, office_id)
         system = _SYSTEM_TEMPLATE.format(no_se=NO_SE, corpus=corpus)
-        if settings.ollama_url:
+        if settings.modelo_abierto:
             message = nlu.ollama_chat(
                 [
                     {"role": "system", "content": system},

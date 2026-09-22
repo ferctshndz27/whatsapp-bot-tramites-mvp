@@ -153,7 +153,7 @@ def test_nightly_sin_api_key_no_consulta_a_claude(monkeypatch, infra_sana):
 
     result = nightly()
 
-    assert result["motivo"] == "sin OLLAMA_URL ni ANTHROPIC_API_KEY"
+    assert result["motivo"] == "sin OPENROUTER_API_KEY, OLLAMA_URL ni ANTHROPIC_API_KEY"
     assert result["propuestas"] == 0
     assert "nuevas" in result["alertas"]  # las alertas se evalúan igual
     with Session(db.engine) as session:
@@ -176,6 +176,45 @@ def test_nightly_persiste_propuestas_pendientes_y_deja_rastro_en_la_bitacora(min
     assert prop.decided_by is None and prop.decided_at is None
     assert (audit.admin, audit.action) == ("sistema", "catalogo:mineria-nocturna")
     assert result["alertas"]["nuevas"] == 0  # infraestructura sana: ninguna alerta
+
+
+def test_con_solo_openrouter_la_mineria_nocturna_si_corre(monkeypatch, infra_sana):
+    """El estado real tras el cierre de labs: solo OPENROUTER_API_KEY. La puerta
+    del cron pregunta por el modelo abierto, no por OLLAMA_URL; si no, la
+    minería se apaga para siempre con un motivo que nadie lee y el bot deja de
+    aprender frases nuevas."""
+    import httpx
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_url", "")
+    monkeypatch.setattr(settings, "openrouter_api_key", "sk-or-prueba")
+    monkeypatch.setattr(settings, "openrouter_base_url", "https://openrouter.ai/api/v1")
+    with Session(db.engine) as session:
+        _seed_no_entendido(session)
+    servicio = catalog.categories[0].services[0]
+    llamadas: list[str] = []
+
+    class _Respuesta:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"role": "assistant", "content": json.dumps(
+                {"proposals": [{"service_id": servicio.id, "synonym": SINONIMO_PROPUESTO}]}
+            )}}]}
+
+    def _post(url, **kw):
+        llamadas.append(url)
+        return _Respuesta()
+
+    monkeypatch.setattr(httpx, "post", _post)
+
+    result = nightly()
+
+    assert llamadas == ["https://openrouter.ai/api/v1/chat/completions"], "el cron no salió a OpenRouter"
+    assert result["propuestas"] == 1, result
 
 
 def test_la_mineria_nocturna_nunca_agrega_sinonimos_al_catalogo(mineria_lista):
@@ -235,7 +274,7 @@ def test_nightly_no_revienta_si_la_evaluacion_de_alertas_falla(monkeypatch, capl
     ({"propuestas": 3, "cobranza": {}, "alertas": {"nuevas": 0}}, []),
     ({"propuestas": 0, "motivo": "sin mensajes pendientes",
       "cobranza": {}, "alertas": {"nuevas": 0}}, []),
-    ({"propuestas": 0, "motivo": "sin OLLAMA_URL ni ANTHROPIC_API_KEY",
+    ({"propuestas": 0, "motivo": "sin OPENROUTER_API_KEY, OLLAMA_URL ni ANTHROPIC_API_KEY",
       "cobranza": {}, "alertas": {}}, []),
     # Fallos, cada uno con la forma que le da su propia función.
     ({"propuestas": 0, "motivo": "error: connection refused",

@@ -63,6 +63,13 @@ NO_SON_CREDENCIALES = {
     "OLLAMA_TOKEN",
     "OLLAMA_MODEL",
     "OLLAMA_TIMEOUT",
+    # OpenRouter sustituye al Ollama propio desde que Oracle cerró labs
+    # (2026-09-22): mismo caso — un solo servicio de inferencia y una sola
+    # cuenta para todo el despliegue, no una llave contratada por oficina.
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
+    "OPENROUTER_BASE_URL",
+    "OPENROUTER_PERMITIR_RETENCION",
     "EMBEDDINGS_URL",
     "EMBEDDINGS_MODEL",
     "EMBEDDINGS_TOKEN",

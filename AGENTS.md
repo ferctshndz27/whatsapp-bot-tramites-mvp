@@ -240,8 +240,12 @@ interactive messages with an automatic fallback to plain text.
    precisely because a local CPU classification costs ~5 s, and charging that to "quiero mi acta de
    nacimiento" is paying to guess what was already said. **A tie does NOT resolve here** — that is
    real ambiguity and falls through to the LLMs, which do read context.
-2. **`ollama`** — local classifier, only if `OLLAMA_URL` is set. A "don't know" does not stop the
-   chain: the cheap layers below see synonyms the miner learned that the prompt never carried.
+2. **`ollama`** — the open-model classifier, only if `settings.modelo_abierto` is set: OpenRouter
+   (`OPENROUTER_API_KEY`, OpenAI format, wins when present) or a self-hosted Ollama (`OLLAMA_URL`).
+   Both go through the single funnel `nlu.ollama_chat`, which translates the protocol and always
+   returns Ollama's message shape; the layer keeps the name `ollama` in `NluEvent`. A "don't know"
+   does not stop the chain: the cheap layers below see synonyms the miner learned that the prompt
+   never carried.
 3. **`llm`** (Claude) — only if `ANTHROPIC_API_KEY` is set. Today `config.CLAUDE_HABILITADO` is
    `False`, so this layer is off and the key is blanked centrally.
 4. **`keyword`** → **`fuzzy`** (rapidfuzz) — fuzzy goes LAST and accepts a service only at/above
@@ -254,8 +258,10 @@ One `NluEvent` is logged per inbound message via `conversation._deduce_and_log()
 Fuente única de los patrones de CURP/RFC/NSS/correo (no los redefinas en `conversation.py`;
 `rag._CURP_RE` sí es aparte a propósito — es un guardia de fugas, más laxo). Una cadena con forma
 de clave que no cuadra con ningún patrón se guarda como `codigo` y **solo entonces** se le pregunta
-a Ollama (`nlu.clasificar_codigos`) de qué tipo es. Si Ollama no está configurado, tarda o alucina,
-devuelve `{}` y **el folio se crea igual** — el colaborador valida a mano; nunca bloquea un alta.
+a Ollama (`nlu.clasificar_codigos`) de qué tipo es — **solo al Ollama propio, nunca a OpenRouter**:
+es la única llamada que manda claves crudas y no salen a un tercero. Si Ollama no está configurado,
+tarda o alucina, devuelve `{}` y **el folio se crea igual** — el colaborador valida a mano; nunca
+bloquea un alta.
 
 Los códigos que vienen en el mismo mensaje que pide el trámite viajan en el contexto `confirmar`
 (`_pendiente`), porque el folio no existe hasta que el cliente confirma. De ahí salen **las dos

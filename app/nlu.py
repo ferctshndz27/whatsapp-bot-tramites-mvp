@@ -1,9 +1,12 @@
 """Deducción de intención: ¿qué servicio del catálogo quiere el cliente?
 
 Cadena de capas, de la más barata a la más cara: coincidencia textual exacta
-(nombre o sinónimo del catálogo — instantánea y gratis) → Ollama local (con
-OLLAMA_URL; modelo abierto, costo cero pero ~5s en CPU) → Claude (con
-ANTHROPIC_API_KEY) → difuso y categoría. Los LLM solo ven lo que el matching
+(nombre o sinónimo del catálogo — instantánea y gratis) → modelo abierto
+(settings.modelo_abierto: OpenRouter con OPENROUTER_API_KEY, centavos por
+mensaje y proveedor externo, u Ollama propio con OLLAMA_URL, costo cero pero
+~5s en CPU) → Claude (con ANTHROPIC_API_KEY) → difuso y categoría. Lo que sale
+hacia cualquier modelo va enmascarado (codigos.enmascarar): CURP, RFC, NSS,
+correo y teléfono no viajan. Los LLM solo ven lo que el matching
 exacto no resolvió, y su respuesta se valida contra el catálogo: nunca se
 confía en un id inventado. Si una capa falla o tarda, contesta la siguiente:
 el bot jamás se queda sin responder por culpa de un servicio externo.
@@ -119,6 +122,11 @@ class OllamaEnPausa(Exception):
     """K timeouts seguidos: Ollama se da por caído hasta que pase la pausa."""
 
 
+class OpenRouterError(Exception):
+    """OpenRouter contestó 200 con `error` (falló el proveedor de atrás) o sin
+    `choices`: para las capas es un fallo del modelo como cualquier otro."""
+
+
 def iniciar_presupuesto(segundos: float = PRESUPUESTO_IA_SEGUNDOS) -> None:
     _DEADLINE.set(time.monotonic() + segundos)
 
@@ -168,7 +176,11 @@ def _clasificar_fallo(exc: Exception) -> str:
         return "sin_presupuesto"
     if isinstance(exc, OllamaEnPausa):
         return "en_pausa"
+    if isinstance(exc, OpenRouterError):
+        return "openrouter"
     if isinstance(exc, httpx.HTTPStatusError):
+        # Con OpenRouter el código ya dice qué revisar: 401 llave, 402 crédito,
+        # 429 límite de peticiones, 404 ningún proveedor para esos parámetros.
         return f"http_{exc.response.status_code}"
     return type(exc).__name__.lower()[:60]
 
@@ -316,7 +328,10 @@ def deduce_explained(text: str) -> tuple[Service | None, Category | None, str, f
 
     para_modelo = enmascarar(cleaned)[:MAX_INPUT_CHARS]
 
-    if settings.ollama_url:
+    # Capa de modelo abierto: el Ollama propio u OpenRouter, lo que diga
+    # settings.modelo_abierto. En NluEvent la capa se sigue llamando "ollama":
+    # es el nombre del escalón de la cascada, no del proveedor que lo sirve.
+    if settings.modelo_abierto:
         try:
             service, category = _deduce_ollama(para_modelo)
             if service is not None and vago:
@@ -406,7 +421,12 @@ def clasificar_codigos(codigos: list[str]) -> dict[str, str]:
     """{código: "CURP"|"RFC"|"NSS"} para las cadenas que el modelo local sí
     reconoce. Devuelve {} si Ollama no está configurado o si falla: quien
     llama debe seguir adelante sin esto."""
-    if not settings.ollama_url or not codigos:
+    # A PROPÓSITO solo con el Ollama propio, no con cualquier modelo abierto:
+    # esta es la única llamada que manda claves CRUDAS (CURP/RFC/NSS
+    # malformadas, que `enmascarar` no reconoce) y esas no salen a un
+    # proveedor externo. Con OpenRouter la función es inerte: {} y el asesor
+    # tipifica a mano, que es lo que ya pasaba sin Ollama.
+    if settings.modelo_abierto != "ollama" or not codigos:
         return {}
     try:
         return _clasificar_codigos_ollama(codigos[:CODIGOS_MAX])
@@ -504,11 +524,71 @@ def ollama_chat(
     num_ctx: int | None = None,
     timeout: float | None = None,
 ) -> dict:
-    """El `message` de /api/chat de Ollama (labs, detrás de nginx). Fuente
-    única de la llamada: la usan el clasificador, el validador de códigos, la
-    capa informativa y el nodo agéntico. "think" apagado: nada de esto
-    necesita cadena de razonamiento y el cliente de WhatsApp sí siente cada
-    segundo de latencia."""
+    """El `message` de la capa de modelo abierto. Fuente única de la llamada:
+    la usan el clasificador, el validador de códigos, la capa informativa, el
+    nodo agéntico y el minero. Según settings.modelo_abierto habla con el
+    Ollama propio (/api/chat, como siempre) o con OpenRouter (formato OpenAI)
+    y devuelve SIEMPRE la forma de Ollama —`content` y `tool_calls` con los
+    argumentos como dict—: ninguna capa sabe qué proveedor contestó. Conserva
+    el nombre por eso mismo: las capas y sus pruebas lo falsifican por nombre.
+    "think" apagado y temperatura 0: nada de esto necesita cadena de
+    razonamiento y el cliente de WhatsApp sí siente cada segundo de latencia."""
+    # El try envuelve la llamada porque este es el ÚNICO punto por donde pasan
+    # todas las capas que usan el modelo abierto (clasificador, códigos, RAG,
+    # nodo agéntico, minero): registrar la falla aquí la hace visible para
+    # todas sin repetir el except en cada una. Se re-lanza sin tocar: cada capa
+    # sigue decidiendo por su cuenta cómo degradar.
+    try:
+        if _en_pausa():
+            raise OllamaEnPausa("Ollama en pausa tras timeouts seguidos")
+        # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
+        # lento); conectar a un servidor caído corta a los 2s. Un float suelto
+        # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
+        # Las capas de prompt largo pasan su propio timeout: procesar miles de
+        # tokens en la CPU de labs tarda más que el clasificador. Y ninguno
+        # rebasa lo que le queda al mensaje.
+        tope = timeout or settings.ollama_timeout
+        restante = presupuesto_restante()
+        if restante is not None:
+            if restante < 1.0:
+                raise OllamaSinPresupuesto("el mensaje agotó su presupuesto de IA")
+            tope = min(tope, restante)
+        if not _CUPO_OLLAMA.acquire(timeout=OLLAMA_ESPERA_CUPO_SEGUNDOS):
+            raise OllamaSinCupo("sin cupo para otra generación")
+        try:
+            if settings.modelo_abierto == "openrouter":
+                message = _chat_openrouter(
+                    messages, format=format, tools=tools, num_predict=num_predict, tope=tope
+                )
+            else:
+                message = _chat_ollama(
+                    messages, format=format, tools=tools, num_predict=num_predict,
+                    num_ctx=num_ctx, tope=tope,
+                )
+        finally:
+            _CUPO_OLLAMA.release()
+        _registrar_resultado(None)
+        return message
+    except Exception as exc:
+        _FALLO_OLLAMA.set(_clasificar_fallo(exc))
+        # Se marca aquí, en el embudo, por la misma razón que el motivo: las
+        # cuatro capas que hablan con Ollama pasan por este punto, y basta que
+        # UNA falle para que reintentar con las otras solo alargue la espera.
+        _BACKEND_CAIDO.set(True)
+        _registrar_resultado(exc)
+        raise
+
+
+def _chat_ollama(
+    messages: list[dict],
+    *,
+    format: dict | None,
+    tools: list[dict] | None,
+    num_predict: int,
+    num_ctx: int | None,
+    tope: float,
+) -> dict:
+    """POST a /api/chat del Ollama propio (labs, detrás de nginx con Bearer)."""
     import httpx
 
     headers = {}
@@ -532,53 +612,179 @@ def ollama_chat(
         payload["format"] = format
     if tools is not None:
         payload["tools"] = tools
-    # El try envuelve la llamada porque este es el ÚNICO punto por donde pasan
-    # todas las capas que usan Ollama (clasificador, códigos, RAG, nodo
-    # agéntico): registrar la falla aquí la hace visible para todas sin
-    # repetir el except en cada una. Se re-lanza sin tocar: cada capa sigue
-    # decidiendo por su cuenta cómo degradar.
-    try:
-        if _en_pausa():
-            raise OllamaEnPausa("Ollama en pausa tras timeouts seguidos")
-        # OLLAMA_TIMEOUT acota la fase de lectura (la generación, lo único
-        # lento); conectar a un servidor caído corta a los 2s. Un float suelto
-        # aplicaría el tope a CADA fase y un servidor lento podría sumarlas.
-        # Las capas de prompt largo pasan su propio timeout: procesar miles de
-        # tokens en la CPU de labs tarda más que el clasificador. Y ninguno
-        # rebasa lo que le queda al mensaje.
-        tope = timeout or settings.ollama_timeout
-        restante = presupuesto_restante()
-        if restante is not None:
-            if restante < 1.0:
-                raise OllamaSinPresupuesto("el mensaje agotó su presupuesto de IA")
-            tope = min(tope, restante)
-        if not _CUPO_OLLAMA.acquire(timeout=OLLAMA_ESPERA_CUPO_SEGUNDOS):
-            raise OllamaSinCupo("sin cupo para otra generación")
-        try:
-            response = httpx.post(
-                f"{settings.ollama_url}/api/chat",
-                headers=headers,
-                json=payload,
-                timeout=httpx.Timeout(tope, connect=2.0),
-            )
-        finally:
-            _CUPO_OLLAMA.release()
-        response.raise_for_status()
-        _registrar_resultado(None)
-        return response.json()["message"]
-    except Exception as exc:
-        _FALLO_OLLAMA.set(_clasificar_fallo(exc))
-        # Se marca aquí, en el embudo, por la misma razón que el motivo: las
-        # cuatro capas que hablan con Ollama pasan por este punto, y basta que
-        # UNA falle para que reintentar con las otras solo alargue la espera.
-        _BACKEND_CAIDO.set(True)
-        _registrar_resultado(exc)
-        raise
+    response = httpx.post(
+        f"{settings.ollama_url}/api/chat",
+        headers=headers,
+        json=payload,
+        timeout=httpx.Timeout(tope, connect=2.0),
+    )
+    response.raise_for_status()
+    return response.json()["message"]
+
+
+# ---- OpenRouter: el mismo embudo, protocolo OpenAI ----
+# Cabeceras fijas y sin nada del cliente (OpenRouter las usa para atribuir la
+# app en su panel): jamás un teléfono ni un fragmento de mensaje aquí.
+_OPENROUTER_CABECERAS = {"X-Title": "bot-tramites"}
+# Solo proveedores que respeten TODOS los parámetros pedidos (response_format,
+# tools): sin esto OpenRouter puede enrutar a uno que ignore el esquema y el
+# JSON llega roto. La política de datos va en CADA petición (`data_collection`,
+# ver _proveedor_openrouter): el default de la API es "allow" —proveedores que
+# guardan y pueden entrenar—, y un toggle en la cuenta de OpenRouter no está
+# versionado ni probado. Lo que viaja ya va enmascarado, pero el texto libre
+# sigue siendo la historia de un cliente.
+_OPENROUTER_PROVEEDOR = {"require_parameters": True}
+
+
+def _proveedor_openrouter() -> dict:
+    """Preferencias de enrutamiento de la petición. `deny` = solo proveedores
+    que no recogen datos; se relaja únicamente con
+    OPENROUTER_PERMITIR_RETENCION=1 en el .env del servidor."""
+    return {
+        **_OPENROUTER_PROVEEDOR,
+        "data_collection": "allow" if settings.openrouter_permitir_retencion else "deny",
+    }
+
+
+def _formato_openai(schema: dict) -> dict:
+    """`format` de Ollama (un JSON Schema suelto) → `response_format` de OpenAI.
+    `strict` solo cuando el esquema cierra sus propiedades (additionalProperties
+    false, y los dos que lo hacen —_SCHEMA y _MINE_SCHEMA— exigen todas en
+    required): OpenAI rechaza con 400 un esquema estricto abierto, y el de la
+    capa informativa queda abierto a propósito."""
+    estricto = schema.get("additionalProperties") is False
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": "respuesta", "strict": estricto, "schema": schema},
+    }
+
+
+def _mensajes_para_openai(messages: list[dict]) -> list[dict]:
+    """El historial en la forma de Ollama → la de OpenAI. Solo difieren en las
+    herramientas: OpenAI exige `id` y `type` en cada tool_call, los argumentos
+    como JSON en texto y, en cada resultado, el `tool_call_id` de la llamada
+    que contesta (Ollama asocia por orden y `tool_name`). Una cola FIFO sobre
+    TODO el historial: cada resultado toma el id de la llamada más antigua sin
+    contestar, así que dos turnos de llamadas seguidos tampoco se cruzan."""
+    salida: list[dict] = []
+    pendientes: list[str] = []
+    for i, m in enumerate(messages):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            llamadas = []
+            for j, call in enumerate(m["tool_calls"]):
+                funcion = call.get("function") or {}
+                args = funcion.get("arguments")
+                if not isinstance(args, str):
+                    args = json.dumps(args or {}, ensure_ascii=False)
+                id_ = call.get("id") or f"call_{i}_{j}"
+                pendientes.append(id_)
+                llamadas.append({
+                    "id": id_,
+                    "type": "function",
+                    "function": {"name": funcion.get("name") or "", "arguments": args},
+                })
+            salida.append({"role": "assistant", "content": m.get("content") or "",
+                           "tool_calls": llamadas})
+        elif m.get("role") == "tool":
+            id_ = pendientes.pop(0) if pendientes else "call_0"
+            salida.append({"role": "tool", "tool_call_id": id_, "content": m.get("content") or ""})
+        else:
+            salida.append({"role": m.get("role") or "user", "content": m.get("content") or ""})
+    return salida
+
+
+def _mensaje_como_ollama(msg: dict) -> dict:
+    """El `message` de OpenAI → la forma que ya consumen las capas: `content`
+    SIEMPRE texto y `tool_calls[].function.arguments` como dict. El `id` viaja
+    de regreso para que la siguiente vuelta del agente lo devuelva como
+    `tool_call_id`."""
+    contenido = msg.get("content")
+    if isinstance(contenido, list):
+        # Algunos proveedores contestan en partes ({"type": "text", "text": …});
+        # las capas hacen json.loads/regex sobre el content y esperan texto.
+        contenido = "".join(
+            str(parte.get("text") or "") for parte in contenido if isinstance(parte, dict)
+        )
+    elif contenido is not None and not isinstance(contenido, str):
+        contenido = str(contenido)
+    salida: dict = {"role": "assistant", "content": contenido or ""}
+    llamadas = []
+    for call in msg.get("tool_calls") or []:
+        funcion = call.get("function") or {}
+        args = funcion.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args.strip() else {}
+            except ValueError:
+                args = {}
+        llamadas.append({
+            "id": call.get("id"),
+            "function": {"name": funcion.get("name") or "", "arguments": args or {}},
+        })
+    if llamadas:
+        salida["tool_calls"] = llamadas
+    return salida
+
+
+def _chat_openrouter(
+    messages: list[dict],
+    *,
+    format: dict | None,
+    tools: list[dict] | None,
+    num_predict: int,
+    tope: float,
+) -> dict:
+    """POST a /chat/completions de OpenRouter con la llave del despliegue.
+    `num_ctx` no aplica: el contexto lo fija el modelo del proveedor."""
+    import httpx
+
+    headers = {"Authorization": f"Bearer {settings.openrouter_api_key}", **_OPENROUTER_CABECERAS}
+    payload: dict = {
+        "model": settings.openrouter_model,
+        "messages": _mensajes_para_openai(messages),
+        "stream": False,
+        "temperature": 0,
+        "max_tokens": num_predict,
+        "provider": _proveedor_openrouter(),
+    }
+    if format is not None:
+        payload["response_format"] = _formato_openai(format)
+    if tools is not None:
+        payload["tools"] = tools
+    response = httpx.post(
+        f"{settings.openrouter_base_url}/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=httpx.Timeout(tope, connect=2.0),
+    )
+    response.raise_for_status()
+    data = response.json()
+    if isinstance(data, dict) and data.get("error"):
+        # OpenRouter contesta 200 con {"error": …} cuando el proveedor de atrás
+        # falló a medio camino. Solo el mensaje del proveedor, acotado: nada
+        # de lo nuestro va en él.
+        detalle = data["error"].get("message") if isinstance(data["error"], dict) else data["error"]
+        raise OpenRouterError(str(detalle)[:200])
+    choices = data.get("choices") or []
+    if not choices:
+        raise OpenRouterError("respuesta sin choices")
+    return _mensaje_como_ollama(choices[0].get("message") or {})
+
+
+def etiqueta_modelo_abierto() -> tuple[str, str]:
+    """(proveedor, modelo) para el panel: ("OpenRouter", "openai/gpt-4.1-nano"),
+    ("Ollama", "qwen3:4b") o ("", "") si la capa no existe."""
+    if settings.modelo_abierto == "openrouter":
+        return "OpenRouter", settings.openrouter_model
+    if settings.modelo_abierto == "ollama":
+        return "Ollama", settings.ollama_model
+    return "", ""
 
 
 def _deduce_ollama(text: str) -> tuple[Service | None, Category | None]:
-    """Clasificación con el modelo abierto local. Mismo prompt, mismo esquema
-    y misma validación que la capa Claude."""
+    """Clasificación con el modelo abierto (Ollama propio u OpenRouter, según
+    settings.modelo_abierto). Mismo prompt, mismo esquema y misma validación
+    que la capa Claude."""
     message = ollama_chat(
         [
             {"role": "system", "content": _catalog_system_prompt()},

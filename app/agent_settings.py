@@ -99,6 +99,12 @@ CONFIG_EDITABLE = {
         "Modelo de Ollama", "texto", maximo=60,
         ayuda="El nombre tal como lo sirve Ollama, sin espacios (qwen3:4b).",
     ),
+    "openrouter_model": Perilla(
+        "Modelo en OpenRouter", "texto", maximo=80,
+        ayuda="El id tal como lo lista openrouter.ai/models (autor/modelo, sin "
+              "espacios). Solo aplica con OPENROUTER_API_KEY en el .env; elige "
+              "uno sin razonamiento o el cliente paga esa latencia.",
+    ),
     "ollama_timeout": Perilla(
         "Timeout de Ollama", "decimal", 1, 60, 0.5, unidad=" s",
         ayuda="Acota la generación; conectar a un servidor caído siempre corta "
