@@ -110,25 +110,19 @@ def test_handshake_sin_modo_subscribe_da_403(cliente, monkeypatch):
     assert otro_modo.status_code == 403
 
 
-def test_handshake_con_verify_token_vacio_acepta_el_parametro_vacio(cliente, monkeypatch):
-    """Fail-open documentado, NO un descuido de esta prueba.
-
-    Con `verify_token` vacío, un `hub.verify_token=` presente-y-vacío compara
-    "" == "" y devuelve 200 con el eco del challenge; el mismo GET SIN el
-    parámetro devuelve 403, porque ahí `webhook.py:25` da None y no "".
-
-    Severidad baja —el atacante solo recupera su propio `hub.challenge`, no se
-    filtra secreto ni cambia estado— y por eso el PR de credenciales lo
-    REPRODUCE en vez de arreglarlo: endurecerlo (`token and token == ...`)
-    cambia comportamiento observable y es decisión del operador, en su propio
-    PR. Si algún día se endurece, esta prueba truena — que es justo lo que se
-    quiere: la decisión se toma a la vista, no se descubre.
-    """
+def test_handshake_sin_credencial_o_con_token_vacio_da_403(cliente, monkeypatch):
+    """Antes esta prueba fijaba el fail-open: con `verify_token` vacío, un
+    `hub.verify_token=` presente-y-vacío comparaba "" == "" y devolvía 200. Su
+    propio docstring dejaba anotado el endurecimiento como pendiente; la
+    auditoría 2026-09 (EXT-6) lo cerró: sin credencial configurada no hay
+    handshake, y con credencial el token vacío tampoco pasa. Cambiar esta
+    prueba ES la tarea."""
     monkeypatch.setattr(settings, "verify_token", "")
+    con_vacio = cliente.get("/webhook?hub.mode=subscribe&hub.verify_token=&hub.challenge=RETO123")
+    sin_param = cliente.get("/webhook?hub.mode=subscribe&hub.challenge=RETO123")
+    assert con_vacio.status_code == 403 and sin_param.status_code == 403
 
-    presente_y_vacio = cliente.get("/webhook?hub.mode=subscribe&hub.verify_token=&hub.challenge=X")
-    ausente = cliente.get("/webhook?hub.mode=subscribe&hub.challenge=X")
-
-    assert presente_y_vacio.status_code == 200
-    assert presente_y_vacio.text == "X"
-    assert ausente.status_code == 403
+    monkeypatch.setattr(settings, "verify_token", "token-de-prueba")
+    vacio_con_credencial = cliente.get("/webhook?hub.mode=subscribe&hub.verify_token=&hub.challenge=RETO123")
+    assert vacio_con_credencial.status_code == 403
+    assert "RETO123" not in vacio_con_credencial.text

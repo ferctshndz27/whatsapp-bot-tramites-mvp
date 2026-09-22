@@ -23,6 +23,25 @@ ALLOWED_MEDIA = {
 }
 MEDIA_NAME_RE = re.compile(r"^[a-f0-9]{32}\.(jpg|png|webp|pdf|docx|xlsx)$")
 
+# El Content-Type lo declara el cliente; los primeros bytes no. Un HTML con
+# `.pdf` declarado se guardaba con extensión .pdf y nosniff lo contenía, pero
+# el archivo entraba al almacén de documentos de clientes igual (auditoría
+# 2026-09, INJ-8). docx y xlsx son ZIP: comparten firma.
+_FIRMAS = {
+    ".jpg": (b"\xff\xd8\xff",),
+    ".png": (b"\x89PNG",),
+    ".webp": (b"RIFF",),
+    ".pdf": (b"%PDF-",),
+    ".docx": (b"PK\x03\x04",),
+    ".xlsx": (b"PK\x03\x04",),
+}
+
+
+def _firma_coincide(ext: str, data: bytes) -> bool:
+    if ext == ".webp":
+        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    return any(data.startswith(firma) for firma in _FIRMAS[ext])
+
 
 def save_upload(file: UploadFile) -> tuple[str | None, str | None, str | None]:
     """Valida y guarda un archivo subido.
@@ -36,6 +55,8 @@ def save_upload(file: UploadFile) -> tuple[str | None, str | None, str | None]:
     data = file.file.read()
     if len(data) > max_size:
         return None, None, "peso"
+    if not _firma_coincide(ext, data):
+        return None, None, "tipo"
 
     media_dir = Path(settings.media_dir)
     media_dir.mkdir(parents=True, exist_ok=True)

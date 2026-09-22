@@ -468,18 +468,18 @@ function campo(clave) {
   const comun = `id="${id}" data-clave="${clave}"`;
   if (p.tipo === "texto")
     return `<label for="${id}">${esc(p.etiqueta)}</label>
-      <input ${comun} maxlength="${p.maximo}" value="${esc(String(p.valor))}">` + ayudaDe(p);
+      <input ${comun} maxlength="${esc(p.maximo)}" value="${esc(String(p.valor))}">` + ayudaDe(p);
   if (p.tipo === "entero")
     // Deslizador con su <output>: el valor se lee sin arrastrar, y el output
     // es un live region nativo para lectores de pantalla.
-    return `<label for="${id}">${esc(p.etiqueta)} (${p.minimo}–${p.maximo}):
-        <output id="${out}">${p.valor}</output></label>
-      <input ${comun} type="range" min="${p.minimo}" max="${p.maximo}" step="${p.paso}"
-        value="${p.valor}">` + ayudaDe(p);
+    return `<label for="${id}">${esc(p.etiqueta)} (${esc(p.minimo)}–${esc(p.maximo)}):
+        <output id="${out}">${esc(p.valor)}</output></label>
+      <input ${comun} type="range" min="${esc(p.minimo)}" max="${esc(p.maximo)}" step="${esc(p.paso)}"
+        value="${esc(p.valor)}">` + ayudaDe(p);
   return `<label for="${id}">${esc(p.etiqueta)}${
       p.unidad ? ` (${esc(p.unidad.trim())})` : ""}</label>
-    <input ${comun} type="number" min="${p.minimo}" max="${p.maximo}" step="${p.paso}"
-      value="${p.valor}">` + ayudaDe(p);
+    <input ${comun} type="number" min="${esc(p.minimo)}" max="${esc(p.maximo)}" step="${esc(p.paso)}"
+      value="${esc(p.valor)}">` + ayudaDe(p);
 }
 
 function grupoCampos(claves, etiquetaBoton) {
@@ -498,9 +498,9 @@ function panelNodo(n) {
   ocultarCorpus();
   titulo.textContent = n.nombre;
   const c = ESTADO.config;
-  let h = `<p class="muted mini">${n.detalle}</p>
-    <p><strong>${n.mensajes}</strong> mensajes en 14 días` +
-    (n.descartes ? ` · <strong>${n.descartes}</strong> descartes de guardrail` : "") + `</p>`;
+  let h = `<p class="muted mini">${esc(n.detalle)}</p>
+    <p><strong>${esc(n.mensajes)}</strong> mensajes en 14 días` +
+    (n.descartes ? ` · <strong>${esc(n.descartes)}</strong> descartes de guardrail` : "") + `</p>`;
   // Los avisos van ARRIBA de todo: si el nodo no puede trabajar, eso es lo
   // primero que hay que leer, no la configuración.
   if ((n.avisos || []).length) h += `<ul class="avisos" role="alert">` +
@@ -521,7 +521,7 @@ function panelNodo(n) {
       (ESTADO.herramientas || []).map(t => `
         <div class="tool-fila${t.bloqueada ? " bloqueada" : ""}">
           <div><strong>${esc(t.nombre)}</strong>
-            <span class="muted mini">${t.usos} usos · ${t.errores} errores · 14d</span></div>
+            <span class="muted mini">${esc(t.usos)} usos · ${esc(t.errores)} errores · 14d</span></div>
           ${t.bloqueada
             ? `<span class="tool-candado" title="Mover dinero es del panel del asesor, nunca del modelo">🔒 bloqueada</span>`
             : `<button class="btn-mini" data-tool="${esc(t.nombre)}">${
@@ -540,7 +540,7 @@ function panelNodo(n) {
     // Esta capa no tiene flags: la alimentan los DATOS del catálogo.
     h += `<p class="muted mini">No se configura con flags: la alimenta el <strong>catálogo</strong>
         — el nombre oficial del servicio y sus sinónimos aprobados.</p>
-      <p><a class="btn-mini" href="/unmatched">Propuestas por aprobar (${PENDIENTES})</a></p>
+      <p><a class="btn-mini" href="/unmatched">Propuestas por aprobar (${esc(PENDIENTES)})</a></p>
       <label for="f-servicio">Sinónimos por servicio</label>
       <select id="f-servicio"><option>cargando…</option></select>
       <div id="lista-sinonimos" class="sinonimos"></div>

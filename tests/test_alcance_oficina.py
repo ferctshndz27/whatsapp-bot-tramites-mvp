@@ -767,7 +767,8 @@ def test_el_alta_no_renombra_un_cliente_de_otra_oficina(clientes):
     ficha y los folios de esa oficina."""
     r = _sesion("colab1").post("/clients", data={"phone": TEL_2, "name": "Renombrado"},
                                follow_redirects=False)
-    assert "otra oficina" in unquote(r.headers["location"])
+    # Desde INJ-5 (auditoría 2026-09) el aviso viaja como CÓDIGO, no como texto.
+    assert r.headers["location"] == "/clients?error=otra_oficina"
     assert _cliente(TEL_2).name == "Cliente de Puebla"
     assert _ticket(2).client_name == "folio de Puebla", "propagó el nombre a sus folios"
 
