@@ -3,6 +3,7 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -74,12 +75,21 @@ async def lifespan(_app: FastAPI):
 # el esquema, así que sin él FastAPI ni siquiera registra sus rutas—. Los otros
 # dos van explícitos de todos modos: el día que alguien reactive el esquema para
 # generar un cliente, no debe reabrir Swagger y ReDoc de paso sin notarlo.
+async def _error_500(request, exc) -> PlainTextResponse:
+    """El 500 sale de ServerErrorMiddleware, que envuelve a TODOS los middlewares
+    —también a _security_headers—, así que era la única respuesta del panel sin
+    CSP ni X-Frame-Options (auditoría 2026-09, INJ-6). Cuerpo fijo: nunca el
+    traceback. Las cabeceras se ponen aquí porque nadie más las va a poner."""
+    return PlainTextResponse("Error interno del servidor.", status_code=500, headers=SECURITY_HEADERS)
+
+
 app = FastAPI(
     title="Bot de trámites — MVP",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
+    exception_handlers={500: _error_500},
 )
 
 # CSS/JS estáticos del panel (el CSS vive en static/css/*.css). No es un
@@ -281,5 +291,8 @@ def on_startup() -> None:
 
 
 @app.get("/health")
-def health() -> dict:
+async def health() -> dict:
+    # `async` a propósito: un `def` lo mandaría al threadpool que comparte con el
+    # webhook y las rutas del panel, y con el pool saturado por Ollama el cron del
+    # deploy leería «caído» un servicio que solo está ocupado (auditoría, IA-4).
     return {"status": "ok"}

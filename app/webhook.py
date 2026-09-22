@@ -34,9 +34,12 @@ def verify_webhook(request: Request) -> Response:
     # event loop: verify_webhook es `def` y no `async def`, así que Starlette ya
     # lo corre en su threadpool. Y encima solo corre en el handshake de alta del
     # webhook, no una vez por mensaje.
-    if mode == "subscribe" and token == credencial(
-        "WHATSAPP_VERIFY_TOKEN", office_id=OFICINA_TLAXCALA_ID
-    ):
+    # Falla CERRADO (auditoría 2026-09, EXT-6): con WHATSAPP_VERIFY_TOKEN ausente
+    # el `==` comparaba "" == "" y el handshake pasaba con token vacío. Sin
+    # credencial configurada no hay handshake que valga, y la comparación va en
+    # tiempo constante como las demás firmas del repo.
+    esperado = credencial("WHATSAPP_VERIFY_TOKEN", office_id=OFICINA_TLAXCALA_ID)
+    if mode == "subscribe" and esperado and hmac.compare_digest(token or "", esperado):
         return Response(content=challenge, media_type="text/plain")
     raise HTTPException(status_code=403, detail="Verificación fallida")
 

@@ -8,6 +8,7 @@ de solicitudes queda para supervisión.
 
 import logging
 from datetime import timedelta, timezone
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
@@ -18,6 +19,7 @@ from app import cobranza_panel
 from app.auth import is_admin, alcance
 from app.db import get_session
 from app.inbox import build_conversation_items
+from app.utils import ruta_interna
 from app.ventana import WINDOW_HOURS, horas_restantes
 from app.models import FollowUp, Ticket, TicketStatus, User, utcnow
 
@@ -154,6 +156,9 @@ def set_estado(request: Request, estado: str = Form("")):
             me.estado = estado
             session.add(me)
             session.commit()
-    # Regresar a donde estaba (el selector vive en el sidebar de todas las páginas)
-    referer = request.headers.get("referer", "/my")
-    return RedirectResponse(referer, status_code=303)
+    # Regresar a donde estaba (el selector vive en el sidebar de todas las páginas).
+    # Solo la RUTA del Referer y por ruta_interna (auditoría 2026-09, AUTHZ-5): era la
+    # única redirección del panel que no pasaba por ahí. Un Referer ajeno cae a /my.
+    partes = urlsplit(request.headers.get("referer", ""))
+    destino = ruta_interna(partes.path + (f"?{partes.query}" if partes.query else "")) or "/my"
+    return RedirectResponse(destino, status_code=303)

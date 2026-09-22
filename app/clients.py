@@ -141,6 +141,16 @@ def _propagar_nombre(session, phone: str, nombre: str) -> int:
     return len(desfasados)
 
 
+# Los avisos de /clients viajan por la URL como CÓDIGO y se traducen aquí: un
+# texto libre en ?error= se pintaba (escapado) dentro del panel y servía para
+# suplantar contenido con un enlace (auditoría 2026-09, INJ-5).
+_ERRORES = {
+    "telefono": "Teléfono inválido: usa 10 dígitos, o 52 + 10 dígitos.",
+    "nombre": "El nombre es obligatorio.",
+    "otra_oficina": "Ese teléfono ya es cliente de otra oficina.",
+}
+
+
 @router.get("/clients")
 def clients_list(request: Request, q: str = "", alta: str = "", error: str = ""):
     user = _current_user(request)
@@ -176,7 +186,7 @@ def clients_list(request: Request, q: str = "", alta: str = "", error: str = "")
             "clients": clientes,
             "q": termino,
             "alta": alta,
-            "error": error,
+            "error": _ERRORES.get(error, ""),
             "truncada": len(clientes) == LIMITE_LISTA,
         },
     )
@@ -199,11 +209,11 @@ def clients_upsert(request: Request, phone: str = Form(""), name: str = Form("")
     nombre = name.strip()[:MAX_NOMBRE]
     if not canonico:
         return RedirectResponse(
-            "/clients?error=Teléfono inválido: usa 10 dígitos, o 52 + 10 dígitos.",
+            "/clients?error=telefono",
             status_code=303,
         )
     if not nombre:
-        return RedirectResponse("/clients?error=El nombre es obligatorio.", status_code=303)
+        return RedirectResponse("/clients?error=nombre", status_code=303)
 
     vista = alcance(user)
     with get_session() as session:
@@ -213,7 +223,7 @@ def clients_upsert(request: Request, phone: str = Form(""), name: str = Form("")
             # desde otra cambiaría la ficha y los folios de esa oficina. Aquí sí
             # se dice que existe: el alta no puede fingir que lo creó.
             return RedirectResponse(
-                "/clients?error=Ese teléfono ya es cliente de otra oficina.", status_code=303
+                "/clients?error=otra_oficina", status_code=303
             )
         if cliente is None:
             # Nace en la oficina de quien lo da de alta: con el default de la
