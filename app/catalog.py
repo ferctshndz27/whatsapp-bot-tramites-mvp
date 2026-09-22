@@ -127,6 +127,53 @@ def requisitos_del_ticket(requirements_json: str | None) -> list[dict]:
     ]
 
 
+# Lo que se escribe en el catálogo llega a los prompts del clasificador y del
+# agente (nlu.catalog_listing pega los nombres tal cual) y al corpus RAG (los
+# requisitos). Auditoría 2026-09, AUTHZ-3 / IA-1: un nombre con «\n» metía
+# «Regla prioritaria: …» en el system prompt, y un requisito con «anticipo al
+# 55 1234 5678 o en https://pago-tramites.example» se colaba en las respuestas
+# informativas saltándose el filtro que SÍ aplica agente_studio a un InfoDoc.
+NOMBRE_MAX = 80
+PRECIO_MAX = 120
+_URL_RE = re.compile(r"https?://|www\.|\b[a-z0-9-]+\.(?:com|mx|net|org|info|io|app|link|me)\b", re.IGNORECASE)
+
+
+def una_linea(texto: str, maximo: int) -> str:
+    """Espacios colapsados (incluidos saltos de línea) y largo acotado: es lo
+    único que puede entrar a un prompt como nombre o precio."""
+    return " ".join((texto or "").split())[:maximo]
+
+
+def motivo_requisitos_invalidos(texto: str) -> str | None:
+    """La misma regla dura que agente_studio aplica al corpus, aplicada a los
+    requisitos (que también entran al corpus): sin precios, sin CURP, sin
+    teléfonos, y además sin enlaces. Import perezoso: agente_studio importa
+    este módulo al cargar."""
+    if not texto or not texto.strip():
+        return None
+    from app.agente_studio import _motivo_rechazo
+
+    motivo = _motivo_rechazo(texto)
+    if motivo:
+        return f"Requisitos rechazados: {motivo[0].lower()}{motivo[1:]}"
+    if _URL_RE.search(texto):
+        return "Requisitos rechazados: no llevan enlaces ni dominios."
+    return None
+
+
+# Sinónimos que ningún humano debería poder aprobar (IA-3): la capa literal
+# corre ANTES que cualquier LLM y para TODAS las oficinas, así que «de» como
+# sinónimo de acta de nacimiento manda «quiero algo de infonavit» a actas.
+SINONIMO_MIN, SINONIMO_MAX, SINONIMO_MAX_PALABRAS = 3, 60, 5
+_SINONIMO_CHARS_RE = re.compile(r"^[a-z0-9ñáéíóúü ]+$")
+_SINONIMOS_VACIOS = {
+    "de", "del", "la", "el", "los", "las", "un", "una", "unos", "unas", "para", "por", "con",
+    "sin", "que", "como", "donde", "cuando", "esto", "eso", "algo", "mas", "más", "muy", "hola",
+    "buenos dias", "buenas tardes", "buenas noches", "gracias", "ok", "okay", "vale", "si",
+    "sí", "no", "ayuda", "info", "informacion", "información", "tramite", "trámite", "tramites",
+    "trámites", "servicio", "servicios", "precio", "costo", "quiero", "necesito", "favor",
+}
+
 def slugify(name: str) -> str:
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "item"
@@ -294,6 +341,9 @@ class Catalog:
     def add_service(
         self, category_id: str, name: str, price_info: str, admin: str = "sistema"
     ) -> str | None:
+        name, price_info = una_linea(name, NOMBRE_MAX), una_linea(price_info, PRECIO_MAX)
+        if not name or not price_info:
+            return "Nombre y precio son obligatorios."
         self._refresh()
         with get_session() as session:
             if session.get(CatalogCategory, category_id) is None:
@@ -333,6 +383,19 @@ class Catalog:
         requirements: str | None = None,
         admin: str = "sistema",
     ) -> str | None:
+        name, price_info = una_linea(name, NOMBRE_MAX), una_linea(price_info, PRECIO_MAX)
+        if not name or not price_info:
+            return "Nombre y precio son obligatorios."
+        if synonyms is not None:
+            for s in synonyms:
+                if s.strip():
+                    motivo = self.motivo_sinonimo_invalido(s, service_id)
+                    if motivo:
+                        return motivo
+        if requirements is not None:
+            motivo = motivo_requisitos_invalidos(requirements)
+            if motivo:
+                return motivo
         self._refresh()
         with get_session() as session:
             svc = session.get(CatalogService, service_id)
@@ -367,11 +430,50 @@ class Catalog:
         self._refresh()
         return None
 
+    def colision_de(self, synonym: str, service_id: str) -> str | None:
+        """El nombre del OTRO servicio o categoría con el que chocaría este
+        sinónimo (mismo texto, normalizado), o None. Un choque hace ambigua la
+        capa literal para todas las oficinas."""
+        from app.nlu import _norm
+
+        objetivo = _norm(synonym)
+        for c in self.categories:
+            if _norm(c.name) == objetivo:
+                return f"la categoría «{c.name}»"
+            for s in c.services:
+                if s.id == service_id:
+                    continue
+                if _norm(s.name) == objetivo or objetivo in (_norm(x) for x in s.synonyms):
+                    return f"«{s.name}»"
+        return None
+
+    def motivo_sinonimo_invalido(self, synonym: str, service_id: str) -> str | None:
+        """La ÚNICA regla de qué sinónimo puede entrar al catálogo, venga del
+        panel, del minero nocturno o de un grupo de no-entendidos. None = válido."""
+        from app.nlu import _norm
+
+        limpio = _norm(synonym)
+        if limpio in _SINONIMOS_VACIOS:
+            return f"«{synonym.strip()}» es una palabra vacía: mandaría cualquier frase a este servicio."
+        if len(limpio) < SINONIMO_MIN or len(limpio) > SINONIMO_MAX:
+            return f"Un sinónimo tiene entre {SINONIMO_MIN} y {SINONIMO_MAX} caracteres."
+        if len(limpio.split()) > SINONIMO_MAX_PALABRAS:
+            return f"Un sinónimo tiene como mucho {SINONIMO_MAX_PALABRAS} palabras."
+        if not _SINONIMO_CHARS_RE.match(limpio):
+            return "Un sinónimo solo lleva letras, números y espacios."
+        choque = self.colision_de(synonym, service_id)
+        if choque:
+            return f"«{synonym.strip()}» ya nombra a {choque}: la capa literal quedaría ambigua."
+        return None
+
     def add_synonym(self, service_id: str, synonym: str, admin: str = "sistema") -> str | None:
         cleaned = synonym.strip()
         if not cleaned:
             return "El sinónimo no puede estar vacío."
         self._refresh()
+        motivo = self.motivo_sinonimo_invalido(cleaned, service_id)
+        if motivo:
+            return motivo
         with get_session() as session:
             svc = session.get(CatalogService, service_id)
             if svc is None:

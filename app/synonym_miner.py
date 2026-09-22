@@ -206,6 +206,8 @@ def mine_synonyms(texts: list[str]) -> list[dict]:
         key = (p.get("service_id"), synonym)
         if service is None or not synonym or key in seen:
             continue  # id alucinado o duplicado: fuera
+        if catalog.motivo_sinonimo_invalido(synonym, service.id):
+            continue  # «de», «hola», 400 caracteres, o choca con otro servicio (IA-3)
         seen.add(key)
         proposals.append(
             {"service_id": service.id, "service_name": service.name, "synonym": synonym}
@@ -230,6 +232,8 @@ def persist_proposals(session: Session, proposals: list[dict], origin: str) -> i
         key = (service.id, synonym)
         if key in existing or synonym in (s.lower() for s in service.synonyms):
             continue
+        if catalog.motivo_sinonimo_invalido(synonym, service.id):
+            continue  # la misma regla que el panel aplica al aprobar (IA-3)
         session.add(SynonymProposal(service_id=service.id, synonym=synonym, origin=origin))
         existing.add(key)
         created += 1
@@ -276,24 +280,47 @@ def cluster_unmatched(days: int = CLUSTER_DAYS) -> list[dict]:
         events = _unmatched_events(session, days)
 
     counts: dict[str, int] = {}
+    phones: dict[str, set[str]] = {}
     for e in events:
         text = nlu._norm(e.text)
         if len(text) < 4:
             continue
         counts[text] = counts.get(text, 0) + 1
+        phones.setdefault(text, set()).add(e.phone or "")
 
+    # Se cuentan TELÉFONOS distintos además de eventos (IA-3): un número
+    # repitiendo «para» veinte veces subía el grupo hasta arriba y el humano lo
+    # aprobaba creyendo que veinte clientes lo pedían. El orden es por
+    # teléfonos y, a igual número, por eventos.
     clusters: list[dict] = []
     for text, n in sorted(counts.items(), key=lambda kv: -kv[1]):
         for c in clusters:
             if fuzz.token_set_ratio(text, c["rep"]) >= CLUSTER_THRESHOLD:
                 c["count"] += n
+                c["_phones"] |= phones[text]
                 if len(c["examples"]) < 3:
                     c["examples"].append(text)
                 break
         else:
-            clusters.append({"rep": text, "count": n, "examples": []})
-    clusters.sort(key=lambda c: -c["count"])
+            clusters.append({"rep": text, "count": n, "examples": [], "_phones": set(phones[text])})
+    for c in clusters:
+        c["telefonos"] = len(c.pop("_phones"))
+    clusters.sort(key=lambda c: (-c["telefonos"], -c["count"]))
     return clusters[:CLUSTER_TOP]
+
+
+def impacto_de(synonym: str, days: int = CLUSTER_DAYS) -> tuple[int, int]:
+    """(mensajes, teléfonos) no entendidos de la ventana que la capa literal
+    empezaría a mandar a ese servicio si el sinónimo se aprobara: lo que el
+    humano necesita ver antes de aprobar, en vez de servicio/sinónimo/fecha
+    (IA-3, «aprobación a ciegas»). Misma coincidencia que la capa literal."""
+    termino = nlu._norm(synonym)
+    if not termino:
+        return 0, 0
+    with get_session() as session:
+        events = _unmatched_events(session, days)
+    afectados = [e for e in events if nlu._contains_term(termino, nlu._norm(e.text))]
+    return len(afectados), len({e.phone or "" for e in afectados})
 
 
 def ignore_cluster(rep: str, days: int = CLUSTER_DAYS) -> int:
@@ -429,6 +456,11 @@ def _render(request: Request, admin: str, proposals=None, error=None, ok=None):
                     "synonym": p.synonym,
                     "origin": p.origin,
                     "created_at": p.created_at,
+                    # Lo que cambiaría si se aprueba, y con quién chocaría: sin esto
+                    # el admin aprobaba a ciegas (IA-3).
+                    "impacto": impacto_de(p.synonym),
+                    "colision": catalog.colision_de(p.synonym, p.service_id),
+                    "motivo": catalog.motivo_sinonimo_invalido(p.synonym, p.service_id),
                 }
                 for p in db_proposals
             ],
