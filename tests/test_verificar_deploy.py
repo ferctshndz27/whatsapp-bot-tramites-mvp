@@ -199,3 +199,14 @@ def test_durante_termina_en_despues_cuando_el_commit_llega_a_servir(banco):
     salida, _ = proceso.communicate(timeout=60)
     assert proceso.returncode == 0, salida
     assert "está sirviendo" in salida and "== despues" in salida and "Sin fallos" in salida
+
+def test_antes_exige_que_data_sea_del_uid_del_contenedor_cuando_el_dockerfile_fija_usuario(banco):
+    """INFRA-5: el contenedor deja de ser root y data/ es un bind mount. Si el
+    host no hizo el chown, el deploy entra en rollback cada dos minutos; el
+    script lo dice ANTES. Sin USER en el Dockerfile, no opina."""
+    r = _correr(banco, "antes")
+    assert "pertenece al uid" not in r.stdout and "chown" not in r.stdout, "sin USER no debía opinar"
+
+    (banco["repo"] / "Dockerfile").write_text("FROM python\nRUN useradd --uid 10001 app\nUSER app\n")
+    r = _correr(banco, "antes")
+    assert r.returncode == 1 and "chown -R 10001:10001 data/" in r.stdout, r.stdout

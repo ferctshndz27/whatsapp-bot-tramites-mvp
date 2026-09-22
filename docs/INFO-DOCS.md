@@ -42,14 +42,14 @@ inventar.
 Copiar la plantilla, llenarla y subirla al VPS:
 
 ```bash
-scp docs/info.ejemplo.md root@2.25.185.41:/opt/whatsapp-bot-tramites/data/info.md
+scp docs/info.ejemplo.md root@<IP-del-VPS>:/opt/whatsapp-bot-tramites/data/info.md
 ```
 
 Declarar la ruta **dentro del contenedor** (`./data` está montado en `/data`)
 y recrear (`up -d`, no `restart`: no relee el `.env`):
 
 ```bash
-ssh root@2.25.185.41 "echo 'INFO_DOCS_PATH=/data/info.md' >> /opt/whatsapp-bot-tramites/.env && cd /opt/whatsapp-bot-tramites && docker compose up -d"
+ssh root@<IP-del-VPS> "echo 'INFO_DOCS_PATH=/data/info.md' >> /opt/whatsapp-bot-tramites/.env && cd /opt/whatsapp-bot-tramites && docker compose up -d"
 ```
 
 ## Mantenimiento

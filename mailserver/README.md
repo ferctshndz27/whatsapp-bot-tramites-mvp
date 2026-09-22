@@ -29,7 +29,7 @@ hace `docker compose up -d` aquí igual que en la raíz del repo, como un stack 
    existente lo levanta). Verifica con `docker ps --filter name=mail-poste`.
 3. **Vhost de nginx** — sigue `nginx-mail.esaumillan.cloud.conf` de esta carpeta:
    ```bash
-   ssh root@2.25.185.41
+   ssh root@<IP-del-VPS>
    cp mailserver/nginx-mail.esaumillan.cloud.conf /etc/nginx/sites-available/mail.esaumillan.cloud
    ln -s /etc/nginx/sites-available/mail.esaumillan.cloud /etc/nginx/sites-enabled/
    nginx -t && systemctl reload nginx

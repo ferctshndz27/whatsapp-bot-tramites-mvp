@@ -29,7 +29,9 @@ services:
         condition: service_healthy
 
   mssql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # Por digest (INFRA-6): «2022-latest» avanza con cada CU sin un commit de por
+    # medio; el motor de la base se actualiza cuando alguien mueve este digest.
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:4402d880dd4c34bfa7d8705e56a86cd6c88da80a1f6bbbe741f999e76264a090
     container_name: tramites-mssql
     restart: unless-stopped
     environment:

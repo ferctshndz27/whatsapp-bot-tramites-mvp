@@ -117,6 +117,7 @@ fase_antes() {
   fi
 
   respaldar_base
+  dueno_de_data
 
   if intentar "python:3.12-slim descargada (acorta la ventana de build)" timeout 300 docker pull -q python:3.12-slim; then :; else
     # No es un fallo del deploy: la build la baja sola. Se degrada a aviso.
@@ -131,6 +132,25 @@ fase_antes() {
   } > "$ESTADO" 2>/dev/null && ok "estado guardado en $ESTADO" || aviso "no pude escribir $ESTADO"
 
   resumen
+}
+
+dueno_de_data() {
+  # Desde INFRA-5 el contenedor corre con un uid fijo y data/ es un bind mount:
+  # si el host no le dio data/ a ese uid, el contenedor no escribe la base y el
+  # deploy hace rollback cada dos minutos. Se lee el uid del Dockerfile que va a
+  # correr: el del checkout si ya trae USER, o el de origin/$BRANCH si el que
+  # viene lo estrena.
+  local uid
+  uid=$(grep -hoE -- '--uid[[:space:]]+[0-9]+' Dockerfile 2>/dev/null | grep -oE '[0-9]+' | head -1)
+  [ -z "$uid" ] && uid=$(git show "origin/$BRANCH:Dockerfile" 2>/dev/null | grep -oE -- '--uid[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1)
+  [ -z "$uid" ] && return 0  # ni el actual ni el que viene fijan usuario
+  local dueno
+  dueno=$(stat -c '%u' data 2>/dev/null || echo "?")
+  if [ "$dueno" = "$uid" ]; then
+    ok "data/ pertenece al uid $uid del contenedor"
+  else
+    fallo "data/ es del uid $dueno y el contenedor corre como $uid: chown -R $uid:$uid data/ ANTES del deploy"
+  fi
 }
 
 respaldar_base() {
