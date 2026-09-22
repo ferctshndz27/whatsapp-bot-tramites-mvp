@@ -24,6 +24,7 @@ from app.credenciales import credencial
 from app.dinero import formato_monto
 from app.models import (
     Alert,
+    Client,
     Cobro,
     EventoPasarela,
     IntentoCobro,
@@ -298,6 +299,19 @@ def _actividad(session: Session, ticket_id: int | None, username: str, action: s
         session.add(TicketActivity(ticket_id=ticket_id, username=username, action=action))
 
 
+def _oficina_del_cobro(session: Session, ticket_id: int | None, phone: str) -> int:
+    """La oficina del cobro es la del folio; sin folio, la de la ficha del
+    cliente. Antes `Cobro(...)` nacía sin office_id y caía al DEFAULT (Tlaxcala):
+    con una segunda oficina, la oficina 1 veía los cobros de la 2 y el asesor
+    dueño no veía los suyos (auditoría 2026-09, AUTHZ-4)."""
+    if ticket_id:
+        ticket = session.get(Ticket, ticket_id)
+        if ticket is not None:
+            return ticket.office_id
+    cliente = session.get(Client, phone)
+    return cliente.office_id if cliente is not None else OFICINA_TLAXCALA_ID
+
+
 def crear_cobro(
     session: Session,
     *,
@@ -322,6 +336,7 @@ def crear_cobro(
     cobro = Cobro(
         ticket_id=ticket_id,
         phone=phone,
+        office_id=_oficina_del_cobro(session, ticket_id, phone),
         client_name=client_name,
         service_id=service_id,
         concepto=concepto,
@@ -443,6 +458,14 @@ def resolver_cobro(session: Session, payload: dict) -> tuple[Cobro | None, str |
 
     cobro_id = meta.get("cobro_id")
     if cobro_id:
+        # `cobro_id` es secuencial y lo pone quien arma la metadata; el token es
+        # lo único que prueba que la metadata la escribimos nosotros. Sin token
+        # NO se resuelve por id (auditoría 2026-09, EXT-1): un evento firmado con
+        # el secreto de otra oficina y metadata {"cobro_id": N} marcaba pagado
+        # el cobro N. Los ids de Stripe (pi/cs/ch) de abajo no son adivinables y
+        # siguen resolviendo solos.
+        if not token:
+            return None, "metadata sin token"
         try:
             fila = session.get(Cobro, int(cobro_id))
         except (TypeError, ValueError):
@@ -594,14 +617,27 @@ def transicionar(cobro: Cobro, nuevo_estado: str, evento: EventoPasarela) -> boo
 # ---------------------------------------------------------------------------
 
 
-def aplicar_evento(session: Session, evento: EventoPasarela) -> str:
+def aplicar_evento(
+    session: Session,
+    evento: EventoPasarela,
+    *,
+    office_id: int | None = None,
+    payload: dict | None = None,
+) -> str:
     """Aplica un evento persistido al cobro que resuelva. NO comitea y NO hace
     red (el detalle del voucher lo trae el barrido). Escribe resultado,
-    detalle y procesado_at en la fila del evento."""
-    try:
-        payload = json.loads(evento.payload_json or "{}")
-    except ValueError:
-        payload = {}
+    detalle y procesado_at en la fila del evento.
+
+    `office_id`: la oficina cuyo secreto verificó la firma del webhook. Si viene
+    y no es la del cobro, el evento se ignora (auditoría 2026-09, EXT-1). Los
+    llamadores internos (barrido, panel) no la pasan: sus eventos son nuestros.
+    `payload`: el cuerpo ya parseado, para no depender de `payload_json` cuando
+    el original rebasó PAYLOAD_MAX (EXT-7)."""
+    if payload is None:
+        try:
+            payload = json.loads(evento.payload_json or "{}")
+        except ValueError:
+            payload = {}
 
     # livemode del evento contra el modo de la llave configurada: un evento de
     # prueba jamás mueve un cobro real (ni al revés). La detección vive en
@@ -633,7 +669,7 @@ def aplicar_evento(session: Session, evento: EventoPasarela) -> str:
     # Por eso tampoco se llama a stripe_client.modo_real() (que resuelve por su
     # cuenta): se resuelve la llave UNA vez con esta sesión y se le pregunta el
     # modo al valor. La regla `_live_` sigue viviendo solo en stripe_client.
-    llave = credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID, session=session)
+    llave = credencial("STRIPE_SECRET_KEY", office_id=office_id or OFICINA_TLAXCALA_ID, session=session)
     modo_real = _es_modo_real(llave)
     if evento.livemode is not None and llave and evento.livemode != modo_real:
         alerta(session, "cobro:modo-no-coincide", "Evento de Stripe en modo equivocado",
@@ -658,6 +694,15 @@ def aplicar_evento(session: Session, evento: EventoPasarela) -> str:
             alerta(session, "cobro:evento-huerfano", "Evento de Stripe sin cobro",
                    f"{evento.stripe_event_id} ({evento.tipo}) no resolvió a ningún cobro")
             return _cerrar(session, evento, "huerfano", "sin cobro que lo reclame")
+
+    if office_id is not None and cobro.office_id != office_id:
+        # La llave solo autentica: el cobro dice su oficina. Un evento firmado
+        # con el secreto de la oficina B no puede mover un cobro de la A aunque
+        # su metadata lo nombre (EXT-1).
+        alerta(session, "cobro:oficina-no-coincide", "Evento de Stripe de otra oficina",
+               f"{evento.stripe_event_id}: firmado por la oficina {office_id}, "
+               f"cobro #{cobro.id} de la oficina {cobro.office_id}")
+        return _cerrar(session, evento, "ignorado", "oficina no coincide")
 
     evento.cobro_id = cobro.id
     resultado, detalle = _aplicar_a_cobro(session, cobro, evento, _obj_de(payload))

@@ -78,9 +78,9 @@ def test_17_mismo_evento_dos_veces_una_fila_y_un_aplicar(cliente, monkeypatch):
     llamadas = {"n": 0}
     original = sw.cobranza.aplicar_evento
 
-    def _contado(session, evento):
+    def _contado(session, evento, **kw):  # office_id/payload: EXT-1 y EXT-7 (auditoría 2026-09)
         llamadas["n"] += 1
-        return original(session, evento)
+        return original(session, evento, **kw)
 
     monkeypatch.setattr(sw.cobranza, "aplicar_evento", _contado)
     raw = _evento_crudo("evt_repetido")

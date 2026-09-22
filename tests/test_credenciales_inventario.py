@@ -568,7 +568,12 @@ def test_ningun_modulo_lee_una_credencial_de_settings_directo():
 # leen la misma llave más de una vez (whatsapp_client._send/send_media,
 # twilio_client.enabled/verify_signature/_post_message, stripe_client).
 PUNTOS_CON_OFICINA_INLINE = {
-    ("cobranza.py", "STRIPE_SECRET_KEY"),
+    # ("cobranza.py", "STRIPE_SECRET_KEY") — SALDADO A MEDIAS por la auditoría
+    # 2026-09 (EXT-1): aplicar_evento recibe la oficina cuyo secreto verificó la
+    # firma del webhook y la usa para la llave; los llamadores internos (barrido,
+    # panel) no la pasan y siguen cayendo a Tlaxcala por `or`. Ya no es un
+    # literal que el colector vea, pero el PR 5 sigue debiéndole la oficina a
+    # esos llamadores.
     ("cobranza_panel.py", "STRIPE_SECRET_KEY"),
     # crm.py: el cajón del chat pregunta si Stripe está configurado para decidir
     # si pinta el formulario de cobro. Fija Tlaxcala a mano A PROPÓSITO, aunque

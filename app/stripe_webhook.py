@@ -109,6 +109,30 @@ def _oficina_por_slug(slug: str) -> int | None:
         ).first()
 
 
+def _payload_para_guardar(raw: bytes, payload: dict) -> str:
+    """Lo que se persiste en `payload_json`, acotado a PAYLOAD_MAX y PARSEABLE.
+
+    Antes se recortaba el crudo a 32 KB: un evento grande quedaba como JSON roto,
+    `aplicar_evento` leía `{}` y el evento se declaraba huérfano hasta que el
+    barrido de 2 h lo rescataba (auditoría 2026-09, EXT-7). Escalera: el crudo si
+    cabe; si no, el mismo JSON compactado; si no, lo esencial (id, tipo, modo,
+    fecha y `data.object`, que es todo lo que el aplicador lee); y solo como
+    último recurso el recorte de antes —para ese caso la aplicación inmediata
+    ya no depende de esto, porque recibe el payload parseado—."""
+    texto = raw.decode("utf-8", "replace")
+    if len(texto) <= cobranza.PAYLOAD_MAX:
+        return texto
+    compacto = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    if len(compacto) <= cobranza.PAYLOAD_MAX:
+        return compacto
+    esencial = {k: payload.get(k) for k in ("id", "type", "api_version", "livemode", "created")}
+    esencial["data"] = {"object": (payload.get("data") or {}).get("object") or {}}
+    compacto = json.dumps(esencial, separators=(",", ":"), ensure_ascii=False)
+    if len(compacto) <= cobranza.PAYLOAD_MAX:
+        return compacto
+    return texto[:cobranza.PAYLOAD_MAX]
+
+
 async def _procesar(request: Request, office_id: int) -> dict:
     # El cuerpo CRUDO antes de cualquier json(): la firma es sobre los bytes.
     raw = await request.body()
@@ -151,7 +175,7 @@ async def _procesar(request: Request, office_id: int) -> dict:
                 objeto_id=obj.get("id"),
                 monto_centavos=monto,
                 moneda=obj.get("currency"),
-                payload_json=raw.decode("utf-8", "replace")[:cobranza.PAYLOAD_MAX],
+                payload_json=_payload_para_guardar(raw, payload),
             )
             session.add(evento)
             session.commit()
@@ -167,7 +191,10 @@ async def _procesar(request: Request, office_id: int) -> dict:
     try:
         with get_session() as session:
             fila = session.get(EventoPasarela, evento_id)
-            cobranza.aplicar_evento(session, fila)
+            # La oficina que verificó la firma viaja hasta el aplicador (EXT-1), y
+            # el payload ya parseado evita depender de lo guardado si el cuerpo
+            # rebasó PAYLOAD_MAX (EXT-7).
+            cobranza.aplicar_evento(session, fila, office_id=office_id, payload=payload)
             session.commit()
     except Exception:
         logger.exception("Fallo aplicando el evento %s (id=%s); queda en cola",
