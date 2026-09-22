@@ -137,3 +137,51 @@ def test_el_script_declara_los_flags_estrictos():
     """El resto de este archivo razona sobre `set -e`; si alguien lo quitara,
     estas pruebas seguirían verdes probando otra cosa."""
     assert "set -euo pipefail" in SCRIPT.read_text()
+
+# ---------------------------------------------------------------------------
+# INFRA-1 (auditoría 2026-09): solo se despliega lo que desciende de lo que sirve
+# ---------------------------------------------------------------------------
+
+
+def _correr_candado(banco, remote: str) -> tuple[int, bool, str]:
+    """Ejecuta SOLO el bloque de ancestro del script real (delimitado por sus
+    comentarios) con LOCAL = el commit sano del VPS y REMOTE = `remote`. Devuelve
+    (código de salida, si llegó a `deploy`, stderr)."""
+    fuente = SCRIPT.read_text()
+    ini = fuente.index("# Solo se despliega lo que DESCIENDE")
+    fin = fuente.index("\nfi\n", ini) + 4
+    guion = banco["repo"] / "_candado.sh"
+    guion.write_text("\n".join([
+        "set -euo pipefail", "BRANCH=production",
+        f'LOCAL={banco["sano"]}', f"REMOTE={remote}",
+        fuente[ini:fin],
+        "touch _llego_a_deploy",
+    ]))
+    r = subprocess.run(["bash", str(guion)], cwd=banco["repo"], capture_output=True, text=True, timeout=60)
+    return r.returncode, (banco["repo"] / "_llego_a_deploy").exists(), r.stderr
+
+
+def test_un_production_reescrito_no_se_despliega_y_head_no_se_mueve(banco):
+    """Un force-push deja origin/production en un commit que NO desciende de lo
+    que sirve. Antes el script hacía `reset --hard` a lo que hubiera: un
+    docker-compose.yml malicioso en un commit huérfano era RCE en el VPS en
+    menos de dos minutos."""
+    _git(banco["repo"], "checkout", "-q", "--orphan", "intruso")
+    (banco["repo"] / "f").write_text("huérfano")
+    _git(banco["repo"], "add", "f")
+    _git(banco["repo"], "commit", "-qm", "commit huérfano")
+    huerfano = _git(banco["repo"], "rev-parse", "HEAD").stdout.strip()
+    _git(banco["repo"], "checkout", "-q", banco["sano"])
+
+    codigo, desplego, err = _correr_candado(banco, huerfano)
+
+    assert codigo == 1 and not desplego, (codigo, desplego, err)
+    assert "no desciende" in err
+    assert _git(banco["repo"], "rev-parse", "HEAD").stdout.strip() == banco["sano"], "HEAD se movió"
+
+
+def test_un_avance_normal_de_production_si_pasa_el_candado(banco):
+    """Control positivo: v2 desciende de v1, que es lo que `promote` produce
+    siempre; sin esto un candado que negara TODO dejaría verde la de arriba."""
+    codigo, desplego, err = _correr_candado(banco, banco["malo"])
+    assert codigo == 0 and desplego, (codigo, err)

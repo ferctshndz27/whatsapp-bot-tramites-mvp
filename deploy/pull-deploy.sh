@@ -89,6 +89,19 @@ if [ "$LOCAL" = "$REMOTE" ]; then
   exit 0
 fi
 
+# Solo se despliega lo que DESCIENDE de lo que ya sirve (auditoría 2026-09,
+# INFRA-1). `promote` avanza en fast-forward, así que un origin/production que
+# no contenga a HEAD solo puede venir de un force-push o de un push directo: un
+# commit huérfano con un docker-compose.yml malicioso sería RCE en el VPS en
+# menos de dos minutos. No se hace rollback porque no se movió nada; el cron
+# vuelve a mirar en el siguiente tick y seguirá negándose hasta que alguien
+# arregle la rama. Un rollback legítimo se hace hacia adelante (revertir el
+# commit en main): reescribir production ya rompía `promote` de todos modos.
+if [ "$LOCAL" != "none" ] && ! git merge-base --is-ancestor "$LOCAL" "$REMOTE"; then
+  echo "$(date -Is) ERROR: origin/$BRANCH ($REMOTE) no desciende de HEAD ($LOCAL): la rama se reescribio; no se despliega" >&2
+  exit 1
+fi
+
 echo "$(date -Is) desplegando $REMOTE (antes: $LOCAL)"
 # .env, data/ y media/ están en .gitignore: reset --hard no los toca
 deploy

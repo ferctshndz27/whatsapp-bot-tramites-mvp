@@ -19,7 +19,7 @@ variable "mail_subdomain" {
 variable "existing_vps_ip" {
   description = "IP del VPS que YA existe y corre el bot — Poste.io se instala ahí mismo, sin crear un VPS nuevo."
   type        = string
-  default     = "2.25.185.41"
+  # Sin default (auditoría 2026-09, INFRA-8): la IP no se versiona; va en terraform.tfvars.
 }
 
 variable "dmarc_report_email" {

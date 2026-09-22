@@ -3,4 +3,4 @@
 
 hostinger_api_token = "TU_TOKEN_DE_HPANEL"
 domain              = "esaumillan.cloud"
-existing_vps_ip     = "2.25.185.41"
+existing_vps_ip     = "<IP-del-VPS>"
