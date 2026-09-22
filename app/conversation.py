@@ -321,12 +321,15 @@ def handle_incoming(
     _log_message(
         session, phone, Direction.IN, "[archivo adjunto]" if is_media else text, wa_message_id
     )
-    if not is_media:
-        _extract_client_data(session, phone, text)
-
+    # El rate limit se decide con el entrante YA registrado —es la base del
+    # contador y de la idempotencia— y ANTES de derivar nada más: 60 entrantes
+    # en un minuto dejaban 123 ClientNote además de las filas de message
+    # (auditoría 2026-09, EXT-4).
     if _is_rate_limited(session, phone):
         logger.warning("Rate limit alcanzado para %s — mensaje ignorado", mask_phone(phone))
         return []
+    if not is_media:
+        _extract_client_data(session, phone, text)
 
     if is_media:
         replies = ["Por ahora no puedo recibir documentos en este chat. Un asesor te indicará cómo enviarlos."]

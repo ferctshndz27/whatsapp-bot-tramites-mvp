@@ -33,6 +33,7 @@ para cuando el corpus crezca). La elección es por configuración, no por códig
 import json
 import logging
 import re
+import unicodedata
 from typing import Protocol
 
 import httpx
@@ -82,6 +83,52 @@ _TELEFONO_RE = re.compile(r"\d{10,}")
 # Separadores que disfrazan un teléfono ("55-1234-5678", "(55) 1234.5678"):
 # se quitan ANTES del chequeo para que la corrida de dígitos aflore.
 _SEPARADORES_RE = re.compile(r"[\s.\-()]+")
+# Lo que la auditoría 2026-09 (IA-2) coló por delante de los guardrails, y
+# cómo se cierra. Todo se revisa sobre una copia NORMALIZADA (NFKC: «＄» de
+# ancho completo → «$», superíndices y keycaps → dígitos) y no sobre lo que
+# se envía, que sigue siendo el texto original.
+# Cualquier cosa que no sea letra ni dígito, entre dos dígitos y de hasta tres
+# caracteres, era un separador que _SEPARADORES_RE no cubría ("55/1234/5678",
+# "55,1234,5678", "55_1234_5678"): se une y la corrida aflora.
+_UNION_DIGITOS_RE = re.compile(r"(?<=\d)[\W_]{1,3}(?=\d)")
+# Una CURP «GOMC 800101 HDFRRN09» o con guiones tampoco casaba: el chequeo corre
+# sobre el texto sin estos separadores.
+_SEPARADORES_CLAVE_RE = re.compile(r"[\s._/-]")
+# La línea del producto, dicha con palabras: el bot no confirma pagos, no
+# cierra trámites, no fija precios finales y no manda enlaces. Ninguna de
+# estas frases puede salir de esta capa ni del agente, vengan del modelo o de
+# un corpus envenenado; en inglés también, porque el modelo cambia de idioma.
+_LINEA_RE = re.compile(
+    r"pago\s+(?:\w+\s+){0,2}(?:confirmad|acreditad|recibid|liquidad)"
+    r"|(?:tr[aá]mite|folio|solicitud)\s+(?:\w+\s+){0,2}(?:cerrad|conclu|terminad|finaliz|complet)"
+    r"|precio\s+final|monto\s+final|costo\s+final"
+    r"|payment\s+(?:is\s+)?(?:confirmed|received|complete)|final\s+price"
+    r"|(?:case|request|process)\s+(?:is\s+)?(?:closed|completed)"
+    r"|https?://|www\.",
+    re.IGNORECASE,
+)
+# Números en palabras tras un verbo de costo: «cuesta ochocientos» no traía
+# ni un dígito y pasaba. Basta con el arranque de la palabra.
+_NUMERO_EN_PALABRAS = (
+    r"(?:un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince"
+    r"|dieci\w*|veint\w*|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa"
+    r"|cien\w*|doscient\w*|trescient\w*|cuatrocient\w*|quinient\w*|seiscient\w*"
+    r"|setecient\w*|ochocient\w*|novecient\w*|mil|mill[oó]n\w*)"
+)
+
+
+def normalizar_para_revision(texto: str) -> str:
+    """La copia sobre la que corren los guardrails: NFKC y dígitos unidos."""
+    return _UNION_DIGITOS_RE.sub("", unicodedata.normalize("NFKC", texto))
+
+
+def hay_pii(texto: str) -> bool:
+    """CURP (con o sin separadores) o corrida de 10+ dígitos (con o sin
+    separadores) en el texto YA normalizado."""
+    return bool(
+        _CURP_RE.search(_SEPARADORES_CLAVE_RE.sub("", texto))
+        or _TELEFONO_RE.search(_SEPARADORES_RE.sub("", texto))
+    )
 # "Habla de dinero" en cualquier disfraz: con símbolo ($150), con moneda
 # ("999 pesos", "MXN 1500", "ochocientos pesos") o con verbo de costo
 # inequívoco ("cuesta 800", "cobran 250"). Cualquiera tumba la respuesta:
@@ -94,8 +141,8 @@ _SEPARADORES_RE = re.compile(r"[\s.\-()]+")
 # precios ya no están en el corpus, solo una invención, y toda redacción que
 # de verdad se lee como dinero sigue cayendo por $ / pesos / MXN.
 _DINERO_RE = re.compile(
-    r"\$|\bmxn\b|\bpesos?\b"
-    r"|\b(?:cuesta|cuestan|cobra|cobran|cobramos|precio|costo)\s+[\d.,]+",
+    r"\$|\bmxn\b|\bpesos?\b|\bvaros?\b|\bd[oó]lares?\b|\busd\b|\bm\.\s?n\.?"
+    r"|\b(?:cuesta|cuestan|cobra|cobran|cobramos|precio|costo)\s*:?\s*(?:[\d.,]+|" + _NUMERO_EN_PALABRAS + r"\b)",
     re.IGNORECASE,
 )
 
@@ -599,13 +646,20 @@ def _evaluar_respuesta(respuesta: str) -> tuple[str | None, str | None]:
         if recorte is None:
             return None, "larga"
         respuesta = recorte
+    # Los chequeos corren sobre la copia normalizada (IA-2); lo que viaja es
+    # `respuesta` tal cual.
+    revisada = normalizar_para_revision(respuesta)
     # Un CURP o un teléfono en la respuesta = fuga en potencia. El corpus no
     # trae ninguno, así que cualquiera que aparezca fue inventado o inducido.
-    if _CURP_RE.search(respuesta) or _TELEFONO_RE.search(_SEPARADORES_RE.sub("", respuesta)):
+    if hay_pii(revisada):
         return None, "pii"
     # Regla de oro: nunca inventar ni cruzar precios. Esta capa no cotiza —
     # cualquier mención de dinero se descarta y el cliente cae al flujo
     # determinista, que cita el price_info textual del servicio correcto.
-    if _DINERO_RE.search(respuesta):
+    if _DINERO_RE.search(revisada):
         return None, "dinero"
+    # La línea del producto con palabras: pagos confirmados, trámites cerrados,
+    # precios finales, enlaces. Nada de eso sale de aquí.
+    if _LINEA_RE.search(revisada):
+        return None, "linea"
     return respuesta, None
