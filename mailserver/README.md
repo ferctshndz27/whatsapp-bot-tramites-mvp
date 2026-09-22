@@ -1,5 +1,11 @@
 # Correo (Poste.io) en el mismo VPS del bot — sin costo adicional
 
+> **Retirado el 2026-09-22.** El correo no se usaba y en el VPS competía por memoria y CPU con
+> el bot y MSSQL (417 MiB residentes, siete puertos publicados). `deploy/pull-deploy.sh` ya no
+> levanta este stack; en el servidor se bajó con `docker compose down` (los datos quedan en
+> `mailserver/data/`, que es local y no viaja en git). Para reactivarlo: volver a poner el
+> `docker compose up -d` en el script del deploy y seguir los pasos de abajo.
+
 Opción elegida: reutilizar `srv1740939.hstgr.cloud` (el VPS que ya corre el bot de
 trámites) en vez de crear un VPS nuevo. Cero cargo extra de Hostinger; a cambio,
 correo y bot comparten IP y recursos.
