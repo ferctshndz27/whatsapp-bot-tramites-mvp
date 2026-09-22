@@ -652,6 +652,13 @@ def test_la_ruta_vieja_del_chat_reenvia_al_crm_y_conserva_el_error_del_envio():
     anonimo = TestClient(app, base_url="https://testserver")
     assert anonimo.get(f"/inbox/{ANA}", follow_redirects=False).headers["location"] == "/login"
     # El envío desde el CRM sigue el mismo camino: el ?err= llega hasta la página del CRM.
+    # Beto tiene que ser de colab1: desde AUTHZ-2 (auditoría 2026-09) un colaborador no le
+    # escribe a un cliente sin folio suyo —antes esta línea pasaba justo por ese hueco—.
+    with Session(db.engine) as s:
+        s.add(Ticket(phone=BETO, client_name="Beto Nuñez", category="CURP", service_id="curp",
+                     service_name="CURP", price_info="$80",
+                     status=TicketStatus.TOMADO, assigned_to="colab1", office_id=1))
+        s.commit()
     r = c.post(f"/inbox/{BETO}/send", data={"body": "hola"}, follow_redirects=True)
     assert r.status_code == 200 and str(r.url).endswith(f"/crm?chat={BETO}&err=window")
 

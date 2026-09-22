@@ -190,6 +190,30 @@ MAX_NOTE_TEXT = 500
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_MAX_MESSAGES = 20
 
+# ---- Folios repetidos (auditoría 2026-09, EXT-2) ----
+# El alta creaba un folio por servicio confirmado sin mirar los ABIERTOS del
+# mismo cliente: un número, 20 mensajes → 50 folios, cada uno pasando por el
+# reparto a asesores y por el espejo, e inundando la bandeja. El rate limit no
+# lo frena porque son mensajes legítimos en cantidad legítima.
+# Dos reglas, antes de `session.add(ticket)`: un servicio que ya tiene folio
+# abierto para ese teléfono no abre otro («ya tienes el folio #N»), y un cliente
+# con MAX_FOLIOS_ABIERTOS abiertos no abre más hasta que su asesor cierre alguno.
+# El bot no cierra folios —eso es del asesor—, solo deja de multiplicarlos.
+# El tope se cuenta y se aplica en la misma función pero no en una transacción
+# serializable: dos confirmaciones del mismo teléfono que lleguen a la vez
+# pueden colarse una de más (la carrera ya rastreada en
+# tests/test_concurrency.py, xfail). Frena el abuso secuencial, que es el PoC;
+# no es un candado bajo concurrencia.
+# ponytail: constante, no knob del Estudio; se vuelve knob el día que alguien
+# lo pida con un número en la mano (un cliente real con más de cinco trámites
+# vivos a la vez es el asesor consolidando, no el bot).
+MAX_FOLIOS_ABIERTOS = 5
+FOLIO_REPETIDO = "Ya tienes el folio #{folio} de '{servicio}' abierto; tu asesor lo está atendiendo."
+FOLIOS_TOPE = (
+    "Tienes {n} solicitudes abiertas, que es el máximo a la vez. Cuando tu asesor "
+    "cierre alguna podrás abrir más. Escribe *estado* para ver cómo van."
+)
+
 # ---- Captura de requisitos (estado "pidiendo_requisitos") ----
 # Al registrar el folio, si el servicio tiene requisitos documentados en el
 # catálogo el agente los pide uno por uno y guarda la respuesta EN EL TICKET,
@@ -400,18 +424,55 @@ def _is_rate_limited(session: Session, phone: str) -> bool:
     return len(recent) > RATE_LIMIT_MAX_MESSAGES
 
 
+def _folios_abiertos(session: Session, phone: str) -> list[Ticket]:
+    """Los folios abiertos del cliente, del más nuevo al más viejo."""
+    return list(
+        session.exec(
+            select(Ticket)
+            .where(Ticket.phone == phone)
+            .where(Ticket.status != TicketStatus.CERRADO)
+            # Un ticket borrado suavemente desde el panel NO es un ticket abierto:
+            # sin este filtro la escalada marcaba escalado=True en un folio
+            # invisible (y ninguna solicitud aparecía), y un agent_active=False
+            # borrado silenciaba al bot para siempre.
+            .where(Ticket.habilitado == True)  # noqa: E712
+            .order_by(Ticket.created_at.desc())
+        ).all()
+    )
+
+
 def _latest_open_ticket(session: Session, phone: str) -> Ticket | None:
-    return session.exec(
-        select(Ticket)
-        .where(Ticket.phone == phone)
-        .where(Ticket.status != TicketStatus.CERRADO)
-        # Un ticket borrado suavemente desde el panel NO es un ticket abierto:
-        # sin este filtro la escalada marcaba escalado=True en un folio
-        # invisible (y ninguna solicitud aparecía), y un agent_active=False
-        # borrado silenciaba al bot para siempre.
-        .where(Ticket.habilitado == True)  # noqa: E712
-        .order_by(Ticket.created_at.desc())
-    ).first()
+    abiertos = _folios_abiertos(session, phone)
+    return abiertos[0] if abiertos else None
+
+
+def _filtrar_folios_nuevos(session: Session, phone: str, services: list) -> tuple[list, list[str]]:
+    """Qué servicios confirmados SÍ abren folio, y los avisos para los que no.
+
+    Descarta el que ya tiene folio abierto para este teléfono (se le dice cuál)
+    y recorta al cupo que deja MAX_FOLIOS_ABIERTOS. Un mismo servicio dos veces
+    en la misma confirmación cuenta una. Auditoría 2026-09, EXT-2."""
+    abiertos = _folios_abiertos(session, phone)
+    abierto_por_servicio: dict[str, Ticket] = {}
+    for t in abiertos:  # del más nuevo al más viejo: se queda el más reciente
+        abierto_por_servicio.setdefault(t.service_id, t)
+    avisos: list[str] = []
+    nuevos: list = []
+    vistos: set[str] = set()
+    for service in services:
+        if service.id in vistos:
+            continue
+        vistos.add(service.id)
+        repetido = abierto_por_servicio.get(service.id)
+        if repetido is not None:
+            avisos.append(FOLIO_REPETIDO.format(folio=repetido.id, servicio=service.name))
+        else:
+            nuevos.append(service)
+    cupo = max(MAX_FOLIOS_ABIERTOS - len(abiertos), 0)
+    if len(nuevos) > cupo:
+        nuevos = nuevos[:cupo]
+        avisos.append(FOLIOS_TOPE.format(n=len(abiertos) + len(nuevos)))
+    return nuevos, avisos
 
 
 def _asks_status(text: str) -> bool:
@@ -760,6 +821,14 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     services = [s for s in (catalog.service_by_id(i) for i in ids) if s is not None]
 
     if normalized in YES_WORDS and services:
+        # Un servicio con folio abierto no abre otro, y hay un tope de abiertos
+        # por cliente (EXT-2). Si no queda ninguno por abrir, se le dice qué
+        # folios ya tiene y se vuelve al menú: nada pasa por el reparto ni por
+        # el espejo. El folio existente lo cierra el asesor, no el bot.
+        services, avisos_folios = _filtrar_folios_nuevos(session, client.phone, services)
+        if not services:
+            _set_state(session, conv, "menu_categoria")
+            return ["\n".join(avisos_folios) + " ¿Otro trámite? Escribe *menu*."]
         # Códigos que venían en el mensaje con que pidió el trámite: se copian
         # al folio antes de preguntar nada (ver _requisitos_con_codigos).
         detectados = context.get("codigos") or {}
@@ -833,6 +902,10 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
             # Decirlo evita que el cliente crea que se ignoró lo que escribió y
             # lo vuelva a mandar (que es justo lo que pasaba antes).
             alta += " " + REQ_YA_CAPTURADO
+        if avisos_folios:
+            # Lo que SÍ se abrió va primero; lo que ya existía o no cupo, después,
+            # para que el cliente no crea que se ignoró lo que pidió.
+            alta += "\n" + "\n".join(avisos_folios)
 
         pregunta, cola = _siguiente_pregunta(session, cola)
         if pregunta is None:
