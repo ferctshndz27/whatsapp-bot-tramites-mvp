@@ -94,7 +94,7 @@ def login_form(request: Request):
 
 
 @router.post("/login")
-def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+def login_submit(request: Request, username: str = Form(""), password: str = Form("")):
     if _is_login_locked(username):
         logger.warning("Login bloqueado por intentos fallidos: %s", username)
         authlog.record_login(request, username, success=False, reason=authlog.REASON_LOCKED)
@@ -178,10 +178,10 @@ def register_form(request: Request):
 @router.post("/register")
 def register_submit(
     request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    code: str = Form(...),
-    phone: str = Form(...),
+    username: str = Form(""),
+    password: str = Form(""),
+    code: str = Form(""),
+    phone: str = Form(""),
 ):
     username = username.strip().lower()
     # ponytail: reusa el lockout del login con una llave global para frenar
@@ -1044,7 +1044,7 @@ def _append_note(ticket: Ticket, author: str, text: str) -> None:
 
 @router.post("/tickets/{ticket_id}/reassign")
 def reassign_ticket(
-    request: Request, ticket_id: int, to_user: str = Form(...), note: str = Form("")
+    request: Request, ticket_id: int, to_user: str = Form(""), note: str = Form("")
 ):
     user = _current_user(request)
     if not user:
@@ -1085,7 +1085,7 @@ def reassign_ticket(
 
 
 @router.post("/tickets/{ticket_id}/notes")
-def add_ticket_note(request: Request, ticket_id: int, note: str = Form(...)):
+def add_ticket_note(request: Request, ticket_id: int, note: str = Form("")):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -1104,7 +1104,7 @@ def add_ticket_note(request: Request, ticket_id: int, note: str = Form(...)):
 
 
 @router.post("/tickets/{ticket_id}/labels")
-def add_ticket_label(request: Request, ticket_id: int, nombre: str = Form(...)):
+def add_ticket_label(request: Request, ticket_id: int, nombre: str = Form("")):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -1174,7 +1174,7 @@ def remove_ticket_label(request: Request, ticket_id: int, label_id: int):
 
 
 @router.post("/tickets/{ticket_id}/status")
-def update_ticket_status(request: Request, ticket_id: int, status: str = Form(...)):
+def update_ticket_status(request: Request, ticket_id: int, status: str = Form("")):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)

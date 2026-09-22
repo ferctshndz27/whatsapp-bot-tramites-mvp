@@ -145,8 +145,8 @@ def users_list(request: Request):
 @router.post("/users")
 def users_create(
     request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
+    username: str = Form(""),
+    password: str = Form(""),
     role: str = Form("colaborador"),
     office_id: int = Form(OFICINA_TLAXCALA_ID),
 ):
@@ -188,7 +188,7 @@ def users_create(
 
 
 @router.post("/users/{username}/password")
-def users_reset_password(request: Request, username: str, password: str = Form(...)):
+def users_reset_password(request: Request, username: str, password: str = Form("")):
     admin, redirect = _admin_or_redirect(request)
     if redirect:
         return redirect

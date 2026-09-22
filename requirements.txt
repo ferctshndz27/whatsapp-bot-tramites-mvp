@@ -1,17 +1,42 @@
-fastapi==0.115.6
+# Pines subidos el 2026-09-21 por la auditoría de seguridad (INFRA-2, INFRA-7/9):
+# `python-multipart` 0.0.20 y la starlette que fijaba fastapi 0.115.6 traían
+# CVE de DoS alcanzables desde POST /login sin sesión (1 MB de «a;a;a;…» costaba
+# 4 s de CPU del único worker). Cada pin lleva la razón de SU número; subirlos
+# de nuevo es otra build de la imagen, así que se suben juntos.
+#
+# fastapi 0.136.x a propósito, y no la última: es la última serie que acepta
+# starlette 1.x y todavía aplana las rutas en `app.routes`. Desde 0.137
+# `include_router` guarda envoltorios `_IncludedRouter`, y las pruebas que
+# enumeran las rutas del panel (tests/test_authz.py, tests/test_security.py,
+# tests/test_stripe_webhook.py) dejan de ver 130 de ellas. Antes de pasar de
+# 0.136 hay que adaptar esas tres.
+# Desde fastapi 0.116 un `str = Form(...)` trata "" como campo ausente y
+# contesta 422; por eso los formularios del panel declaran `str = Form("")`
+# (tests/test_formularios_vacios.py lo fija).
+fastapi==0.136.3
 uvicorn[standard]==0.34.0
-# Stream de avisos del CRM (/crm/api/eventos). La 2.4.x es la última que NO exige
-# subir starlette por encima de lo que fija fastapi 0.115.6 (la 3.x pide starlette 1.x).
-sse-starlette==2.4.1
+# starlette 1.3.1 corrige el límite de campos de request.form() que se ignoraba
+# en x-www-form-urlencoded (CVE-2026-54283) y el O(n²) del header Range
+# (CVE-2025-62727). Se fija explícito: fastapi 0.136 no le pone tope.
+starlette==1.6.0
+# Stream de avisos del CRM (/crm/api/eventos). La 3.x exige starlette>=0.49.1,
+# que es justo lo que frenaba la subida mientras fastapi fijaba 0.41.
+sse-starlette==3.4.11
 sqlmodel==0.0.22
 httpx==0.28.1
-jinja2==3.1.5
-python-multipart==0.0.20
+# 3.1.6: CVE-2025-27516 (escape del sandbox por el filtro attr).
+jinja2==3.1.6
+# 0.0.31 cubre las siete CVE de la serie 0.0.2x, incluidas las dos de DoS
+# (CVE-2026-53539, CVE-2026-42561) y la escritura arbitraria (CVE-2026-24486).
+python-multipart==0.0.32
 bcrypt==4.2.1
 itsdangerous==2.2.0
-python-dotenv==1.0.1
+# 1.2.2: CVE-2026-28684 (set_key seguía symlinks). Aquí solo se lee el .env.
+python-dotenv==1.2.2
 pytest==8.3.4
 pymssql==2.3.2
-cryptography==45.0.7
+# 50.0.0 cubre las siete de la 45.x, tres Altas (CVE-2026-69247/69249/26007)
+# y la OpenSSL vulnerable embebida en las wheels (GHSA-537c-gmf6-5ccf).
+cryptography==50.0.0
 anthropic>=0.92.0
 rapidfuzz>=3.0

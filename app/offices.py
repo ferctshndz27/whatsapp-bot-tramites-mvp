@@ -158,9 +158,9 @@ def oficinas_lista(request: Request):
 @router.post("/oficinas")
 def oficinas_crear(
     request: Request,
-    nombre: str = Form(...),
-    slug: str = Form(...),
-    ciudad: str = Form(...),
+    nombre: str = Form(""),
+    slug: str = Form(""),
+    ciudad: str = Form(""),
 ):
     admin, redirect = _global_or_redirect(request)
     if redirect:
@@ -197,9 +197,9 @@ def oficina_detalle(request: Request, office_id: int):
 def oficina_editar(
     request: Request,
     office_id: int,
-    nombre: str = Form(...),
-    slug: str = Form(...),
-    ciudad: str = Form(...),
+    nombre: str = Form(""),
+    slug: str = Form(""),
+    ciudad: str = Form(""),
 ):
     """Editar los datos de una oficina. Misma validación que el alta.
 
@@ -300,7 +300,7 @@ def oficina_baja(request: Request, office_id: int):
 
 
 @router.post("/oficinas/{office_id}/llaves")
-def llave_guardar(request: Request, office_id: int, clave: str = Form(...), valor: str = Form(...)):
+def llave_guardar(request: Request, office_id: int, clave: str = Form(""), valor: str = Form("")):
     admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect
@@ -359,7 +359,7 @@ def llave_baja(request: Request, office_id: int, clave: str):
 
 
 @router.post("/oficinas/{office_id}/usuarios")
-def usuario_mover(request: Request, office_id: int, username: str = Form(...)):
+def usuario_mover(request: Request, office_id: int, username: str = Form("")):
     admin, redirect = _global_or_redirect(request)
     if redirect:
         return redirect

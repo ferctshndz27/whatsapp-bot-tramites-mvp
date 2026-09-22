@@ -84,7 +84,7 @@ def catalog_view(request: Request):
 
 
 @router.post("/catalog/categories")
-def category_create(request: Request, name: str = Form(...)):
+def category_create(request: Request, name: str = Form("")):
     admin, redirect = _usuario_o_redirect(request)
     if redirect:
         return redirect
@@ -96,7 +96,7 @@ def category_create(request: Request, name: str = Form(...)):
 
 
 @router.post("/catalog/categories/{category_id}/rename")
-def category_rename(request: Request, category_id: str, name: str = Form(...)):
+def category_rename(request: Request, category_id: str, name: str = Form("")):
     admin, redirect = _usuario_o_redirect(request)
     if redirect:
         return redirect
@@ -122,9 +122,9 @@ def category_toggle(request: Request, category_id: str):
 @router.post("/catalog/services")
 def service_create(
     request: Request,
-    category_id: str = Form(...),
-    name: str = Form(...),
-    price_info: str = Form(...),
+    category_id: str = Form(""),
+    name: str = Form(""),
+    price_info: str = Form(""),
 ):
     admin, redirect = _usuario_o_redirect(request)
     if redirect:
@@ -141,8 +141,8 @@ def service_create(
 def service_update(
     request: Request,
     service_id: str,
-    name: str = Form(...),
-    price_info: str = Form(...),
+    name: str = Form(""),
+    price_info: str = Form(""),
     synonyms: str = Form(""),
     requirements: str = Form(""),
 ):
@@ -172,7 +172,7 @@ def service_toggle(request: Request, service_id: str):
 
 
 @router.post("/catalog/services/{service_id}/atencion")
-def service_attention(request: Request, service_id: str, atiende: str = Form(...)):
+def service_attention(request: Request, service_id: str, atiende: str = Form("")):
     """«Lo atiendo» / «Dejo de atenderlo» — siempre sobre quien tiene la sesión.
 
     Sin campo de usuario a propósito: si la ruta aceptara un nombre, cualquiera

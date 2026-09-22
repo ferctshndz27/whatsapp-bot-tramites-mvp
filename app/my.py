@@ -141,7 +141,7 @@ def complete_followup(request: Request, followup_id: int):
 
 
 @router.post("/my/estado")
-def set_estado(request: Request, estado: str = Form(...)):
+def set_estado(request: Request, estado: str = Form("")):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)

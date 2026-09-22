@@ -102,9 +102,9 @@ def _admin_or_redirect(request: Request):
 def generar_cobro(
     request: Request,
     ticket_id: int,
-    monto: str = Form(...),
+    monto: str = Form(""),
     concepto: str = Form(""),
-    token_form: str = Form(...),
+    token_form: str = Form(""),
     metodo: list[str] = Form(default=[]),
     msi: str = Form(""),
     volver: str = Form(""),

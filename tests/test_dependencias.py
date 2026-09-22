@@ -8,7 +8,9 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 REQUIREMENTS = RAIZ / "requirements.txt"
-PIN_CRYPTOGRAPHY = "cryptography==45.0.7"  # docs/SPEC-MULTI-OFICINA.md §3.1
+# docs/SPEC-MULTI-OFICINA.md §3.1 fijó 45.0.7; la auditoría 2026-09 (INFRA-7)
+# lo subió a 50.0.0 por siete CVE, tres Altas. Cambiar este pin ES la tarea.
+PIN_CRYPTOGRAPHY = "cryptography==50.0.0"
 
 
 def test_cryptography_esta_pineada_en_requirements():
