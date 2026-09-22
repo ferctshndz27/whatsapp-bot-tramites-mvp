@@ -11,6 +11,7 @@ from sqlmodel import select
 
 from app import messaging, ventana
 from app.audit import log_admin
+from app.clients import conversacion_escribible
 from app.auth import is_admin, alcance
 from app.config import settings
 from app import asignacion
@@ -44,18 +45,16 @@ def _current_user(request: Request) -> str | None:
     return request.session.get("user")
 
 
-def _verificar_acceso_oficina(session, phone: str, vista, user: str) -> bool:
-    """True si la oficina del usuario puede ver la conversación de este número."""
-    if vista.ve_todas:
-        return True
-    
-    # La oficina de una conversación la dicta el Client (y la tabla Conversation).
-    # Como los mensajes pueden llegar antes que un Ticket, Client es la fuente segura.
-    client = session.get(Client, phone)
-    if client and client.office_id != vista.office_id:
-        logger.warning("%s intentó acceder a la bandeja %s de otra oficina", user, mask_phone(phone))
-        return False
-    return True
+def _puede_escribir(session, phone: str, user: str) -> bool:
+    """¿Este usuario puede actuar sobre la conversación de este número?
+
+    La regla vive en `clients.conversacion_escribible`, junto al corte de
+    lectura: oficina, y para quien no es admin, un folio vigente reclamable por
+    él. El guard anterior solo miraba la oficina —y contestaba True sin fila
+    Client—, así que un colaborador al que el CRM le negaba el chat podía
+    mandar WhatsApp como el negocio, reactivar el bot y ocultar mensajes
+    (auditoría 2026-09, AUTHZ-2)."""
+    return conversacion_escribible(session, phone, user) is not None
 
 
 def _time_ago(dt: datetime) -> str:
@@ -284,9 +283,8 @@ def inbox_send(
     if not body and adjunto is None:
         return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
-    vista = alcance(user)
     with get_session() as session:
-        if not _verificar_acceso_oficina(session, phone, vista, user):
+        if not _puede_escribir(session, phone, user):
             return RedirectResponse("/", status_code=303)
             
         if not ventana.abierta_para(session, phone):
@@ -358,9 +356,8 @@ def inbox_delete_message(request: Request, phone: str, message_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
-    vista = alcance(user)
     with get_session() as session:
-        if not _verificar_acceso_oficina(session, phone, vista, user):
+        if not _puede_escribir(session, phone, user):
             return RedirectResponse("/", status_code=303)
             
         message = session.get(Message, message_id)
@@ -383,9 +380,8 @@ def inbox_toggle_block(request: Request, phone: str):
     if not is_admin(user):
         return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
-    vista = alcance(user)
     with get_session() as session:
-        if not _verificar_acceso_oficina(session, phone, vista, user):
+        if not _puede_escribir(session, phone, user):
             return RedirectResponse("/", status_code=303)
             
         client = session.get(Client, phone)
@@ -405,9 +401,8 @@ def inbox_bot_on(request: Request, phone: str):
     if not user:
         return RedirectResponse("/login", status_code=303)
 
-    vista = alcance(user)
     with get_session() as session:
-        if not _verificar_acceso_oficina(session, phone, vista, user):
+        if not _puede_escribir(session, phone, user):
             return RedirectResponse("/", status_code=303)
             
         conv = session.get(Conversation, phone)

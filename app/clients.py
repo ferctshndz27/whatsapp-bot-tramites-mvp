@@ -12,11 +12,12 @@ from fastapi.responses import RedirectResponse
 from app.templating import templates
 from sqlmodel import or_, select
 
+from app import asignacion
 from app.audit import log_admin
 from app.auth import alcance, is_admin
 from app.db import get_session
 from app.codigos import EMAIL_RE
-from app.models import Client, ClientNote, Ticket, utcnow
+from app.models import Client, ClientNote, Ticket, TicketStatus, utcnow
 
 # El select de la ficha en client.html ofrece exactamente estos valores.
 _ORIGENES = {"meta", "twilio", "referido", "manual"}
@@ -50,6 +51,74 @@ def _cliente_visible(session, phone: str, user: str) -> Client | None:
             logger.warning("%s intentó abrir un cliente de otra oficina", user)
         return None
     return client
+
+
+def folio_vigente(folios) -> Ticket | None:
+    """El folio que representa a una conversación: el ABIERTO más reciente; si
+    no hay abierto, el más reciente. `folios` viene ordenado del más nuevo al
+    más viejo (`created_at desc`).
+
+    Una sola definición a propósito: es la que pinta la tarjeta del CRM
+    (`crm._agregar`) y la que decide quién puede escribirle al cliente desde la
+    bandeja (`conversacion_escribible`). Con dos copias, la lectura y la
+    escritura volverían a divergir, que es justo el hallazgo AUTHZ-2."""
+    vigente = None
+    for t in folios:
+        if vigente is None or (
+            vigente.status == TicketStatus.CERRADO and t.status != TicketStatus.CERRADO
+        ):
+            vigente = t
+    return vigente
+
+
+def folio_vigente_de(session, phone: str) -> Ticket | None:
+    return folio_vigente(
+        session.exec(
+            select(Ticket)
+            .where(Ticket.phone == phone)
+            .where(Ticket.habilitado == True)  # noqa: E712
+            # `id` desempata a propósito: dos folios con el mismo created_at
+            # —la ventana que abre la carrera de confirmaciones (test_concurrency)—
+            # quedaban al orden físico de SQLite, y desde AUTHZ-2 esta elección
+            # decide quién puede escribirle al cliente. Misma lección que
+            # crm._agregar aplica al último mensaje: el id no depende de un reloj.
+            .order_by(Ticket.created_at.desc(), Ticket.id.desc())  # type: ignore[union-attr]
+        ).all()
+    )
+
+
+def conversacion_escribible(session, phone: str, user: str) -> Client | None:
+    """El cliente, si este usuario puede ESCRIBIRLE (mandar WhatsApp como el
+    negocio, pausar o reactivar su bot, ocultar mensajes, bloquearlo); None si no.
+
+    Corte de oficina como la lectura (`_cliente_visible`), y para quien no es
+    admin, el folio vigente tiene que ser reclamable por él: suyo, sin dueño, o
+    con dueño provisional —de reparto, todavía en NUEVO—, porque «quien
+    responde se queda el chat» (`inbox._pause_bot`, `asignacion.provisional`).
+    Un folio TOMADO por otro, o ningún folio, cierra la puerta: antes bastaba la
+    oficina y un colaborador sin folios del cliente le mandaba WhatsApp firmado
+    por el negocio mientras el CRM le negaba el chat (auditoría 2026-09,
+    AUTHZ-2). Sin fila Client tampoco: el guard viejo contestaba True.
+
+    Más ancha que la lectura del CRM (`crm._atiende`: solo el asignado) en un
+    solo punto, el folio reclamable. No es una concesión nueva: es la «cola
+    abierta» del reparto que ya existía —el tablero de Solicitudes lista a toda
+    la oficina los folios NUEVO con teléfono y nombre, y contestar uno se lo
+    quedaba quien contestara (`_pause_bot`)—. Lo que sí cambia es que un folio
+    ya TOMADO por un compañero queda protegido, cosa que antes no pasaba.
+    (`/tickets/{id}/claim` es más estrecho: solo actúa sin dueño; no es la
+    analogía exacta, `_pause_bot` sí.)
+    """
+    cliente = _cliente_visible(session, phone, user)
+    if cliente is None or is_admin(user):
+        return cliente
+    folio = folio_vigente_de(session, phone)
+    if folio is None:
+        return None
+    if folio.assigned_to in (None, user) or asignacion.provisional(folio):
+        return cliente
+    logger.warning("%s intentó escribirle a un cliente cuyo folio atiende otro", user)
+    return None
 
 
 def _propagar_nombre(session, phone: str, nombre: str) -> int:

@@ -8,6 +8,7 @@ from app import media_store, twilio_client, whatsapp_client
 from app.inbox import build_conversation_items, inbox_bot_on, inbox_delete_message, inbox_send
 from app.models import (
     PROVIDER_TWILIO,
+    Client,
     Conversation,
     Direction,
     Message,
@@ -21,7 +22,18 @@ def _request(user: str) -> SimpleNamespace:
     return SimpleNamespace(session={"user": user}, url=SimpleNamespace(path="/inbox/000"))
 
 
+def _cliente(session, phone: str) -> None:
+    """La fila Client que en producción crea el webhook con el primer mensaje.
+    Desde AUTHZ-2 (auditoría 2026-09) escribirle a un teléfono sin ficha ya no
+    pasa para quien no es admin, así que las pruebas la siembran como lo haría
+    el flujo real."""
+    if session.get(Client, phone) is None:
+        session.add(Client(phone=phone))
+        session.commit()
+
+
 def _ticket(session, phone: str, **kwargs) -> Ticket:
+    _cliente(session, phone)
     ticket = Ticket(
         phone=phone, category="Servicios básicos", service_id="curp",
         service_name="CURP certificada", price_info="$80", **kwargs,
@@ -30,6 +42,14 @@ def _ticket(session, phone: str, **kwargs) -> Ticket:
     session.commit()
     session.refresh(ticket)
     return ticket
+
+
+def _atendido_por(session, phone: str, user: str = "ana", **kwargs) -> Ticket:
+    """Cliente con folio TOMADO por `user`: la situación normal de una asesora
+    que contesta desde el compositor. Un colaborador solo escribe donde tiene
+    folio (o donde el folio es reclamable), así que las pruebas del compositor
+    —que son sobre el compositor, no sobre permisos— parten de aquí."""
+    return _ticket(session, phone, assigned_to=user, status=TicketStatus.TOMADO, **kwargs)
 
 
 def test_manual_reply_auto_claims_and_pauses_agent(monkeypatch, session):
@@ -52,27 +72,45 @@ def test_manual_reply_auto_claims_and_pauses_agent(monkeypatch, session):
     assert {"tomado", "agente:pausado-auto"} <= actions
 
 
-def test_manual_reply_pauses_agent_without_stealing_assigned_ticket(monkeypatch, session):
+def test_un_colaborador_no_le_escribe_al_cliente_que_atiende_otro(monkeypatch, session):
+    """Antes esta prueba afirmaba lo contrario —que `ana` mandaba «apoyo con esto»
+    al cliente de `bob` sin quitarle el folio— y esa afirmación ERA el hallazgo
+    AUTHZ-2: el CRM le negaba el chat a `ana` y la bandeja le dejaba mandar un
+    WhatsApp firmado por el negocio. Se reescribe: `ana` no manda nada y no
+    queda rastro; `bob`, el dueño, sí, sin que el folio cambie de manos."""
     monkeypatch.setattr(db, "engine", session.get_bind())
-    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.AUTO2")
+    enviados: list[str] = []
+    monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: enviados.append(body) or "wamid.AUTO2")
     session.add(_msg("445", Direction.IN, "hola", hours_ago=1))
     session.add(Conversation(phone="445", state="escalado"))
     ticket = _ticket(
-        session, "445", escalado=True, assigned_to="bob", status=TicketStatus.TOMADO
+        session, "445", escalado=True, assigned_to="bob", status=TicketStatus.TOMADO, agent_active=True
     )
 
-    inbox_send(_request("ana"), "445", body="apoyo con esto")
+    respuesta = inbox_send(_request("ana"), "445", body="apoyo con esto")
+
+    assert respuesta.headers["location"] == "/", "a ana la dejaron pasar"
+    assert enviados == [], "salió un WhatsApp firmado por el negocio de alguien que no atiende al cliente"
+    session.refresh(ticket)
+    assert ticket.assigned_to == "bob" and ticket.agent_active is True, "el intento tocó el folio"
+    assert session.exec(select(Message).where(
+        Message.phone == "445", Message.direction == Direction.OUT
+    )).first() is None
+
+    inbox_send(_request("bob"), "445", body="aquí sigo")  # control positivo: el dueño sí
 
     session.refresh(ticket)
-    assert ticket.assigned_to == "bob"  # el dueño no cambia
-    assert ticket.agent_active is False
+    assert enviados == ["aquí sigo"]
+    assert ticket.assigned_to == "bob" and ticket.agent_active is False
     entry = session.exec(select(TicketActivity).where(
         TicketActivity.action == "agente:pausado-auto"
     )).one()
-    assert entry.username == "ana"  # queda registrado quién lo apagó
+    assert entry.username == "bob"
 
 
-def test_bot_reactivation_also_resumes_ticket_agent(monkeypatch, session):
+def test_un_colaborador_no_reactiva_el_bot_del_cliente_que_atiende_otro(monkeypatch, session):
+    """Misma reescritura que la de arriba, para /bot-on: `ana` no reactiva el
+    agente del cliente de `bob`; `bob` sí, y queda registrado quién."""
     monkeypatch.setattr(db, "engine", session.get_bind())
     session.add(Conversation(phone="556", state="escalado"))
     ticket = _ticket(
@@ -80,14 +118,23 @@ def test_bot_reactivation_also_resumes_ticket_agent(monkeypatch, session):
         status=TicketStatus.TOMADO, agent_active=False,
     )
 
-    inbox_bot_on(_request("ana"), "556")
+    respuesta = inbox_bot_on(_request("ana"), "556")
+
+    assert respuesta.headers["location"] == "/"
+    session.refresh(ticket)
+    assert ticket.agent_active is False, "ana reactivó el bot de un cliente que no atiende"
+    assert session.exec(select(TicketActivity).where(
+        TicketActivity.action == "agente:reanudado"
+    )).first() is None
+
+    inbox_bot_on(_request("bob"), "556")  # control positivo
 
     session.refresh(ticket)
     assert ticket.agent_active is True
     entry = session.exec(select(TicketActivity).where(
         TicketActivity.action == "agente:reanudado"
     )).one()
-    assert entry.username == "ana"
+    assert entry.username == "bob"
 
 
 def _msg(phone: str, direction: Direction, body: str, hours_ago: float = 0) -> Message:
@@ -121,6 +168,7 @@ def test_items_flag_waiting_and_expired_window(session):
 def test_send_logs_message_and_pauses_bot(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.SENT1")
+    _atendido_por(session, "333")
     session.add(_msg("333", Direction.IN, "hola", hours_ago=1))
     session.add(Conversation(phone="333", state="inicio"))
     session.commit()
@@ -150,6 +198,7 @@ def test_la_respuesta_manual_sale_y_se_registra_por_el_canal_del_cliente(monkeyp
     monkeypatch.setattr(
         twilio_client, "send_text", lambda phone, body: por_twilio.append(body) or "SMX1"
     )
+    _atendido_por(session, "555")
     session.add(_msg("555", Direction.IN, "hola", hours_ago=1))
     session.add(Conversation(phone="555", state="escalado", provider=PROVIDER_TWILIO))
     session.commit()
@@ -191,6 +240,7 @@ def test_composer_envia_archivo_con_el_texto_como_pie(monkeypatch, session, tmp_
         whatsapp_client, "send_text",
         lambda *a: (_ for _ in ()).throw(AssertionError("con archivo NO se manda texto suelto")),
     )
+    _atendido_por(session, "777")
     session.add(_msg("777", Direction.IN, "hola", hours_ago=1))
     session.commit()
 
@@ -209,6 +259,7 @@ def test_composer_sin_texto_registra_el_tipo_de_archivo(monkeypatch, session, tm
     monkeypatch.setattr(db, "engine", session.get_bind())
     monkeypatch.setattr(media_store.settings, "media_dir", str(tmp_path))
     monkeypatch.setattr(whatsapp_client, "send_media", lambda *a: "wamid.MEDIA2")
+    _atendido_por(session, "778")
     session.add(_msg("778", Direction.IN, "hola", hours_ago=1))
     session.commit()
 
@@ -225,6 +276,7 @@ def test_composer_ignora_el_input_de_archivo_vacio(monkeypatch, session):
     "sin adjunto" y debe irse por el camino de texto."""
     monkeypatch.setattr(db, "engine", session.get_bind())
     monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.TXT")
+    _atendido_por(session, "779")
     session.add(_msg("779", Direction.IN, "hola", hours_ago=1))
     session.commit()
 
@@ -246,6 +298,7 @@ def test_composer_vacio_no_envia_nada(monkeypatch, session):
         whatsapp_client, "send_text",
         lambda *a: (_ for _ in ()).throw(AssertionError("no hay nada que enviar")),
     )
+    _atendido_por(session, "780")
     session.add(_msg("780", Direction.IN, "hola", hours_ago=1))
     session.commit()
 
@@ -294,6 +347,7 @@ def test_composer_manda_el_adjunto_por_http_real(monkeypatch, tmp_path):
             password_hash=bcrypt.hashpw(clave.encode(), bcrypt.gensalt(rounds=4)).decode(),
         ))
         s.add(_msg("900", Direction.IN, "hola", hours_ago=1))
+        s.add(Client(phone="900"))  # sin ficha ni un admin puede escribirle (AUTHZ-2)
         s.commit()
 
     cliente = TestClient(app, base_url="https://testserver")
@@ -324,6 +378,7 @@ def test_send_blocked_when_window_expired(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     called = []
     monkeypatch.setattr(whatsapp_client, "send_text", lambda *a: called.append(a))
+    _atendido_por(session, "444")
     session.add(_msg("444", Direction.IN, "hola", hours_ago=30))
     session.commit()
 
@@ -339,6 +394,7 @@ def test_send_blocked_when_window_expired(monkeypatch, session):
 
 def test_bot_reactivation(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
+    _atendido_por(session, "555")
     session.add(Conversation(phone="555", state="escalado"))
     session.commit()
 
@@ -352,6 +408,7 @@ def test_bot_reactivation(monkeypatch, session):
 def test_advisor_can_soft_delete_own_sent_message(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.SENT2")
+    _atendido_por(session, "666")
     session.add(_msg("666", Direction.IN, "hola", hours_ago=1))
     session.commit()
     inbox_send(_request("ana"), "666", body="mensaje a borrar")
@@ -367,6 +424,7 @@ def test_advisor_can_soft_delete_own_sent_message(monkeypatch, session):
 
 def test_advisor_cannot_delete_client_message(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
+    _atendido_por(session, "777")
     session.add(_msg("777", Direction.IN, "palabras del cliente", hours_ago=1))
     session.commit()
     client_msg = session.exec(select(Message).where(Message.phone == "777")).one()

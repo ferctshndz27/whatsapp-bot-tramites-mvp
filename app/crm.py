@@ -63,7 +63,7 @@ from app import eventos, ventana
 from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
 from app.authlog import sesion_vigente
-from app.clients import MAX_NOMBRE, _cliente_visible
+from app.clients import MAX_NOMBRE, _cliente_visible, folio_vigente
 from app.db import get_session
 from app.inbox import QUICK_REPLIES
 from app.models import (
@@ -309,17 +309,19 @@ def _agregar(session, clientes: list[Client]) -> dict[str, dict]:
         select(Ticket)
         .where(Ticket.phone.in_(telefonos))
         .where(Ticket.habilitado == True)  # noqa: E712
-        .order_by(Ticket.created_at.desc())  # type: ignore[union-attr]
+        # `id` desempata igual que en clients.folio_vigente_de: con created_at
+        # iguales, el orden físico de SQLite decidía la tarjeta.
+        .order_by(Ticket.created_at.desc(), Ticket.id.desc())  # type: ignore[union-attr]
     ).all()
+    # Qué folio representa a cada conversación lo decide `clients.folio_vigente`,
+    # la MISMA función que usa el guard de escritura de la bandeja: si la regla
+    # viviera aquí y allá, la tarjeta y el permiso volverían a divergir (AUTHZ-2).
+    por_telefono: dict[str, list[Ticket]] = {}
     for t in tickets:
-        a = agg.get(t.phone)
-        if a is None:
-            continue
-        actual = a["ticket"]
-        if actual is None or (
-            actual.status == TicketStatus.CERRADO and t.status != TicketStatus.CERRADO
-        ):
-            a["ticket"] = t
+        if t.phone in agg:
+            por_telefono.setdefault(t.phone, []).append(t)
+    for phone, folios in por_telefono.items():
+        agg[phone]["ticket"] = folio_vigente(folios)
 
     ids_folios = [a["ticket"].id for a in agg.values() if a["ticket"] is not None]
     if ids_folios:

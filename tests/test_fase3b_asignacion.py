@@ -24,6 +24,7 @@ from app.config import settings
 from app.conversation import handle_incoming
 from app.inbox import inbox_send
 from app.models import (
+    Client,
     Conversation,
     Direction,
     Message,
@@ -310,6 +311,10 @@ def _contesta(session, monkeypatch, usuario: str, phone: str = PHONE) -> None:
         Message(phone=phone, direction=Direction.IN, body="hola", created_at=utcnow())
     )
     session.add(Conversation(phone=phone, state="escalado"))
+    # La ficha que en producción crea el webhook con el primer mensaje: desde
+    # AUTHZ-2 (auditoría 2026-09) escribirle a un teléfono sin Client no pasa.
+    if session.get(Client, phone) is None:
+        session.add(Client(phone=phone))
     session.commit()
     from types import SimpleNamespace
 
