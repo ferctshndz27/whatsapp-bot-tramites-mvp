@@ -65,7 +65,10 @@ def banco(tmp_path):
         case "$1 $2" in
           "inspect -f") case "$3" in
               *StartedAt*) echo "${{FAKE_STARTED:-2026-09-21T10:00:00Z}}";;
-              *Status*)    echo "${{FAKE_STATUS:-running}}";; esac;;
+              *Status*)    if [ "$4" = tramites-ollama ]; then
+                             [ "${{FAKE_OLLAMA:-running}}" = ausente ] && exit 1
+                             echo "${{FAKE_OLLAMA:-running}}"
+                           else echo "${{FAKE_STATUS:-running}}"; fi;; esac;;
           "exec -i")    sed 's#/data/#{repo}/data/#g' | "{sys.executable}" - ;;
           "exec tramites-bot") shift 2
               if [ "$1 $2" = "pip freeze" ]; then
@@ -210,3 +213,22 @@ def test_antes_exige_que_data_sea_del_uid_del_contenedor_cuando_el_dockerfile_fi
     (banco["repo"] / "Dockerfile").write_text("FROM python\nRUN useradd --uid 10001 app\nUSER app\n")
     r = _correr(banco, "antes")
     assert r.returncode == 1 and "chown -R 10001:10001 data/" in r.stdout, r.stdout
+
+
+def test_ollama_presente_y_corriendo_es_ok(banco):
+    """El servicio ollama del compose es opcional; si está, se reporta como los demás."""
+    r = _correr(banco, "antes")
+    assert "contenedor tramites-ollama: running" in r.stdout
+    assert "Sin fallos" in r.stdout
+
+
+def test_ollama_ausente_es_aviso_no_fallo(banco):
+    """Sin COMPOSE_PROFILES=ollama el contenedor no existe: aviso, y el deploy
+    sigue siendo válido (0 fallos). Presente pero caído sí es fallo: restart
+    debería haberlo levantado."""
+    r = _correr(banco, "antes", entorno={"FAKE_OLLAMA": "ausente"})
+    assert "tramites-ollama: ausente" in r.stdout
+    assert "Sin fallos" in r.stdout
+    r = _correr(banco, "antes", entorno={"FAKE_OLLAMA": "exited"})
+    assert "contenedor tramites-ollama: exited" in r.stdout
+    assert "fallo(s)" in r.stdout

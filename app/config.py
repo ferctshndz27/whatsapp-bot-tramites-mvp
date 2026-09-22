@@ -131,6 +131,12 @@ class Settings:
         # las respuestas buenas.
         # Mismo criterio y misma cota que la perilla de /agente (1-60 s).
         self.ollama_timeout = max(1.0, min(60.0, float(os.environ.get("OLLAMA_TIMEOUT", "12"))))
+        # Generaciones a la vez que el bot le manda al modelo abierto (barandal
+        # 1-8). Era constante «porque la CPU de labs es una y conocida»; ya no:
+        # en el VPS (2 vCPU compartidos) va en 1, porque la segunda esperaría a
+        # la primera y se saldría del timeout. Quien no alcanza cupo cae de una
+        # vez a las capas baratas (nlu._CUPO_OLLAMA).
+        self.ollama_concurrencia = max(1, min(8, int(os.environ.get("OLLAMA_CONCURRENCIA", "4"))))
         # Umbral de la capa difusa (rapidfuzz) para aceptar un servicio con
         # faltas de ortografía. Barandal 70-95: bajarlo de más dispara falsos
         # positivos que cotizan el trámite equivocado a un cliente real.
