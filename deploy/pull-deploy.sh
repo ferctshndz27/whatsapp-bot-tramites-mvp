@@ -38,10 +38,9 @@ deploy() {
     return 1
   fi
 
-  # Stack de correo (Poste.io) — independiente del bot, no bloquea su
-  # deploy ni su health check si falla; solo se registra la advertencia.
-  (cd mailserver && docker compose up -d) \
-    || echo "$(date -Is) ADVERTENCIA: fallo al desplegar mailserver" >&2
+  # El stack de correo (mailserver/, Poste.io) se retiró del VPS el 2026-09-22:
+  # no se usaba y sus 417 MiB y siete puertos publicados estorbaban. Este
+  # script ya no lo levanta; mailserver/README.md dice cómo volver a activarlo.
 
   for _ in $(seq 1 12); do
     if curl -sf http://127.0.0.1:8000/health > /dev/null; then

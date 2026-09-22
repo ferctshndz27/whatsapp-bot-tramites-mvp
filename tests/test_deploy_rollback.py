@@ -64,7 +64,6 @@ def banco(tmp_path):
     _git(repo, "config", "user.name", "t")
     _git(repo, "checkout", "-q", sano)
     (repo / "data").mkdir(exist_ok=True)
-    (repo / "mailserver").mkdir(exist_ok=True)
 
     return {"repo": repo, "bin": binarios, "sano": sano, "malo": malo}
 
