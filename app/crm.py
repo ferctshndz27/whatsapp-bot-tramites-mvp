@@ -62,6 +62,7 @@ from sse_starlette.sse import EventSourceResponse
 from app import eventos, ventana
 from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
+from app.authlog import sesion_vigente
 from app.clients import MAX_NOMBRE, _cliente_visible
 from app.db import get_session
 from app.inbox import QUICK_REPLIES
@@ -883,8 +884,10 @@ async def crm_eventos(request: Request):
     dentro de él. Esto es un GET normal que pasa por SessionMiddleware, por la CSP
     (`default-src 'self'` ya cubre EventSource) y por las cabeceras de seguridad sin tocar nada.
     """
-    if not _current_user(request):
+    user = _current_user(request)
+    if not user:
         return _sin_sesion()
+    sid = request.session.get("sid")
     cola = eventos.suscribir()
 
     async def flujo():
@@ -898,6 +901,19 @@ async def crm_eventos(request: Request):
                 if aviso is eventos.CIERRE:
                     # El proceso se apaga: terminar el generador cierra la conexión y deja que
                     # uvicorn pare en el acto, en vez de esperar a un stream que no acaba nunca.
+                    return
+                # El guardia de sesión (authlog) corre una vez por request, y este request no
+                # termina nunca: a quien dieron de baja con la pestaña abierta le seguían
+                # llegando avisos (refutación de AUTH-1, 2026-09-21). Se re-verifica antes de
+                # cada aviso —un SELECT por índice único, y solo cuando hay algo que contar—
+                # y si ya no está vigente se cierra el stream; el EventSource del navegador
+                # reintenta solo y ese GET nuevo ya rebota en el guardia. Si la base no
+                # contesta, también se cierra: falla cerrado, igual que el guardia.
+                try:
+                    vigente = sesion_vigente(user, sid)
+                except Exception:  # noqa: BLE001 — cerrar el stream ES el manejo
+                    vigente = False
+                if not vigente:
                     return
                 yield {"event": "mensajes", "data": "1"}
         finally:

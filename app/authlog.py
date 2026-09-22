@@ -20,11 +20,12 @@ from fastapi import APIRouter, Request
 from app.templating import templates
 from sqlmodel import select
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import PlainTextResponse
 
 from app.auth import is_admin
 from app.config import settings
 from app.db import get_session
-from app.models import IpGeoCache, LoginEvent, WebSession, utcnow
+from app.models import IpGeoCache, LoginEvent, User, WebSession, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -268,19 +269,120 @@ def touch_session(request) -> None:
                 token=sid, username=user, ip=ip, geo=geo_hint(ip),
                 device=parse_device(ua), user_agent=ua,
             )
+        elif ws.ended_at is not None:
+            # Cerrada es cerrada. Antes aquí se ponía `ended_at = None` «porque
+            # si la cookie vive, la sesión está activa», y eso era justo el
+            # hueco: la cookie es un dato firmado que vive en el navegador, así
+            # que una copia hecha antes del logout revivía la sesión en el
+            # siguiente request (auditoría 2026-09, AUTH-1d). El guardia de
+            # abajo ya no deja llegar hasta aquí; esto cubre la carrera con un
+            # logout desde otra pestaña entre el guardia y este punto.
+            _last_touch.pop(sid, None)
+            return
         ws.last_seen_at = utcnow()
-        ws.ended_at = None  # si la cookie sigue viva, la sesión está activa
         session.add(ws)
         session.commit()
     _last_touch[sid] = time.monotonic()
 
 
+def sesion_vigente(user: str, sid: str | None) -> bool:
+    """¿Esta cookie todavía da acceso? La respuesta la tiene la base, no la cookie.
+
+    La cookie de Starlette es un dato FIRMADO que vive en el navegador: prueba
+    que alguna vez se inició sesión, no que el acceso siga en pie. Falso si el
+    usuario ya no existe, si está deshabilitado, o si su websession se cerró
+    (logout, reseteo de contraseña, baja).
+
+    Una websession AUSENTE no revoca: es una base restaurada de un respaldo, y
+    `touch_session` recrea la fila. Lo mismo una cookie sin `sid`, anterior a
+    este módulo. En los dos casos el usuario igual tiene que seguir habilitado.
+    Las websessions nunca se purgan, así que «ausente» no se puede provocar
+    esperando a que caduque la fila de una sesión cerrada."""
+    with get_session() as session:
+        if not session.exec(select(User.habilitado).where(User.username == user)).first():
+            return False  # None = ya no existe · False = deshabilitado
+        if sid:
+            cerrada = session.exec(
+                select(WebSession.ended_at).where(WebSession.token == sid)
+            ).first()
+            if cerrada is not None:
+                return False
+    return True
+
+
+def revocar_sesiones(session, username: str, excepto: str | None = None) -> int:
+    """Cierra las websessions abiertas de `username` EN LA SESIÓN DEL LLAMADOR y
+    devuelve cuántas. No hace commit.
+
+    Para cuando cambia lo que la sesión daba por cierto: le resetearon la
+    contraseña o lo dieron de baja. Va en la MISMA transacción que ese cambio a
+    propósito: o quedan las dos cosas o ninguna. La primera versión abría su
+    propia transacción después del commit del cambio, y un «database is locked»
+    pasajero en ese segundo paso dejaba la contraseña nueva guardada y la cookie
+    robada viva —justo el hueco que esto cierra— (refutación, 2026-09-21).
+
+    `excepto` conserva la sesión de quien se cambia la contraseña a sí mismo.
+    Fila por fila y por ORM a propósito: un `update()` de Core no dispara los
+    listeners del espejo MSSQL."""
+    abiertas = session.exec(
+        select(WebSession).where(WebSession.username == username, WebSession.ended_at.is_(None))
+    ).all()
+    cerradas = [ws for ws in abiertas if ws.token != excepto]
+    ahora = utcnow()
+    for ws in cerradas:
+        ws.ended_at = ahora
+        session.add(ws)
+        # Solo el acelerador de last_seen; si el commit no llega, lo peor es un
+        # touch de más, no un acceso de más.
+        _last_touch.pop(ws.token, None)
+    return len(cerradas)
+
+
+# Lo que se monta como estático no decide acceso y no renderiza nada con la
+# sesión: mismo criterio que `_nav_context` en main.py. Una navegación del panel
+# pide la página y luego su CSS y su JS; sin esto cada uno repetiría el guardia.
+_SIN_GUARDIA = ("/static/", "/landing/")
+
+
 async def session_activity_middleware(request: Request, call_next):
-    """Mantiene last_seen de la websession en cada request autenticado.
+    """Guardia de sesión en cada request, y después el last_seen de la websession.
+
+    EL GUARDIA VA AQUÍ Y NO EN `dashboard._current_user`, que es donde lo pedía
+    la auditoría 2026-09 (AUTH-1): unas veinte lecturas directas de
+    `request.session.get("user")` en dieciséis módulos no pasan por esa función
+    —entre ellas app/users.py, la ruta donde un admin dado de baja seguía
+    creando admins—. No hay guardia global ni default-deny en este panel; este
+    middleware es el único código que corre en TODO request con la sesión ya
+    cargada. Vaciar la sesión aquí hace que cada handler vea lo de siempre para
+    un anónimo y conteste su 303 a /login, sin tocar ninguno.
+
+    Si la base no contesta, el request se niega (503) en vez de pasar: falla
+    cerrado. No se vacía la sesión, para que un «database is locked» pasajero
+    no saque a todo el mundo del panel.
 
     Debe quedar POR DENTRO de SessionMiddleware (necesita request.session);
     en main.py se registra ANTES porque en Starlette el último middleware
     agregado es el más externo."""
+    # ponytail: las dos lecturas corren en el event loop, sin threadpool, por la
+    # misma medición que `_nav_context` documenta en main.py: el salto cuesta
+    # más que el SELECT. Son por índice único, solo con sesión iniciada —el
+    # webhook de WhatsApp nunca pasa por aquí— y en WAL un lector no espera a
+    # quien escribe. Reabrir junto con aquel, con una medición bajo carga.
+    if "session" in request.scope and not request.url.path.startswith(_SIN_GUARDIA):
+        user = request.session.get("user")
+        if user:
+            sid = request.session.get("sid")
+            try:
+                vigente = sesion_vigente(user, sid)
+            except Exception:
+                logger.error("No se pudo verificar la sesión de %s; se niega el request", user,
+                             exc_info=True)
+                return PlainTextResponse("Servicio no disponible, intenta de nuevo.",
+                                         status_code=503)
+            if not vigente:
+                logger.info("Sesión de %s revocada: usuario dado de baja o sesión cerrada", user)
+                _last_touch.pop(sid, None)
+                request.session.clear()
     response = await call_next(request)
     if "session" in request.scope and should_touch(request):
         try:
