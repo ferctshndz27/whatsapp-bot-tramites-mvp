@@ -40,9 +40,14 @@ def _nlu_sin_red(monkeypatch):
     pruebas que ejercitan esas capas las configuran explícitamente y ganan."""
     from app.config import settings
 
+    import app.nlu as nlu
+
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     monkeypatch.setattr(settings, "ollama_url", "")
     monkeypatch.setattr(settings, "ollama_token", "")
+    # Y ningún hilo de precalentado suelto: cada test estrena catálogo (motor
+    # nuevo), y sin esto cada primera lectura dispararía el aviso de cambio.
+    monkeypatch.setattr(nlu, "PRECALENTADO_ACTIVO", False)
 
 
 @pytest.fixture(autouse=True)

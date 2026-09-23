@@ -25,6 +25,7 @@ from app import (
     inbox,
     kb,
     my,
+    nlu,
     offices,
     replies,
     stripe_webhook,
@@ -288,6 +289,9 @@ def on_startup() -> None:
     activity.backfill_closed_tickets()
     archive.backfill()
     _aplicar_eventos_pendientes()
+    # Último y en segundo plano: el prefijo del clasificador se evalúa en frío
+    # tras cada arranque (>60 s con 4b en el VPS) y el primer cliente lo pagaba.
+    nlu.precalentar_en_segundo_plano("arranque")
 
 
 @app.get("/health")

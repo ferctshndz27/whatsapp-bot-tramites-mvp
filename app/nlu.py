@@ -268,7 +268,13 @@ def familia_ambigua(text: str, service: Service) -> bool:
     nombre truncado, no una descripción ambigua.
 
     Con el service_id descartado decide la cascada barata, que para este mismo
-    texto ya ofrece el mini-menú de las cinco altas — la respuesta honesta."""
+    texto ya ofrece el mini-menú de las cinco altas — la respuesta honesta.
+
+    La elección del modelo NO entra en la condición. Medido el 2026-09-23 con
+    qwen3:4b en el VPS: «necesito una constancia» (diez constancias lo
+    completan) y el modelo contestó 'Semanas cotizadas', que ni lleva la
+    palabra; el veto de entonces solo miraba si la elección estaba dentro de la
+    familia y una de fuera pasaba entera. La ambigüedad la define el mensaje."""
     pedidas = {
         w for w in _norm(text).split()
         if len(w) >= 3 and w not in _RELLENO_PEDIDO
@@ -279,7 +285,7 @@ def familia_ambigua(text: str, service: Service) -> bool:
         s for s, _terms in _service_terms()
         if pedidas < set(_norm(s.name).split())  # subconjunto ESTRICTO
     ]
-    return len(completan) >= 2 and any(s.id == service.id for s in completan)
+    return len(completan) >= 2
 
 
 def deduce(text: str) -> tuple[Service | None, Category | None]:
@@ -588,6 +594,106 @@ def _deduce_ollama(text: str) -> tuple[Service | None, Category | None]:
         format=_SCHEMA,
     )
     return _validated(json.loads(message["content"]))
+
+
+# ---- Precalentado del prefijo del catálogo (2026-09-23) ----
+# El system prompt del clasificador lleva el catálogo entero y es idéntico en
+# cada mensaje: Ollama reutiliza su caché de prefijo mientras nadie lo desaloje.
+# Pero se evalúa en frío tras cada arranque del bot y tras cada cambio del
+# catálogo: >60 s con 4b en las 2 vCPU del VPS (~10 tok/s de prompt eval), 22,8 s
+# medidos con 1.7b. Con OLLAMA_TIMEOUT=12 eso significa que el primer cliente
+# después de cada deploy se queda sin modelo. Aquí se paga antes de que llegue:
+# una llamada con el mismo prefijo y un token de salida, en un hilo demonio, al
+# arrancar y cuando `catalog` avisa que cambió. Va por `ollama_chat` como todo
+# lo demás (cupo y pausa incluidos); lo que NO lleva es presupuesto por
+# mensaje, porque no hay mensaje: su tope es el suyo.
+PRECALENTADO_TIMEOUT_SEGUNDOS = 180.0
+# Interruptor de módulo, no de .env: existe para que la suite no abra hilos ni
+# sockets (conftest lo apaga), no para que un admin lo toque.
+PRECALENTADO_ACTIVO = True
+_precalentado_lock = threading.Lock()
+_prefijo_calentado: str | None = None  # hash del system prompt ya evaluado
+_precalentando = False
+_precalentar_de_nuevo = False
+
+
+def _firma_prefijo() -> str:
+    import hashlib
+
+    return hashlib.sha256(_catalog_system_prompt().encode("utf-8")).hexdigest()
+
+
+def precalentar_prefijo() -> bool:
+    """Síncrono. Manda el prefijo del clasificador con un mensaje mínimo para
+    que el servidor lo evalúe y lo deje en caché. True si lo mandó y contestó;
+    False si no hay Ollama, si ese mismo prefijo ya se calentó, o si falló
+    (queda en el log: nunca lanza, nadie espera por esto)."""
+    global _prefijo_calentado
+    if not settings.ollama_url:
+        return False
+    firma = _firma_prefijo()
+    if firma == _prefijo_calentado:
+        return False
+    try:
+        # Sin presupuesto por mensaje: el hilo nace sin deadline, y si alguien
+        # lo llamara dentro de un request, tampoco debe heredar el suyo.
+        _DEADLINE.set(None)
+        ollama_chat(
+            [
+                {"role": "system", "content": _catalog_system_prompt()},
+                {"role": "user", "content": "hola"},
+            ],
+            num_predict=1,
+            timeout=PRECALENTADO_TIMEOUT_SEGUNDOS,
+        )
+    except Exception as exc:
+        logger.warning("Precalentado del prefijo del catálogo falló: %s", exc)
+        return False
+    _prefijo_calentado = firma
+    logger.info("Prefijo del catálogo precalentado (%s)", settings.ollama_model)
+    return True
+
+
+def _precalentar_hasta_quedar_al_dia() -> None:
+    global _precalentando, _precalentar_de_nuevo
+    while True:
+        try:
+            precalentar_prefijo()
+        except Exception:  # pragma: no cover - precalentar_prefijo ya no lanza
+            logger.exception("Precalentado del prefijo reventó")
+        with _precalentado_lock:
+            if not _precalentar_de_nuevo:
+                _precalentando = False
+                return
+            _precalentar_de_nuevo = False
+
+
+def precalentar_en_segundo_plano(motivo: str) -> bool:
+    """Lanza el precalentado en un hilo demonio. A lo más uno en vuelo: si el
+    catálogo vuelve a cambiar mientras corre, se anota y repite UNA vez al
+    terminar (dos ediciones seguidas de la parrilla no son dos hilos peleando
+    por las 2 vCPU). True si arrancó un hilo o anotó la repetición."""
+    global _precalentando, _precalentar_de_nuevo
+    if not PRECALENTADO_ACTIVO or not settings.ollama_url:
+        return False
+    with _precalentado_lock:
+        if _precalentando:
+            _precalentar_de_nuevo = True
+            return True
+        _precalentando = True
+    logger.info("Precalentando el prefijo del catálogo (%s)", motivo)
+    threading.Thread(
+        target=_precalentar_hasta_quedar_al_dia,
+        name=f"precalentado-{motivo}",
+        daemon=True,
+    ).start()
+    return True
+
+
+# El catálogo avisa cuando su contenido cambió (parrilla, Estudio, sinónimo
+# aprobado): el prefijo viejo ya no sirve. Lambda a propósito: resuelve el
+# nombre en este módulo al llamar, así un monkeypatch sí lo alcanza.
+catalog.al_cambiar(lambda: precalentar_en_segundo_plano("catalogo"))
 
 
 # FUZZY_THRESHOLD ahora es configurable (settings.fuzzy_threshold, .env).

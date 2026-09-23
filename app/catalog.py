@@ -20,6 +20,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -216,6 +217,8 @@ class Catalog:
         self._categories: list[Category] = []
         self._service_by_id: dict[str, Service] = {}
         self._category_by_id: dict[str, Category] = {}
+        self._suscritos: list[Callable[[], None]] = []
+        self._contenido_anterior: list[Category] | None = None
 
     # ---- Carga ----
 
@@ -268,6 +271,26 @@ class Catalog:
 
         self._service_by_id = {s.id: s for c in self._categories for s in c.services}
         self._category_by_id = {c.id: c for c in self._categories}
+        self._avisar_si_cambio()
+
+    # ---- Aviso de cambio (2026-09-23) ----
+    # Diez métodos mutan el catálogo desde tres módulos; en vez de un gancho en
+    # cada uno, la recarga compara lo que trajo con lo que tenía y avisa a los
+    # suscritos (hoy: nlu, que precalienta el prefijo del clasificador). La
+    # primera carga no avisa: el arranque ya se encarga de esa.
+    def al_cambiar(self, fn: Callable[[], None]) -> None:
+        self._suscritos.append(fn)
+
+    def _avisar_si_cambio(self) -> None:
+        anterior = self._contenido_anterior
+        self._contenido_anterior = list(self._categories)
+        if anterior is None or anterior == self._categories:
+            return
+        for fn in self._suscritos:
+            try:
+                fn()
+            except Exception:  # el aviso nunca rompe una lectura del catálogo
+                logger.exception("Un suscrito al cambio del catálogo falló")
 
     def _maybe_reload(self) -> None:  # nombre heredado de la época del JSON
         self._refresh()
