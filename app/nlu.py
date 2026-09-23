@@ -544,6 +544,14 @@ def ollama_chat(
     # agéntico): registrar la falla aquí la hace visible para todas sin
     # repetir el except en cada una. Se re-lanza sin tocar: cada capa sigue
     # decidiendo por su cuenta cómo degradar.
+    # Desalojo del prefijo (2026-09-23): con OLLAMA_NUM_PARALLEL=1 hay UNA ranura
+    # de caché en el servidor. Cualquier llamada que no sea la del clasificador
+    # —otro system (minero, códigos, RAG, agente) u otro num_ctx, que además
+    # levanta otro runner— la ocupa, y el siguiente cliente paga los ~1 500
+    # tokens del catálogo desde cero (13:19 UTC del 2026-09-23: 12 s, 500,
+    # fuzzy contestó). Se decide aquí porque este es el único embudo.
+    del_clasificador = _es_llamada_del_clasificador(messages, num_ctx)
+    llego_al_servidor = False
     try:
         if _en_pausa():
             raise OllamaEnPausa("Ollama en pausa tras timeouts seguidos")
@@ -562,6 +570,7 @@ def ollama_chat(
         if not _CUPO_OLLAMA.acquire(timeout=OLLAMA_ESPERA_CUPO_SEGUNDOS):
             raise OllamaSinCupo("sin cupo para otra generación")
         try:
+            llego_al_servidor = True
             response = httpx.post(
                 f"{settings.ollama_url}/api/chat",
                 headers=headers,
@@ -572,6 +581,8 @@ def ollama_chat(
             _CUPO_OLLAMA.release()
         response.raise_for_status()
         _registrar_resultado(None)
+        if not del_clasificador:
+            prefijo_desalojado("otro_prompt")
         return response.json()["message"]
     except Exception as exc:
         _FALLO_OLLAMA.set(_clasificar_fallo(exc))
@@ -580,6 +591,18 @@ def ollama_chat(
         # UNA falle para que reintentar con las otras solo alargue la espera.
         _BACKEND_CAIDO.set(True)
         _registrar_resultado(exc)
+        # Un ConnectError no llegó a nadie: la ranura sigue como estaba.
+        if (llego_al_servidor and not _EN_PRECALENTADO.get()
+                and not isinstance(exc, httpx.ConnectError)):
+            if not del_clasificador:
+                # Aunque fallara, el servidor pudo evaluar parte del otro prompt
+                # en la ranura: se da por desalojado.
+                prefijo_desalojado("otro_prompt")
+            elif isinstance(exc, httpx.TimeoutException):
+                # El clasificador cortó por timeout: prefijo frío por una causa
+                # que no vimos. Sin esto cada cliente paga 12 s, aborta, y el
+                # siguiente vuelve a empezar: nunca termina de calentarse solo.
+                prefijo_desalojado("timeout")
         raise
 
 
@@ -607,20 +630,43 @@ def _deduce_ollama(text: str) -> tuple[Service | None, Category | None]:
 # arrancar y cuando `catalog` avisa que cambió. Va por `ollama_chat` como todo
 # lo demás (cupo y pausa incluidos); lo que NO lleva es presupuesto por
 # mensaje, porque no hay mensaje: su tope es el suyo.
-PRECALENTADO_TIMEOUT_SEGUNDOS = 180.0
+# 1 491 tokens de prefijo a ~10 tok/s de prompt eval son ~150 s (medido el
+# 2026-09-23: un recalentado parcial tardó 51 s; el minero, con 8k de
+# contexto, 3 min). Nadie espera por esto, así que el tope es holgado.
+PRECALENTADO_TIMEOUT_SEGUNDOS = 300.0
 # Interruptor de módulo, no de .env: existe para que la suite no abra hilos ni
 # sockets (conftest lo apaga), no para que un admin lo toque.
 PRECALENTADO_ACTIVO = True
 _precalentado_lock = threading.Lock()
-_prefijo_calentado: str | None = None  # hash del system prompt ya evaluado
+# Lo que ya está caliente: (hash del system prompt, generación de la caché).
+# La generación sube con cada desalojo; así un desalojo que llega mientras un
+# precalentado está en vuelo no se pierde (el hilo guardaría como caliente un
+# prefijo que el minero acaba de tirar, y la repetición se saltaría por hash).
+_prefijo_calentado: tuple[str, int] | None = None
+_generacion_cache = 0
 _precalentando = False
 _precalentar_de_nuevo = False
+_hilo_precalentado: threading.Thread | None = None
+# La llamada del propio precalentado no cuenta como desalojo: si corta por
+# timeout se anota y no se reprograma en bucle contra un servidor lento.
+_EN_PRECALENTADO: ContextVar[bool] = ContextVar("en_precalentado", default=False)
 
 
 def _firma_prefijo() -> str:
     import hashlib
 
     return hashlib.sha256(_catalog_system_prompt().encode("utf-8")).hexdigest()
+
+
+def _es_llamada_del_clasificador(messages: list[dict], num_ctx: int | None) -> bool:
+    """La única llamada que deja la ranura como el clasificador la necesita:
+    su mismo system, byte a byte, y sin num_ctx (otro tamaño es otro runner)."""
+    return (
+        num_ctx is None
+        and bool(messages)
+        and messages[0].get("role") == "system"
+        and messages[0].get("content") == _catalog_system_prompt()
+    )
 
 
 def precalentar_prefijo() -> bool:
@@ -631,9 +677,15 @@ def precalentar_prefijo() -> bool:
     global _prefijo_calentado
     if not settings.ollama_url:
         return False
+    # La firma se calcula FUERA del candado: leer el catálogo puede detectar
+    # un cambio y avisar, y el aviso pide este mismo candado (interbloqueo
+    # visto en la suite el 2026-09-23).
     firma = _firma_prefijo()
-    if firma == _prefijo_calentado:
-        return False
+    with _precalentado_lock:
+        clave = (firma, _generacion_cache)
+        if clave == _prefijo_calentado:
+            return False
+    token = _EN_PRECALENTADO.set(True)
     try:
         # Sin presupuesto por mensaje: el hilo nace sin deadline, y si alguien
         # lo llamara dentro de un request, tampoco debe heredar el suyo.
@@ -649,9 +701,33 @@ def precalentar_prefijo() -> bool:
     except Exception as exc:
         logger.warning("Precalentado del prefijo del catálogo falló: %s", exc)
         return False
-    _prefijo_calentado = firma
+    finally:
+        _EN_PRECALENTADO.reset(token)
+    with _precalentado_lock:
+        _prefijo_calentado = clave
     logger.info("Prefijo del catálogo precalentado (%s)", settings.ollama_model)
     return True
+
+
+def prefijo_desalojado(motivo: str) -> bool:
+    """La caché del servidor ya no tiene el prefijo (otro prompt pasó por la
+    única ranura, o el clasificador cortó por timeout): sube la generación,
+    para que el mismo catálogo cuente como frío, y recalienta en segundo plano."""
+    global _generacion_cache
+    with _precalentado_lock:
+        _generacion_cache += 1
+    return precalentar_en_segundo_plano(motivo)
+
+
+def esperar_precalentado(timeout: float) -> bool:
+    """Bloquea hasta que el hilo en vuelo termine (True) o venza el plazo
+    (False). Para procesos que salen —el job nocturno—: un hilo demonio muere
+    con el proceso y dejaría el prefijo frío hasta el primer cliente."""
+    hilo = _hilo_precalentado
+    if hilo is None or not hilo.is_alive():
+        return True
+    hilo.join(timeout)
+    return not hilo.is_alive()
 
 
 def _precalentar_hasta_quedar_al_dia() -> None:
@@ -673,7 +749,7 @@ def precalentar_en_segundo_plano(motivo: str) -> bool:
     catálogo vuelve a cambiar mientras corre, se anota y repite UNA vez al
     terminar (dos ediciones seguidas de la parrilla no son dos hilos peleando
     por las 2 vCPU). True si arrancó un hilo o anotó la repetición."""
-    global _precalentando, _precalentar_de_nuevo
+    global _precalentando, _precalentar_de_nuevo, _hilo_precalentado
     if not PRECALENTADO_ACTIVO or not settings.ollama_url:
         return False
     with _precalentado_lock:
@@ -682,11 +758,12 @@ def precalentar_en_segundo_plano(motivo: str) -> bool:
             return True
         _precalentando = True
     logger.info("Precalentando el prefijo del catálogo (%s)", motivo)
-    threading.Thread(
+    _hilo_precalentado = threading.Thread(
         target=_precalentar_hasta_quedar_al_dia,
         name=f"precalentado-{motivo}",
         daemon=True,
-    ).start()
+    )
+    _hilo_precalentado.start()
     return True
 
 

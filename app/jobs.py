@@ -151,14 +151,28 @@ def errores(resultado: dict, _ruta: str = "") -> list[str]:
     return sorted(set(fallos))
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+def main() -> int:
+    """El proceso del cron: corre la noche, espera al recalentado del prefijo
+    y devuelve el código de salida."""
+    from app import nlu
+
     resultado = nightly()
     print(resultado)
+    # La minería pasó por la única ranura de Ollama con OTRO prompt: el embudo
+    # ya pidió recalentar el prefijo del clasificador en un hilo demonio, y un
+    # demonio muere con este proceso. Se espera aquí, que nadie tiene prisa a
+    # las 3:30, y no a las 13:19 con un cliente al teléfono (2026-09-23).
+    if not nlu.esperar_precalentado(nlu.PRECALENTADO_TIMEOUT_SEGUNDOS + 30):
+        logger.warning("El recalentado del prefijo no terminó antes de salir")
     # El trabajo que sí se hizo ya quedó guardado; esto solo decide qué le
     # dice el proceso al cron. Con exit 0 pase lo que pase, un barrido de
     # cobranza caído —dinero— se veía igual que una noche sana.
     fallos = errores(resultado)
     if fallos:
         logger.error("Job nocturno con %d fallo(s): %s", len(fallos), ", ".join(fallos))
-    sys.exit(1 if fallos else 0)
+    return 1 if fallos else 0
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    sys.exit(main())
