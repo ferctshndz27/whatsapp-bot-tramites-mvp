@@ -123,6 +123,26 @@ def test_un_empate_por_sinonimo_si_lo_decide_el_modelo():
     )
 
 
+def test_un_nombre_a_medias_no_lo_resuelve_el_modelo_ni_eligiendo_fuera_de_la_familia(monkeypatch):
+    """Medido el 2026-09-23 con qwen3:4b en el VPS: «necesito una constancia»
+    —diez constancias lo completan— y el modelo eligió 'Semanas cotizadas',
+    que ni siquiera lleva la palabra. El veto solo miraba si la elección
+    estaba DENTRO de la familia; una elección de fuera pasaba entera y el
+    cliente confirmaba un trámite que no pidió, con un estimado que no era.
+    La ambigüedad la define el mensaje, no lo que el modelo contestó."""
+    semanas = _servicio("Semanas cotizadas")
+    assert nlu.familia_ambigua("necesito una constancia", semanas), (
+        "el nombre a medias no se vetó porque el modelo eligió fuera de la familia"
+    )
+
+    _ollama_responde(monkeypatch, {"service_id": semanas.id, "category_id": None})
+    service, category, capa, _ = nlu.deduce_explained("necesito una constancia")
+
+    assert service is None, "el modelo cotizó semanas cotizadas por una constancia sin apellido"
+    assert capa != "ollama"
+    assert len(nlu.suggestions("necesito una constancia")) >= 2
+
+
 def test_alta_medica_pregunta_cual_en_vez_de_anotar_una(session, monkeypatch):
     """El flujo real. El bot llegó a decir "Voy anotando 'Alta médica básica'"
     y a ofrecer las otras cuatro como si fueran un SEGUNDO trámite; el cliente
