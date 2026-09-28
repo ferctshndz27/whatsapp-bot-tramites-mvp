@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Cliente {{ client.name or client.phone }}{% endblock %}
 {% block content %}
+{% from "partials/alias.html" import alias_tag %}
 {# `is_admin` abre una sesión y consulta SQLite en cada llamada (app/auth.py), y
    abajo se usa DENTRO del bucle de notas: una consulta por nota. Se resuelve una
    sola vez aquí — el rol no cambia a media página. #}
@@ -13,6 +14,7 @@
   <span class="u-c-text-muted u-fs-0_9rem u-fw-400">· {{ client.phone }}</span>
   {% if not client.habilitado %}<span class="badge caducada">bloqueado</span>{% endif %}
 </h1>
+{{ alias_tag(client.alias) }}
 
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
 {% if aviso %}<div class="banner-warn" role="status">{{ aviso }}</div>{% endif %}
@@ -30,7 +32,15 @@
   <div class="card">
     <h2>Ficha</h2>
     <form method="post" action="/clients/{{ client.phone }}/update">
-      <label for="ficha-email">Correo</label>
+      {# El nombre se reescribe también en sus folios (clients._propagar_nombre); vacío no lo borra. #}
+      <label for="ficha-nombre">Nombre</label>
+      <input id="ficha-nombre" name="name" value="{{ client.name or '' }}" maxlength="200" required
+             autocomplete="off">
+      <label class="u-mt-0_5rem u-d-block" for="ficha-alias">Alias</label>
+      <input id="ficha-alias" name="alias" value="{{ client.alias or '' }}" maxlength="40"
+             autocomplete="off" placeholder="Ej. contador Pérez" aria-describedby="ficha-alias-ayuda">
+      <p class="sub u-mt-0" id="ficha-alias-ayuda">Solo lo ve el equipo, nunca el cliente. Déjalo vacío para quitarlo.</p>
+      <label class="u-mt-0_5rem u-d-block" for="ficha-email">Correo</label>
       <input id="ficha-email" name="email" type="email" value="{{ client.email or '' }}" maxlength="200"
              placeholder="cliente@ejemplo.com">
       <label class="u-mt-0_5rem u-d-block" for="ficha-origen">Origen</label>

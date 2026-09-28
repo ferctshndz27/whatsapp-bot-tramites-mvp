@@ -1,0 +1,7 @@
+{#- Etiqueta del alias interno del cliente (Client.alias), debajo de su nombre.
+    Una sola definición para todas las vistas: `{% from "partials/alias.html" import alias_tag %}`
+    y `{{ alias_tag(cliente.alias) }}`. Sin alias no pinta nada. El texto va con el
+    autoescape de Jinja: lo escribe un colaborador, pero nunca se marca | safe. -#}
+{% macro alias_tag(alias) -%}
+{% if alias %}<span class="alias-tag"><span aria-hidden="true">🏷️ </span><span class="sr-only">Alias: </span>{{ alias }}</span>{% endif %}
+{%- endmacro %}

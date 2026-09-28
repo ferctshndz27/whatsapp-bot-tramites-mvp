@@ -127,6 +127,7 @@ def build_conversation_items(session, vista) -> list[dict]:
             items[m.phone] = {
                 "phone": m.phone,
                 "name": (clients.get(m.phone).name if clients.get(m.phone) else None),
+                "alias": (clients.get(m.phone).alias if clients.get(m.phone) else None),
                 "last_body": m.body,
                 "last_direction": m.direction.value,
                 "last_at": m.created_at,

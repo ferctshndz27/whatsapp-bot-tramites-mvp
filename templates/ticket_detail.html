@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Solicitud #{{ ticket.id }}{% endblock %}
 {% block content %}
+{% from "partials/alias.html" import alias_tag %}
 {# `volver` trae la lista de origen con filtros y página (validado en la
    ruta); el texto del botón dice a DÓNDE regresa. #}
 {% set volver_texto = '← Volver a cobros' if volver.startswith('/cobros') else ('← Volver al chat' if volver.startswith('/inbox') or volver.startswith('/crm') else '← Volver a solicitudes') %}
@@ -30,6 +31,7 @@
     </form>
     {% endif %}
   </h2>
+  {{ alias_tag(alias_cliente) }}
   <p>
     <strong>Teléfono:</strong> {{ ticket.phone }}<br>
     <strong>Categoría:</strong> {{ ticket.category }}<br>

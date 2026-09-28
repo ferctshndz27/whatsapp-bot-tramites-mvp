@@ -35,7 +35,7 @@ ARCHIVE_DDL = [
         email TEXT, origen TEXT, idioma TEXT DEFAULT 'es-MX',
         opt_in_at TIMESTAMP, opt_in_source TEXT, opt_out_at TIMESTAMP,
         atributos_json TEXT, last_activity_at TIMESTAMP,
-        notas_internas TEXT, office_id INTEGER DEFAULT 1,
+        notas_internas TEXT, alias TEXT, office_id INTEGER DEFAULT 1,
         etapa_crm_id INTEGER, etapa_crm_at TIMESTAMP, etapa_crm_por TEXT)""",
     """CREATE TABLE wa_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER UNIQUE,

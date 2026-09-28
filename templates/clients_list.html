@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Clientes{% endblock %}
 {% block content %}
+{% from "partials/alias.html" import alias_tag %}
 {# URL actual (búsqueda q incluida) para que el regreso desde la ficha la
    restaure. #}
 {% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
@@ -17,7 +18,7 @@
 
 <div class="card">
   <h2>Registrar cliente</h2>
-  <p class="sub">Si el número ya existe, se actualiza el nombre — no se reinicia su conversación ni se pierde su historial.</p>
+  <p class="sub">Si el número ya existe, se actualiza el nombre — no se reinicia su conversación ni se pierde su historial. El nombre y el alias también se editan en la ficha del cliente.</p>
   <form method="post" action="/clients">
     {# La ayuda del teléfono va dentro del label: así ambas columnas miden lo
        mismo y los campos quedan alineados (antes el <small> colgaba del input
@@ -51,7 +52,7 @@
     <div class="u-d-flex u-gap-0_5rem u-wrap-wrap u-items-center">
       <label class="u-m-0" for="q">Buscar</label>
       <input type="text" id="q" name="q" value="{{ q }}"
-             placeholder="Nombre o teléfono" autocomplete="off">
+             placeholder="Nombre, alias o teléfono" autocomplete="off">
       <label class="u-m-0 u-d-flex u-gap-0_4rem u-items-center" for="solo-mios">
         <input type="checkbox" id="solo-mios" name="mios" value="1"{% if mios %} checked{% endif %}>
         Mis clientes
@@ -75,7 +76,7 @@
               <span class="avatar avatar-c{{ loop.index0 % 5 }}" aria-hidden="true">
                 {{ (c.name or c.phone)[:2] | upper }}
               </span>
-              <span><strong>{{ c.name or 'Sin nombre' }}</strong></span>
+              <span><strong>{{ c.name or 'Sin nombre' }}</strong>{{ alias_tag(c.alias) }}</span>
             </a>
           </td>
           <td>{{ c.phone }}</td>

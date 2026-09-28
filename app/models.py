@@ -96,6 +96,11 @@ class Client(SQLModel, table=True):
     last_activity_at: datetime | None = None
     # Resumen fijado del cliente; el historial granular vive en ClientNote.
     notas_internas: str | None = None
+    # Etiqueta interna para que el equipo reconozca al cliente de un vistazo
+    # («la señora de las actas», «contador Pérez»). Solo se pinta en el panel,
+    # debajo del nombre; el bot nunca la lee ni se la manda al cliente. Uno por
+    # cliente, no por colaborador: es un identificador compartido. NULL = sin alias.
+    alias: str | None = None
     # Embudo comercial del CRM (/crm, app/crm.py). NULL = «en la primera etapa»
     # (la de menor `ord`): así el histórico entra al tablero sin un UPDATE
     # masivo, que además el espejo MSSQL no vería. Quién y cuándo la movió, para

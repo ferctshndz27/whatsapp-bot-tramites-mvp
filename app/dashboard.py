@@ -19,7 +19,7 @@ from app.auth import alcance, is_admin
 from app.config import settings
 from app.credenciales import credencial
 from app import asignacion
-from app.clients import folio_de
+from app.clients import alias_por_telefono, folio_de
 from app.db import get_session
 from app.dinero import formato_monto, parse_monto
 from app.models import (
@@ -653,6 +653,9 @@ def ticket_list(
     # Ventana de 5 números centrada en la actual, como la referencia (1…5).
     inicio_ventana = max(1, min(page - 2, pages - 4))
     page_numbers = list(range(inicio_ventana, min(pages, inicio_ventana + 4) + 1))
+    # Solo los de la página: el alias vive en Client, no en el folio.
+    with get_session() as session:
+        alias = alias_por_telefono(session, (t.phone for t in tickets))
 
     return templates.TemplateResponse(
         request, "tickets_list.html",
@@ -660,6 +663,7 @@ def ticket_list(
             "request": request,
             "user": user,
             "tickets": tickets,
+            "alias": alias,
             "stats": stats,
             "statuses": [s.value for s in TicketStatus],
             "current_filter": status,
@@ -762,6 +766,7 @@ def ticket_detail(
             )
             .order_by(Label.nombre)
         ).all()
+        alias_cliente = alias_por_telefono(session, [ticket.phone]).get(ticket.phone)
         # Para el datalist del formulario «+ etiqueta».
         todas_las_etiquetas = [
             l.nombre
@@ -780,6 +785,7 @@ def ticket_detail(
             "request": request,
             "user": user,
             "ticket": ticket,
+            "alias_cliente": alias_cliente,
             "statuses": [s.value for s in TicketStatus],
             # Dueño de reparto que nadie ha tocado todavía: la vista lo dice de
             # otra forma, porque «la está atendiendo X» sería falso.

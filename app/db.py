@@ -126,6 +126,8 @@ _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH = {
     "atributos_json": "VARCHAR",
     "last_activity_at": "DATETIME",
     "notas_internas": "VARCHAR",
+    # Alias interno del cliente. Nullable: un cliente viejo no tenía alias.
+    "alias": "VARCHAR",
     # Embudo del CRM (/crm). Nullable sin default a propósito: NULL es «en la
     # primera etapa» y evita un UPDATE masivo que el espejo no vería.
     "etapa_crm_id": "INTEGER",
