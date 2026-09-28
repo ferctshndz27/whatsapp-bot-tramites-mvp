@@ -269,7 +269,7 @@
   {% if asignacion_provisional %}
   <p class="empty u-text-left u-p-0_5rem-0 u-m-0">
     Repartida a <strong>{{ ticket.assigned_to }}</strong>, que todavía no la abre.
-    Si le contestas al cliente desde la Bandeja, la solicitud pasa a ti.
+    {% if contestar_la_toma %}Si le contestas al cliente desde el chat, la solicitud pasa a ti.{% endif %}
   </p>
   {% else %}
   <p class="empty u-text-left u-p-0_5rem-0 u-m-0">

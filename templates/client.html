@@ -14,6 +14,9 @@
   {% if not client.habilitado %}<span class="badge caducada">bloqueado</span>{% endif %}
 </h1>
 
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+{% if aviso %}<div class="banner-warn" role="status">{{ aviso }}</div>{% endif %}
+
 <div class="card">
   <p class="u-m-0 u-d-flex u-gap-0_75rem u-wrap-wrap">
     <a href="/crm?chat={{ client.phone }}" class="btn-sm u-deco-none u-c-white u-d-inline-flex u-items-center u-bg-green-2 u-r-999px u-p-0_35rem-0_9rem">💬 Abrir chat</a>
@@ -63,6 +66,51 @@
       <button type="submit" name="accion" value="opt_out" class="btn-sm"
               data-confirm="¿Registrar opt-out? Dejará de recibir mensajes iniciados por el negocio.">Opt-out</button>
     </form>
+  </div>
+
+  <div class="card">
+    <h2>Cartera</h2>
+    <p class="sub">Quién considera suyo a este cliente. Le llegan primero sus folios de los
+      trámites que atiende y ve la conversación aunque no tenga folio abierto. Escribirle sigue
+      siendo de quien tiene el folio.</p>
+    {% if titulares %}
+    {% for t in titulares %}
+    <p class="u-bb-1px-solid-border u-pb-0_6rem">
+      <strong>{{ t }}</strong>{% if t == user %} <span class="u-c-text-muted">(tú)</span>{% endif %}
+      {% if es_admin and t != user %}
+      <span class="u-c-text-muted u-fs-0_78rem">
+        · <form class="u-d-inline" method="post" action="/clients/{{ client.phone }}/cartera/quitar"
+            data-confirm="¿Quitar a {{ t }} de la cartera de este cliente?">
+            <input type="hidden" name="username" value="{{ t }}">
+            <button class="u-bg-none u-b-none u-p-0 u-minh-auto u-c-inherit u-deco-underline u-cursor-pointer u-fs-inherit" type="submit">quitar</button>
+          </form>
+      </span>
+      {% endif %}
+    </p>
+    {% endfor %}
+    {% else %}
+    <p class="empty">Nadie tiene a este cliente en su cartera.</p>
+    {% endif %}
+    <div class="u-d-flex u-gap-0_4rem u-wrap-wrap u-items-center">
+      {% if user in titulares %}
+      <form method="post" action="/clients/{{ client.phone }}/cartera/quitar">
+        <button type="submit" class="btn-sm">Quitar de mi cartera</button>
+      </form>
+      {% else %}
+      <form method="post" action="/clients/{{ client.phone }}/cartera">
+        <button type="submit" class="btn-sm">Agregar a mi cartera</button>
+      </form>
+      {% endif %}
+      {% if es_admin and candidatos %}
+      <form class="u-d-flex u-gap-0_4rem u-wrap-wrap u-items-center" method="post" action="/clients/{{ client.phone }}/cartera">
+        <label for="cartera-colaborador" class="sr-only">Colaborador a agregar</label>
+        <select id="cartera-colaborador" name="username">
+          {% for c in candidatos %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="btn-sm">Agregar a la cartera</button>
+      </form>
+      {% endif %}
+    </div>
   </div>
 
   <div class="card">

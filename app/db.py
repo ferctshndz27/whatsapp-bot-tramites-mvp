@@ -224,6 +224,15 @@ def init_db() -> None:
                 "ON catalogasesor(service_id, username) WHERE habilitado = 1"
             )
         )
+        # La cartera, mismo patrón: una fila VIVA por (cliente, colaborador). Sin
+        # el índice, dos clics seguidos en «Agregar a mi cartera» dejarían a
+        # alguien contando doble como titular del cliente.
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_clienteasesor_vivo "
+                "ON clienteasesor(phone, username) WHERE habilitado = 1"
+            )
+        )
         # Llaves por oficina: una fila VIVA por (oficina, proveedor, clave).
         # Parcial sobre habilitado, como ux_ticketlabel_viva: dar de baja es
         # apagar la fila, y volver a dar de alta la misma llave no choca con la

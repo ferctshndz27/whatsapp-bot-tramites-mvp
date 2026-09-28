@@ -7,17 +7,17 @@ y acceso directo al chat. La memoria deja de vivir en la cabeza de cada quien.
 
 import logging
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import RedirectResponse
 from app.templating import templates
 from sqlmodel import or_, select
 
-from app import asignacion
+from app import asignacion, cartera
 from app.audit import log_admin
 from app.auth import alcance, is_admin
 from app.db import get_session
 from app.codigos import EMAIL_RE
-from app.models import Client, ClientNote, Ticket, TicketStatus, utcnow
+from app.models import Client, ClientNote, Ticket, TicketStatus, User, utcnow
 
 # El select de la ficha en client.html ofrece exactamente estos valores.
 _ORIGENES = {"meta", "twilio", "referido", "manual"}
@@ -53,15 +53,26 @@ def _cliente_visible(session, phone: str, user: str) -> Client | None:
     return client
 
 
-def folio_vigente(folios) -> Ticket | None:
-    """El folio que representa a una conversación: el ABIERTO más reciente; si
-    no hay abierto, el más reciente. `folios` viene ordenado del más nuevo al
-    más viejo (`created_at desc`).
+def folio_vigente(folios, user: str | None = None) -> Ticket | None:
+    """El folio con el que se mira y se actúa sobre una conversación. `folios`
+    viene ordenado del más nuevo al más viejo (`created_at desc`).
+
+    La regla de siempre: el ABIERTO más reciente; si no hay abierto, el más
+    reciente. Con `user` (un colaborador que mira), antes que eso SU folio
+    abierto más reciente: una conversación puede tener folios de dueños
+    distintos —la asignación reparte por servicio—, y cada quien ve y escribe
+    sobre el suyo (decisión del operador, 2026-09-25). Su folio CERRADO no
+    cuenta: no le devuelve una conversación que ahora atiende otro.
 
     Una sola definición a propósito: es la que pinta la tarjeta del CRM
-    (`crm._agregar`) y la que decide quién puede escribirle al cliente desde la
-    bandeja (`conversacion_escribible`). Con dos copias, la lectura y la
-    escritura volverían a divergir, que es justo el hallazgo AUTHZ-2."""
+    (`crm._agregar`), la que decide quién puede escribirle al cliente
+    (`conversacion_escribible`) y la que toma quien contesta (`inbox._pause_bot`).
+    Con dos copias, la lectura y la escritura volverían a divergir, que es justo
+    el hallazgo AUTHZ-2."""
+    if user is not None:
+        for t in folios:
+            if t.assigned_to == user and t.status != TicketStatus.CERRADO:
+                return t
     vigente = None
     for t in folios:
         if vigente is None or (
@@ -71,8 +82,8 @@ def folio_vigente(folios) -> Ticket | None:
     return vigente
 
 
-def folio_vigente_de(session, phone: str) -> Ticket | None:
-    return folio_vigente(
+def _folios_de(session, phone: str) -> list[Ticket]:
+    return list(
         session.exec(
             select(Ticket)
             .where(Ticket.phone == phone)
@@ -87,35 +98,54 @@ def folio_vigente_de(session, phone: str) -> Ticket | None:
     )
 
 
+def folio_vigente_de(session, phone: str) -> Ticket | None:
+    """El vigente de siempre, sin preferencia por nadie (lo que ve un admin)."""
+    return folio_vigente(_folios_de(session, phone))
+
+
+def folio_de(session, phone: str, user: str, admin: bool | None = None) -> Ticket | None:
+    """El folio con el que `user` mira y actúa sobre esta conversación. Un admin
+    no tiene preferencia: sigue viendo el vigente de siempre.
+
+    Quien llama con escrituras pendientes pasa `admin` ya resuelto: `is_admin`
+    abre su propia sesión, y con el engine de la suite (una sola conexión) su
+    cierre deshace lo que la transacción de afuera ya había escrito (lo documenta
+    asignacion._por_producto)."""
+    if admin is None:
+        admin = is_admin(user)
+    return folio_vigente(_folios_de(session, phone), None if admin else user)
+
+
 def conversacion_escribible(session, phone: str, user: str) -> Client | None:
     """El cliente, si este usuario puede ESCRIBIRLE (mandar WhatsApp como el
     negocio, pausar o reactivar su bot, ocultar mensajes, bloquearlo); None si no.
 
     Corte de oficina como la lectura (`_cliente_visible`), y para quien no es
-    admin, el folio vigente tiene que ser reclamable por él: suyo, sin dueño, o
-    con dueño provisional —de reparto, todavía en NUEVO—, porque «quien
-    responde se queda el chat» (`inbox._pause_bot`, `asignacion.provisional`).
-    Un folio TOMADO por otro, o ningún folio, cierra la puerta: antes bastaba la
-    oficina y un colaborador sin folios del cliente le mandaba WhatsApp firmado
-    por el negocio mientras el CRM le negaba el chat (auditoría 2026-09,
-    AUTHZ-2). Sin fila Client tampoco: el guard viejo contestaba True.
+    admin, SU folio (`folio_vigente` con `user`) tiene que poder ser suyo:
+    `asignacion.puede_tomar` —suyo, sin dueño, o provisional de un servicio que
+    él atiende o que nadie de la oficina atiende—, porque contestar se lo queda
+    (`inbox._pause_bot`). Un folio TOMADO por otro, o ningún folio, cierra la
+    puerta: antes bastaba la oficina y un colaborador sin folios del cliente le
+    mandaba WhatsApp firmado por el negocio mientras el CRM le negaba el chat
+    (auditoría 2026-09, AUTHZ-2). Sin fila Client tampoco.
 
-    Más ancha que la lectura del CRM (`crm._atiende`: solo el asignado) en un
-    solo punto, el folio reclamable. No es una concesión nueva: es la «cola
-    abierta» del reparto que ya existía —el tablero de Solicitudes lista a toda
-    la oficina los folios NUEVO con teléfono y nombre, y contestar uno se lo
-    quedaba quien contestara (`_pause_bot`)—. Lo que sí cambia es que un folio
-    ya TOMADO por un compañero queda protegido, cosa que antes no pasaba.
-    (`/tickets/{id}/claim` es más estrecho: solo actúa sin dueño; no es la
-    analogía exacta, `_pause_bot` sí.)
+    La CARTERA no entra aquí, a propósito (decisión del operador, 2026-09-25):
+    deja ver la conversación (`crm._conversacion_visible`), nunca escribirle.
+    Con ella, el titular podía contestar sobre el trámite que otro ya tomó.
+
+    Más ancha que la lectura del CRM (`crm._atiende`) en un solo punto, el folio
+    que se puede tomar: la «cola abierta» del reparto que ya existía —el tablero
+    de Solicitudes lista a la oficina los folios NUEVO, y contestar uno se lo
+    queda quien contesta—, ahora acotada a quien atiende el servicio para que
+    la división por servicio no se deshaga al primer mensaje.
     """
     cliente = _cliente_visible(session, phone, user)
     if cliente is None or is_admin(user):
         return cliente
-    folio = folio_vigente_de(session, phone)
+    folio = folio_vigente(_folios_de(session, phone), user)
     if folio is None:
         return None
-    if folio.assigned_to in (None, user) or asignacion.provisional(folio):
+    if asignacion.puede_tomar(session, folio, user):
         return cliente
     logger.warning("%s intentó escribirle a un cliente cuyo folio atiende otro", user)
     return None
@@ -152,7 +182,7 @@ _ERRORES = {
 
 
 @router.get("/clients")
-def clients_list(request: Request, q: str = "", alta: str = "", error: str = ""):
+def clients_list(request: Request, q: str = "", alta: str = "", error: str = "", mios: str = ""):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -163,6 +193,9 @@ def clients_list(request: Request, q: str = "", alta: str = "", error: str = "")
         consulta = vista.filtrar(select(Client), Client.office_id).where(
             Client.habilitado == True  # noqa: E712
         )
+        if mios:
+            # «Mis clientes»: los de su cartera. En SQL, antes del tope de LIMITE_LISTA.
+            consulta = consulta.where(Client.phone.in_(cartera.telefonos_de(user)))
         if termino:
             # Se busca por nombre y por teléfono. El teléfono se normaliza para
             # que buscar "+52 155 0000 0000" encuentre al cliente guardado como
@@ -188,18 +221,29 @@ def clients_list(request: Request, q: str = "", alta: str = "", error: str = "")
             "alta": alta,
             "error": _ERRORES.get(error, ""),
             "truncada": len(clientes) == LIMITE_LISTA,
+            "mios": bool(mios),
         },
     )
 
 
 @router.post("/clients")
-def clients_upsert(request: Request, phone: str = Form(""), name: str = Form("")):
+def clients_upsert(
+    request: Request,
+    phone: str = Form(""),
+    name: str = Form(""),
+    a_mi_cartera: str = Form("", alias="cartera"),
+):
     """Alta manual, o actualización del nombre si el teléfono ya existe.
 
     Deliberadamente NO toca `habilitado`, `created_at` ni la conversación: dar
     de alta a alguien que ya existe actualiza su nombre y nada más. En
     particular no sirve para desbloquear a un cliente bloqueado ni para
     reiniciar el flujo del bot de alguien que va a media conversación.
+
+    La casilla «Agregarlo a mi cartera» (marcada por omisión) mete al cliente en
+    la cartera de quien lo registra; si ya existía en su oficina, queda
+    compartido. Es explícita para que un admin que captura clientes del equipo
+    no se quede con todos: la cartera decide a quién le llegan sus folios.
     """
     user = _current_user(request)
     if not user:
@@ -242,6 +286,9 @@ def clients_upsert(request: Request, phone: str = Form(""), name: str = Form("")
         # teléfono ya tenía folios de antes.
         folios = _propagar_nombre(session, canonico, nombre)
         session.commit()
+        if a_mi_cartera:
+            # Después del commit: la cartera valida contra la fila Client ya guardada.
+            cartera.agregar(session, canonico, user, por=user)
 
     # Auditado porque a este cliente se le van a cobrar tarjetas: quién le puso
     # ese nombre y cuándo es dato que hace falta el día de una aclaración.
@@ -254,11 +301,18 @@ def clients_upsert(request: Request, phone: str = Form(""), name: str = Form("")
 
 
 @router.get("/clients/{phone}")
-def client_profile(request: Request, phone: str, volver: str = ""):
+def client_profile(
+    request: Request,
+    phone: str,
+    volver: str = "",
+    error: str = "",
+    aviso_cartera: str = Query("", alias="cartera"),
+):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    es_admin = is_admin(user)
     with get_session() as session:
         client = _cliente_visible(session, phone, user)
         if client is None:
@@ -273,6 +327,17 @@ def client_profile(request: Request, phone: str, volver: str = ""):
             .where(ClientNote.habilitado == True)  # noqa: E712
             .order_by(ClientNote.created_at.desc())
         ).all()
+        titulares = sorted(cartera.duenos(session, phone))
+        # A quién puede meter un admin: gente habilitada de la oficina DEL CLIENTE
+        # (la de quien mira puede ser otra, o todas para el admin global).
+        candidatos = [] if not es_admin else [
+            u for u in session.exec(
+                select(User.username)
+                .where(User.habilitado == True, User.office_id == client.office_id)  # noqa: E712
+                .order_by(User.username)
+            ).all()
+            if u not in titulares
+        ]
 
     return templates.TemplateResponse(
         request, "client.html",
@@ -285,8 +350,56 @@ def client_profile(request: Request, phone: str, volver: str = ""):
             # Origen del salto a la ficha (folio o chat) para el botón de
             # regreso; validado, un valor externo se descarta.
             "volver": ruta_interna(volver),
+            "titulares": titulares,
+            "candidatos": candidatos,
+            "error": _ERRORES_CARTERA.get(error, ""),
+            "aviso": _AVISOS_CARTERA.get(aviso_cartera, ""),
         },
     )
+
+
+# Los resultados de la cartera viajan por la URL como código, igual que _ERRORES.
+_ERRORES_CARTERA = {
+    cartera.AJENO: "Solo puedes agregarte o quitarte a ti de la cartera.",
+    cartera.USUARIO: "Ese colaborador no está habilitado en la oficina del cliente.",
+}
+_AVISOS_CARTERA = {
+    cartera.AGREGADO: "✅ Agregado a la cartera.",
+    cartera.YA_ESTABA: "Ya estaba en la cartera.",
+    cartera.QUITADO: "Quitado de la cartera.",
+    cartera.NO_ESTABA: "No estaba en la cartera.",
+}
+
+
+def _tras_cartera(phone: str, resultado: str) -> RedirectResponse:
+    if resultado == cartera.NO_EXISTE:
+        # Mismo corte que el resto de la ficha: de otra oficina, «no existe».
+        return RedirectResponse("/", status_code=303)
+    if resultado in _ERRORES_CARTERA:
+        return RedirectResponse(f"/clients/{phone}?error={resultado}", status_code=303)
+    return RedirectResponse(f"/clients/{phone}?cartera={resultado}", status_code=303)
+
+
+@router.post("/clients/{phone}/cartera")
+def cartera_agregar(request: Request, phone: str, username: str = Form("")):
+    """Agrega a la cartera: sin `username`, a uno mismo. Meter a otro es de admin, y la regla
+    vive en app/cartera.py, no aquí: el formulario solo lo ofrece, no lo decide."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with get_session() as session:
+        resultado = cartera.agregar(session, phone, username.strip() or user, por=user)
+    return _tras_cartera(phone, resultado)
+
+
+@router.post("/clients/{phone}/cartera/quitar")
+def cartera_quitar(request: Request, phone: str, username: str = Form("")):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with get_session() as session:
+        resultado = cartera.quitar(session, phone, username.strip() or user, por=user)
+    return _tras_cartera(phone, resultado)
 
 
 @router.post("/clients/{phone}/update")

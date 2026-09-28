@@ -144,7 +144,11 @@ def test_sin_asesores_dados_de_alta_el_folio_nace_sin_dueno(session):
 
 def test_un_mensaje_con_dos_tramites_va_a_un_solo_asesor(session):
     """Un cliente que pide tres trámites de un jalón es un cliente, no tres.
-    Partirlo entre asesores es justo lo que la pegajosa existe para evitar."""
+    Desde la cartera (2026-09-25) la asignación decide por servicio, pero
+    cuando la misma persona puede llevar todos —aquí nadie se inscribió, así
+    que todos atienden todo— la regla del mismo mensaje no lo parte. Que SÍ se
+    parta cuando atienden personas distintas lo cubre
+    tests/test_asignacion_por_servicio.py."""
     _usuarios(session, "ana", "beto")
     _sin_requisitos("sb-acta-nacimiento", "sb-acta-matrimonio")
     handle_incoming(session, PHONE, "menu")
@@ -198,10 +202,13 @@ def test_la_pegajosa_se_pega_al_ULTIMO_asesor_no_al_primero(session):
 
 def test_la_pegajosa_manda_aunque_el_asesor_este_saturado(session):
     """Asimetría deliberada: la continuidad con el cliente vale más que el
-    equilibrio de la carga."""
+    equilibrio de la carga.
+
+    Siembra en TOMADO (antes NUEVO): desde la cartera (2026-09-25) un folio
+    auto-asignado que nadie ha trabajado no cuenta como «lo atendió»."""
     _usuarios(session, "ana", "beto")
     for _ in range(settings.carga_maxima_asesor + 3):
-        _folio(session, assigned_to="beto")
+        _folio(session, assigned_to="beto", status=TicketStatus.TOMADO)
 
     asesor, motivo = asignacion.elegir(session, PHONE)
 
@@ -769,7 +776,9 @@ def test_la_pegajosa_no_le_manda_un_producto_a_quien_no_lo_atiende(misma_base):
     mano que el cliente sufre después."""
     session = misma_base
     _usuarios(session, "ana", "beto")
-    _folio(session, assigned_to="ana")  # este cliente ya fue de ana
+    # Este cliente ya fue de ana. TOMADO (antes NUEVO): un folio que nadie trabajó
+    # ya no es historial, y con NUEVO esta prueba pasaría sin mirar el producto.
+    _folio(session, assigned_to="ana", status=TicketStatus.TOMADO)
     _atiende("beto", ACTA)
     assert asignacion.elegir(session, PHONE, [ACTA]) == ("beto", "reparto")
 
@@ -780,7 +789,9 @@ def test_la_pegajosa_sigue_ganando_si_el_anterior_atiende_el_producto(misma_base
     session = misma_base
     monkeypatch.setattr(settings, "carga_maxima_asesor", 1)
     _usuarios(session, "ana", "beto")
-    _folio(session, assigned_to="ana")  # el cliente fue de ana, y eso la pone al tope
+    # El cliente fue de ana, y eso la pone al tope. TOMADO (antes NUEVO): un folio
+    # que nadie trabajó ya no cuenta como «lo atendió» (cartera, 2026-09-25).
+    _folio(session, assigned_to="ana", status=TicketStatus.TOMADO)
     _atiende("ana", ACTA)
     _atiende("beto", ACTA)
     assert asignacion.elegir(session, PHONE, [ACTA]) == ("ana", "pegajosa")

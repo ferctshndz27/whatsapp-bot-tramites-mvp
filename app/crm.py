@@ -16,9 +16,10 @@ filtro más: quién atiende qué, sin salir del tablero.
 Alcance por oficina: cada consulta pasa por auth.alcance(); un teléfono que llega por URL se
 comprueba contra Client.office_id (clients._cliente_visible: de otra oficina responde como «no
 existe»). Y por folio: un ADMIN (global o de oficina) ve todas las conversaciones de su
-alcance y a los miembros de la oficina; un COLABORADOR ve solo las conversaciones de las
-solicitudes que toma —los clientes cuyo folio vigente le está asignado—, sin tira de
-miembros y sin alta de contactos (regla del operador, 2026-09-14). Las conversaciones con
+alcance y a los miembros de la oficina; un COLABORADOR ve las conversaciones donde tiene un
+folio abierto —la tarjeta muestra el SUYO: una conversación puede traer folios de dueños
+distintos desde la asignación por servicio— y las de los clientes de su cartera, sin tira de
+miembros y sin alta de contactos (reglas del operador, 2026-09-14 y 2026-09-24). Las conversaciones con
 sus compañeros siguen en el chat de equipo (/team). Las etapas (models.CrmEtapa) son GLOBALES —un solo embudo, como el catálogo (SPEC
 multi-oficina §11.3)— y las administra el admin global; mover clientes entre etapas es de
 cualquiera que alcance al cliente.
@@ -59,7 +60,7 @@ from sqlalchemy.orm import aliased
 from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 
-from app import eventos, ventana
+from app import cartera, eventos, ventana
 from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
 from app.authlog import sesion_vigente
@@ -229,17 +230,24 @@ def _ventana_json(last_in: datetime | None) -> dict:
     }
 
 
-def _agregar(session, clientes: list[Client]) -> dict[str, dict]:
+def _agregar(session, clientes: list[Client], viewer: str | None = None) -> dict[str, dict]:
     """Por teléfono: último mensaje, no leídos, último entrante, folio, etiquetas y conversación.
 
     «No leídos» no existe como columna (Message no lleva read_at): se deriva como los mensajes
     entrantes que llegaron DESPUÉS del último saliente, que es lo que el asesor todavía no ha
-    contestado. El folio es el abierto más reciente; si no hay abierto, el más reciente.
+    contestado. El folio es el de `clients.folio_vigente`: con `viewer` (un colaborador), su
+    folio abierto si lo tiene; si no —o para un admin, que pasa None—, el abierto más reciente
+    o, sin abiertos, el más reciente.
+
+    `apagado_por` y `bot_callado` miran TODOS los folios abiertos, no el de la tarjeta: el bot
+    calla si cualquiera tiene el agente apagado (conversation.handle_incoming), y la cabecera
+    tiene que decirlo aunque el folio apagado sea de otro.
     """
     agg = {
         c.phone: {
             "last": None, "unread": 0, "last_in": None,
             "ticket": None, "labels": [], "conv": None,
+            "apagado_por": [], "bot_callado": False,
         }
         for c in clientes
     }
@@ -321,7 +329,10 @@ def _agregar(session, clientes: list[Client]) -> dict[str, dict]:
         if t.phone in agg:
             por_telefono.setdefault(t.phone, []).append(t)
     for phone, folios in por_telefono.items():
-        agg[phone]["ticket"] = folio_vigente(folios)
+        agg[phone]["ticket"] = folio_vigente(folios, viewer)
+        apagados = [t for t in folios if t.status != TicketStatus.CERRADO and not t.agent_active]
+        agg[phone]["bot_callado"] = bool(apagados)
+        agg[phone]["apagado_por"] = sorted({t.assigned_to for t in apagados if t.assigned_to})
 
     ids_folios = [a["ticket"].id for a in agg.values() if a["ticket"] is not None]
     if ids_folios:
@@ -383,7 +394,11 @@ def _contacto_json(cliente: Client, a: dict, etapa_id: int | None) -> dict:
         "ventana": _ventana_json(a["last_in"]),
         # Folio vigente cerrado: fuera del panel salvo en «Folios cerrados» o en la búsqueda.
         "cerrada": ticket is not None and ticket.status == TicketStatus.CERRADO,
-        "bot_pausado": bool(conv and conv.state == "escalado"),
+        # Pausado también si algún folio abierto tiene el agente apagado: el bot calla por
+        # eso aunque la conversación ya no esté escalada, y «bot activo» sería mentira.
+        "bot_pausado": bool(conv and conv.state == "escalado") or a["bot_callado"],
+        # Quién tiene el agente apagado en su folio (con varios dueños puede no ser quien mira).
+        "apagado_por": a["apagado_por"],
         "provider": conv.provider if conv else PROVIDER_META,
     }
 
@@ -410,7 +425,7 @@ def _coincide(cliente: Client, q: str) -> bool:
 
 
 def _atiende(a: dict, user: str) -> bool:
-    """¿El folio vigente del cliente (el que muestra la tarjeta) es de este usuario?"""
+    """¿El folio con el que este usuario mira la conversación (el de la tarjeta) es suyo?"""
     return a["ticket"] is not None and a["ticket"].assigned_to == user
 
 
@@ -418,13 +433,20 @@ def _conversacion_visible(session, phone: str, user: str):
     """(cliente, agregado) si este usuario puede ver esa conversación; (None, None) si no.
 
     Dos cortes, y los dos responden «no existe» para no revelar que el número está en la
-    base: el de oficina (clients._cliente_visible) y, para quien no es admin, el del folio
-    vigente: un colaborador solo ve las solicitudes que toma."""
+    base: el de oficina (clients._cliente_visible) y, para quien no es admin, el del folio:
+    un colaborador ve las conversaciones donde tiene un folio (su folio es el de la tarjeta)
+    o las de los clientes de su CARTERA (decisión del operador, 2026-09-24). Ver no es
+    escribir: eso lo decide clients.conversacion_escribible, que no mira la cartera."""
     cliente = _cliente_visible(session, phone, user)
     if cliente is None:
         return None, None
-    agg = _agregar(session, [cliente])
-    if not is_admin(user) and not _atiende(agg[cliente.phone], user):
+    admin = is_admin(user)
+    agg = _agregar(session, [cliente], None if admin else user)
+    if (
+        not admin
+        and not _atiende(agg[cliente.phone], user)
+        and not cartera.es_mio(session, cliente.phone, user)
+    ):
         return None, None
     return cliente, agg
 
@@ -436,14 +458,18 @@ def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> 
 
     consulta = vista.filtrar(select(Client), Client.office_id)
     if solo_mios:
-        # Un colaborador ve las conversaciones de las solicitudes que toma: clientes con
-        # algún folio suyo. La decisión final la toma el folio VIGENTE (abajo); acotar ya
-        # en SQL evita que sus clientes viejos queden fuera del tope de LIMITE_CONTACTOS.
+        # Un colaborador ve las conversaciones de las solicitudes que toma —clientes con
+        # algún folio suyo— y las de su cartera. La decisión final la toma su folio
+        # (abajo); acotar ya en SQL evita que sus clientes viejos queden fuera del tope de
+        # LIMITE_CONTACTOS.
         consulta = consulta.where(
-            Client.phone.in_(
-                select(Ticket.phone)
-                .where(Ticket.assigned_to == user)
-                .where(Ticket.habilitado == True)  # noqa: E712
+            or_(
+                Client.phone.in_(
+                    select(Ticket.phone)
+                    .where(Ticket.assigned_to == user)
+                    .where(Ticket.habilitado == True)  # noqa: E712
+                ),
+                Client.phone.in_(cartera.telefonos_de(user)),
             )
         )
     # Una conversación sale del panel cuando TODOS sus folios están cerrados —su folio
@@ -481,9 +507,10 @@ def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> 
     if q and not digitos:
         clientes = [c for c in clientes if _coincide(c, q)]
 
-    agg = _agregar(session, clientes)
+    agg = _agregar(session, clientes, user if solo_mios else None)
     if solo_mios:
-        clientes = [c for c in clientes if _atiende(agg[c.phone], user)]
+        mi_cartera = cartera.clientes_de(session, user)
+        clientes = [c for c in clientes if _atiende(agg[c.phone], user) or c.phone in mi_cartera]
     contactos = [_contacto_json(c, agg[c.phone], etapa_de(c, ids)) for c in clientes]
     contactos.sort(
         key=lambda x: (x["last_message"] or {}).get("created_at") or x["created_at"] or "",
@@ -776,7 +803,8 @@ def crm_mover_contacto(request: Request, phone: str, payload: dict = Body(defaul
             session.commit()
             session.refresh(cliente)
             logger.info("Cliente %s movido a la etapa %s por %s", mask_phone(phone), etapa_id, user)
-        agg = _agregar(session, [cliente])
+        # La tarjeta que devuelve es la que ve quien la movió: su folio, no el de otro.
+        agg = _agregar(session, [cliente], None if is_admin(user) else user)
         return JSONResponse(_contacto_json(cliente, agg[cliente.phone], etapa_id))
 
 
@@ -851,13 +879,15 @@ def crm_chat(request: Request, phone: str):
         mensajes.reverse()
         ids = [e.id for e in etapas_activas(session)]
         contacto = _contacto_json(cliente, agg[cliente.phone], etapa_de(cliente, ids))
-        ticket = agg[cliente.phone]["ticket"]
         return JSONResponse({
             "contacto": contacto,
             "mensajes": [_mensaje_json(m, user) for m in mensajes],
             "ventana": contacto["ventana"],
             "bot_pausado": contacto["bot_pausado"],
-            "agente_activo": bool(ticket.agent_active) if ticket is not None else True,
+            # Si el bot habla de verdad: ningún folio abierto con el agente apagado. Antes era
+            # el agente del folio de la tarjeta, y con varios dueños el bot podía estar callado
+            # por el folio de otro mientras la cabecera decía «el agente sigue activo».
+            "agente_activo": not agg[cliente.phone]["bot_callado"],
             "provider": contacto["provider"],
             "ticket": contacto["ticket"],
             "bloqueado": contacto["bloqueado"],

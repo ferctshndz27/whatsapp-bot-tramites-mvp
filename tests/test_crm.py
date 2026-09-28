@@ -265,12 +265,27 @@ def test_un_colaborador_ve_solo_las_conversaciones_de_las_solicitudes_que_toma()
                      status=TicketStatus.TOMADO, assigned_to="colab1", office_id=1))
         s.commit()
     assert {c["phone"] for c in _tablero("colab1")["contactos"]} == {ANA, BETO}
-    # Un folio nuevo de Ana que toma otro asesor se lleva la conversación: el vigente manda.
+    # Un folio nuevo de Ana que toma otro asesor ya NO le quita la conversación a colab1
+    # mientras su folio siga abierto: cada quien la ve con SU folio. Reescrita a propósito
+    # (2026-09-25): antes el folio más nuevo «se llevaba» la conversación entera, y con la
+    # asignación por servicio el dueño del otro trámite dejaba de ver a su cliente.
     with Session(db.engine) as s:
         s.add(Ticket(phone=ANA, client_name="Ana Lucía Ramírez", category="Actas",
                      service_id="acta-def", service_name="Acta de defunción", price_info="$150",
                      status=TicketStatus.TOMADO, assigned_to="jefe1", office_id=1,
                      created_at=utcnow() + timedelta(seconds=5)))
+        s.commit()
+    tarjeta = _contacto(_tablero("colab1"), ANA)
+    assert tarjeta["ticket"]["assigned_to"] == "colab1", "la tarjeta de colab1 muestra el folio de otro"
+    assert tarjeta["ticket"]["service_name"] == "Acta de nacimiento"
+    assert _sesion("colab1").get(f"/crm/api/chat/{ANA}").status_code == 200
+    # Cuando SU folio se cierra, la conversación es de quien tiene el abierto: el vigente manda.
+    with Session(db.engine) as s:
+        propio = s.exec(
+            select(Ticket).where(Ticket.phone == ANA, Ticket.assigned_to == "colab1")
+        ).one()
+        propio.status = TicketStatus.CERRADO
+        s.add(propio)
         s.commit()
     assert [c["phone"] for c in _tablero("colab1")["contactos"]] == [BETO]
     assert _sesion("colab1").get(f"/crm/api/chat/{ANA}").status_code == 404

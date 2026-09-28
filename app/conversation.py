@@ -345,11 +345,15 @@ def handle_incoming(
         # de Twilio teclea eso mismo (o el emoji). El folio se resuelve por el
         # último cerrado, así que la opción no tiene que cargar el id.
         replies = _record_feedback(session, phone, pendiente, rating)
-    elif (apagado := _latest_open_ticket(session, phone)) is not None and not apagado.agent_active:
-        # El colaborador asignado apagó el agente IA para este folio: silencio
-        # total en CUALQUIER estado — antes solo aplicaba en "escalado" y el
-        # bot seguía pidiendo requisitos con el agente apagado. Tomar el
-        # ticket (asignarlo) sigue sin callar al bot por sí solo.
+    elif any(not t.agent_active for t in _folios_abiertos(session, phone)):
+        # Un colaborador apagó el agente IA en su folio: silencio total en
+        # CUALQUIER estado — antes solo aplicaba en "escalado" y el bot seguía
+        # pidiendo requisitos con el agente apagado. Tomar el ticket
+        # (asignarlo) sigue sin callar al bot por sí solo.
+        # Basta CUALQUIER folio abierto, no el más reciente: con la asignación
+        # por servicio la conversación trae folios de dueños distintos, y el
+        # bot no puede hablarle al cliente encima de un asesor que lo atiende
+        # solo porque el folio más nuevo es de otro.
         replies = []
     elif conv.state == "escalado":
         normalized = text.strip().lower()
@@ -837,14 +841,13 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         detectados = context.get("codigos") or {}
         tickets = []
         prellenado = False
-        # A quién le tocan (fase 3b). Se decide UNA vez para todo el mensaje:
-        # un cliente que pide tres trámites de un jalón es un cliente, no tres,
-        # y partirlo entre asesores es justo lo que la asignación pegajosa
-        # existe para evitar. Efecto secundario asumido: el tope de carga se
-        # sobrepasa por los folios extra de este mismo mensaje.
-        # Con los productos pedidos: la asignación le da el folio a quien los
-        # atiende (lo declara cada colaborador en /catalog).
-        asesor, motivo_asignacion = asignacion.elegir(
+        # A quién le toca cada uno: se decide POR SERVICIO (decisión del
+        # operador, 2026-09-24). Cada folio va a quien atiende ese trámite —lo
+        # declara cada colaborador en /catalog—, prefiriendo al titular de la
+        # cartera; el mismo asesor se queda varios solo si los atiende, así que
+        # un cliente no se parte sin necesidad. Solo lee: nada se escribe
+        # hasta crear los folios.
+        decisiones = asignacion.elegir_por_servicio(
             session, client.phone, [s.id for s in services]
         )
         for service in services:
@@ -863,7 +866,7 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
                 # Nace en NUEVO CON dueño: TOMADO significaría «alguien lo
                 # tiene», falso para un folio que nadie ha mirado, y
                 # corrompería el embudo de operacion_stats.
-                assigned_to=asesor,
+                assigned_to=decisiones[service.id].asesor,
                 # Los requisitos se congelan aquí: editar el catálogo después no
                 # reescribe lo que se le pidió a este cliente.
                 requirements_json=con_codigos,
@@ -877,7 +880,7 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
             session.refresh(ticket)
         # La bitácora va después del commit porque necesita el id del folio.
         for ticket in tickets:
-            asignacion.bitacora(session, ticket, motivo_asignacion)
+            asignacion.bitacora(session, ticket, decisiones[ticket.service_id].motivo)
         session.commit()
 
         # Cola plana de preguntas: [[folio, índice del requisito], …] en orden

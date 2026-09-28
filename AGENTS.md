@@ -298,15 +298,28 @@ No Alembic. New **columns** on existing tables are added by hand:
   `_add_missing_columns` in `init_db()` via `ALTER TABLE ... ADD COLUMN`).
 - MSSQL mirror: also add to `_COLUMNS_ADDED_AFTER_LAUNCH` in `app/archive.py`.
 
+### Cartera y asignación por servicio (`app/cartera.py`, `app/asignacion.py`)
+Cada colaborador registra **su cartera** (`ClienteAsesor`, muchos a muchos: un cliente puede ser
+compartido) desde la ficha o el alta de `/clients`; se agrega o se quita a sí mismo, y un admin
+mueve a cualquiera de la oficina del cliente. Un cliente que llega solo por WhatsApp no entra a
+ninguna. **La cartera da preferencia de asignación y visibilidad, nunca escritura** (operador,
+2026-09-25): escribirle al cliente sigue siendo del folio (`clients.conversacion_escribible`).
+Un mensaje con varios trámites se asigna **por servicio** (`elegir_por_servicio`): cartera →
+pegajosa → mismo mensaje → reparto, siempre dentro de quien atiende ese trámite; un compartido va
+al titular que lo atendió último, y un folio auto-asignado que sigue en NUEVO no cuenta como «lo
+atendió». Con varios dueños en un chat, **cada quien ve y escribe sobre su folio**
+(`clients.folio_vigente` con usuario); contestar solo toma un folio que `asignacion.puede_tomar`;
+el bot calla si **cualquier** folio abierto tiene el agente apagado, y cada quien reactiva lo suyo.
+
 ### CRM Kanban (`/crm`, `app/crm.py`)
 Embudo comercial por cliente, bandeja y chat en una página JSON-driven (`templates/crm.html`,
 `static/js/crm.js`, `static/css/crm.css`, más el cajón del folio en `static/js/crm-panel.js` y
 `static/css/crm-panel.css`). Las etapas (`CrmEtapa`) son **globales** y las
 administra el admin global; la etapa de cada cliente vive en `Client.etapa_crm_id` (NULL = la
 primera por `ord`, así el histórico no necesita un UPDATE masivo que el espejo no vería). Todo lo
-que lee pasa por `auth.alcance()` y, para quien no es admin, por el folio vigente: **un colaborador
-ve solo las conversaciones de las solicitudes que toma** (clientes cuyo folio vigente le está
-asignado), sin tira de miembros ni alta de contactos; los admins (global o de oficina) ven todos
+que lee pasa por `auth.alcance()` y, para quien no es admin, por su folio: **un colaborador ve las
+conversaciones donde tiene un folio abierto** (la tarjeta muestra el suyo) **y las de su cartera**,
+sin tira de miembros ni alta de contactos; los admins (global o de oficina) ven todos
 los clientes de su alcance y a los **miembros de la oficina** (`User.estado` y cuántos chats
 atiende cada uno), agrupados por oficina para el admin global.
 **Un folio cerrado saca la conversación del panel, para todos** (regla del operador,

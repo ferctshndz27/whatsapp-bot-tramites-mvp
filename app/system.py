@@ -38,6 +38,7 @@ from app.models import (
     CatalogService,
     Client,
     ClientNote,
+    ClienteAsesor,
     Cobro,
     Conversation,
     EventoPasarela,
@@ -120,6 +121,8 @@ MIRROR_TABLES = [
     (TicketLabel, "ticket_labels"),
     # Embudo comercial del CRM (/crm).
     (CrmEtapa, "crm_etapas"),
+    # La cartera de clientes de cada colaborador (app/cartera.py).
+    (ClienteAsesor, "cliente_asesores"),
 ]
 
 

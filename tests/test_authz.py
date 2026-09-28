@@ -551,7 +551,17 @@ def test_la_tabla_cubre_toda_ruta_con_guard_de_admin():
     #   - POST /tickets/{id}/release: cualquiera suelta SU folio; un admin puede
     #     además soltar el de otro, que es la única salida para los folios de un
     #     colaborador deshabilitado (tiene su prueba en test_fase3_horario.py).
-    fuera_de_tabla = {("GET", "/activity"), ("POST", "/tickets/{ticket_id}/release")}
+    #   - GET /clients/{phone}: la ficha es de cualquiera de la oficina; al admin
+    #     solo le agrega el selector para meter a otro en la cartera (la regla
+    #     vive en app/cartera.py y tiene su prueba en tests/test_cartera.py).
+    #   - POST /inbox/{phone}/bot-on: quien puede escribir reactiva el agente de
+    #     SUS folios; un admin, el de todos (tests/test_chat_varios_duenos.py).
+    fuera_de_tabla = {
+        ("GET", "/activity"),
+        ("POST", "/tickets/{ticket_id}/release"),
+        ("GET", "/clients/{phone}"),
+        ("POST", "/inbox/{phone}/bot-on"),
+    }
     # API JSON del CRM: sí cierra la puerta, pero contesta 403 JSON en vez de redirigir
     # (la llama fetch) y no encaja en el molde de Ruta. Su rechazo al colaborador y su
     # control positivo con el admin viven en tests/test_crm.py

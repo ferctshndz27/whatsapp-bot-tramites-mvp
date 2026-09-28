@@ -529,6 +529,30 @@ class CatalogAsesor(SQLModel, table=True):
     habilitado: bool = True
 
 
+class ClienteAsesor(SQLModel, table=True):
+    """La cartera: qué colaboradores consideran suyo a un cliente (app/cartera.py).
+
+    Muchos a muchos porque un cliente puede ser compartido. Gemela de
+    CatalogAsesor: quitarse de la cartera apaga la fila (soft delete, el espejo
+    se entera por after_update) y volver a agregarse la reactiva; el índice
+    único parcial ux_clienteasesor_vivo (db.init_db) impide dos filas vivas del
+    mismo par.
+
+    Da preferencia de asignación (si el titular atiende el servicio) y deja VER
+    la conversación; nunca da permiso de escribirle al cliente, que sigue siendo
+    del folio (decisión del operador, 2026-09-25). Sin office_id a propósito: la
+    oficina es la del cliente, y duplicarla aquí abriría la puerta a que las dos
+    discrepen.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    phone: str = Field(index=True)
+    username: str = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    created_by: str | None = None
+    habilitado: bool = True
+
+
 class SynonymProposal(SQLModel, table=True):
     """Propuesta de sinónimo para el catálogo (minería nocturna con Claude o
     clustering de no-entendidos). Nada se aplica sin aprobación humana: el

@@ -1,20 +1,37 @@
-"""Reparto del trabajo (fase 3b): quién se queda un folio recién nacido.
+"""Reparto del trabajo (fase 3b + cartera): quién se queda un folio recién nacido.
 
-Dos reglas, en este orden, sobre un pool que ya sale acotado por producto:
+Un mensaje con varios trámites se decide **servicio por servicio**
+(`elegir_por_servicio`, decisión del operador, 2026-09-24): cada folio va a
+quien atiende ESE trámite, y el mismo asesor se queda varios solo si los
+atiende. La escalada, que no trae servicio, usa `elegir`. Para cada folio, en
+este orden, sobre un pool que ya sale acotado por producto:
 
 0. **Quién atiende el producto** — el pool es la gente de la oficina que se
    inscribió en /catalog para lo que el cliente pidió (`CatalogAsesor`). Si
    nadie de la oficina lo atiende, el pool es la oficina entera, igual que
    antes: un producto sin inscritos no deja folios sin dueño, y mientras nadie
-   se inscriba en nada este módulo se comporta exactamente como antes.
-1. **Pegajosa** — un cliente que regresa cae con el último asesor que ya lo
-   atendió, **si esa persona atiende lo que ahora pide**. Es la continuidad que
-   los usuarios de la competencia reclaman cuando no existe (§2.6 del análisis
-   de brechas): volver a explicar el caso desde cero es la queja, no la espera.
-   Pero mandarle un trámite a quien no lo lleva no es continuidad, es un pase
-   de mano diferido.
-2. **Reparto** — sin historial, al asesor con menos folios vivos que todavía
-   quepa bajo el tope.
+   se inscriba en nada el pool es el de siempre.
+1. **Cartera** — los titulares del cliente (`app/cartera.py`) que están en el
+   pool. Uno: ese. Varios (cliente compartido): el que lo atendió último; si
+   ninguno lo ha atendido, el de menos carga. La cartera nunca pasa por encima
+   de la cobertura: un titular que no atiende el trámite no está en el pool.
+2. **Pegajosa** — un cliente que regresa cae con quien ya lo atendió, **si esa
+   persona atiende lo que ahora pide**: primero quien llevó ese mismo trámite,
+   luego el más reciente de cualquiera. Es la continuidad que los usuarios de
+   la competencia reclaman cuando no existe (§2.6 del análisis de brechas):
+   volver a explicar el caso desde cero es la queja, no la espera. Pero
+   mandarle un trámite a quien no lo lleva no es continuidad, es un pase de
+   mano diferido.
+3. **Mismo mensaje** — si otro trámite de este mensaje ya quedó con alguien del
+   pool, ese: no se parte al cliente sin necesidad.
+4. **Reparto** — al asesor del pool con menos folios vivos que todavía quepa
+   bajo el tope, y solo en horario.
+
+Cartera, pegajosa y mismo mensaje no exigen horario ni respetan el tope: son
+continuidad, y la continuidad con el cliente vale más que el equilibrio de la
+carga. «Atendió» es un folio TRABAJADO (`_historial`): uno auto-asignado que
+sigue en NUEVO nadie lo abrió, y contarlo pegaría al cliente a alguien que no
+lo conoce.
 
 Lo que este módulo NO hace, a propósito:
 
@@ -26,9 +43,13 @@ Lo que este módulo NO hace, a propósito:
 - **No cuenta la carga por su cuenta.** Reusa `activity.carga_abierta`, que la
   fase 3a construyó justamente para esto. Un segundo contador con su propio
   criterio de «vivo» es la copia que se desincroniza.
-- **No guarda estado.** No hay columna nueva ni tabla de política: la
-  pegajosa se deriva del folio anterior y la rotación, del último folio que
-  recibió cada quien. Nada que respaldar en el espejo MSSQL.
+- **No guarda estado propio.** Lee la cartera (su tabla vive en app/cartera.py);
+  la pegajosa se deriva de los folios y la rotación, del último folio que
+  recibió cada quien. El motivo de cada decisión va a la bitácora del log, no a
+  una columna.
+- **No escribe al decidir.** Las lecturas se hacen una vez y la cadena de
+  reglas (`_decidir`) es una función pura; la bitácora se escribe después, con
+  el folio ya creado.
 
 ponytail: el pool son todos los usuarios habilitados, admins incluidos, y no
 mira `User.estado` — es autorreportado y no caduca, así que un «ausente» que
@@ -39,11 +60,12 @@ repartir solo entre quien está de verdad conectado, la señal ya existe y es
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app import horario
+from app import cartera, horario
 from app.activity import carga_abierta
 from app.config import settings
 from app.models import (
@@ -80,11 +102,11 @@ def _por_producto(
 ) -> list[str]:
     """Los elegibles que mejor cubren lo que se pidió; todos si nadie atiende nada.
 
-    «Mejor cubren» porque un mensaje puede pedir varios trámites y el folio de
-    todos va a UNA persona (un cliente que pide tres trámites es un cliente, no
-    tres — ver conversation). Gana quien atiende más de los productos pedidos:
-    si alguien los atiende todos, solo esa gente; si nadie los atiende todos, los
-    que atienden alguno. Con un solo producto es simplemente «quien lo atiende».
+    Con un solo producto —como lo pide `elegir_por_servicio`, trámite por
+    trámite— es simplemente «quien lo atiende». Con varios (`elegir` con una
+    lista, que es un solo folio para todos) gana quien atiende más de los
+    pedidos: si alguien los atiende todos, solo esa gente; si nadie los atiende
+    todos, los que atienden alguno.
 
     Consulta con la sesión que recibe y no con una propia: esto corre dentro de
     la conversación, que puede traer escrituras sin confirmar, y una sesión
@@ -116,25 +138,36 @@ def _oficina_del_telefono(session: Session, phone: str) -> int:
     return client.office_id if client is not None else OFICINA_TLAXCALA_ID
 
 
-def _pegajoso(session: Session, phone: str, elegibles: set[str]) -> str | None:
-    """El último asesor que atendió a este teléfono, si sigue dado de alta.
+@dataclass(frozen=True)
+class Decision:
+    """A quién le toca un folio (`None` = se queda sin dueño) y por qué. El motivo
+    es lo que dice la bitácora del log y lo que una prueba compara."""
 
-    Mira el folio anterior más reciente CON dueño, sin importar si está
-    cerrado: que el trámite pasado haya terminado no borra a quien lo llevó.
-    Si esa persona ya no está habilitada, no se busca al penúltimo — el
-    cliente cae al reparto como cualquier otro.
+    asesor: str | None
+    motivo: str
+
+
+def _historial(session: Session, phone: str) -> list[tuple[str, str]]:
+    """`(asesor, service_id)` de los folios TRABAJADOS del cliente, del más
+    reciente al más viejo. Es lo que «lo atendió» quiere decir en la pegajosa y
+    en el desempate de un cliente compartido.
+
+    Cuenta un folio cerrado —que el trámite pasado haya terminado no borra a
+    quien lo llevó— pero NO uno que sigue en NUEVO: ese lo auto-asignó el
+    reparto y nadie lo abrió (`provisional`). Contarlo pegaría al cliente a
+    alguien que nunca habló con él.
     """
-    dueno = session.exec(
-        select(Ticket.assigned_to)
+    filas = session.exec(
+        select(Ticket.assigned_to, Ticket.service_id)
         .where(
             Ticket.phone == phone,
             Ticket.assigned_to.is_not(None),  # type: ignore[union-attr]
             Ticket.habilitado == True,  # noqa: E712
+            Ticket.status != TicketStatus.NUEVO,
         )
-        .order_by(Ticket.created_at.desc())
-        .limit(1)
-    ).first()
-    return dueno if dueno in elegibles else None
+        .order_by(Ticket.created_at.desc(), Ticket.id.desc())  # type: ignore[union-attr]
+    ).all()
+    return [(asesor, servicio) for asesor, servicio in filas if asesor is not None]
 
 
 def _ultimo_folio_por_asesor(session: Session) -> dict[str, int]:
@@ -149,36 +182,90 @@ def _ultimo_folio_por_asesor(session: Session) -> dict[str, int]:
     return {asesor: ultimo for asesor, ultimo in filas if asesor is not None}
 
 
-def _reparto(session: Session, elegibles: list[str]) -> str | None:
-    """El asesor con menos folios vivos que quepa bajo el tope. `None` si
-    todos están al tope: el folio se queda sin asignar, que es lo que «sin
-    asignar» pasa a significar a partir de esta fase — desbordamiento."""
-    carga = carga_abierta(session)
-    ultimo = _ultimo_folio_por_asesor(session)
-    libres = [u for u in elegibles if carga.get(u, 0) < settings.carga_maxima_asesor]
+def _contexto(session: Session, phone: str) -> dict:
+    """Todo lo que la cadena lee de la base, leído UNA vez por mensaje."""
+    return {
+        "titulares": cartera.duenos(session, phone),
+        "historial": _historial(session, phone),
+        "carga": carga_abierta(session),
+        "ultimo": _ultimo_folio_por_asesor(session),
+        "abierto": horario.abierto(),
+    }
+
+
+def _mas_reciente(
+    historial: list[tuple[str, str]], candidatos: set[str], servicios: set[str] | None = None
+) -> str | None:
+    for asesor, servicio in historial:
+        if asesor in candidatos and (servicios is None or servicio in servicios):
+            return asesor
+    return None
+
+
+def _menos_cargado(candidatos: list[str], carga: dict, ultimo: dict[str, int]) -> str:
+    return min(candidatos, key=lambda u: (carga.get(u, 0), ultimo.get(u, 0), u))
+
+
+def _decidir(
+    pool: list[str],
+    service_ids: Sequence[str],
+    *,
+    titulares: set[str],
+    historial: list[tuple[str, str]],
+    en_mensaje: Sequence[str],
+    carga: dict,
+    ultimo: dict[str, int],
+    abierto: bool,
+) -> Decision:
+    """La cadena del docstring del módulo, sin tocar la base: pura a propósito,
+    para que cada regla se pruebe con conjuntos y no con un escenario entero."""
+    en_pool = set(pool)
+    # 1. Cartera: titulares que atienden el servicio.
+    suyos = [u for u in pool if u in titulares]
+    if suyos:
+        if len(suyos) == 1:
+            return Decision(suyos[0], "cartera")
+        # Compartido: el que lo atendió último (decisión del operador); si ninguno
+        # lo ha atendido, el de menos carga. Sin tope: el cliente es de ellos.
+        return Decision(
+            _mas_reciente(historial, set(suyos)) or _menos_cargado(suyos, carga, ultimo),
+            "cartera",
+        )
+    # 2. Pegajosa: primero quien llevó este mismo trámite, luego cualquiera.
+    # A propósito NO se revisa el tope: un cliente que regresa y cae con alguien
+    # nuevo tiene que contar su caso otra vez.
+    pegado = (
+        _mas_reciente(historial, en_pool, set(service_ids)) if service_ids else None
+    ) or _mas_reciente(historial, en_pool)
+    if pegado is not None:
+        return Decision(pegado, "pegajosa")
+    # 3. Mismo mensaje: no partir al cliente si alguien ya elegido lo atiende.
+    mismo = next((u for u in en_mensaje if u in en_pool), None)
+    if mismo is not None:
+        return Decision(mismo, "mismo-mensaje")
+    # 4. Reparto, solo en horario: repartir de madrugada llena el panel de folios
+    # que nadie va a mirar hasta la mañana y consume el tope con trabajo dormido.
+    # La continuidad de arriba no tiene ese problema, y el aviso de horario (fase
+    # 3a) ya le dijo al cliente cuándo hay alguien.
+    if not abierto:
+        return Decision(None, "fuera-de-horario")
+    libres = [u for u in pool if carga.get(u, 0) < settings.carga_maxima_asesor]
     if not libres:
-        return None
-    return min(libres, key=lambda u: (carga.get(u, 0), ultimo.get(u, 0), u))
+        # Todos al tope: el folio se queda sin asignar, que es lo que «sin
+        # asignar» significa desde la fase 3b — desbordamiento.
+        return Decision(None, "tope")
+    return Decision(_menos_cargado(libres, carga, ultimo), "reparto")
 
 
 def elegir(
     session: Session, phone: str, service_ids: Sequence[str] = ()
 ) -> tuple[str | None, str]:
-    """A quién le toca este folio. Devuelve `(asesor, motivo)`; `asesor` es
-    `None` cuando el folio debe quedarse sin dueño.
+    """A quién le toca UN folio. Devuelve `(asesor, motivo)`; `asesor` es `None`
+    cuando el folio debe quedarse sin dueño.
 
-    `service_ids` son los productos del mensaje (vacío en la escalada, que no
-    trae ninguno): estrechan el pool a quien los atiende ANTES de la pegajosa y
-    del reparto, que no cambian — reciben la lista ya acotada. Por eso la
-    pegajosa respeta el producto sin una línea propia: el asesor anterior solo
-    gana si sigue en el pool.
-
-    **El reparto solo corre en horario de atención; la pegajosa siempre.**
-    Repartir de madrugada llena el panel de cada asesor con folios que nadie
-    va a mirar hasta la mañana y consume el tope con trabajo dormido. La
-    pegajosa no tiene ese problema: mandarle a un cliente que regresa el mismo
-    asesor de siempre es correcto a cualquier hora, y el aviso de horario que
-    la fase 3a agregó ya le dijo al cliente cuándo hay alguien.
+    Lo usa la escalada, que no trae servicio (`service_ids` vacío: el pool es la
+    oficina). Con varios productos es un solo folio para todos y gana quien más
+    cubre (`_por_producto`); el alta ya no llama así: usa `elegir_por_servicio`.
     """
     if not settings.reparto_automatico:
         # Interruptor del Estudio (/agente), apagado por default. Sin él el
@@ -189,20 +276,42 @@ def elegir(
     elegibles = _elegibles(session, _oficina_del_telefono(session, phone))
     if not elegibles:
         return None, "sin-asesores"
-    elegibles = _por_producto(session, elegibles, service_ids)
+    d = _decidir(
+        _por_producto(session, elegibles, service_ids),
+        service_ids,
+        en_mensaje=(),
+        **_contexto(session, phone),
+    )
+    return d.asesor, d.motivo
 
-    pegado = _pegajoso(session, phone, set(elegibles))
-    if pegado is not None:
-        # A propósito NO se revisa el tope: la continuidad con el cliente vale
-        # más que el equilibrio de la carga. Un cliente que regresa y cae con
-        # alguien nuevo tiene que contar su caso otra vez.
-        return pegado, "pegajosa"
 
-    if not horario.abierto():
-        return None, "fuera-de-horario"
+def elegir_por_servicio(
+    session: Session, phone: str, service_ids: Sequence[str]
+) -> dict[str, Decision]:
+    """A quién le toca el folio de CADA trámite de un mensaje: `{service_id: Decision}`.
 
-    elegido = _reparto(session, elegibles)
-    return elegido, "reparto" if elegido is not None else "tope"
+    Cada servicio corre la cadena con su propio pool (quien lo atiende), así que
+    un mensaje con dos trámites que atienden personas distintas queda con dos
+    dueños, y el mismo asesor se queda varios solo si los atiende (regla 3).
+    Solo lee: los folios y su bitácora los escribe quien llama.
+    """
+    ids = list(dict.fromkeys(service_ids))
+    if not settings.reparto_automatico:
+        return {sid: Decision(None, "apagado") for sid in ids}
+    elegibles = _elegibles(session, _oficina_del_telefono(session, phone))
+    if not elegibles:
+        return {sid: Decision(None, "sin-asesores") for sid in ids}
+    contexto = _contexto(session, phone)
+    decisiones: dict[str, Decision] = {}
+    en_mensaje: list[str] = []
+    for sid in ids:
+        d = _decidir(
+            _por_producto(session, elegibles, [sid]), [sid], en_mensaje=en_mensaje, **contexto
+        )
+        decisiones[sid] = d
+        if d.asesor is not None and d.asesor not in en_mensaje:
+            en_mensaje.append(d.asesor)
+    return decisiones
 
 
 def bitacora(session: Session, ticket: Ticket, motivo: str) -> None:
@@ -241,3 +350,25 @@ def provisional(ticket: Ticket) -> bool:
     se le acreditaría al dueño de reparto en todos los reportes.
     """
     return ticket.status == TicketStatus.NUEVO
+
+
+def puede_tomar(session: Session, ticket: Ticket, user: str) -> bool:
+    """¿Puede `user` quedarse este folio contestándole al cliente?
+
+    Suyo o sin dueño: sí. Trabajado por otro: no. Provisional de otro (de
+    reparto, todavía en NUEVO): solo si `user` está en el pool del servicio
+    —lo atiende, o nadie de la oficina del folio lo atiende (`_por_producto`)—.
+    Sin ese corte, con la asignación por servicio el primero que contestara se
+    quedaba el trámite de un compañero que sí lo atiende, y la división se
+    deshacía al primer mensaje. Es la «cola abierta» de siempre, acotada a
+    quien puede llevar el trámite.
+
+    Lo usan el permiso de escribir (`clients.conversacion_escribible`) y la toma
+    al contestar (`inbox._pause_bot`): una sola regla para las dos.
+    """
+    if ticket.assigned_to in (None, user):
+        return True
+    if not provisional(ticket):
+        return False
+    pool = _por_producto(session, _elegibles(session, ticket.office_id), [ticket.service_id])
+    return user in pool

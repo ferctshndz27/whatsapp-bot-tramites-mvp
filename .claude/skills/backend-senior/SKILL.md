@@ -94,10 +94,12 @@ Run this before editing any route or model:
   `Session(db.engine)` after `from app import db` (`main.py:159`, `rag.py:152`,
   `agente_studio.py:304`). `from app.db import engine` would capture the real `tramites.db`
   and defeat the autouse `_isolated_db` fixture in `tests/conftest.py`.
-- **Assignment is decided once per message.** `conversation.py:740` calls
-  `asignacion.elegir(session, client.phone)` once, before the loop that creates one Ticket per
-  requested service — a client asking for three trámites is one client. `asignacion.bitacora`
-  runs **after** `session.commit()` (`:765-771`) because it needs the folio id.
+- **Assignment is decided per service.** `conversation._handle_confirmar` calls
+  `asignacion.elegir_por_servicio(session, client.phone, ids)` once, before the loop that creates
+  one Ticket per requested service, and each Ticket takes its own `Decision`. The chain —cartera →
+  pegajosa → mismo mensaje → reparto— is the pure `asignacion._decidir`; the same advisor keeps
+  several folios only if they attend them. `asignacion.bitacora` runs **after** `session.commit()`
+  because it needs the folio id.
 - **A folio born from auto-assignment stays `NUEVO` with an owner.** `TOMADO` would corrupt the
   funnel; `asignacion.provisional()` is what keeps "whoever replies keeps the chat" alive in
   `inbox._pause_bot` (`inbox.py:308-346`).
@@ -108,6 +110,11 @@ Run this before editing any route or model:
   there is no DI container, no CQRS, no MediatR, and adding one is fashion, not architecture.
 - Using Core `update()` on a mirrored table for convenience — the mirror goes stale with no error.
 - `from app.db import engine` — tests then write the developer's real DB.
+- Calling a helper that opens its OWN session (`auth.is_admin`, `auth.alcance`, `audit.log_admin`)
+  while the current session has pending writes. With the suite's single-connection engine its
+  `close()` rolls back the outer transaction and the write vanishes silently (the trap documented
+  in `asignacion._por_producto`). Resolve those values before the first write, as
+  `inbox._pause_bot` does, or after the commit.
 - Adding a column to `app/db.py` but forgetting `app/archive.py` (or the reverse).
 - A `SQLModel` `sa_column_kwargs={"server_default": text("'meta'")}` that disagrees with the
   `ALTER TABLE ... DEFAULT` string in `db.py` (`models.py:86`, `114`, `171` vs `db.py:41`, `50`, `71`).

@@ -19,6 +19,7 @@ from app.auth import alcance, is_admin
 from app.config import settings
 from app.credenciales import credencial
 from app import asignacion
+from app.clients import folio_de
 from app.db import get_session
 from app.dinero import formato_monto, parse_monto
 from app.models import (
@@ -732,6 +733,16 @@ def ticket_detail(
             ).all()
             if u.username != user
         ]
+        # «Si le contestas, pasa a ti» solo es verdad si contestar se la queda: tiene que
+        # ser el folio con el que quien mira ve la conversación —con un folio propio ahí,
+        # contestar consolida el suyo— y tiene que poder tomarlo (cartera y asignación por
+        # servicio, 2026-09-25). Misma regla que inbox._pause_bot.
+        al_contestar = folio_de(session, ticket.phone, user)
+        contestar_la_toma = (
+            al_contestar is not None
+            and al_contestar.id == ticket.id
+            and asignacion.puede_tomar(session, ticket, user)
+        )
         from app.models import FollowUp
 
         followups = session.exec(
@@ -773,6 +784,7 @@ def ticket_detail(
             # Dueño de reparto que nadie ha tocado todavía: la vista lo dice de
             # otra forma, porque «la está atendiendo X» sería falso.
             "asignacion_provisional": asignacion.provisional(ticket),
+            "contestar_la_toma": contestar_la_toma,
             "teammates": teammates,
             "followups": followups,
             "requirements": service.requirements if service else "",
