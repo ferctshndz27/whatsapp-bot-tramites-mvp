@@ -366,6 +366,7 @@ def _contacto_json(cliente: Client, a: dict, etapa_id: int | None) -> dict:
     return {
         "phone": cliente.phone,
         "name": cliente.name,
+        "alias": cliente.alias,
         "initials": _iniciales(cliente),
         "avatar_color": _color_avatar(cliente.phone),
         "etapa_id": etapa_id,
@@ -418,7 +419,8 @@ def _mensaje_json(m: Message, user: str) -> dict:
 
 def _coincide(cliente: Client, q: str) -> bool:
     aguja = _normalizar(q)
-    if aguja in _normalizar(cliente.name or "") or aguja in cliente.phone:
+    if (aguja in _normalizar(cliente.name or "") or aguja in _normalizar(cliente.alias or "")
+            or aguja in cliente.phone):
         return True
     digitos = re.sub(r"\D", "", q)
     return bool(digitos) and digitos in cliente.phone

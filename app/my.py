@@ -18,6 +18,7 @@ from sqlmodel import select
 from app import cobranza_panel
 from app.auth import is_admin, alcance
 from app.db import get_session
+from app.clients import alias_por_telefono
 from app.inbox import build_conversation_items
 from app.utils import ruta_interna
 from app.ventana import WINDOW_HOURS, horas_restantes
@@ -76,6 +77,7 @@ def my_day(request: Request):
             .order_by(FollowUp.due_at)
         ).all()
         me = session.exec(select(User).where(User.username == user)).first()
+        alias = alias_por_telefono(session, (t.phone for t in tickets))
 
     # Fuera del `with`: abre su propia sesión y no tiene por qué alargar esta.
     cobros_vivos, cobros_en_la_calle = cobranza_panel.cartera_de(user)
@@ -87,6 +89,7 @@ def my_day(request: Request):
             "request": request,
             "user": user,
             "tickets": tickets,
+            "alias": alias,
             "waiting": waiting,
             "expiring": [w for w in waiting if w["hours_left"] <= EXPIRING_HOURS],
             "due_now": [f for f in followups if f.due_at <= naive_now],

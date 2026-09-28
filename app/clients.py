@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_NOMBRE = 200
+MAX_ALIAS = 40
 # Tope de la lista: a este volumen sobra y evita renderizar miles de filas.
 # ponytail: paginar si el directorio pasa de unos miles de clientes.
 LIMITE_LISTA = 300
@@ -171,6 +172,42 @@ def _propagar_nombre(session, phone: str, nombre: str) -> int:
     return len(desfasados)
 
 
+def _renombrar(session, cliente: Client, nombre: str) -> bool:
+    """Le pone `nombre` al cliente. True si cambió. No hace commit ni propaga:
+    quien llama junta el cliente y sus folios (`_propagar_nombre`) en un solo
+    commit, y audita después. Una sola regla para el alta y para la ficha."""
+    if cliente.name == nombre:
+        return False
+    cliente.name = nombre
+    session.add(cliente)
+    return True
+
+
+def alias_por_telefono(session, phones) -> dict[str, str]:
+    """{teléfono: alias} de los que tienen alias, en UNA consulta. Las vistas de
+    folios pintan `Ticket.client_name` (copia congelada) y el alias no se copia
+    al folio —vive solo en Client, así cambiarlo no reescribe folios ni el
+    espejo—, de modo que la ruta lo resuelve aquí y no la plantilla en su bucle."""
+    telefonos = set(phones)
+    if not telefonos:
+        return {}
+    return dict(
+        session.exec(
+            select(Client.phone, Client.alias)
+            .where(Client.phone.in_(telefonos))  # type: ignore[attr-defined]
+            .where(Client.alias.is_not(None))  # type: ignore[union-attr]
+        ).all()
+    )
+
+
+def limpiar_alias(alias: str) -> str | None:
+    """Una línea, sin espacios de sobra y a lo más MAX_ALIAS caracteres; vacío = sin alias.
+    El tope es el mismo que la columna del espejo (NVARCHAR(40)) y el que cabe en la
+    etiqueta de una tarjeta del CRM sin partirla."""
+    limpio = " ".join(alias.split())[:MAX_ALIAS]
+    return limpio or None
+
+
 # Los avisos de /clients viajan por la URL como CÓDIGO y se traducen aquí: un
 # texto libre en ?error= se pintaba (escapado) dentro del panel y servía para
 # suplantar contenido con un enlace (auditoría 2026-09, INJ-5).
@@ -203,7 +240,7 @@ def clients_list(request: Request, q: str = "", alta: str = "", error: str = "",
             # alta otra vez.
             patron = f"%{termino}%"
             canonico = normalize_phone(termino)
-            condiciones = [Client.name.ilike(patron), Client.phone.like(patron)]
+            condiciones = [Client.name.ilike(patron), Client.alias.ilike(patron), Client.phone.like(patron)]
             if canonico:
                 condiciones.append(Client.phone == canonico)
             consulta = consulta.where(or_(*condiciones))
@@ -275,12 +312,10 @@ def clients_upsert(
             # desaparecía de su propia lista.
             session.add(Client(phone=canonico, name=nombre, office_id=vista.office_id))
             accion, resultado = "cliente:alta", "alta"
-        elif cliente.name == nombre:
-            accion, resultado = None, "sin-cambio"
-        else:
-            cliente.name = nombre
-            session.add(cliente)
+        elif _renombrar(session, cliente, nombre):
             accion, resultado = "cliente:nombre", "actualizado"
+        else:
+            accion, resultado = None, "sin-cambio"
         # Un solo commit: el cliente y sus folios cambian de nombre juntos o no
         # cambian. La corrección se aplica también en el alta, por si el
         # teléfono ya tenía folios de antes.
@@ -410,17 +445,31 @@ def update_client(
     origen: str = Form(""),
     idioma: str = Form(""),
     notas_internas: str = Form(""),
+    name: str | None = Form(None),
+    alias: str | None = Form(None),
 ):
-    """Ficha CRM (fase 1). El nombre se corrige en /clients (propaga a folios);
-    aquí va el resto de la ficha."""
+    """Ficha CRM (fase 1): nombre, alias y el resto de la ficha.
+
+    `name` y `alias` son opcionales a propósito: una petición que no los manda
+    no los toca (None ≠ «borrar»). El nombre sigue la misma regla que el alta
+    con teléfono repetido (`_renombrar` + `_propagar_nombre`, un solo commit y
+    auditado); vacío se ignora, porque el nombre es obligatorio y la ficha no
+    tiene canal de error. El alias vacío sí lo quita."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
 
+    renombrado = None
     with get_session() as session:
         client = _cliente_visible(session, phone, user)
         if client is None:
             return RedirectResponse("/", status_code=303)
+        nombre = (name or "").strip()[:MAX_NOMBRE]
+        if name is not None and nombre and _renombrar(session, client, nombre):
+            _propagar_nombre(session, client.phone, nombre)
+            renombrado = nombre
+        if alias is not None:
+            client.alias = limpiar_alias(alias)
         nuevo_email = email.strip().lower()[:200]
         if not nuevo_email:
             client.email = None
@@ -435,7 +484,10 @@ def update_client(
         session.add(client)
         session.commit()
     # Mismo criterio que el alta: a este cliente se le cobra; quién editó su
-    # ficha es dato de aclaración.
+    # ficha es dato de aclaración. El cambio de nombre lleva su propia fila,
+    # igual que en el alta: es el que se reescribe en los folios.
+    if renombrado:
+        log_admin(user, "cliente:nombre", f"{phone} · {renombrado}")
     log_admin(user, "cliente:ficha", phone)
     return RedirectResponse(f"/clients/{phone}", status_code=303)
 

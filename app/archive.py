@@ -690,6 +690,7 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "atributos_json": "NVARCHAR(MAX) NULL",
         "last_activity_at": "DATETIME2 NULL",
         "notas_internas": "NVARCHAR(MAX) NULL",
+        "alias": "NVARCHAR(40) NULL",
         "office_id": _OFFICE_ID_MSSQL,
         # Embudo del CRM — NULL es «en la primera etapa», igual que en SQLite.
         "etapa_crm_id": "BIGINT NULL",
@@ -1085,6 +1086,7 @@ def sync_client_name(c) -> None:
                 _naive_utc(c.last_activity_at) if c.last_activity_at else None
             ),
             "notas_internas": c.notas_internas,
+            "alias": c.alias,
             "office_id": c.office_id,
             "etapa_crm_id": c.etapa_crm_id,
             "etapa_crm_at": _naive_utc(c.etapa_crm_at) if c.etapa_crm_at else None,

@@ -146,6 +146,26 @@
     if (el) el.textContent = text;
   }
 
+  /* Etiqueta del alias interno (Client.alias) debajo del nombre: mismo markup que
+     templates/partials/alias.html —🏷️ decorativo y «Alias:» para el lector de
+     pantalla—, armado con nodos de texto: el alias lo escribe una persona. */
+  function fillAlias(el, c) {
+    if (!el) return;
+    clear(el);
+    var alias = c && c.alias;
+    el.hidden = !alias;
+    if (!alias) return;
+    var ico = document.createElement("span");
+    ico.setAttribute("aria-hidden", "true");
+    ico.textContent = "🏷️ ";
+    var sr = document.createElement("span");
+    sr.className = "sr-only";
+    sr.textContent = "Alias: ";
+    el.appendChild(ico);
+    el.appendChild(sr);
+    el.appendChild(document.createTextNode(alias));
+  }
+
   function clear(el) {
     while (el && el.firstChild) el.removeChild(el.firstChild);
   }
@@ -724,7 +744,7 @@
     var extra = "";
     if (Number(c.unread) > 0) extra += ", " + c.unread + " sin leer";
     if (c.pinned) extra += ", fijado";
-    return "Abrir chat con " + nombreDe(c) + extra;
+    return "Abrir chat con " + nombreDe(c) + (c.alias ? " (alias " + c.alias + ")" : "") + extra;
   }
 
   function makeTrayItem(c, now) {
@@ -734,6 +754,7 @@
     li.setAttribute("aria-label", accessibleName(c));
     fillAvatar($(".avatar", li), c);
     setText(li, ".tray-name", nombreDe(c));
+    fillAlias($(".alias-tag", li), c);
     setTiempo($(".tray-time", li), lastActivity(c), now);
     fillPreview($(".tray-preview", li), previewOf(c.last_message));
     fillBadges($(".tray-badges", li), c);
@@ -992,6 +1013,7 @@
     card.setAttribute("aria-label", accessibleName(c));
     fillAvatar($(".avatar", card), c);
     setText(card, ".card-name", nombreDe(c));
+    fillAlias($(".alias-tag", card), c);
     setText(card, ".card-phone", c.name ? formatoTelefono(c.phone) : "");
     fillPreview($(".card-preview", card), previewOf(c.last_message));
     setTiempo($(".card-time", card), lastActivity(c), now);
@@ -1749,13 +1771,14 @@
     // Quién más tiene el agente apagado en su folio: con varios dueños el bot puede estar
     // callado por el folio de un compañero, no por el de quien mira.
     var apagadoPorOtros = (c.apagado_por || []).filter(function (u) { return u !== USUARIO; });
-    var firma = JSON.stringify([c.phone, c.name, c.avatar_color, c.initials, c.bot_pausado, c.ventana,
+    var firma = JSON.stringify([c.phone, c.name, c.alias, c.avatar_color, c.initials, c.bot_pausado, c.ventana,
       c.provider, c.ticket, c.bloqueado, agenteActivo, estadoAsesor, apagadoPorOtros]);
     if (firma === ultimaCabecera) return;
     ultimaCabecera = firma;
 
     fillAvatar(els.chatAvatar, c);
     if (els.chatName) els.chatName.textContent = c.name || "Sin nombre";
+    fillAlias(els.chatAlias, c);
     if (els.chatPhone) els.chatPhone.textContent = formatoTelefono(c.phone);
 
     var b = els.chatBadges;
@@ -2273,6 +2296,7 @@
       chat: chat,
       chatAvatar: document.getElementById("crm-chat-avatar"),
       chatName: document.getElementById("crm-chat-name"),
+      chatAlias: document.getElementById("crm-chat-alias"),
       chatPhone: document.getElementById("crm-chat-phone"),
       chatBadges: document.getElementById("crm-chat-badges"),
       chatThread: document.getElementById("crm-chat-thread"),

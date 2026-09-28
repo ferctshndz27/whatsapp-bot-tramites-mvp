@@ -2,6 +2,7 @@
 {% block title %}Solicitudes{% endblock %}
 {% block head %}<meta name="auto-recarga" content="30">{% endblock %}
 {% block content %}
+{% from "partials/alias.html" import alias_tag %}
 {# URL actual (filtros y página incluidos) urlencoded: viaja como ?volver= en
    cada enlace al detalle para que su botón de regreso restaure esta vista. #}
 {% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
@@ -90,7 +91,7 @@
                 {{ (t.client_name or t.phone)[:2] | upper }}
               </span>
               <span>
-                <strong>{{ t.client_name or 'Sin nombre' }}</strong><br>
+                <strong>{{ t.client_name or 'Sin nombre' }}</strong>{{ alias_tag(alias.get(t.phone)) }}{% if not alias.get(t.phone) %}<br>{% endif %}
                 <span class="sub">#{{ t.id }} · {{ t.phone }}</span>
               </span>
             </a>

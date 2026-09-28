@@ -111,6 +111,19 @@
     .badge.escalado   { background: #22242a; color: #ffd35c; }
     .badge.disponible { background: #e3f7f0; color: #0b6e5d; }
     .badge.ocupado    { background: #fdeedd; color: #92590a; }
+    /* Alias interno del cliente (partials/alias.html): va DEBAJO del nombre, por eso
+       es un bloque de ancho justo y no un badge en línea. Violeta para no confundirse
+       con los estados de folio; el 🏷️ y el «Alias:» de lector de pantalla son el
+       segundo canal. #5b3fb3 sobre #efe9fd ≈ 6.4:1. */
+    .alias-tag {
+      display: block; width: fit-content; max-width: 100%; margin-top: .2rem;
+      padding: .1rem .55rem; border-radius: 999px; background: #efe9fd; color: #5b3fb3;
+      font-size: .75rem; font-weight: 600; line-height: 1.4;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* `display: block` le ganaría al [hidden] del navegador: las tarjetas del CRM
+       traen la etiqueta vacía y crm.js la muestra solo si hay alias. */
+    .alias-tag[hidden] { display: none; }
     .badge.ausente    { background: #eef0f3; color: #666; }
     .badge.urgente    { background: #be1e51; color: #fff; }
     /* Canal: qué cuenta atiende esta conversación. El color NO es el único

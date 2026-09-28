@@ -7,6 +7,7 @@
      items      lista de dicts de app.inbox.build_conversation_items
      volver_url ya no se usa: el chat vive en el CRM, que tiene su propia navegación
      filtrada   bool: cambia el texto del estado vacío #}
+{% from "partials/alias.html" import alias_tag %}
 {% if items %}
 <div class="convo-list">
   {% for i in items %}
@@ -17,6 +18,7 @@
     <span class="body">
       <strong>{{ i.name or i.phone }}</strong>
       {% if i.name %}<span class="sub u-c-text-muted u-fs-0_8rem"> · {{ i.phone }}</span>{% endif %}
+      {{ alias_tag(i.alias) }}
       <div class="preview">{{ '📎 ' if i.last_direction == 'out' and not i.last_body else '' }}{{ i.last_body[:70] }}</div>
       <span class="badges">
         {% if i.waiting %}<span class="badge esperando">esperando respuesta</span>{% endif %}

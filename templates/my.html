@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Mi día{% endblock %}
 {% block content %}
+{% from "partials/alias.html" import alias_tag %}
 <h1 class="u-d-flex u-items-center u-gap-1rem u-wrap-wrap">
   Mi día
   <form class="u-d-inline-flex u-items-center u-gap-0_5rem u-ml-auto" method="post" action="/my/estado">
@@ -50,7 +51,7 @@
     {% for w in waiting %}
     <a class="convo-card" href="/crm?chat={{ w.phone }}">
       <div class="body">
-        <strong>{{ w.name or w.phone }}</strong>
+        <strong>{{ w.name or w.phone }}</strong>{{ alias_tag(w.alias) }}
         <div class="preview">{{ w.last_body }}</div>
         <div class="badges">
           {% if w.hours_left <= 6 %}
@@ -107,7 +108,7 @@
           {% for t in tickets %}
           <tr data-href="/tickets/{{ t.id }}">
             <td><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
-            <td>{{ t.client_name or t.phone }}</td>
+            <td>{{ t.client_name or t.phone }}{{ alias_tag(alias.get(t.phone)) }}</td>
             <td>{{ t.service_name }}</td>
             <td><span class="badge {{ t.status.value }}">{{ t.status.value.replace('_', ' ') }}</span></td>
           </tr>
