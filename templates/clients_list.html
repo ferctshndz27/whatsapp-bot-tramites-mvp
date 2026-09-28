@@ -35,6 +35,12 @@
       </div>
       <button type="submit">Guardar</button>
     </div>
+    {# Marcada por omisión: registrar a un cliente suele ser registrar a MI cliente. Quien
+       captura clientes del equipo la desmarca, o le llegarían todos sus folios. #}
+    <label class="u-d-flex u-gap-0_4rem u-items-center u-mt-0_5rem" for="alta-cartera">
+      <input type="checkbox" id="alta-cartera" name="cartera" value="1" checked>
+      Agregarlo a mi cartera
+    </label>
   </form>
 </div>
 
@@ -46,8 +52,12 @@
       <label class="u-m-0" for="q">Buscar</label>
       <input type="text" id="q" name="q" value="{{ q }}"
              placeholder="Nombre o teléfono" autocomplete="off">
+      <label class="u-m-0 u-d-flex u-gap-0_4rem u-items-center" for="solo-mios">
+        <input type="checkbox" id="solo-mios" name="mios" value="1"{% if mios %} checked{% endif %}>
+        Mis clientes
+      </label>
       <button type="submit" class="btn-sm">Buscar</button>
-      {% if q %}<a class="btn-sm u-deco-none u-d-inline-flex u-items-center" href="/clients">Limpiar</a>{% endif %}
+      {% if q or mios %}<a class="btn-sm u-deco-none u-d-inline-flex u-items-center" href="/clients">Limpiar</a>{% endif %}
     </div>
   </form>
 
@@ -80,7 +90,7 @@
   {% endif %}
   {% else %}
   <p class="empty">
-    {% if q %}Ningún cliente coincide con «{{ q }}».{% else %}Todavía no hay clientes registrados.{% endif %}
+    {% if q %}Ningún cliente coincide con «{{ q }}».{% elif mios %}Todavía no tienes clientes en tu cartera.{% else %}Todavía no hay clientes registrados.{% endif %}
   </p>
   {% endif %}
 </div>

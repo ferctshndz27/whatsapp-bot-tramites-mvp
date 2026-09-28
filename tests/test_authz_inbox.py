@@ -110,19 +110,32 @@ def test_quien_responde_se_queda_el_folio_sin_dueno_o_provisional(escenario, ses
     """La regla de producto que el guard tiene que respetar: un folio sin dueño,
     o con dueño de reparto todavía en NUEVO, lo reclama quien contesta
     (`inbox._pause_bot`, `asignacion.provisional`). Si esto se pone rojo, el
-    guard nuevo mató «quien responde se queda el chat»."""
+    guard nuevo mató «quien responde se queda el chat».
+
+    Reescrita a propósito con la asignación por servicio (2026-09-25): quien YA
+    tiene un folio abierto en la conversación contesta sobre el suyo y no le
+    quita a nadie el provisional más nuevo. Antes ana se quedaba el de bob, y
+    eso deshacía la división por servicio al primer mensaje. La «cola abierta»
+    sigue para quien no tiene folio propio (carla, abajo)."""
     sin_dueno = _folio(session, assigned_to=None, status=TicketStatus.NUEVO)
     inbox_send(_request("ana"), CLIENTE, body="yo lo tomo")
     session.refresh(sin_dueno)
     assert escenario == ["yo lo tomo"] and sin_dueno.assigned_to == "ana"
     assert sin_dueno.status == TicketStatus.TOMADO
 
-    # Otro folio, más nuevo, de reparto para bob y todavía en NUEVO: ana también puede.
+    # Otro folio, más nuevo, de reparto para bob y todavía en NUEVO.
     provisional = _folio(session, assigned_to="bob", status=TicketStatus.NUEVO)
     assert folio_vigente_de(session, CLIENTE).id == provisional.id, "el vigente debía ser el nuevo"
-    inbox_send(_request("ana"), CLIENTE, body="lo trabajo yo")
+    # ana contesta sobre SU folio: el de bob no cambia de manos.
+    inbox_send(_request("ana"), CLIENTE, body="sigo con lo mío")
     session.refresh(provisional)
-    assert provisional.assigned_to == "ana", "el folio de reparto no cambió de manos al contestar"
+    assert provisional.assigned_to == "bob", "ana le quitó el provisional a bob contestando sobre el suyo"
+    # carla, sin folio propio, sí se lo queda al contestar (nadie atiende «curp»).
+    session.add(User(username="carla", password_hash="x"))
+    session.commit()
+    inbox_send(_request("carla"), CLIENTE, body="lo trabajo yo")
+    session.refresh(provisional)
+    assert provisional.assigned_to == "carla", "el folio de reparto no cambió de manos al contestar"
     accion = {a.action for a in session.exec(select(TicketActivity).where(TicketActivity.ticket_id == provisional.id))}
     assert "tomado-de:bob" in accion, "el histórico no dice a quién se le quitó"
 

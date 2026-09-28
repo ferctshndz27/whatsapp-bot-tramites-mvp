@@ -429,6 +429,8 @@ _ESQUEMA_DESPLEGADO = {
     # Quién atiende qué producto (2026-09-18): tabla nueva, create_all() la crea
     # completa. Desde aquí, una columna que se le agregue tiene que ir en los dicts.
     "catalogasesor": ("id", "service_id", "username", "created_at", "created_by", "habilitado"),
+    # La cartera de clientes (2026-09-25): tabla nueva, create_all() la crea completa.
+    "clienteasesor": ("id", "phone", "username", "created_at", "created_by", "habilitado"),
     "catalogcategory": ("id", "name", "position", "habilitado"),
     "catalogservice": (
         "id",

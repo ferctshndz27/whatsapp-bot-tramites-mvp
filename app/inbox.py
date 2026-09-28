@@ -7,15 +7,16 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from app.templating import templates
+from sqlalchemy import update
 from sqlmodel import select
 
 from app import messaging, ventana
 from app.audit import log_admin
-from app.clients import conversacion_escribible
+from app.clients import conversacion_escribible, folio_de
 from app.auth import is_admin, alcance
 from app.config import settings
 from app import asignacion
-from app.conversation import _latest_open_ticket
+from app.conversation import _folios_abiertos
 from app.db import get_session
 from app.media_store import MEDIA_NAME_RE, save_upload, verify_media_token
 from app.team_chat import archivo_de_chat_visible
@@ -49,8 +50,8 @@ def _puede_escribir(session, phone: str, user: str) -> bool:
     """¿Este usuario puede actuar sobre la conversación de este número?
 
     La regla vive en `clients.conversacion_escribible`, junto al corte de
-    lectura: oficina, y para quien no es admin, un folio vigente reclamable por
-    él. El guard anterior solo miraba la oficina —y contestaba True sin fila
+    lectura: oficina, y para quien no es admin, que su folio pueda ser suyo
+    (`asignacion.puede_tomar`). El guard anterior solo miraba la oficina —y contestaba True sin fila
     Client—, así que un colaborador al que el CRM le negaba el chat podía
     mandar WhatsApp como el negocio, reactivar el bot y ocultar mensajes
     (auditoría 2026-09, AUTHZ-2)."""
@@ -228,23 +229,48 @@ def _pause_bot(session, phone: str, user: str) -> None:
     provisional mientras el folio siga en NUEVO (`asignacion.provisional`):
     contestar sigue siendo la forma de quedarse un chat, y en cuanto alguien
     lo trabajó —NUEVO deja de serlo— el dueño ya no se mueve solo.
+
+    Con la asignación por servicio una conversación trae folios de dueños
+    distintos, así que ya no se toma «el abierto más reciente» sino el folio de
+    quien contesta (`clients.folio_de`, el mismo que le pinta la tarjeta y le
+    da permiso de escribir), y solo si `asignacion.puede_tomar`: contestar ya no
+    le quita a un compañero el trámite que él atiende y quien contesta no.
     """
+    # Antes de escribir nada: is_admin abre su propia sesión (ver clients.folio_de).
+    admin = is_admin(user)
     conv = session.get(Conversation, phone)
     if conv and conv.state != "escalado":
         conv.state = "escalado"
         session.add(conv)
-    ticket = _latest_open_ticket(session, phone)
-    if ticket is not None:
-        if ticket.assigned_to is None or asignacion.provisional(ticket):
+    ticket = folio_de(session, phone, user, admin=admin)
+    if ticket is not None and ticket.status != TicketStatus.CERRADO:
+        if (
+            ticket.assigned_to is None or asignacion.provisional(ticket)
+        ) and asignacion.puede_tomar(session, ticket, user):
             anterior = ticket.assigned_to
-            ticket.assigned_to = user
-            ticket.status = TicketStatus.TOMADO
-            ticket.status_changed_at = utcnow()
-            # Si le quitó el folio a un dueño de reparto, el histórico lo dice:
-            # un cambio de dueño sin nadie apareciendo haciéndolo es justo lo
-            # que vuelve inauditable la tabla de equipo.
-            accion = "tomado" if anterior in (None, user) else f"tomado-de:{anterior}"
-            session.add(TicketActivity(ticket_id=ticket.id, username=user, action=accion))
+            # Toma atómica, como /claim: solo si el folio sigue como se leyó. Dos que
+            # contestan a la vez ya no se lo quedan los dos (antes ganaba el último
+            # commit y la bitácora decía que lo tomaron ambos). El UPDATE de Core no
+            # pasa por el listener del espejo, pero el ORM de abajo (updated_at)
+            # sí, y lleva la fila completa ya refrescada.
+            tomado = session.exec(
+                update(Ticket)
+                .where(
+                    Ticket.id == ticket.id,
+                    Ticket.status == ticket.status,
+                    Ticket.assigned_to.is_(None)  # type: ignore[union-attr]
+                    if anterior is None
+                    else Ticket.assigned_to == anterior,
+                )
+                .values(assigned_to=user, status=TicketStatus.TOMADO, status_changed_at=utcnow())
+            ).rowcount
+            session.refresh(ticket)
+            if tomado:
+                # Si le quitó el folio a un dueño de reparto, el histórico lo dice:
+                # un cambio de dueño sin nadie apareciendo haciéndolo es justo lo
+                # que vuelve inauditable la tabla de equipo.
+                accion = "tomado" if anterior in (None, user) else f"tomado-de:{anterior}"
+                session.add(TicketActivity(ticket_id=ticket.id, username=user, action=accion))
         if ticket.agent_active:
             ticket.agent_active = False
             session.add(
@@ -405,20 +431,29 @@ def inbox_bot_on(request: Request, phone: str):
         if not _puede_escribir(session, phone, user):
             return RedirectResponse("/", status_code=303)
             
+        # Antes de escribir nada: is_admin abre su propia sesión (ver clients.folio_de).
+        admin = is_admin(user)
         conv = session.get(Conversation, phone)
         if conv and conv.state == "escalado":
             conv.state = "inicio"
             session.add(conv)
-        # Reactivar el bot también reenciende el agente del ticket abierto,
-        # con su registro de quién lo hizo (espejo del apagado).
-        ticket = _latest_open_ticket(session, phone)
-        if ticket is not None and not ticket.agent_active:
-            ticket.agent_active = True
-            ticket.updated_at = utcnow()
-            session.add(ticket)
-            session.add(
-                TicketActivity(ticket_id=ticket.id, username=user, action="agente:reanudado")
-            )
+        # Reactivar el bot también reenciende el agente de los folios abiertos,
+        # con su registro de quién lo hizo (espejo del apagado). Pero solo los
+        # de quien pulsa —los suyos y el folio con el que mira—: con varios
+        # dueños, reencender el de un compañero pondría al bot a hablarle al
+        # cliente encima de él. El bot sigue callado mientras quede alguno
+        # apagado (conversation.handle_incoming). El admin reenciende todos.
+        suyo = None if admin else folio_de(session, phone, user, admin=False)
+        for ticket in _folios_abiertos(session, phone):
+            if ticket.agent_active:
+                continue
+            if admin or ticket.assigned_to == user or (suyo is not None and ticket.id == suyo.id):
+                ticket.agent_active = True
+                ticket.updated_at = utcnow()
+                session.add(ticket)
+                session.add(
+                    TicketActivity(ticket_id=ticket.id, username=user, action="agente:reanudado")
+                )
         session.commit()
         logger.info("Bot reactivado para %s por %s", mask_phone(phone), user)
     return RedirectResponse(f"/inbox/{phone}", status_code=303)

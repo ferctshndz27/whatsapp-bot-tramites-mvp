@@ -1739,13 +1739,18 @@
      repinta si algo cambió, para que el sondeo no parpadee. */
   function pintarCabecera(c, extra) {
     if (!c || !els.chatBadges) return;
+    // Sin la respuesta del chat (se pinta con la tarjeta mientras carga) se deduce de la
+    // tarjeta: el agente de su folio, y nadie más con el suyo apagado.
     var agenteActivo = (extra && typeof extra.agente_activo === "boolean")
       ? extra.agente_activo
-      : (c.ticket ? c.ticket.agent_active !== false : true);
+      : (c.ticket ? c.ticket.agent_active !== false : true) && !(c.apagado_por && c.apagado_por.length);
     var asesor = (c.ticket && c.ticket.assigned_to) ? miembroPorNombre(c.ticket.assigned_to) : null;
     var estadoAsesor = (asesor && asesor.estado) ? (ESTADOS_MIEMBRO[asesor.estado] || asesor.estado) : null;
+    // Quién más tiene el agente apagado en su folio: con varios dueños el bot puede estar
+    // callado por el folio de un compañero, no por el de quien mira.
+    var apagadoPorOtros = (c.apagado_por || []).filter(function (u) { return u !== USUARIO; });
     var firma = JSON.stringify([c.phone, c.name, c.avatar_color, c.initials, c.bot_pausado, c.ventana,
-      c.provider, c.ticket, c.bloqueado, agenteActivo, estadoAsesor]);
+      c.provider, c.ticket, c.bloqueado, agenteActivo, estadoAsesor, apagadoPorOtros]);
     if (firma === ultimaCabecera) return;
     ultimaCabecera = firma;
 
@@ -1782,7 +1787,12 @@
     var volver = encodeURIComponent("/crm?chat=" + c.phone);
 
     if (c.bot_pausado) {
-      if (c.ticket && !agenteActivo) chip("agente apagado — el cliente solo te ve a ti", "chip-bot");
+      // Si quien mira también lo tiene apagado en su folio, se dice: si no, reactivar el
+      // suyo parecería no servir de nada.
+      var yoTambien = (c.apagado_por || []).indexOf(USUARIO) !== -1;
+      if (!agenteActivo && apagadoPorOtros.length) {
+        chip("agente apagado — lo " + (yoTambien ? "atienden tú y " : "atiende ") + apagadoPorOtros.join(", "), "chip-bot");
+      } else if (c.ticket && !agenteActivo) chip("agente apagado — el cliente solo te ve a ti", "chip-bot");
       else chip("escalado — el agente sigue activo; se apaga al enviar tu primer mensaje", "chip-bot");
       boton("Reactivar bot", "btn-sm chat-bot-on", reactivarBot);
     } else {

@@ -328,6 +328,20 @@ _SCHEMA_DDL = [
         created_at DATETIME2    NOT NULL
     )
     """,
+    # La cartera (ClienteAsesor): qué colaboradores consideran suyo a un
+    # cliente. Mismo molde que catalog_asesores, con el teléfono en vez del
+    # servicio.
+    """
+    IF OBJECT_ID('cliente_asesores', 'U') IS NULL
+    CREATE TABLE cliente_asesores (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        phone      NVARCHAR(32) NOT NULL,
+        username   NVARCHAR(64) NOT NULL,
+        created_by NVARCHAR(64) NULL,
+        habilitado BIT          NOT NULL DEFAULT 1,
+        created_at DATETIME2    NOT NULL
+    )
+    """,
     """
     IF OBJECT_ID('synonym_proposals', 'U') IS NULL
     CREATE TABLE synonym_proposals (
@@ -1344,6 +1358,19 @@ def archive_catalog_asesor(a) -> None:
     )
 
 
+def archive_cliente_asesor(a) -> None:
+    _upsert(
+        "cliente_asesores", "source_id", a.id,
+        {
+            "phone": a.phone,
+            "username": a.username,
+            "created_by": a.created_by,
+            "habilitado": a.habilitado,
+            "created_at": _naive_utc(a.created_at),
+        },
+    )
+
+
 def archive_catalog_audit(a) -> None:
     _upsert(
         "catalog_audit", "source_id", a.id,
@@ -1856,6 +1883,7 @@ def backfill() -> None:
         CatalogService,
         Client,
         ClientNote,
+        ClienteAsesor,
         Cobro,
         Conversation,
         EventoPasarela,
@@ -1928,6 +1956,8 @@ def backfill() -> None:
                 archive_followup(f)
             for n in session.exec(select(ClientNote)).all():
                 archive_client_note(n)
+            for ca in session.exec(select(ClienteAsesor)).all():
+                archive_cliente_asesor(ca)
             for r in session.exec(select(SavedReply)).all():
                 archive_saved_reply(r)
             for e in session.exec(select(LoginEvent)).all():
@@ -2009,6 +2039,7 @@ def _register_listeners() -> None:
         CatalogService,
         Client,
         ClientNote,
+        ClienteAsesor,
         Cobro,
         Conversation,
         EventoPasarela,
@@ -2178,6 +2209,11 @@ def _register_listeners() -> None:
     @event.listens_for(CatalogAsesor, "after_update")
     def _catalog_asesor_upsert(mapper, connection, target):
         _safe(archive_catalog_asesor, target)
+
+    @event.listens_for(ClienteAsesor, "after_insert")
+    @event.listens_for(ClienteAsesor, "after_update")
+    def _cliente_asesor_upsert(mapper, connection, target):
+        _safe(archive_cliente_asesor, target)
 
     @event.listens_for(NluEvent, "after_insert")
     @event.listens_for(NluEvent, "after_update")

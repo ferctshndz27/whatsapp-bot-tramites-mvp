@@ -36,7 +36,8 @@ Who decides what. Do not move a decision across these lines.
 | `app/catalog.py` | the only source of price, name, synonyms, requirements | conversational rules |
 | `app/codigos.py` | the CURP/RFC/NSS/email patterns and `cuantos_tramites`:108 | fixing a final price |
 | `app/rag.py` / `app/agent_tools.py` | informative answers and read-only tools, hanging off `_not_understood`:1245 | entering the cascade |
-| `app/asignacion.py` | which human gets the folio (`elegir`, once per message) | what the client is told |
+| `app/asignacion.py` | which human gets each folio (`elegir_por_servicio` per requested service, `elegir` for the escalation) | what the client is told |
+| `app/cartera.py` | who considers a client theirs: assignment preference and chat visibility | write permission — that stays with the folio |
 | `app/archive.py` | MSSQL mirror, always through `_safe`:1380 | raising into the request path |
 
 Single trunk: `webhook.handle_inbound`:82 → `conversation.handle_incoming`:262. Both providers arrive
@@ -132,8 +133,10 @@ into an abstraction because it looks cleaner.
   client's free text legitimately contains "folio", "lista", "precios".
 - Re-defining CURP/RFC/NSS patterns in `conversation.py` — they live in `app/codigos.py`, and
   `rag._CURP_RE` is separate **on purpose** (laxer leak guard), so do not unify them either.
-- Calling `asignacion.elegir` inside the ticket loop: once per message (:740) — a client asking for
-  three trámites is one client, not three.
+- Deciding all the folios of a message with one `asignacion.elegir` call: since 2026-09-25 the alta
+  asks `elegir_por_servicio`, one decision per service, and the same advisor keeps several only if
+  they attend them (rule «mismo mensaje»). Giving the cartera write permission is the other trap:
+  it only grants visibility and preference (`clients.conversacion_escribible` ignores it on purpose).
 - Logging a `rag`/`tools` row without excluding it from denominators (`models.CAPAS_EXTRA`), which
   inflates the "not understood" rate; turning a one-row policy into a table (§7bis.2).
 
