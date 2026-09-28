@@ -20,10 +20,10 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # fijo como las acciones: ubuntu-latest pasa a 26 sin commit (19-oct-2026)
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4, por SHA (INFRA-6)
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5, por SHA (INFRA-6)
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0 (node24), por SHA (INFRA-6)
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0 (node24), por SHA (INFRA-6)
         with:
           python-version: "3.12"
           cache: pip
@@ -43,9 +43,9 @@ jobs:
   # un build roto es una máquina quemándose.
   # Se construye y se tira: sin buildx, sin registry, sin push.
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # fijo como las acciones: ubuntu-latest pasa a 26 sin commit (19-oct-2026)
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4, por SHA (INFRA-6)
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0 (node24), por SHA (INFRA-6)
       - name: Construir la imagen
         run: docker build -t tramites-bot:ci .
 
@@ -54,12 +54,12 @@ jobs:
     # que no debe llegar un test rojo.
     needs: [test, build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # fijo como las acciones: ubuntu-latest pasa a 26 sin commit (19-oct-2026)
     permissions:
       contents: write
     concurrency: promote-production
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4, por SHA (INFRA-6)
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0 (node24), por SHA (INFRA-6)
         with:
           fetch-depth: 0
       - name: Promover a production
