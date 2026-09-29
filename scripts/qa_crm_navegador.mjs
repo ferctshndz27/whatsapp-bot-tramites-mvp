@@ -8,7 +8,8 @@
  * sembrada (scripts/qa_crm_seed.py), abre Chrome sin cabeza, entra con la sesión del panel como
  * admin global, colaborador y admin de oficina, y ejecuta los criterios de aceptación del CRM
  * (tablero, drag & drop persistente, pestañas, búsqueda, chat, envío por los endpoints de
- * app/inbox.py, bot, bloqueo, etapas, alta de contacto, alcance por oficina, cajón del folio,
+ * app/inbox.py, bot, bloqueo, etapas, reordenar etapas arrastrando o con el teclado, tablero
+ * personal de cada quien, alta de contacto, alcance por oficina, cajón del folio,
  * folios cerrados y «Mis respuestas», que sustituye a /replies) más una pasada responsiva. Imprime una línea ✅/❌ por criterio (⚠️ = observación) y termina con código 1 si
  * hay algún ❌. Node 22 sin dependencias npm; requiere google-chrome.
  *
@@ -415,6 +416,44 @@ const enPagina = {
     const dropCancelado = !disparar("drop", col);
     disparar("dragend", card);
     return { ok: true, draggable, arrastrando, dato, resaltada, dragoverCancelado, dropCancelado, limpia: !col.classList.contains("is-over") };
+  },
+
+  /* Arrastre nativo de la CABECERA de `columnId` hasta el borde `lado` ("antes" | "despues")
+     de `destinoId`, con coordenadas reales: crm.js decide el hueco por el punto medio de cada
+     columna, no por el elemento que recibe el evento. */
+  arrastrarColumna: (columnId, destinoId, lado) => {
+    const board = document.querySelector("#crm-board");
+    const col = board?.querySelector(`section.column[data-column-id="${columnId}"]`);
+    const destino = board?.querySelector(`section.column[data-column-id="${destinoId}"]`);
+    if (!col) return { error: `no existe section.column[data-column-id="${columnId}"]` };
+    if (!destino) return { error: `no existe section.column[data-column-id="${destinoId}"]` };
+    const header = col.querySelector(".column-header");
+    if (!header) return { error: `la columna ${columnId} no tiene .column-header` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    const r = destino.getBoundingClientRect();
+    const x = lado === "antes" ? r.left + 5 : r.right - 5;
+    const y = r.top + 20;
+    const dt = new DataTransfer();
+    const disparar = (tipo, blanco) =>
+      blanco.dispatchEvent(new DragEvent(tipo, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y }));
+    const draggable = header.draggable === true;
+    disparar("dragstart", header);
+    const atenuada = col.classList.contains("is-col-dragging");
+    disparar("dragenter", destino);
+    const dragoverCancelado = !disparar("dragover", destino);
+    const marcada = board.querySelector(".column.is-drop-before, .column.is-drop-after");
+    const marca = marcada
+      ? { id: marcada.dataset.columnId, lado: marcada.classList.contains("is-drop-before") ? "antes" : "despues" }
+      : null;
+    const dropCancelado = !disparar("drop", destino);
+    disparar("dragend", header);
+    const restos = board.querySelector(".column.is-drop-before, .column.is-drop-after, .column.is-col-dragging");
+    return { ok: true, draggable, atenuada, dragoverCancelado, marca, dropCancelado, limpia: !restos };
+  },
+
+  foco: () => {
+    const a = document.activeElement;
+    return { clase: a?.className ?? null, columna: a?.closest?.("section.column")?.dataset.columnId ?? null };
   },
 
   toast: () => {
@@ -1603,6 +1642,71 @@ async function criterioEtapas(ctx) {
   return "«Por cobrar» creada desde el diálogo, Beto movido ahí, renombrada a «Cobrado», recoloreada y eliminada desde ⋮ (Beto volvió a la primera etapa)";
 }
 
+const mismoOrden = (a, b) => JSON.stringify(a.map(Number)) === JSON.stringify(b.map(Number));
+
+async function criterioReordenarEtapas(ctx) {
+  // Reordenar es acomodar el tablero, no a los clientes: la primera etapa viaja al final
+  // arrastrando su cabecera (con la barra marcando el hueco), el orden se guarda y sobrevive a
+  // una recarga, ninguna tarjeta cambia de columna, y el teclado la devuelve con «Mover antes».
+  const antes = await ctx.tablero();
+  const ids = antes.etapas.map((e) => e.id);
+  if (ids.length < 3) throw new Error(`hacen falta 3 etapas y hay ${ids.length}`);
+  const columnaDe = Object.fromEntries(antes.contactos.map((c) => [c.phone, c.etapa_id]));
+  const primera = antes.etapas[0];
+  const fallos = [];
+
+  let r = await ctx.cdp.evaluate(enPagina.arrastrarColumna, String(ids[0]), String(ids[ids.length - 1]), "despues");
+  if (r.error) throw new Error(r.error);
+  if (!r.draggable) fallos.push("la cabecera no es arrastrable");
+  if (!r.atenuada) fallos.push("sin is-col-dragging en dragstart");
+  if (!r.dragoverCancelado) fallos.push("dragover sin preventDefault()");
+  if (!r.marca || r.marca.id !== String(ids[ids.length - 1]) || r.marca.lado !== "despues") {
+    fallos.push(`la barra de destino no quedó detrás de la última: ${JSON.stringify(r.marca)}`);
+  }
+  if (!r.dropCancelado) fallos.push("drop sin preventDefault()");
+  if (!r.limpia) fallos.push("quedaron marcas de arrastre tras soltar");
+  const esperado = [...ids.slice(1), ids[0]];
+  await ctx.esperarToast(`«${primera.nombre}» quedó en el lugar ${ids.length} de ${ids.length}`, 8000);
+  await waitFor(async () => {
+    const api = (await ctx.tablero()).etapas.map((e) => e.id);
+    const dom = (await ctx.cdp.evaluate(enPagina.columnasDOM)).map((c) => c.id);
+    return mismoOrden(api, esperado) && mismoOrden(dom, esperado) ? true : null;
+  }, { timeout: 6000, label: "el orden nuevo en la API y en el DOM" });
+
+  await recargar(ctx.cdp);
+  const t = await esperarTablero(ctx.cdp);
+  const dom = (await ctx.cdp.evaluate(enPagina.columnasDOM)).map((c) => c.id);
+  if (!mismoOrden(dom, esperado)) fallos.push(`tras recargar el orden es ${JSON.stringify(dom)} y no ${JSON.stringify(esperado)}`);
+  const tabs = t.tabs.map((x) => x.filter).filter((f) => /^\d+$/.test(f));
+  if (!mismoOrden(tabs, esperado)) fallos.push(`las pestañas quedaron en ${JSON.stringify(tabs)}`);
+  const movidas = (await ctx.tablero()).contactos
+    .filter((c) => c.phone in columnaDe && columnaDe[c.phone] !== c.etapa_id)
+    .map((c) => c.phone);
+  if (movidas.length) fallos.push(`reordenar movió tarjetas de columna: ${movidas.join(", ")}`);
+
+  // Teclado: «Mover antes» desde el ⋮, un lugar por vez, hasta el principio.
+  for (let lugar = ids.length - 1; lugar >= 1; lugar--) {
+    r = await ctx.cdp.evaluate(enPagina.abrirMenuColumna, String(ids[0]));
+    if (r.error) throw new Error(r.error);
+    r = await ctx.cdp.evaluate(enPagina.pulsarAccionColumna, String(ids[0]), "act-left");
+    if (r.error) throw new Error(r.error);
+    await ctx.esperarToast(`«${primera.nombre}» quedó en el lugar ${lugar} de ${ids.length}`, 8000);
+  }
+  await waitFor(async () => mismoOrden((await ctx.tablero()).etapas.map((e) => e.id), ids) ? true : null,
+    { timeout: 6000, label: "el orden original de vuelta en la API" });
+  const foco = await ctx.cdp.evaluate(enPagina.foco);
+  if (foco.columna !== String(ids[0]) || !String(foco.clase).includes("column-menu-btn")) {
+    fallos.push(`tras «Mover antes» el foco quedó en ${JSON.stringify(foco)} y no en el ⋮ de la etapa movida`);
+  }
+  // En un extremo el botón existe pero no actúa, y dice por qué.
+  await ctx.cdp.evaluate(enPagina.abrirMenuColumna, String(ids[0]));
+  r = await ctx.cdp.evaluate(enPagina.pulsarAccionColumna, String(ids[0]), "act-left");
+  if (!r.error || !r.error.includes("deshabilitado")) fallos.push("«Mover antes» sigue activo en la primera etapa");
+  await ctx.cdp.evaluate(enPagina.teclaEscape);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `«${primera.nombre}» arrastrada al final (barra en el hueco, orden en API, DOM y pestañas, persiste al recargar, ninguna tarjeta se movió) y devuelta al principio con «Mover antes»; el foco sigue en su ⋮`;
+}
+
 async function criterioAltaContacto(ctx) {
   const api = await ctx.tablero();
   const etapa = api.etapas[1];
@@ -1650,8 +1754,9 @@ async function criterioColaborador(ctx) {
   const t = await ctx.abrirCrm();
   const api = await ctx.tablero();
   const fallos = [];
-  if (t.nuevaEtapa) fallos.push("el colaborador ve «Nueva etapa»");
-  if (t.menus !== 0) fallos.push(`el colaborador ve ${t.menus} menús ⋮`);
+  // Su tablero es suyo (2026-09-29): «Nueva etapa» y un ⋮ por columna, como cualquiera.
+  if (!t.nuevaEtapa) fallos.push("el colaborador no ve «Nueva etapa» en su propio tablero");
+  if (t.menus !== api.etapas.length) fallos.push(`el colaborador ve ${t.menus} menús ⋮ (esperaba ${api.etapas.length})`);
   if (t.altas !== 0) fallos.push(`el colaborador ve ${t.altas} botones «Añadir contacto»`);
   if (t.miembrosTira !== 0 || t.tiraVisible) fallos.push("el colaborador ve la tira de miembros");
   if (api.miembros.length) fallos.push("la API le da miembros a un colaborador");
@@ -1684,7 +1789,78 @@ async function criterioColaborador(ctx) {
   const t2 = await ctx.abrirCrm();
   if (t2.tarjetas !== 0 || !(t2.vacioBandeja ?? "").startsWith("Sin conversaciones todavía")) fallos.push(`colab2 (sin folios) ve ${t2.tarjetas} tarjetas y la bandeja dice ${JSON.stringify(t2.vacioBandeja)}`);
   if (fallos.length) throw new Error(fallos.join("; "));
-  return `colab1 solo ve a Ana (su folio), sin miembros, altas ni controles de admin, la mueve a «${destino.nombre}» y abre su chat; Beto le responde 404; colab2 sin folios ve el aviso`;
+  return `colab1 solo ve a Ana (su folio), con los controles de SU tablero pero sin miembros ni altas, la mueve a «${destino.nombre}» y abre su chat; Beto le responde 404; colab2 sin folios ve el aviso`;
+}
+
+async function tableroHttp(ctx, cookie) {
+  const r = await fetch(`${ctx.base}/crm/api/tablero`, { headers: { cookie, Accept: "application/json" } });
+  if (r.status !== 200) throw new Error(`GET /crm/api/tablero de otra sesión → HTTP ${r.status}`);
+  return r.json();
+}
+
+async function criterioTableroPersonal(ctx) {
+  // colab1 organiza SU tablero —crea una etapa, mete a Ana, la renombra, la pone primera y la
+  // elimina— mientras jefa1, desde su propia sesión, no ve cambiar nada del suyo.
+  await ctx.login("colab1");
+  await ctx.abrirCrm();
+  const cookieJefa = await sesionHttp(ctx, "jefa1");
+  const deJefa = (t) => ({
+    etapas: t.etapas.map((e) => [e.id, e.nombre, e.color]),
+    ana: t.contactos.find((c) => c.phone === ANA)?.etapa_id ?? null,
+  });
+  const jefaAntes = deJefa(await tableroHttp(ctx, cookieJefa));
+  const antes = await ctx.tablero();
+  const fallos = [];
+
+  let r = await ctx.cdp.evaluate(enPagina.abrirDialogoColumna);
+  if (r.error) throw new Error(r.error);
+  r = await ctx.cdp.evaluate(enPagina.enviarDialogoColumna, "Mis urgentes");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Etapa «Mis urgentes» creada", 8000);
+  const nueva = await waitFor(async () => (await ctx.tablero()).etapas.find((e) => e.nombre === "Mis urgentes") ?? null,
+    { timeout: 6000, label: "la etapa «Mis urgentes» en el tablero de colab1" });
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.columnasDOM)).some((c) => c.id === String(nueva.id)) ? true : null,
+    { timeout: 6000, label: "la columna «Mis urgentes» en el DOM" });
+  r = await ctx.cdp.evaluate(enPagina.cambiarSelect, ANA, String(nueva.id));
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarMovimiento(ANA, nueva.id, "Mis urgentes");
+  r = await ctx.cdp.evaluate(enPagina.abrirMenuColumna, String(nueva.id));
+  if (r.error) throw new Error(r.error);
+  r = await ctx.cdp.evaluate(enPagina.pulsarAccionColumna, String(nueva.id), "act-rename");
+  if (r.error) throw new Error(r.error);
+  r = await ctx.cdp.evaluate(enPagina.renombrarColumna, String(nueva.id), "Urgentes");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Etapa renombrada a «Urgentes»", 8000);
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.columnasDOM)).some((c) => c.id === String(nueva.id) && c.nombre === "Urgentes") ? true : null,
+    { timeout: 6000, label: "la columna renombrada en el DOM" });
+  r = await ctx.cdp.evaluate(enPagina.arrastrarColumna, String(nueva.id), String(antes.etapas[0].id), "antes");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast(`«Urgentes» quedó en el lugar 1 de ${antes.etapas.length + 1}`, 8000);
+  await waitFor(async () => (await ctx.tablero()).etapas[0]?.id === nueva.id ? true : null,
+    { timeout: 6000, label: "«Urgentes» primera en el tablero de colab1" });
+
+  const jefaEnMedio = deJefa(await tableroHttp(ctx, cookieJefa));
+  if (JSON.stringify(jefaEnMedio) !== JSON.stringify(jefaAntes)) {
+    fallos.push(`el tablero de jefa1 cambió con lo que hizo colab1: ${JSON.stringify(jefaAntes)} → ${JSON.stringify(jefaEnMedio)}`);
+  }
+
+  const desde = ctx.dialogos.length;
+  await ctx.cdp.evaluate(enPagina.abrirMenuColumna, String(nueva.id));
+  r = await ctx.cdp.evaluate(enPagina.pulsarAccionColumna, String(nueva.id), "act-delete");
+  if (r.error) throw new Error(r.error);
+  const msg = await ctx.esperarDialogo({ desde, prefijo: "¿Eliminar la etapa «Urgentes»?" });
+  if (!msg.includes("Solo cambia tu tablero")) fallos.push(`el confirm no dice que solo cambia su tablero: ${msg}`);
+  await ctx.esperarToast("Etapa «Urgentes» eliminada", 8000);
+  const despues = await waitFor(async () => {
+    const t = await ctx.tablero();
+    return !t.etapas.some((e) => e.id === nueva.id) ? t : null;
+  }, { timeout: 6000, label: "que «Urgentes» desaparezca del tablero de colab1" });
+  const ana = despues.contactos.find((c) => c.phone === ANA);
+  if (ana?.etapa_id !== despues.etapas[0].id) fallos.push(`Ana quedó en ${ana?.etapa_id} y no en la primera etapa de colab1 (${despues.etapas[0].id})`);
+  const jefaDespues = deJefa(await tableroHttp(ctx, cookieJefa));
+  if (JSON.stringify(jefaDespues) !== JSON.stringify(jefaAntes)) fallos.push("eliminar una etapa de colab1 cambió el tablero de jefa1");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "colab1 creó, llenó, renombró, arrastró al principio y eliminó «Urgentes» en SU tablero (Ana volvió a su primera etapa); el de jefa1 no cambió en ningún momento";
 }
 
 async function criterioAdminOficina(ctx) {
@@ -1692,7 +1868,7 @@ async function criterioAdminOficina(ctx) {
   const t = await ctx.abrirCrm();
   const api = await ctx.tablero();
   const fallos = [];
-  if (t.nuevaEtapa || t.menus !== 0) fallos.push("el admin de oficina ve controles de etapas (son del admin global)");
+  if (!t.nuevaEtapa || t.menus !== api.etapas.length) fallos.push("el admin de oficina no ve los controles de etapas de SU tablero");
   if (!mismoConjunto(api.contactos.map((c) => c.phone), [CARLA])) fallos.push(`jefe2 ve ${JSON.stringify(api.contactos.map((c) => c.phone))}`);
   if (!mismoConjunto(t.bandeja, [CARLA])) fallos.push(`la bandeja de jefe2 trae ${JSON.stringify(t.bandeja)}`);
   await ctx.cdp.evaluate(enPagina.abrirTarjeta, CARLA, "tarjeta");
@@ -1702,7 +1878,7 @@ async function criterioAdminOficina(ctx) {
   }, { timeout: 6000, label: "el chat de Carla" });
   if (!s.botones.some((b) => b.clase.includes("chat-block"))) fallos.push("el admin de oficina no ve «Bloquear cliente»");
   if (fallos.length) throw new Error(fallos.join("; "));
-  return "jefe2 (admin de Puebla) solo ve a Carla, sin controles de etapas, y sí puede bloquear";
+  return "jefe2 (admin de Puebla) solo ve a Carla, con los controles de su tablero, y sí puede bloquear";
 }
 
 async function criterioResponsivo(ctx) {
@@ -2365,11 +2541,13 @@ async function main() {
     await criterio(ctx, "11. Bloquear y desbloquear (admin)", criterioBloquear);
     await criterio(ctx, "12. Cerrar el chat: ✕, «Tablero» y Escape", criterioCerrarChat);
     await criterio(ctx, "13. Etapas: crear, mover, renombrar, color, eliminar", criterioEtapas);
+    await criterio(ctx, "13b. Reordenar etapas: arrastrar la cabecera y «Mover antes» con el teclado", criterioReordenarEtapas);
     await criterio(ctx, "14. Alta de contacto desde una columna", criterioAltaContacto);
     await criterio(ctx, "15. /crm?chat= abre el chat al cargar", criterioChatInicial);
     await criterio(ctx, "15b. La ruta vieja /inbox/{phone} aterriza en el CRM", criterioRutaVieja);
     await criterio(ctx, "16. Ocultar/mostrar bandeja", criterioToggleTray);
     await criterio(ctx, "17. Colaborador: alcance y sin controles de admin", criterioColaborador);
+    await criterio(ctx, "17b. Tablero personal: lo que colab1 hace con sus etapas no toca el de jefa1", criterioTableroPersonal);
     await criterio(ctx, "18. Admin de oficina: solo su oficina", criterioAdminOficina);
     await criterio(ctx, "19. Pantallas de 900 y 400 px", criterioResponsivo);
     await criterio(ctx, "20. Cajón del folio: abrir cada sección, cambiar y cerrar", criterioCajonAbrirCerrar);

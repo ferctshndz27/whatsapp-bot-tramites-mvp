@@ -20,12 +20,14 @@ alcance y a los miembros de la oficina; un COLABORADOR ve las conversaciones don
 folio abierto —la tarjeta muestra el SUYO: una conversación puede traer folios de dueños
 distintos desde la asignación por servicio— y las de los clientes de su cartera, sin tira de
 miembros y sin alta de contactos (reglas del operador, 2026-09-14 y 2026-09-24). Las conversaciones con
-sus compañeros siguen en el chat de equipo (/team). Las etapas (models.CrmEtapa) son GLOBALES —un solo embudo, como el catálogo (SPEC
-multi-oficina §11.3)— y las administra el admin global; mover clientes entre etapas es de
-cualquiera que alcance al cliente.
+sus compañeros siguen en el chat de equipo (/team).
 
-Un cliente sin etapa (NULL) está en la primera por `ord`: el histórico entra al tablero sin un
-UPDATE masivo, que además el espejo MSSQL no vería.
+El tablero es PERSONAL (decisión del operador, 2026-09-29): cada usuario, admins incluidos, crea,
+renombra, recolorea, reordena y da de baja SUS columnas y acomoda ahí a los clientes que ve, sin
+tocar el tablero de nadie. Las reglas —siembra desde el embudo global, dónde cae cada cliente,
+baja por cadena de destinos— viven en app/tablero.py; aquí solo se valida la petición y se
+contesta. En la API las columnas se siguen llamando «etapas» y `etapa_id`, y una columna de otro
+responde igual que una que no existe.
 
 El cajón lateral del chat (static/js/crm-panel.js) unifica lo que antes obligaba a salir a
 /tickets/{id}: gestión del folio, etiquetas, notas, cobro, seguimiento y transferencia. Lee de
@@ -61,7 +63,7 @@ from sqlalchemy.orm import aliased
 from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 
-from app import adjuntos, cartera, eventos, ventana
+from app import adjuntos, cartera, eventos, tablero, ventana
 from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
 from app.authlog import sesion_vigente
@@ -73,7 +75,7 @@ from app.models import (
     Client,
     ClientNote,
     Conversation,
-    CrmEtapa,
+    CrmColumna,
     Direction,
     FollowUp,
     Label,
@@ -83,7 +85,6 @@ from app.models import (
     TicketLabel,
     TicketStatus,
     User,
-    utcnow,
 )
 from app.replies import (
     MAX_REPLIES,
@@ -146,18 +147,10 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Etapas
+# Etapas (las columnas del tablero personal, app/tablero.py)
 # ---------------------------------------------------------------------------
 
-def etapas_activas(session) -> list[CrmEtapa]:
-    return session.exec(
-        select(CrmEtapa)
-        .where(CrmEtapa.habilitado == True)  # noqa: E712
-        .order_by(CrmEtapa.ord, CrmEtapa.id)
-    ).all()
-
-
-def _etapa_json(etapa: CrmEtapa, count: int = 0) -> dict:
+def _etapa_json(etapa: CrmColumna, count: int = 0) -> dict:
     return {
         "id": etapa.id,
         "nombre": etapa.nombre,
@@ -167,23 +160,17 @@ def _etapa_json(etapa: CrmEtapa, count: int = 0) -> dict:
     }
 
 
-def etapa_de(cliente: Client, ids_activas: list[int]) -> int | None:
-    """La etapa en la que está el cliente: la suya si sigue activa; si no, la primera."""
-    if cliente.etapa_crm_id in ids_activas:
-        return cliente.etapa_crm_id
-    return ids_activas[0] if ids_activas else None
-
-
-def _clave_nombre(nombre: str) -> str:
-    return " ".join(nombre.split()).casefold()
-
-
 def _validar_nombre_etapa(valor) -> tuple[str | None, JSONResponse | None]:
     if not isinstance(valor, str) or not valor.strip():
         return None, _error(400, "El nombre de la etapa es obligatorio")
     nombre = " ".join(valor.split())
     if len(nombre) > MAX_NOMBRE_ETAPA:
         return None, _error(400, f"El nombre debe tener entre 1 y {MAX_NOMBRE_ETAPA} caracteres")
+    # Controles (ESC, NUL…) y sustitutos UTF-16 sueltos: los primeros llegaban crudos al log y
+    # al espejo, los segundos no se pueden guardar y eran un 500. Los saltos de línea ya los
+    # quitó el split() de arriba; acentos, eñes y emoji pasan.
+    if any(unicodedata.category(ch) in ("Cc", "Cs") for ch in nombre):
+        return None, _error(400, "El nombre tiene caracteres no válidos")
     return nombre, None
 
 
@@ -471,9 +458,10 @@ def _conversacion_visible(session, phone: str, user: str):
 
 
 def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> dict:
-    etapas = etapas_activas(session)
-    ids = [e.id for e in etapas]
+    # is_admin ANTES de cargar el tablero: abre su propia sesión, y la primera carga siembra.
     solo_mios = not is_admin(user)
+    mio = tablero.cargar(session, user)
+    ids = mio.ids
 
     consulta = vista.filtrar(select(Client), Client.office_id)
     if solo_mios:
@@ -530,7 +518,7 @@ def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> 
     if solo_mios:
         mi_cartera = cartera.clientes_de(session, user)
         clientes = [c for c in clientes if _atiende(agg[c.phone], user) or c.phone in mi_cartera]
-    contactos = [_contacto_json(c, agg[c.phone], etapa_de(c, ids)) for c in clientes]
+    contactos = [_contacto_json(c, agg[c.phone], mio.columna_de(c)) for c in clientes]
     contactos.sort(
         key=lambda x: (x["last_message"] or {}).get("created_at") or x["created_at"] or "",
         reverse=True,
@@ -542,7 +530,7 @@ def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> 
     # Solo los admins ven a los miembros de la oficina (y sus conteos).
     miembros, oficinas = ([], []) if solo_mios else _miembros(session, vista, contactos)
     return {
-        "etapas": [_etapa_json(e, counts[str(e.id)]) for e in etapas],
+        "etapas": [_etapa_json(e, counts[str(e.id)]) for e in mio.activas],
         "contactos": contactos,
         "counts": counts,
         "total": sum(counts.values()),
@@ -675,13 +663,17 @@ def crm_etapas(request: Request):
         return JSONResponse(_tablero(session, vista, user)["etapas"])
 
 
+# Son de quien las tiene, admins incluidos (como «Mis respuestas»): no hay alcance por oficina
+# que aplicar ni un admin que las administre por otro. Cada endpoint trabaja sobre el tablero
+# del usuario de la sesión, y un id de otro tablero contesta como uno que no existe. Sin
+# AdminAudit, igual que las respuestas guardadas: acomodar el tablero propio no es un acto de
+# administración, y las filas —con su baja lógica— ya son el registro.
+
 @router.post("/crm/api/etapas")
 def crm_etapa_crear(request: Request, payload: dict = Body(default={})):
     user = _current_user(request)
     if not user:
         return _sin_sesion()
-    if not is_admin_global(user):
-        return _error(403, "Solo el admin global administra las etapas")
     nombre, error = _validar_nombre_etapa(payload.get("nombre"))
     if error:
         return error
@@ -689,26 +681,30 @@ def crm_etapa_crear(request: Request, payload: dict = Body(default={})):
     if error:
         return error
 
+    with get_session() as session:
+        try:
+            etapa = tablero.crear(session, user, nombre, color)
+        except (tablero.ColumnasAlTope, tablero.NombreRepetido) as e:
+            return _error(409, str(e))
+        # Nace vacía: ninguna ubicación ni cadena de bajas puede apuntar a una columna nueva.
+        return JSONResponse(_etapa_json(etapa, 0), status_code=201)
+
+
+@router.put("/crm/api/etapas")
+def crm_etapas_ordenar(request: Request, payload: dict = Body(default={})):
+    """Reordena el tablero: `{"orden": [ids de izquierda a derecha]}`, cada columna propia una
+    vez. Es PUT sobre la colección y no una ruta hermana de /etapas/{etapa_id}, que se
+    tragaría «orden» como un id y contestaría 422. Reordenar no mueve a ningún cliente."""
+    user = _current_user(request)
+    if not user:
+        return _sin_sesion()
     vista = alcance(user)
     with get_session() as session:
-        todas = session.exec(select(CrmEtapa)).all()
-        max_ord = max((e.ord for e in todas if e.habilitado), default=-1)
-        repetida = next((e for e in todas if _clave_nombre(e.nombre) == _clave_nombre(nombre)), None)
-        if repetida is not None and repetida.habilitado:
-            return _error(409, "Ya existe una etapa con ese nombre")
-        if repetida is not None:
-            # Una etapa dada de baja con ese nombre vuelve a la vida (el nombre es único en
-            # la tabla; el soft delete la conserva). Va al final, como una nueva.
-            etapa = repetida
-            etapa.nombre, etapa.color, etapa.ord, etapa.habilitado = nombre, color, max_ord + 1, True
-        else:
-            etapa = CrmEtapa(nombre=nombre, color=color, ord=max_ord + 1)
-        session.add(etapa)
-        session.commit()
-        session.refresh(etapa)
-        log_admin(user, "crm:etapa-alta", nombre)
-        counts = _tablero(session, vista, user)["counts"]
-        return JSONResponse(_etapa_json(etapa, counts.get(str(etapa.id), 0)), status_code=201)
+        try:
+            tablero.reordenar(session, user, payload.get("orden"))
+        except ValueError as e:
+            return _error(400, str(e))
+        return JSONResponse(_tablero(session, vista, user)["etapas"])
 
 
 @router.put("/crm/api/etapas/{etapa_id}")
@@ -716,9 +712,13 @@ def crm_etapa_editar(request: Request, etapa_id: int, payload: dict = Body(defau
     user = _current_user(request)
     if not user:
         return _sin_sesion()
-    if not is_admin_global(user):
-        return _error(403, "Solo el admin global administra las etapas")
 
+    # Sin `ord` (revisión de seguridad, 2026-09-29): era un entero libre que ahora puede mandar
+    # cualquier colaborador, y en el espejo es un INT. Una columna con ord > 2^31, dada de baja
+    # y ya imposible de editar, cortaba cada backfill de MSSQL antes de reparar mensajes y chat
+    # de equipo. El orden lo cambia PUT /crm/api/etapas, que numera 0..n-1.
+    if "ord" in payload:
+        return _error(400, "El orden se cambia reordenando el tablero, no etapa por etapa")
     cambios: dict = {}
     if "nombre" in payload:
         nombre, error = _validar_nombre_etapa(payload.get("nombre"))
@@ -730,30 +730,18 @@ def crm_etapa_editar(request: Request, etapa_id: int, payload: dict = Body(defau
         if error:
             return error
         cambios["color"] = color
-    if "ord" in payload:
-        ord_ = payload.get("ord")
-        if not isinstance(ord_, int) or isinstance(ord_, bool) or ord_ < 0:
-            return _error(400, "El orden debe ser un entero mayor o igual a 0")
-        cambios["ord"] = ord_
     if not cambios:
-        return _error(400, "Debes enviar al menos un campo: nombre, color u ord")
+        return _error(400, "Debes enviar al menos un campo: nombre o color")
 
     vista = alcance(user)
     with get_session() as session:
-        etapa = session.get(CrmEtapa, etapa_id)
-        if etapa is None or not etapa.habilitado:
+        etapa = tablero.columna_propia(session, user, etapa_id)
+        if etapa is None:
             return _error(404, "La etapa no existe")
-        if "nombre" in cambios:
-            clave = _clave_nombre(cambios["nombre"])
-            otras = session.exec(select(CrmEtapa).where(CrmEtapa.id != etapa_id)).all()
-            if any(_clave_nombre(o.nombre) == clave for o in otras):
-                return _error(409, "Ya existe una etapa con ese nombre")
-        for campo, valor in cambios.items():
-            setattr(etapa, campo, valor)
-        session.add(etapa)
-        session.commit()
-        session.refresh(etapa)
-        log_admin(user, "crm:etapa-cambio", f"{etapa_id}:{','.join(cambios)}")
+        try:
+            etapa = tablero.editar(session, user, etapa, cambios)
+        except tablero.NombreRepetido as e:
+            return _error(409, str(e))
         counts = _tablero(session, vista, user)["counts"]
         return JSONResponse(_etapa_json(etapa, counts.get(str(etapa.id), 0)))
 
@@ -763,34 +751,27 @@ def crm_etapa_borrar(request: Request, etapa_id: int):
     user = _current_user(request)
     if not user:
         return _sin_sesion()
-    if not is_admin_global(user):
-        return _error(403, "Solo el admin global administra las etapas")
 
+    vista = alcance(user)
     with get_session() as session:
-        etapa = session.get(CrmEtapa, etapa_id)
-        if etapa is None or not etapa.habilitado:
+        etapa = tablero.columna_propia(session, user, etapa_id)
+        if etapa is None:
             return _error(404, "La etapa no existe")
-        restantes = [e for e in etapas_activas(session) if e.id != etapa_id]
-        if not restantes:
-            return _error(400, "No se puede eliminar la única etapa")
-        destino = restantes[0]  # la primera por ord entre las que quedan
-        # La etapa es global: sus clientes, de todas las oficinas, pasan a la primera restante.
-        # Uno por uno por el ORM, nunca con UPDATE masivo: el espejo MSSQL solo ve
-        # after_update por instancia (ver clients._propagar_nombre). Los clientes con NULL
-        # ya estaban «en la primera» y siguen estándolo sin tocarlos.
-        ahora = utcnow()
-        movidos = 0
-        for cliente in session.exec(select(Client).where(Client.etapa_crm_id == etapa_id)).all():
-            cliente.etapa_crm_id = destino.id
-            cliente.etapa_crm_at = ahora
-            cliente.etapa_crm_por = user
-            session.add(cliente)
-            movidos += 1
-        etapa.habilitado = False
-        session.add(etapa)
-        session.commit()
-        log_admin(user, "crm:etapa-baja", f"{etapa.nombre} → {destino.nombre} ({movidos})")
-        logger.info("Etapa CRM «%s» dada de baja por %s; %s clientes a «%s»", etapa.nombre, user, movidos, destino.nombre)
+        # Cuántos se van, contados en el tablero abierto (sin búsqueda): el número que anuncia el
+        # «¿Eliminar…?». Es informativo y se queda corto a propósito: no cuenta conversaciones
+        # con todos sus folios cerrados ni las que deja fuera LIMITE_CONTACTOS, que también se
+        # van al destino. Contarlas exactas costaría rehacer el alcance sin tope, para un número
+        # que el navegador no usa.
+        movidos = _tablero(session, vista, user)["counts"].get(str(etapa_id), 0)
+        nombre = etapa.nombre
+        try:
+            destino = tablero.dar_de_baja(session, user, etapa)
+        except ValueError as e:
+            return _error(400, str(e))
+        logger.info(
+            "Etapa «%s» de %s dada de baja: su tablero abierto mostraba ahí %s clientes; van a «%s»",
+            nombre, user, movidos, destino.nombre,
+        )
         return JSONResponse({"deleted": etapa_id, "moved": movidos, "target_id": destino.id})
 
 
@@ -811,16 +792,13 @@ def crm_mover_contacto(request: Request, phone: str, payload: dict = Body(defaul
         cliente, _ = _conversacion_visible(session, phone, user)
         if cliente is None:
             return _error(404, "No existe")
-        ids = [e.id for e in etapas_activas(session)]
-        if etapa_id not in ids:
+        mio = tablero.cargar(session, user)
+        # Solo una columna viva de SU tablero: la de otro contesta igual que una inventada.
+        if etapa_id not in mio.ids:
             return _error(400, "La etapa no existe")
-        if etapa_de(cliente, ids) != etapa_id:
-            cliente.etapa_crm_id = etapa_id
-            cliente.etapa_crm_at = utcnow()
-            cliente.etapa_crm_por = user
-            session.add(cliente)
-            session.commit()
-            session.refresh(cliente)
+        if mio.columna_de(cliente) != etapa_id:
+            # Solo en el tablero de quien lo mueve: ni Client.etapa_crm_id ni el de nadie más.
+            tablero.mover(session, user, cliente.phone, etapa_id)
             logger.info("Cliente %s movido a la etapa %s por %s", mask_phone(phone), etapa_id, user)
         # La tarjeta que devuelve es la que ve quien la movió: su folio, no el de otro.
         agg = _agregar(session, [cliente], None if is_admin(user) else user)
@@ -857,25 +835,23 @@ def crm_alta_contacto(request: Request, payload: dict = Body(default={})):
                 # Igual que POST /clients: el alta no puede fingir que lo creó.
                 return _error(409, "Ese teléfono ya es cliente de otra oficina.")
             return _error(409, "Ya existe un cliente con ese teléfono.")
-        ids = [e.id for e in etapas_activas(session)]
-        if etapa_id is not None and etapa_id not in ids:
+        if etapa_id is not None and etapa_id not in tablero.cargar(session, user).ids:
             return _error(400, "La etapa no existe")
-        cliente = Client(
-            phone=canonico,
-            name=nombre,
-            office_id=vista.office_id,
-            origen="manual",
-            etapa_crm_id=etapa_id,
-            etapa_crm_at=utcnow() if etapa_id is not None else None,
-            etapa_crm_por=user if etapa_id is not None else None,
-        )
+        # Sin etapa_crm_*: el embudo global ya no se escribe. La columna donde se dio de alta
+        # es de quien lo dio de alta; los demás lo ven en la copia de su primera etapa. Cliente
+        # y columna van en el MISMO commit: si algo falla no queda un contacto sin su columna,
+        # ni un reintento que conteste «ya existe».
+        cliente = Client(phone=canonico, name=nombre, office_id=vista.office_id, origen="manual")
         session.add(cliente)
+        if etapa_id is not None:
+            tablero.ubicar(session, user, canonico, etapa_id)
         session.commit()
         session.refresh(cliente)
         log_admin(user, "cliente:alta", canonico)
         agg = _agregar(session, [cliente])
         return JSONResponse(
-            _contacto_json(cliente, agg[cliente.phone], etapa_de(cliente, ids)), status_code=201
+            _contacto_json(cliente, agg[cliente.phone], tablero.cargar(session, user).columna_de(cliente)),
+            status_code=201,
         )
 
 
@@ -951,8 +927,9 @@ def crm_chat(request: Request, phone: str):
             .limit(MAX_MENSAJES_CHAT)
         ).all()
         mensajes.reverse()
-        ids = [e.id for e in etapas_activas(session)]
-        contacto = _contacto_json(cliente, agg[cliente.phone], etapa_de(cliente, ids))
+        contacto = _contacto_json(
+            cliente, agg[cliente.phone], tablero.cargar(session, user).columna_de(cliente)
+        )
         return JSONResponse({
             "contacto": contacto,
             "mensajes": [_mensaje_json(m, user) for m in mensajes],

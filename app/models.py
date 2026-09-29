@@ -101,10 +101,11 @@ class Client(SQLModel, table=True):
     # debajo del nombre; el bot nunca la lee ni se la manda al cliente. Uno por
     # cliente, no por colaborador: es un identificador compartido. NULL = sin alias.
     alias: str | None = None
-    # Embudo comercial del CRM (/crm, app/crm.py). NULL = «en la primera etapa»
-    # (la de menor `ord`): así el histórico entra al tablero sin un UPDATE
-    # masivo, que además el espejo MSSQL no vería. Quién y cuándo la movió, para
-    # medir tiempo en etapa (fase 5 del análisis de brechas).
+    # Etapa del embudo GLOBAL (CrmEtapa). NULL = «en la primera etapa» (la de
+    # menor `ord`): así el histórico entra al tablero sin un UPDATE masivo, que
+    # además el espejo MSSQL no vería. Desde el 2026-09-29 cada quien tiene su
+    # tablero (CrmUbicacion, app/tablero.py) y esto ya NO se escribe: es el punto
+    # de partida de quien todavía no ha movido al cliente en el suyo.
     etapa_crm_id: int | None = None
     etapa_crm_at: datetime | None = None
     etapa_crm_por: str | None = None
@@ -292,7 +293,7 @@ class Label(SQLModel, table=True):
 
 
 # Etapas con las que nace el embudo (db._seed_crm_etapas). Nombres y colores del
-# plan del CRM; después las edita el admin global desde /crm.
+# plan del CRM; son la plantilla de la que se copia el tablero de cada quien.
 ETAPAS_CRM_DEFAULT = (
     ("Nuevo Lead", "#1E88E5"),
     ("En Negociación", "#FFB300"),
@@ -302,15 +303,16 @@ ETAPAS_CRM_DEFAULT = (
 
 
 class CrmEtapa(SQLModel, table=True):
-    """Etapa comercial del embudo del CRM (/crm): una columna del tablero.
+    """Etapa del embudo GLOBAL del CRM: hoy, la plantilla del tablero de cada quien.
 
-    GLOBAL a propósito —sin office_id—: un solo embudo para todas las oficinas,
-    igual que el catálogo (SPEC multi-oficina §11.3), para que los reportes por
-    etapa sean comparables. La crea, renombra y da de baja el admin global;
-    mover clientes entre etapas es de cualquiera con acceso al cliente. Baja =
-    habilitado=0 (soft delete, como todo en este repo): así el espejo se entera
-    por after_update. Tabla física `crmetapa` (SQLModel sin __tablename__, como
-    ticketlabel); en MSSQL es `crm_etapas`."""
+    Hasta el 2026-09-29 fue la columna del tablero para todos —un solo embudo sin
+    office_id que administraba el admin global—. Desde entonces cada usuario tiene
+    su propio tablero (CrmColumna, app/tablero.py) que nace como copia de estas
+    etapas, y nadie las edita ya: se quedan como punto de partida, igual que el
+    `Client.etapa_crm_id` que las referencia. Baja = habilitado=0 (soft delete,
+    como todo en este repo): así el espejo se entera por after_update. Tabla
+    física `crmetapa` (SQLModel sin __tablename__, como ticketlabel); en MSSQL es
+    `crm_etapas`."""
 
     id: int | None = Field(default=None, primary_key=True)
     nombre: str = Field(unique=True, index=True)
@@ -318,6 +320,54 @@ class CrmEtapa(SQLModel, table=True):
     ord: int = 0
     habilitado: bool = True
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class CrmColumna(SQLModel, table=True):
+    """Una columna del tablero PERSONAL del CRM (/crm): una etapa de alguien.
+
+    Cada usuario —admins incluidos— tiene las suyas y solo las suyas: las crea,
+    renombra, recolorea, reordena y da de baja sin tocar el tablero de nadie
+    (decisión del operador, 2026-09-29; antes era el embudo global de CrmEtapa).
+    En la API y en la pantalla se siguen llamando «etapas». Las reglas viven en
+    app/tablero.py.
+
+    Nacen como copia de las etapas globales la primera vez que su dueño abre el
+    tablero, y `origen_id` dice de cuál: así el primer día cada quien ve a cada
+    cliente donde lo veía antes, por el `Client.etapa_crm_id` de siempre.
+
+    Baja = habilitado=0 y `destino_id` = la columna que heredó a sus clientes. Se
+    resuelve siguiendo esa cadena en vez de reescribir una ubicación por cliente:
+    la baja es UNA escritura (y una copia en el espejo), no una por cliente. Sin
+    office_id a propósito: el tablero es de la persona, no de la oficina. Tabla
+    física `crmcolumna`; en MSSQL es `crm_columnas`."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    nombre: str
+    color: str = "#25D366"
+    ord: int = 0
+    origen_id: int | None = None
+    destino_id: int | None = None
+    habilitado: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class CrmUbicacion(SQLModel, table=True):
+    """En qué columna de SU tablero tiene un usuario a un cliente.
+
+    Una fila por (usuario, cliente) —el índice único ux_crmubicacion de
+    db.init_db lo sostiene—, y solo si ese usuario movió alguna vez al cliente:
+    sin fila, el cliente cae en la copia de su etapa global (app/tablero.py).
+    Mover a un cliente compartido es asunto de quien lo mueve: cada quien lo
+    tiene donde quiere. Nunca se borra: moverlo de nuevo reescribe `columna_id`,
+    y la baja de su columna la resuelve `CrmColumna.destino_id`. Tabla física
+    `crmubicacion`; en MSSQL es `crm_ubicaciones`."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    phone: str = Field(index=True)
+    columna_id: int
+    movida_at: datetime = Field(default_factory=utcnow)
 
 
 class TicketLabel(SQLModel, table=True):

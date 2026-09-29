@@ -1,18 +1,20 @@
-"""CRM Kanban (/crm, app/crm.py): etapas globales, tablero acotado por oficina y chat JSON.
+"""CRM Kanban (/crm, app/crm.py): tablero personal, acotado por oficina, y chat JSON.
 
 Misma base que tests/test_admin_oficina.py: dos oficinas, un admin global (jefa1), un admin de
 oficina en Puebla (jefe2) y un colaborador por oficina. Aquí se afirma:
 
-- init_db siembra las cuatro etapas del plan una sola vez (renombrar o dar de baja una no la
-  resucita en el siguiente arranque).
+- init_db siembra las cuatro etapas del embudo global una sola vez (renombrar o dar de baja una
+  no la resucita en el siguiente arranque); son la plantilla del tablero de cada quien.
 - el tablero y el chat solo muestran clientes de la oficina del usuario; el admin global ve todo;
   un teléfono de otra oficina por URL responde como «no existe».
 - un colaborador ve solo las conversaciones de las solicitudes que toma (folio vigente suyo);
   los admins ven todo su alcance, a los miembros de la oficina y son los únicos que dan de alta.
 - «no leídos» = entrantes desde el último saliente; NULL en etapa_crm_id = primera etapa.
-- mover de etapa escribe por el ORM (etapa_crm_id/at/por) y respeta el alcance.
-- las etapas las administra SOLO el admin global; dar de baja una mueve a sus clientes a la
-  primera restante y la última no se puede dar de baja.
+- el tablero es PERSONAL (2026-09-29; las reglas finas, en tests/test_tablero.py): cada quien
+  abre una copia del embudo global, mueve clientes solo en el suyo —por el ORM, sin tocar
+  Client.etapa_crm_id— y crea, renombra, reordena y da de baja SUS etapas; un id de otro
+  tablero contesta como uno inexistente, también para el admin global. La baja manda a sus
+  clientes a la primera que queda y la última no se puede dar de baja.
 - la API contesta 403 JSON a un anónimo, nunca 200.
 - una conversación con TODOS sus folios cerrados sale del panel para todos (admins incluidos)
   hasta que se abra otro; vive en «Folios cerrados» (?cerradas=1), la búsqueda la alcanza y
@@ -36,7 +38,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine, select
 
 import app.db as db
-from app import eventos
+from app import eventos, tablero
 from app.config import settings
 from app.inbox import QUICK_REPLIES
 from app.main import app
@@ -48,7 +50,9 @@ from app.models import (
     ClientNote,
     Cobro,
     Conversation,
+    CrmColumna,
     CrmEtapa,
+    CrmUbicacion,
     Direction,
     FollowUp,
     Label,
@@ -151,10 +155,16 @@ def _contacto(tablero: dict, phone: str) -> dict:
 
 
 def _etapas() -> list[CrmEtapa]:
+    """Las etapas vivas del embudo GLOBAL (la plantilla), no las del tablero de nadie."""
     with Session(db.engine) as s:
         return s.exec(
             select(CrmEtapa).where(CrmEtapa.habilitado == True).order_by(CrmEtapa.ord)  # noqa: E712
         ).all()
+
+
+def _ids(username: str) -> list[int]:
+    """Las etapas del tablero de esa persona, en su orden (lo siembra si es su primera vez)."""
+    return [e["id"] for e in _tablero(username)["etapas"]]
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +222,10 @@ def test_la_api_contesta_403_json_a_un_anonimo():
         ("GET", f"/crm/api/chat/{ANA}"),
         ("GET", f"/crm/api/panel/{ANA}"),
         ("POST", "/crm/api/etapas"),
+        # PUT y DELETE tampoco entran en el barrido de anónimos de tests/test_authz.py.
+        ("PUT", "/crm/api/etapas"),
+        ("PUT", "/crm/api/etapas/1"),
+        ("DELETE", "/crm/api/etapas/1"),
         ("PUT", f"/crm/api/contactos/{ANA}/etapa"),
         ("POST", "/crm/api/contactos"),
         ("GET", "/crm/api/respuestas"),
@@ -360,97 +374,257 @@ def test_la_busqueda_ignora_acentos_y_formato_del_telefono():
 
 
 # ---------------------------------------------------------------------------
+# Tablero personal: de dónde sale
+# ---------------------------------------------------------------------------
+
+def test_cada_quien_abre_un_tablero_propio_copiado_del_embudo_global():
+    """Mismas etapas, orden y colores que el embudo global, con ids propios: lo que uno haga
+    con las suyas no puede tocar las de otro. Y el primer día cada cliente se ve donde estaba
+    en el embudo global (Ana en «Seguimiento» para todos), para que el cambio a tablero
+    personal no revuelva el trabajo de nadie."""
+    with Session(db.engine) as s:
+        ana = s.get(Client, ANA)
+        ana.etapa_crm_id = _etapas()[2].id
+        s.add(ana)
+        s.commit()
+    vistos: dict[str, list[int]] = {}
+    for quien in ("jefa1", "jefe1", "colab1"):
+        t = _tablero(quien)
+        assert [(e["nombre"], e["color"]) for e in t["etapas"]] == list(ETAPAS_CRM_DEFAULT), quien
+        vistos[quien] = [e["id"] for e in t["etapas"]]
+        assert _contacto(t, ANA)["etapa_id"] == vistos[quien][2], f"{quien} no ve a Ana donde estaba"
+    todos = [i for ids in vistos.values() for i in ids]
+    assert len(todos) == len(set(todos)), "dos personas comparten columnas"
+
+
+# ---------------------------------------------------------------------------
 # Mover de etapa
 # ---------------------------------------------------------------------------
 
-def test_mover_de_etapa_escribe_por_el_orm_y_deja_quien_y_cuando():
-    ids = [e.id for e in _etapas()]
+def test_mover_de_etapa_solo_cambia_el_tablero_de_quien_mueve():
+    """Reescrita a propósito (2026-09-29, tablero personal): antes mover escribía
+    Client.etapa_crm_id y movía a Ana en el tablero de todos. Ahora escribe la ubicación de
+    quien mueve —por el ORM, así el espejo la ve— y el embudo global queda congelado."""
+    ids = _ids("colab1")
     r = _sesion("colab1").put(f"/crm/api/contactos/{ANA}/etapa", json={"etapa_id": ids[2]})
     assert r.status_code == 200, r.text
     assert r.json()["etapa_id"] == ids[2] and r.json()["phone"] == ANA
     with Session(db.engine) as s:
+        ubicacion = s.exec(select(CrmUbicacion).where(CrmUbicacion.phone == ANA)).one()
+        assert (ubicacion.username, ubicacion.columna_id) == ("colab1", ids[2])
+        assert ubicacion.movida_at is not None
         ana = s.get(Client, ANA)
-        assert ana.etapa_crm_id == ids[2] and ana.etapa_crm_por == "colab1"
-        assert ana.etapa_crm_at is not None
+        assert ana.etapa_crm_id is None and ana.etapa_crm_por is None, "mover reescribió el embudo global"
     assert _contacto(_tablero("colab1"), ANA)["etapa_id"] == ids[2]
+    assert _sesion("colab1").get(f"/crm/api/chat/{ANA}").json()["contacto"]["etapa_id"] == ids[2]
     t = _tablero("jefe1")
-    assert t["counts"][str(ids[0])] == 1 and t["counts"][str(ids[2])] == 1
+    de_jefe = [e["id"] for e in t["etapas"]]
+    assert _contacto(t, ANA)["etapa_id"] == de_jefe[0], "mover en el tablero de colab1 movió a Ana en el de jefe1"
+    assert t["counts"][str(de_jefe[0])] == 2 and t["counts"][str(de_jefe[2])] == 0
 
 
-def test_mover_valida_la_etapa_y_no_cruza_de_oficina():
-    ids = [e.id for e in _etapas()]
+def test_mover_valida_la_etapa_y_no_cruza_de_oficina_ni_de_tablero():
+    ids = _ids("colab1")
+    ajena = _ids("jefe1")[1]
     c = _sesion("colab1")
     assert c.put(f"/crm/api/contactos/{ANA}/etapa", json={"etapa_id": "2"}).status_code == 400
     assert c.put(f"/crm/api/contactos/{ANA}/etapa", json={"etapa_id": 9999}).status_code == 400
     assert c.put(f"/crm/api/contactos/{ANA}/etapa", json={}).status_code == 400
+    # Una etapa del tablero de otro no existe para colab1, aunque vea al cliente.
+    r = c.put(f"/crm/api/contactos/{ANA}/etapa", json={"etapa_id": ajena})
+    assert r.status_code == 400 and r.json() == {"error": "La etapa no existe"}
     r = c.put(f"/crm/api/contactos/{CARLA}/etapa", json={"etapa_id": ids[1]})
     assert r.status_code == 404 and r.json() == {"error": "No existe"}
     r = c.put("/crm/api/contactos/5299999999999/etapa", json={"etapa_id": ids[1]})
     assert r.status_code == 404
     with Session(db.engine) as s:
-        assert s.get(Client, CARLA).etapa_crm_id is None
-    # el admin de oficina de Puebla sí mueve a Carla, y el global también
-    assert _sesion("jefe2").put(f"/crm/api/contactos/{CARLA}/etapa", json={"etapa_id": ids[1]}).status_code == 200
-    assert _sesion("jefa1").put(f"/crm/api/contactos/{ANA}/etapa", json={"etapa_id": ids[3]}).status_code == 200
+        assert s.exec(select(CrmUbicacion)).all() == [], "un movimiento rechazado dejó ubicación"
+    # el admin de oficina de Puebla sí mueve a Carla en su tablero, y el global a Ana en el suyo
+    r = _sesion("jefe2").put(f"/crm/api/contactos/{CARLA}/etapa", json={"etapa_id": _ids("jefe2")[1]})
+    assert r.status_code == 200
+    r = _sesion("jefa1").put(f"/crm/api/contactos/{ANA}/etapa", json={"etapa_id": _ids("jefa1")[3]})
+    assert r.status_code == 200
 
 
 # ---------------------------------------------------------------------------
-# Etapas: solo el admin global
+# Etapas: cada quien las de su tablero
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("quien", ["jefe2", "colab1"])
-def test_solo_el_admin_global_administra_las_etapas(quien):
+def test_cualquiera_administra_las_etapas_de_su_tablero_sin_tocar_las_de_nadie(quien):
+    """Reescrita a propósito (2026-09-29): antes un colaborador o un admin de oficina recibía
+    403 aquí. Ahora cualquiera crea, renombra, recolorea, reordena y da de baja las de SU
+    tablero, y ni el embudo global ni el tablero del admin global se enteran."""
+    antes_jefa = _tablero("jefa1")["etapas"]
     c = _sesion(quien)
-    primera = _etapas()[0].id
-    assert c.post("/crm/api/etapas", json={"nombre": "Por cobrar"}).status_code == 403
-    assert c.put(f"/crm/api/etapas/{primera}", json={"nombre": "X"}).status_code == 403
-    assert c.delete(f"/crm/api/etapas/{primera}").status_code == 403
-    assert [e.nombre for e in _etapas()] == [n for n, _ in ETAPAS_CRM_DEFAULT]
+    ids = _ids(quien)
+    r = c.post("/crm/api/etapas", json={"nombre": "Por cobrar"})
+    assert r.status_code == 201, r.text
+    nueva = r.json()["id"]
+    assert c.put(f"/crm/api/etapas/{ids[0]}", json={"nombre": "Prospecto", "color": "#3949AB"}).status_code == 200
+    assert c.put("/crm/api/etapas", json={"orden": [nueva] + ids}).status_code == 200
+    assert c.delete(f"/crm/api/etapas/{ids[3]}").status_code == 200
+    propias = _tablero(quien)["etapas"]
+    assert [e["nombre"] for e in propias] == ["Por cobrar", "Prospecto", "En Negociación", "Seguimiento"]
+    assert propias[1]["color"] == "#3949AB"
+    assert _tablero("jefa1")["etapas"] == antes_jefa, "el tablero del admin global cambió"
+    assert [(e.nombre, e.color) for e in _etapas()] == list(ETAPAS_CRM_DEFAULT), "el embudo global cambió"
 
 
-def test_el_admin_global_crea_renombra_y_da_de_baja_etapas():
-    c = _sesion("jefa1")
+def test_nadie_toca_las_etapas_de_otro_ni_siquiera_el_admin_global():
+    """Un id de otro tablero contesta igual que uno inventado —404 al editar o dar de baja,
+    400 al reordenar o al mover ahí— y no cambia nada. El admin global tampoco pasa: el tablero
+    es de la persona, como sus respuestas guardadas."""
+    de_colab = _tablero("colab1")["etapas"]
+    ids = [e["id"] for e in de_colab]
+    for quien in ("colab2", "jefe1", "jefa1"):
+        c = _sesion(quien)
+        propios = _ids(quien)
+        r = c.put(f"/crm/api/etapas/{ids[0]}", json={"nombre": "Mía"})
+        assert r.status_code == 404 and r.json() == {"error": "La etapa no existe"}, quien
+        assert c.delete(f"/crm/api/etapas/{ids[1]}").status_code == 404, quien
+        assert c.put("/crm/api/etapas", json={"orden": ids}).status_code == 400, quien
+        assert c.put("/crm/api/etapas", json={"orden": propios[:-1] + [ids[0]]}).status_code == 400, quien
+    # jefe1 ve a Ana (es de su oficina), pero no puede dejarla en una columna de colab1.
+    assert _sesion("jefe1").put(f"/crm/api/contactos/{ANA}/etapa", json={"etapa_id": ids[2]}).status_code == 400
+    assert _tablero("colab1")["etapas"] == de_colab
+
+
+def test_crear_renombrar_y_dar_de_baja_una_etapa_de_mi_tablero():
+    """Reescrita a propósito (2026-09-29): las validaciones de siempre, sobre el tablero propio.
+    Dos cambios de contrato: el nombre repetido se mide solo contra las etapas VIVAS de la
+    persona, y crear una con el nombre de una dada de baja da una columna nueva en vez de
+    revivir la vieja (revivirla le devolvería los clientes que su baja mandó a otra)."""
+    c = _sesion("colab1")
     r = c.post("/crm/api/etapas", json={"nombre": "  Por   cobrar ", "color": "#ffb300"})
     assert r.status_code == 201, r.text
     nueva = r.json()
     assert nueva["nombre"] == "Por cobrar" and nueva["color"] == "#FFB300"
     assert nueva["ord"] == 4 and nueva["count"] == 0
-    assert c.post("/crm/api/etapas", json={"nombre": "por COBRAR"}).status_code == 409
+    r = c.post("/crm/api/etapas", json={"nombre": "por COBRAR"})
+    assert r.status_code == 409 and r.json() == {"error": "Ya tienes una etapa con ese nombre"}
     assert c.post("/crm/api/etapas", json={"nombre": ""}).status_code == 400
     assert c.post("/crm/api/etapas", json={"nombre": "Ok", "color": "rojo"}).status_code == 400
     assert c.post("/crm/api/etapas", json={"nombre": "x" * 41}).status_code == 400
+    # Los nombres son por tablero: jefe1 puede tener su propia «Por cobrar».
+    assert _sesion("jefe1").post("/crm/api/etapas", json={"nombre": "Por cobrar"}).status_code == 201
 
-    r = c.put(f"/crm/api/etapas/{nueva['id']}", json={"nombre": "Cobrado", "ord": 1})
-    assert r.status_code == 200 and r.json()["nombre"] == "Cobrado" and r.json()["ord"] == 1
+    # Sin «ord» desde la revisión de seguridad: el orden se cambia reordenando el tablero.
+    r = c.put(f"/crm/api/etapas/{nueva['id']}", json={"nombre": "Cobrado"})
+    assert r.status_code == 200 and r.json()["nombre"] == "Cobrado" and r.json()["ord"] == 4
     assert c.put(f"/crm/api/etapas/{nueva['id']}", json={"nombre": "seguimiento"}).status_code == 409
     assert c.put(f"/crm/api/etapas/{nueva['id']}", json={}).status_code == 400
-    assert c.put(f"/crm/api/etapas/{nueva['id']}", json={"ord": -1}).status_code == 400
     assert c.put("/crm/api/etapas/9999", json={"nombre": "Nada"}).status_code == 404
 
-    # Ana pasa a la etapa nueva; al darla de baja vuelve a la primera restante
+    # Ana pasa a la etapa nueva; al darla de baja va a la primera que queda.
     c.put(f"/crm/api/contactos/{ANA}/etapa", json={"etapa_id": nueva["id"]})
+    primera = _ids("colab1")[0]
     r = c.delete(f"/crm/api/etapas/{nueva['id']}")
     assert r.status_code == 200
-    primera = _etapas()[0].id
     assert r.json() == {"deleted": nueva["id"], "moved": 1, "target_id": primera}
+    assert _contacto(_tablero("colab1"), ANA)["etapa_id"] == primera
     with Session(db.engine) as s:
-        assert s.get(Client, ANA).etapa_crm_id == primera
-        assert s.get(CrmEtapa, nueva["id"]).habilitado is False
+        assert s.get(CrmColumna, nueva["id"]).habilitado is False
     assert c.delete(f"/crm/api/etapas/{nueva['id']}").status_code == 404
-    # volver a crearla con el mismo nombre la resucita al final, no la duplica
     r = c.post("/crm/api/etapas", json={"nombre": "cobrado"})
-    assert r.status_code == 201 and r.json()["id"] == nueva["id"] and r.json()["ord"] == 4
+    assert r.status_code == 201 and r.json()["id"] != nueva["id"] and r.json()["count"] == 0
+
+
+def test_el_put_de_una_etapa_ya_no_cambia_su_orden():
+    """Revisión de seguridad (2026-09-29): `ord` era el único número libre que ahora puede mandar
+    cualquier colaborador, y en el espejo es un INT. Una fila con ord > 2^31 —dada de baja, ya
+    nadie la edita— cortaba CADA backfill en crm_columnas, antes de reparar mensajes, chat de
+    equipo y demás. Reordenar tiene su propio PUT, que numera 0..n-1; este ya no toca el orden."""
+    c = _sesion("colab1")
+    etapas = _tablero("colab1")["etapas"]
+    primera = etapas[0]["id"]
+    for cuerpo in ({"ord": 1}, {"ord": 2**31}, {"nombre": "Otra", "ord": 0}):
+        r = c.put(f"/crm/api/etapas/{primera}", json=cuerpo)
+        assert r.status_code == 400, cuerpo
+        assert r.json() == {"error": "El orden se cambia reordenando el tablero, no etapa por etapa"}
+    assert _tablero("colab1")["etapas"] == etapas, "un PUT rechazado cambió el tablero"
+
+
+def test_nombres_con_caracteres_de_control_o_sustitutos_sueltos_son_400():
+    """Un sustituto UTF-16 suelto no se puede guardar en SQLite (era un 500 con traza en el log)
+    y un ESC o un NUL en el nombre llegaban crudos al log y al espejo. Ninguno sirve en el
+    nombre de una columna."""
+    c = _sesion("colab1")
+    primera = _ids("colab1")[0]
+    crudos = (
+        '{"nombre": "Mala \\ud800"}',
+        '{"nombre": "Roja \\u001b[31m"}',
+        '{"nombre": "Con \\u0000 nulo"}',
+    )
+    for cuerpo in crudos:
+        cabeceras = {"content-type": "application/json"}
+        r = c.post("/crm/api/etapas", content=cuerpo, headers=cabeceras)
+        assert r.status_code == 400 and r.json() == {"error": "El nombre tiene caracteres no válidos"}, cuerpo
+        r = c.put(f"/crm/api/etapas/{primera}", content=cuerpo, headers=cabeceras)
+        assert r.status_code == 400, cuerpo
+    assert [e["nombre"] for e in _tablero("colab1")["etapas"]] == [n for n, _ in ETAPAS_CRM_DEFAULT]
+    # Los que sí son de un nombre de verdad siguen entrando: acentos, eñes y emoji.
+    assert c.post("/crm/api/etapas", json={"nombre": "Señas ✅ pagó"}).status_code == 201
+
+
+def test_un_id_fuera_de_rango_contesta_como_uno_que_no_existe():
+    """Un id de ruta más allá del INTEGER de SQLite era un OverflowError (500); contesta como
+    cualquier id que no es del tablero de quien pregunta."""
+    c = _sesion("colab1")
+    enorme = 2**63
+    assert c.put(f"/crm/api/etapas/{enorme}", json={"nombre": "X"}).status_code == 404
+    assert c.delete(f"/crm/api/etapas/{enorme}").status_code == 404
+
+
+def test_el_tope_de_etapas_por_persona_se_contesta_con_409(monkeypatch):
+    monkeypatch.setattr(tablero, "MAX_COLUMNAS", 5)
+    c = _sesion("colab1")
+    assert c.post("/crm/api/etapas", json={"nombre": "Quinta"}).status_code == 201
+    r = c.post("/crm/api/etapas", json={"nombre": "Sexta"})
+    assert r.status_code == 409
+    assert r.json() == {"error": "Máximo 5 etapas en tu tablero — elimina alguna."}
+    assert len(_ids("colab1")) == 5
 
 
 def test_la_unica_etapa_no_se_puede_dar_de_baja():
     c = _sesion("jefa1")
-    etapas = _etapas()
-    for e in etapas[1:]:
-        assert c.delete(f"/crm/api/etapas/{e.id}").status_code == 200
-    r = c.delete(f"/crm/api/etapas/{etapas[0].id}")
+    ids = _ids("jefa1")
+    for i in ids[1:]:
+        assert c.delete(f"/crm/api/etapas/{i}").status_code == 200
+    r = c.delete(f"/crm/api/etapas/{ids[0]}")
     assert r.status_code == 400
     assert r.json() == {"error": "No se puede eliminar la única etapa"}
-    assert len(_etapas()) == 1
+    assert _ids("jefa1") == [ids[0]]
+    assert len(_etapas()) == 4, "dar de baja en el tablero propio tocó el embudo global"
+
+
+def test_reordenar_las_etapas_de_mi_tablero():
+    """PUT sobre la colección: el orden nuevo persiste, vuelve ya aplicado y ningún cliente
+    cambia de columna. Una lista que no trae cada etapa propia exactamente una vez es un 400 y
+    no toca nada, y el tablero de otra persona sigue en su orden."""
+    c = _sesion("jefe1")
+    t = _tablero("jefe1")
+    ids = [e["id"] for e in t["etapas"]]
+    antes = {x["phone"]: x["etapa_id"] for x in t["contactos"]}
+    nuevo = [ids[2], ids[0], ids[3], ids[1]]
+    r = c.put("/crm/api/etapas", json={"orden": nuevo})
+    assert r.status_code == 200, r.text
+    assert [e["id"] for e in r.json()] == nuevo and [e["ord"] for e in r.json()] == [0, 1, 2, 3]
+    despues = _tablero("jefe1")
+    assert [e["id"] for e in despues["etapas"]] == nuevo
+    assert {x["phone"]: x["etapa_id"] for x in despues["contactos"]} == antes, "reordenar movió clientes"
+    for malo in (
+        {"orden": nuevo[:-1]},
+        {"orden": nuevo + [nuevo[0]]},
+        {"orden": [str(i) for i in nuevo]},
+        {"orden": "1,2,3,4"},
+        {},
+    ):
+        r = c.put("/crm/api/etapas", json=malo)
+        assert r.status_code == 400, malo
+        assert r.json() == {"error": "El orden debe traer cada una de tus etapas una sola vez"}
+    assert [e["id"] for e in _tablero("jefe1")["etapas"]] == nuevo
+    assert [e["nombre"] for e in _tablero("jefa1")["etapas"]] == [n for n, _ in ETAPAS_CRM_DEFAULT]
 
 
 # ---------------------------------------------------------------------------
@@ -458,10 +632,15 @@ def test_la_unica_etapa_no_se_puede_dar_de_baja():
 # ---------------------------------------------------------------------------
 
 def test_el_alta_nace_en_la_oficina_de_quien_la_hace_con_telefono_canonico():
-    ids = [e.id for e in _etapas()]
+    ids = _ids("jefe2")
     alta = {"name": "  Dora Ibarra ", "phone": "+52 1 33 4444 5555", "etapa_id": ids[1]}
     # Un colaborador no da de alta: el contacto nacería sin folio y él no lo vería.
     assert _sesion("colab2").post("/crm/api/contactos", json=alta).status_code == 403
+    # Una etapa del tablero de otro no sirve para dar de alta, y el rechazo no crea al cliente.
+    r = _sesion("jefe2").post("/crm/api/contactos", json=dict(alta, etapa_id=_ids("jefa1")[1]))
+    assert r.status_code == 400 and r.json() == {"error": "La etapa no existe"}
+    with Session(db.engine) as s:
+        assert s.get(Client, "523344445555") is None
     r = _sesion("jefe2").post("/crm/api/contactos", json=alta)
     assert r.status_code == 201, r.text
     nuevo = r.json()
@@ -470,9 +649,37 @@ def test_el_alta_nace_en_la_oficina_de_quien_la_hace_con_telefono_canonico():
     with Session(db.engine) as s:
         cliente = s.get(Client, "523344445555")
         assert cliente.office_id == 2 and cliente.origen == "manual"
-        assert cliente.etapa_crm_por == "jefe2"
-    assert "523344445555" in {c["phone"] for c in _tablero("jefe2")["contactos"]}
+        # Reescrito a propósito (2026-09-29): la columna del alta es del tablero de quien la
+        # hizo, no del embudo global, que ya nadie escribe.
+        assert cliente.etapa_crm_id is None and cliente.etapa_crm_por is None
+        ubicacion = s.exec(select(CrmUbicacion).where(CrmUbicacion.phone == "523344445555")).one()
+        assert (ubicacion.username, ubicacion.columna_id) == ("jefe2", ids[1])
+    assert _contacto(_tablero("jefe2"), "523344445555")["etapa_id"] == ids[1]
+    # El admin global lo ve (alcanza Puebla), en la copia de SU primera etapa.
+    assert _contacto(_tablero("jefa1"), "523344445555")["etapa_id"] == _ids("jefa1")[0]
     assert "523344445555" not in {c["phone"] for c in _tablero("jefe1")["contactos"]}
+
+
+def test_el_alta_es_una_sola_escritura_con_su_columna(monkeypatch):
+    """Revisión de corrección (2026-09-29): el alta guardaba al cliente y, en otro commit, su
+    ubicación. Si lo segundo fallaba, quedaba un contacto sin su columna ni fila de auditoría, y
+    el reintento contestaba «ya existe». Cliente y columna van juntos: o los dos, o ninguno."""
+    ids = _ids("jefe1")
+    alta = {"name": "Eva Mora", "phone": "5511112222", "etapa_id": ids[2]}
+
+    def falla(*args, **kwargs):
+        raise RuntimeError("la base no contestó")
+
+    # context() y no undo(): undo() deshace TAMBIÉN el cambio de engine del fixture _base, y
+    # el resto de la prueba correría contra la base real de quien la ejecuta.
+    with monkeypatch.context() as m:
+        m.setattr(tablero, "ubicar", falla)
+        with pytest.raises(RuntimeError):
+            _sesion("jefe1").post("/crm/api/contactos", json=alta)
+    with Session(db.engine) as s:
+        assert s.get(Client, "525511112222") is None, "quedó un contacto a medias"
+    r = _sesion("jefe1").post("/crm/api/contactos", json=alta)
+    assert r.status_code == 201 and r.json()["etapa_id"] == ids[2], "el reintento no pudo dar el alta"
 
 
 def test_el_alta_rechaza_telefono_invalido_nombre_vacio_y_repetidos():

@@ -314,9 +314,17 @@ el bot calla si **cualquier** folio abierto tiene el agente apagado, y cada quie
 ### CRM Kanban (`/crm`, `app/crm.py`)
 Embudo comercial por cliente, bandeja y chat en una página JSON-driven (`templates/crm.html`,
 `static/js/crm.js`, `static/css/crm.css`, más el cajón del folio en `static/js/crm-panel.js` y
-`static/css/crm-panel.css`). Las etapas (`CrmEtapa`) son **globales** y las
-administra el admin global; la etapa de cada cliente vive en `Client.etapa_crm_id` (NULL = la
-primera por `ord`, así el histórico no necesita un UPDATE masivo que el espejo no vería). Todo lo
+`static/css/crm-panel.css`). **El tablero es personal** (operador, 2026-09-29; `app/tablero.py`):
+cada usuario —admins incluidos, como «Mis respuestas»— crea, renombra, recolorea, reordena
+(arrastrando la cabecera o con «Mover antes/después» del menú ⋮) y da de baja **sus** columnas
+(`CrmColumna`), y mueve a sus clientes solo en su tablero (`CrmUbicacion`, una fila por usuario y
+cliente); un id de otro tablero contesta como uno inexistente. En la API siguen llamándose etapas
+(`/crm/api/etapas`, `etapa_id`; `PUT /crm/api/etapas` con `{"orden": [...]}` reordena). El
+tablero nace, la primera vez que alguien lo abre, como copia del embudo global (`CrmEtapa`,
+`origen_id`). El cliente que esa persona no ha movido cae en la copia de su `Client.etapa_crm_id`
+(NULL o de baja = la primera etapa global). Ambos quedan **congelados** como punto de partida: nadie
+los escribe ya. Reordenar no mueve a ningún cliente. La baja es una sola escritura (`destino_id` = la
+primera que queda) y la resolución sigue esa cadena; no hay un UPDATE por cliente. Todo lo
 que lee pasa por `auth.alcance()` y, para quien no es admin, por su folio: **un colaborador ve las
 conversaciones donde tiene un folio abierto** (la tarjeta muestra el suyo) **y las de su cartera**,
 sin tira de miembros ni alta de contactos; los admins (global o de oficina) ven todos
@@ -351,7 +359,7 @@ Las reglas —largos, tope, dueño, oficina de nacimiento— siguen en `app/repl
 las guarda y de nadie más (ni el admin global las ve), y `GET /replies` solo reenvía a
 `/crm?respuestas=1`. El JS no tiene pruebas
 unitarias: su verificación es el juez de navegador `node scripts/qa_crm_navegador.mjs` (uvicorn con
-una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 31 criterios de
+una base temporal que siembra `scripts/qa_crm_seed.py`, Chrome headless por CDP, 33 criterios de
 aceptación como admin global, colaborador y admin de oficina; termina en 1 si alguno falla y
 `--capturas=DIR` guarda capturas de pantalla). Córrelo tras tocar `crm.js`, `crm-panel.js`,
 `crm.html`, `crm.css` o `crm-panel.css`.

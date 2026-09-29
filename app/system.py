@@ -27,7 +27,9 @@ from app import credenciales
 from app.credenciales import CredencialIlegible, credencial
 from app.db import get_session
 from app.models import (
+    CrmColumna,
     CrmEtapa,
+    CrmUbicacion,
     AgentConfig,
     InfoDoc,
     AdminAudit,
@@ -119,8 +121,11 @@ MIRROR_TABLES = [
     # Etiquetas (fase 1).
     (Label, "labels"),
     (TicketLabel, "ticket_labels"),
-    # Embudo comercial del CRM (/crm).
+    # Embudo global del CRM (/crm): la plantilla del tablero de cada quien.
     (CrmEtapa, "crm_etapas"),
+    # El tablero personal (app/tablero.py): columnas y ubicaciones de cada quien.
+    (CrmColumna, "crm_columnas"),
+    (CrmUbicacion, "crm_ubicaciones"),
     # La cartera de clientes de cada colaborador (app/cartera.py).
     (ClienteAsesor, "cliente_asesores"),
 ]

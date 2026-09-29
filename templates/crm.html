@@ -25,7 +25,7 @@
       {# Para todos: las respuestas guardadas son de cada quien. Llega sin chat abierto, que es
          justo cuando la fila del compositor no se ve. #}
       <button id="crm-btn-respuestas" class="btn btn-ghost" type="button" aria-haspopup="dialog"><span aria-hidden="true">⚡</span> Mis respuestas</button>
-      {# Solo el admin global administra etapas: si no lo es, crm.js lo quita del DOM. #}
+      {# Para todos: cada quien administra las etapas de SU tablero (app/tablero.py). #}
       <button id="crm-btn-new-column" class="btn btn-primary" type="button">Nueva etapa</button>
     </div>
   </header>
@@ -507,9 +507,13 @@
     </li>
   </template>
 
+  {# La cabecera es el asa para reordenar arrastrando (crm.js la hace draggable); el ⠿ solo
+     lo anuncia a la vista. Teclado y pantallas táctiles, donde el arrastre nativo no llega,
+     reordenan con «Mover antes/después» del menú ⋮. #}
   <template id="crm-tpl-column">
     <section class="column">
-      <header class="column-header">
+      <header class="column-header" title="Arrastra la cabecera para reordenar tus etapas">
+        <span class="column-grip" aria-hidden="true">⠿</span>
         <span class="column-dot" aria-hidden="true"></span>
         <h2 class="column-name"></h2>
         <span class="column-count"></span>
@@ -517,6 +521,8 @@
         <div class="column-menu" role="menu" hidden>
           <button class="act-rename" type="button" role="menuitem">✏️ Renombrar</button>
           <button class="act-color" type="button" role="menuitem">🎨 Cambiar color</button>
+          <button class="act-left" type="button" role="menuitem">⬅️ Mover antes</button>
+          <button class="act-right" type="button" role="menuitem">➡️ Mover después</button>
           <button class="act-delete" type="button" role="menuitem">🗑️ Eliminar etapa</button>
         </div>
       </header>

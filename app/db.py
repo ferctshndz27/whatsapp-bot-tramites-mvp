@@ -242,6 +242,24 @@ def init_db() -> None:
                 "ON clienteasesor(phone, username) WHERE habilitado = 1"
             )
         )
+        # Tablero personal del CRM (app/tablero.py). Una copia por (persona, etapa
+        # global): dos primeras cargas a la vez —dos pestañas— sembrarían dos
+        # tableros, y este índice hace chocar a la segunda. Parcial porque las
+        # columnas que crea la persona no tienen origen y pueden ser muchas.
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_crmcolumna_origen "
+                "ON crmcolumna(username, origen_id) WHERE origen_id IS NOT NULL"
+            )
+        )
+        # Y una ubicación por (persona, cliente): sin ella, un doble clic dejaba
+        # dos filas y la columna del cliente dependía de cuál leyera primero.
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_crmubicacion "
+                "ON crmubicacion(username, phone)"
+            )
+        )
         # Llaves por oficina: una fila VIVA por (oficina, proveedor, clave).
         # Parcial sobre habilitado, como ux_ticketlabel_viva: dar de baja es
         # apagar la fila, y volver a dar de alta la misma llave no choca con la
