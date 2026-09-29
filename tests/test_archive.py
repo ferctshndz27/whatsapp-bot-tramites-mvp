@@ -10,6 +10,8 @@ from app.config import settings
 from app.models import (
     Client,
     Cobro,
+    CrmColumna,
+    CrmUbicacion,
     Direction,
     Invitation,
     Message,
@@ -114,6 +116,13 @@ ARCHIVE_DDL = [
         source_id INTEGER PRIMARY KEY, nombre TEXT, color TEXT,
         ord INTEGER DEFAULT 0, habilitado INTEGER DEFAULT 1,
         created_at TIMESTAMP)""",
+    """CREATE TABLE crm_columnas (
+        source_id INTEGER PRIMARY KEY, username TEXT, nombre TEXT, color TEXT,
+        ord INTEGER DEFAULT 0, origen_id INTEGER, destino_id INTEGER,
+        habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
+    """CREATE TABLE crm_ubicaciones (
+        source_id INTEGER PRIMARY KEY, username TEXT, phone TEXT,
+        columna_id INTEGER, movida_at TIMESTAMP)""",
     """CREATE TABLE ticket_activity (
         source_id INTEGER PRIMARY KEY, ticket_id INTEGER, username TEXT,
         action TEXT, habilitado INTEGER DEFAULT 1, created_at TIMESTAMP)""",
@@ -575,6 +584,40 @@ def test_listeners_mirror_new_entities(mirror):
         ticket = conn.execute(text("SELECT phone FROM tickets")).first()
     assert user[0] == "jefa"
     assert ticket[0] == "521111"
+
+
+def test_el_tablero_personal_llega_al_espejo_con_su_baja(mirror):
+    """Las dos tablas del tablero personal del CRM viajan por sus listeners: la columna con su
+    origen, la ubicación del cliente y la baja —habilitado=0 y destino_id, UNA escritura—
+    como update de la MISMA fila. Sin los listeners, /system contaría filas de menos y solo
+    «Sincronizar ahora» las haría llegar."""
+    app_engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(app_engine)
+
+    with Session(app_engine) as s:
+        primera = CrmColumna(username="ana", nombre="Nuevo Lead", color="#1E88E5", ord=0, origen_id=1)
+        propia = CrmColumna(username="ana", nombre="Por cobrar", color="#FFB300", ord=1)
+        s.add(primera)
+        s.add(propia)
+        s.commit()
+        s.add(CrmUbicacion(username="ana", phone="525500000011", columna_id=propia.id))
+        propia.habilitado = False
+        propia.destino_id = primera.id
+        s.add(propia)
+        s.commit()
+        ids = (primera.id, propia.id)
+
+    with mirror.connect() as conn:
+        columnas = conn.execute(text(
+            "SELECT source_id, username, nombre, origen_id, destino_id, habilitado "
+            "FROM crm_columnas ORDER BY source_id"
+        )).all()
+        ubicaciones = conn.execute(text("SELECT username, phone, columna_id FROM crm_ubicaciones")).all()
+    assert [tuple(f) for f in columnas] == [
+        (ids[0], "ana", "Nuevo Lead", 1, None, 1),
+        (ids[1], "ana", "Por cobrar", None, ids[0], 0),
+    ]
+    assert [tuple(f) for f in ubicaciones] == [("ana", "525500000011", ids[1])]
 
 
 # ---------------------------------------------------------------------------

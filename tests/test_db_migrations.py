@@ -478,6 +478,19 @@ _ESQUEMA_DESPLEGADO = {
     # Embudo del CRM (/crm): tabla nueva, create_all() la crea completa. Las columnas
     # etapa_crm_* de `client` NO van aquí: las crea _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH.
     "crmetapa": ("id", "nombre", "color", "ord", "habilitado", "created_at"),
+    # Tablero personal del CRM (2026-09-29): tablas nuevas, create_all() las crea completas.
+    "crmcolumna": (
+        "id",
+        "username",
+        "nombre",
+        "color",
+        "ord",
+        "origen_id",
+        "destino_id",
+        "habilitado",
+        "created_at",
+    ),
+    "crmubicacion": ("id", "username", "phone", "columna_id", "movida_at"),
     "loginevent": (
         "id",
         "username",

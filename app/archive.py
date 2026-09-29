@@ -641,8 +641,9 @@ _SCHEMA_DDL = [
         created_at DATETIME2    NOT NULL
     )
     """,
-    # Embudo comercial del CRM (/crm): las etapas del tablero. La etapa de cada
-    # cliente va en wa_clients (etapa_crm_*, _COLUMNS_ADDED_AFTER_LAUNCH).
+    # Embudo GLOBAL del CRM: desde el 2026-09-29, la plantilla de la que se
+    # copia el tablero de cada quien. La etapa global de cada cliente va en
+    # wa_clients (etapa_crm_*, _COLUMNS_ADDED_AFTER_LAUNCH).
     """
     IF OBJECT_ID('crm_etapas', 'U') IS NULL
     CREATE TABLE crm_etapas (
@@ -652,6 +653,33 @@ _SCHEMA_DDL = [
         ord        INT          NOT NULL DEFAULT 0,
         habilitado BIT          NOT NULL DEFAULT 1,
         created_at DATETIME2    NOT NULL
+    )
+    """,
+    # Tablero PERSONAL del CRM (app/tablero.py): las columnas de cada quien
+    # (origen_id = la etapa global que copian; destino_id = a dónde mandó a sus
+    # clientes su baja) y en cuál tiene cada quien a cada cliente.
+    """
+    IF OBJECT_ID('crm_columnas', 'U') IS NULL
+    CREATE TABLE crm_columnas (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        username   NVARCHAR(64) NOT NULL,
+        nombre     NVARCHAR(80) NOT NULL,
+        color      NVARCHAR(16) NOT NULL,
+        ord        INT          NOT NULL DEFAULT 0,
+        origen_id  BIGINT       NULL,
+        destino_id BIGINT       NULL,
+        habilitado BIT          NOT NULL DEFAULT 1,
+        created_at DATETIME2    NOT NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('crm_ubicaciones', 'U') IS NULL
+    CREATE TABLE crm_ubicaciones (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        username   NVARCHAR(64) NOT NULL,
+        phone      NVARCHAR(32) NOT NULL,
+        columna_id BIGINT       NOT NULL,
+        movida_at  DATETIME2    NOT NULL
     )
     """,
 ]
@@ -1278,6 +1306,34 @@ def archive_crm_etapa(e) -> None:
             "ord": e.ord,
             "habilitado": e.habilitado,
             "created_at": _naive_utc(e.created_at),
+        },
+    )
+
+
+def archive_crm_columna(c) -> None:
+    _upsert(
+        "crm_columnas", "source_id", c.id,
+        {
+            "username": c.username,
+            "nombre": c.nombre,
+            "color": c.color,
+            "ord": c.ord,
+            "origen_id": c.origen_id,
+            "destino_id": c.destino_id,
+            "habilitado": c.habilitado,
+            "created_at": _naive_utc(c.created_at),
+        },
+    )
+
+
+def archive_crm_ubicacion(u) -> None:
+    _upsert(
+        "crm_ubicaciones", "source_id", u.id,
+        {
+            "username": u.username,
+            "phone": u.phone,
+            "columna_id": u.columna_id,
+            "movida_at": _naive_utc(u.movida_at),
         },
     )
 
@@ -1938,6 +1994,8 @@ def backfill() -> None:
         Label,
         TicketLabel,
         CrmEtapa,
+        CrmColumna,
+        CrmUbicacion,
         WebSession,
     )
     from sqlmodel import select
@@ -2030,6 +2088,10 @@ def backfill() -> None:
                 archive_ticket_label(tl)
             for ce in session.exec(select(CrmEtapa)).all():
                 archive_crm_etapa(ce)
+            for cc in session.exec(select(CrmColumna)).all():
+                archive_crm_columna(cc)
+            for cu in session.exec(select(CrmUbicacion)).all():
+                archive_crm_ubicacion(cu)
             etapa = "mensajes"
             for m in session.exec(select(Message)).all():
                 sync_wa_message(m)
@@ -2093,6 +2155,8 @@ def _register_listeners() -> None:
         Label,
         TicketLabel,
         CrmEtapa,
+        CrmColumna,
+        CrmUbicacion,
         User,
         WebSession,
     )
@@ -2160,6 +2224,16 @@ def _register_listeners() -> None:
     @event.listens_for(CrmEtapa, "after_update")
     def _crm_etapa_upsert(mapper, connection, target):
         _safe(archive_crm_etapa, target)
+
+    @event.listens_for(CrmColumna, "after_insert")
+    @event.listens_for(CrmColumna, "after_update")
+    def _crm_columna_upsert(mapper, connection, target):
+        _safe(archive_crm_columna, target)
+
+    @event.listens_for(CrmUbicacion, "after_insert")
+    @event.listens_for(CrmUbicacion, "after_update")
+    def _crm_ubicacion_upsert(mapper, connection, target):
+        _safe(archive_crm_ubicacion, target)
 
     @event.listens_for(User, "after_insert")
     @event.listens_for(User, "after_update")

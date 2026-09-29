@@ -548,6 +548,26 @@
   background: var(--col-soft);
 }
 
+/* Reordenar arrastrando la cabecera (crm.js, wireColumnDrag): la columna que
+   viaja se atenúa y una barra marca el hueco donde caería. La barra va en el
+   gap de 16 px del tablero, centrada (-10 px = 8 de medio gap + 2 del borde),
+   y es una forma, no solo un color: dice «aquí» aunque no se distinga el tono. */
+.crm .column { position: relative; }
+.crm .column.is-col-dragging { opacity: .5; }
+.crm .column.is-drop-before::before,
+.crm .column.is-drop-after::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--wa-teal);
+  pointer-events: none;
+}
+.crm .column.is-drop-before::before { left: -10px; }
+.crm .column.is-drop-after::after { right: -10px; }
+
 .crm .column.is-focused {
   box-shadow: 0 0 0 3px var(--col-color), 0 4px 12px rgba(0, 0, 0, .12);
 }
@@ -559,6 +579,19 @@
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid rgba(0, 0, 0, .05);
+}
+
+.crm .column-header[draggable="true"] { cursor: grab; }
+.crm .column-header[draggable="true"]:active { cursor: grabbing; }
+
+/* El asa se anuncia a la vista (⠿); la cabecera entera es la que se arrastra. */
+.crm .column-grip {
+  flex: 0 0 auto;
+  margin: 0 -2px 0 -4px;
+  color: var(--wa-muted-2);
+  font-size: 14px;
+  line-height: 1;
+  user-select: none;
 }
 
 .crm .column-dot {
@@ -1239,6 +1272,19 @@
     width: auto;
     max-height: none;
   }
+
+  /* Apiladas, el hueco donde cae una columna arrastrada está arriba o abajo. */
+  .crm .column.is-drop-before::before,
+  .crm .column.is-drop-after::after {
+    top: auto;
+    bottom: auto;
+    left: 0;
+    right: 0;
+    width: auto;
+    height: 4px;
+  }
+  .crm .column.is-drop-before::before { top: -10px; }
+  .crm .column.is-drop-after::after { bottom: -10px; }
 
   .crm .column-body { overflow-y: visible; }
 

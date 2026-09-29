@@ -4,7 +4,10 @@
  * Port de crm-kanban/static/js/kanban.js (mismo tablero: pestañas-filtro,
  * bandeja, drag & drop nativo, menú de columna, diálogo de nueva etapa, foco
  * restaurado tras cada repintado y `loadSeq` contra respuestas fuera de orden)
- * más el panel de chat que sustituye a /inbox/{phone}. Un solo archivo, sin
+ * más el panel de chat que sustituye a /inbox/{phone}. El tablero es de quien
+ * lo mira (app/tablero.py): todos crean, renombran, recolorean, reordenan
+ * —arrastrando la cabecera o con «Mover antes/después» del menú ⋮— y dan de
+ * baja SUS etapas, sin tocar el tablero de nadie. Un solo archivo, sin
  * frameworks ni build: la CSP del panel es `script-src 'self'`, así que aquí
  * vive TODO el comportamiento y templates/crm.html solo marca.
  *
@@ -60,7 +63,6 @@
   var DATOS = leerDatos();
   var USUARIO = DATOS.usuario || "";
   var ES_ADMIN = !!DATOS.admin;
-  var ES_ADMIN_GLOBAL = !!DATOS.admin_global;
   var VENTANA_HORAS = DATOS.ventana_horas || 24;
   /* Largos de app/replies.py; la plantilla ya los puso de maxlength. */
   var LIMITES_RESPUESTAS = DATOS.respuestas_limites || {};
@@ -88,6 +90,7 @@
 
   var els = {};
   var draggingId = null;     // teléfono de la tarjeta en arrastre; null = no hay arrastre propio
+  var draggingColumnId = null; // id de la etapa cuya cabecera se arrastra; null = ninguna
   var toastTimer = null;
   var searchTimer = null;
   var loadSeq = 0;           // ignora respuestas del tablero ya superadas
@@ -890,14 +893,10 @@
       }
     }
 
-    /* Las etapas son globales y las administra solo el admin global: para los
-       demás el menú ⋮ no existe, no está «deshabilitado». */
-    if (ES_ADMIN_GLOBAL) {
-      wireColumnMenu(section, etapa);
-    } else {
-      quitar($(".column-menu-btn", section));
-      quitar($(".column-menu", section));
-    }
+    /* Las etapas son de quien mira el tablero (app/tablero.py): el menú ⋮ y el
+       arrastre de la cabecera son de todos, admins o no. */
+    wireColumnMenu(section, etapa);
+    wireColumnDrag(section, etapa);
     /* Dar de alta es de los admins: un colaborador solo ve las conversaciones
        de las solicitudes que toma, y un contacto sin folio nacería invisible
        para él. */
@@ -931,6 +930,21 @@
 
     var colorBtn = $(".act-color", menu);
     if (colorBtn) colorBtn.addEventListener("click", function () { closeAllMenus(); openColorPicker(section, etapa); });
+
+    /* La alternativa al arrastre para teclado y pantallas táctiles. En los
+       extremos el botón existe pero no hace nada, y lo dice. */
+    var posicion = posicionDe(etapa.id);
+    [[".act-left", -1, posicion === 0, "Ya es la primera etapa"],
+     [".act-right", 1, posicion === state.etapas.length - 1, "Ya es la última etapa"]].forEach(function (d) {
+      var b = $(d[0], menu);
+      if (!b) return;
+      if (d[2]) {
+        b.disabled = true;
+        b.title = d[3];
+      } else {
+        b.addEventListener("click", function () { moverColumna(etapa, d[1]); });
+      }
+    });
 
     var del = $(".act-delete", menu);
     if (del) {
@@ -1179,7 +1193,186 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* Menú de columna: renombrar, color, eliminar (solo admin global)     */
+  /* Reordenar etapas: arrastre de la cabecera y «Mover antes/después»   */
+  /* ------------------------------------------------------------------ */
+
+  /* Lo que se reordena es el tablero de quien lo mira, nunca a sus clientes:
+     el servidor recibe la lista completa de ids (PUT /crm/api/etapas) y cada
+     tarjeta se queda en su columna. Igual que al mover una tarjeta, se pinta
+     antes de que conteste y se revierte si falla. */
+
+  function posicionDe(id) {
+    for (var i = 0; i < state.etapas.length; i++) {
+      if (state.etapas[i].id === id) return i;
+    }
+    return -1;
+  }
+
+  function wireColumnDrag(section, etapa) {
+    var header = $(".column-header", section);
+    if (!header) return;
+    header.draggable = true;
+    header.addEventListener("dragstart", function (e) {
+      draggingColumnId = etapa.id;
+      closeAllMenus();
+      closeColorPickers();
+      if (e.dataTransfer) {
+        try {
+          e.dataTransfer.setData("text/plain", etapa.nombre);
+          e.dataTransfer.effectAllowed = "move";
+          /* Se arrastra la columna entera, no solo su cabecera. */
+          if (typeof e.dataTransfer.setDragImage === "function") {
+            var r = section.getBoundingClientRect();
+            e.dataTransfer.setDragImage(section, e.clientX - r.left, e.clientY - r.top);
+          }
+        } catch (_) { /* DataTransfer en modo protegido */ }
+      }
+      section.classList.add("is-col-dragging");
+    });
+    header.addEventListener("dragend", function () {
+      section.classList.remove("is-col-dragging");
+      limpiarMarcaColumna();
+      draggingColumnId = null;
+    });
+  }
+
+  /* Un solo juego de escuchas en el tablero, no uno por columna: la columna
+     cae tanto sobre otra como en el hueco entre dos o más allá de la última.
+     Los de las tarjetas (wireColumnDnD) ni se enteran: miran draggingId. */
+  function wireBoardColumnDnD() {
+    var board = els.board;
+    if (!board) return;
+    board.addEventListener("dragenter", function (e) {
+      if (draggingColumnId !== null) e.preventDefault();
+    });
+    board.addEventListener("dragover", function (e) {
+      if (draggingColumnId === null) return;
+      e.preventDefault();
+      if (e.dataTransfer) {
+        try { e.dataTransfer.dropEffect = "move"; } catch (_) { /* solo lectura en algunos eventos */ }
+      }
+      marcarColumnaDestino(indiceInsercion(e));
+    });
+    board.addEventListener("dragleave", function (e) {
+      if (draggingColumnId === null) return;
+      if (e.relatedTarget && board.contains(e.relatedTarget)) return;
+      limpiarMarcaColumna();
+    });
+    board.addEventListener("drop", function (e) {
+      if (draggingColumnId === null) return;
+      e.preventDefault();
+      var id = draggingColumnId;
+      var indice = indiceInsercion(e);
+      draggingColumnId = null;
+      limpiarMarcaColumna();
+      $$(".column.is-col-dragging", board).forEach(function (s) { s.classList.remove("is-col-dragging"); });
+      reordenarColumna(id, indice);
+    });
+  }
+
+  /* Las otras columnas, en el orden de la pantalla. */
+  function otrasColumnas() {
+    return $$(".column", els.board).filter(function (s) {
+      return s.dataset.columnId !== String(draggingColumnId);
+    });
+  }
+
+  /* Dónde caería: cuántas de las OTRAS columnas quedan antes del puntero,
+     medido contra su punto medio en el eje del tablero. Horizontal, salvo por
+     debajo de 900 px, donde crm.css las apila y el eje es el vertical. */
+  function indiceInsercion(e) {
+    var vertical = window.getComputedStyle(els.board).flexDirection === "column";
+    var p = vertical ? e.clientY : e.clientX;
+    var indice = 0;
+    otrasColumnas().forEach(function (s) {
+      var r = s.getBoundingClientRect();
+      if (p > (vertical ? r.top + r.height / 2 : r.left + r.width / 2)) indice++;
+    });
+    return indice;
+  }
+
+  function ordenCon(id, indice) {
+    var ids = [];
+    state.etapas.forEach(function (e) { if (e.id !== id) ids.push(e.id); });
+    ids.splice(indice, 0, id);
+    return ids;
+  }
+
+  function mismoOrden(ids) {
+    return ids.join(",") === state.etapas.map(function (e) { return e.id; }).join(",");
+  }
+
+  /* Una barra en el hueco donde caería. Soltarla en su propio lugar no marca
+     nada: no hay nada que guardar. */
+  function marcarColumnaDestino(indice) {
+    limpiarMarcaColumna();
+    if (draggingColumnId === null || mismoOrden(ordenCon(draggingColumnId, indice))) return;
+    var otras = otrasColumnas();
+    if (!otras.length) return;
+    if (indice < otras.length) otras[indice].classList.add("is-drop-before");
+    else otras[otras.length - 1].classList.add("is-drop-after");
+  }
+
+  function limpiarMarcaColumna() {
+    if (!els.board) return;
+    $$(".column.is-drop-before, .column.is-drop-after", els.board).forEach(function (s) {
+      s.classList.remove("is-drop-before", "is-drop-after");
+    });
+  }
+
+  function reordenarColumna(id, indice) {
+    var ids = ordenCon(id, indice);
+    if (mismoOrden(ids)) return Promise.resolve(false);
+    return guardarOrden(ids, id);
+  }
+
+  function guardarOrden(ids, movidaId) {
+    var antes = state.etapas.slice();
+    var porId = {};
+    antes.forEach(function (e) { porId[e.id] = e; });
+    var etapa = porId[movidaId];
+    state.etapas = ids.map(function (id) { return porId[id]; });
+    /* Una carga que salió antes trae el orden viejo: si llegara ahora, la
+       columna volvería a su lugar. Se invalidan las dos, como en moveContact. */
+    loadSeq++;
+    ultimoTablero = null;
+    tableroPendiente = null;
+    render();
+    return api("PUT", API + "/etapas", { orden: ids })
+      .then(function () {
+        /* El aviso dice el lugar y no «a la derecha»: por debajo de 900 px las
+           columnas se apilan y la derecha es abajo. Lo lee también el lector
+           de pantalla (#crm-toast es role=status). */
+        toast("«" + etapa.nombre + "» quedó en el lugar " + (ids.indexOf(movidaId) + 1) + " de " + ids.length);
+        return load().then(function () { return true; });
+      })
+      .catch(function (err) {
+        state.etapas = antes;
+        /* Si en medio llegó un sondeo con la verdad del servidor, su firma quedó como la última
+           pintada y el siguiente sondeo, idéntico, no repintaría: `antes` se quedaría en
+           pantalla. Sin firma, el siguiente sondeo repinta lo que diga el servidor. */
+        ultimoTablero = null;
+        render();
+        toast(mensajeDe(err, "No se pudo reordenar"));
+        return false;
+      });
+  }
+
+  /* «Mover antes/después» del menú ⋮. El menú se cierra con el foco adentro,
+     así que el foco se lleva al ⋮ de la columna movida —ya en su lugar nuevo—
+     y el repintado de la recarga lo conserva ahí. */
+  function moverColumna(etapa, delta) {
+    var i = posicionDe(etapa.id);
+    var j = i + delta;
+    if (i < 0 || j < 0 || j >= state.etapas.length) return;
+    closeAllMenus();
+    reordenarColumna(etapa.id, j);
+    var btn = els.board ? $('.column[data-column-id="' + etapa.id + '"] .column-menu-btn', els.board) : null;
+    if (btn) btn.focus();
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Menú de columna: renombrar, color, eliminar (cada quien las suyas)  */
   /* ------------------------------------------------------------------ */
 
   function closeAllMenus() {
@@ -1196,6 +1389,10 @@
   function startRename(section, etapa) {
     var h2 = $(".column-name", section);
     if (!h2) return;
+    /* Con la cabecera arrastrable, Firefox no deja poner el cursor ni seleccionar
+       dentro del input: mientras se renombra, la cabecera no se arrastra. */
+    var header = h2.parentNode;
+    if (header) header.draggable = false;
     var input = document.createElement("input");
     input.type = "text";
     input.className = "column-rename";
@@ -1210,6 +1407,7 @@
     function finish(save) {
       if (done) return;
       done = true;
+      if (header) header.draggable = true;
       var value = input.value.trim();
       if (save && value && value !== etapa.nombre) {
         api("PUT", API + "/etapas/" + etapa.id, { nombre: value })
@@ -1345,7 +1543,7 @@
       : n === 1 ? "Su único contacto pasará a «" + target.nombre + "»."
       : "Sus " + n + " contactos pasarán a «" + target.nombre + "».";
     var ok = window.confirm("¿Eliminar la etapa «" + etapa.nombre + "»? " + detalle
-      + " La etapa es de todas las oficinas.");
+      + " Solo cambia tu tablero.");
     if (!ok) return;
     api("DELETE", API + "/etapas/" + etapa.id)
       .then(function () {
@@ -2214,7 +2412,7 @@
      alta abierto, un renombrado, un selector de color, un menú o un campo
      con el foco dentro del tablero. */
   function tableroOcupado() {
-    if (draggingId !== null) return true;
+    if (draggingId !== null || draggingColumnId !== null) return true;
     if (els.dlgColumn && els.dlgColumn.open) return true;
     if (!els.board) return false;
     if ($(".add-contact-form:not([hidden]), .column-rename, .column .color-picker, .column-menu:not([hidden])", els.board)) return true;
@@ -2380,11 +2578,8 @@
       toast("La página no tiene la estructura esperada; no se puede iniciar el tablero.");
       return;
     }
-    if (!ES_ADMIN_GLOBAL && els.btnNewColumn) {
-      quitar(els.btnNewColumn);
-      els.btnNewColumn = null;
-    }
     wireGlobal();
+    wireBoardColumnDnD();
     wireDialog();
     wireChat();
     wireComposer();
