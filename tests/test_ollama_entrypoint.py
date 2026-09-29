@@ -16,7 +16,13 @@ SCRIPT = Path(__file__).resolve().parents[1] / "deploy" / "ollama-entrypoint.sh"
 def ollama_falso(tmp_path):
     """`ollama serve` se queda vivo hasta recibir TERM; `ls` falla las dos
     primeras veces (servidor arrancando) y luego contesta; `pull` anota el
-    modelo y sale con FAKE_PULL_EXIT."""
+    modelo y sale con FAKE_PULL_EXIT.
+
+    `ls` reescribe su contador con un `mv` (atómico) y no con `echo > archivo`:
+    el `>` vacía el archivo antes de escribir, y las pruebas, que lo leen cada
+    50 ms, podían encontrarlo vacío. Pasó en CI el 2026-09-29 (`int('')`); con
+    el mismo patrón reproducido aparte, 4210 de 730 524 lecturas salían vacías,
+    y con el `mv`, 0 de 1 047 257."""
     bitacora = tmp_path / "bitacora"
     bitacora.write_text("")
     contador = tmp_path / "ls_llamadas"
@@ -27,7 +33,8 @@ case "$1" in
   serve) trap 'echo "serve: TERM recibido" >> "{bitacora}"; exit 0' TERM
          echo "serve: arranca" >> "{bitacora}"
          while :; do sleep 0.1; done;;
-  ls)    n=$(cat "{contador}"); n=$((n + 1)); echo "$n" > "{contador}"
+  ls)    n=$(cat "{contador}"); n=$((n + 1))
+         echo "$n" > "{contador}.tmp" && mv "{contador}.tmp" "{contador}"
          [ "$n" -ge 3 ] && exit 0 || exit 1;;
   pull)  echo "pull: $2" >> "{bitacora}"; exit "${{FAKE_PULL_EXIT:-0}}";;
   *)     echo "ollama falso: $*" >&2; exit 1;;
