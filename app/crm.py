@@ -52,15 +52,16 @@ import re
 import unicodedata
 import zlib
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 
-from app import cartera, eventos, ventana
+from app import adjuntos, cartera, eventos, ventana
 from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
 from app.authlog import sesion_vigente
@@ -378,6 +379,7 @@ def _contacto_json(cliente: Client, a: dict, etapa_id: int | None) -> dict:
             "direction": last.direction.value,
             "body": last.body,
             "media_path": last.media_path,
+            "media_mime": last.media_mime,
             "wa_status": last.wa_status,
             "created_at": _iso(last.created_at),
             "sent_by": last.sent_by,
@@ -404,12 +406,27 @@ def _contacto_json(cliente: Client, a: dict, etapa_id: int | None) -> dict:
     }
 
 
+def _adjunto_json(m: Message) -> dict | None:
+    """Lo que el CRM necesita para pintar el archivo; el archivo lo trae el visor."""
+    if not m.media_ref:
+        return None
+    return {
+        "url": f"/crm/api/adjunto/{m.id}",
+        "mime": m.media_mime,
+        "nombre": m.media_nombre,
+        "bytes": m.media_bytes,
+        "vence_at": _iso(m.media_vence_at) if m.media_vence_at else None,
+        "vencido": adjuntos.vencido(m),
+    }
+
+
 def _mensaje_json(m: Message, user: str) -> dict:
     return {
         "id": m.id,
         "direction": m.direction.value,
         "body": m.body,
         "media_path": m.media_path,
+        "adjunto": _adjunto_json(m),
         "wa_status": m.wa_status,
         "created_at": _iso(m.created_at),
         "sent_by": m.sent_by,
@@ -860,6 +877,61 @@ def crm_alta_contacto(request: Request, payload: dict = Body(default={})):
         return JSONResponse(
             _contacto_json(cliente, agg[cliente.phone], etapa_de(cliente, ids)), status_code=201
         )
+
+
+# Qué contesta el visor cuando no puede servir el archivo. Un código por caso
+# para que el CRM diga lo que pasó en vez de un «error» genérico.
+_ADJUNTO_ERRORES = {
+    "sin-archivo": (404, "Este mensaje no tiene un archivo que abrir"),
+    "vencido": (410, "El archivo ya no está en WhatsApp: pídele al cliente que lo reenvíe"),
+    "no-disponible": (502, "WhatsApp no entregó el archivo; intenta de nuevo en un momento"),
+    "tipo": (415, "El archivo no es del tipo que dice ser; no se abre"),
+}
+# Se ven en el navegador; lo demás (Word, Excel) se descarga.
+_ADJUNTO_EN_LINEA = {"application/pdf", "image/jpeg", "image/png"}
+
+
+@router.get("/crm/api/adjunto/{message_id}")
+def crm_adjunto(request: Request, message_id: int):
+    """El archivo de un mensaje, traído del proveedor (app/adjuntos.py).
+
+    Mismo permiso que el chat (`_conversacion_visible`): quien no ve la
+    conversación recibe el mismo 404 que si el mensaje no existiera. El VPS no
+    guarda el archivo: lo pide a Meta o a Twilio en cada apertura, y lo pide
+    FUERA de la sesión de SQLite para no retener la base durante la descarga.
+    """
+    user = _current_user(request)
+    if not user:
+        return _sin_sesion()
+    with get_session() as session:
+        m = session.get(Message, message_id)
+        if m is None or not m.habilitado:
+            return _error(404, "No existe")
+        cliente, _ = _conversacion_visible(session, m.phone, user)
+        if cliente is None:
+            return _error(404, "No existe")
+        session.expunge(m)
+    resultado = adjuntos.traer(m)
+    if isinstance(resultado, str):
+        status, texto = _ADJUNTO_ERRORES[resultado]
+        return _error(status, texto)
+    data, mime = resultado
+    nombre = m.media_nombre or f"archivo-{m.id}"
+    disposicion = "inline" if mime in _ADJUNTO_EN_LINEA else "attachment"
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            # filename* (RFC 5987): el nombre lo puso el cliente y puede traer
+            # acentos o comillas; así no rompe la cabecera.
+            "Content-Disposition": f"{disposicion}; filename*=UTF-8''{quote(nombre)}",
+            "X-Content-Type-Options": "nosniff",
+            # Privado (nunca en un caché compartido) y de una hora: el chat se
+            # repinta cada 8 s y cada imagen visible volvería a pedirse al
+            # proveedor. Quien ya lo vio lo tiene igual en su navegador.
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 @router.get("/crm/api/chat/{phone}")

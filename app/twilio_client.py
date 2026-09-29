@@ -25,14 +25,13 @@ import hmac
 import json
 import logging
 import time
-from pathlib import Path
 from urllib.parse import quote
 
 import httpx
 
 from app.config import settings
 from app.credenciales import credencial
-from app.media_store import signed_media_path
+from app.media_store import publicar_efimero
 from app.models import OFICINA_TLAXCALA_ID
 from app.utils import mask_phone, normalize_phone
 
@@ -141,10 +140,22 @@ def parse_inbound(form: dict[str, str]) -> dict | None:
     # habría tecleado, que es lo que espera la máquina de estados.
     texto = form.get("ListId") or form.get("ButtonPayload") or form.get("Body", "")
 
+    # Solo el primer archivo: WhatsApp manda uno por mensaje. Se guarda la URL de
+    # la API de Twilio, que lo conserva hasta que alguien lo borre; el VPS no
+    # descarga nada al recibir (app/adjuntos.py lo trae al abrirlo).
+    adjunto = None
+    if num_media > 0 and form.get("MediaUrl0"):
+        adjunto = {
+            "ref": form["MediaUrl0"],
+            "mime": (form.get("MediaContentType0") or "").split(";")[0].strip(),
+            "nombre": None,
+        }
+
     return {
         "phone": phone,
         "text": texto,
         "is_media": num_media > 0,
+        "adjunto": adjunto,
         "message_id": form.get("MessageSid") or None,
         # Twilio lo entrega directo; Meta lo esconde en contacts[].profile.name.
         "profile_name": (form.get("ProfileName") or "").strip() or None,
@@ -274,34 +285,81 @@ def send_buttons(
 
 
 def send_media(
-    to_phone: str,
-    file_path: str,
-    mime_type: str,
-    caption: str = "",
-    filename: str | None = None,
-) -> str | None:
-    """Manda un adjunto vía URL pública firmada.
+    to_phone: str, data: bytes, mime_type: str, caption: str = "", filename: str | None = None
+) -> tuple[str | None, str | None]:
+    """Manda un adjunto EN MEMORIA vía URL pública efímera. Devuelve (sid, ref).
 
-    A diferencia de Meta —que recibe el binario y devuelve un media id— Twilio
-    exige `MediaUrl`: una URL de la que ÉL descarga el archivo. Como MEDIA_DIR
-    guarda documentos de clientes, no se publica abierto: se genera una URL
-    firmada y de vida corta (ver app/media_store.signed_media_path).
+    Twilio exige `MediaUrl`: una URL de la que ÉL descarga el archivo. Sin disco
+    (regla del operador, 2026-09-28), la URL la sirve la RAM unos minutos
+    (media_store.publicar_efimero). La referencia «msg:<sid>» deja al CRM volver
+    a abrirlo desde el recurso Media del mensaje en Twilio.
 
-    Devuelve None sin enviar si falta PUBLIC_BASE_URL o SESSION_SECRET. Preferir
-    no entregar el archivo antes que publicarlo sin protección; el asesor ve que
-    el mensaje quedó sin acuse y el motivo queda en el log.
+    Twilio no admite nombre ni pie en documentos por WhatsApp (su guía de
+    medios): el pie se manda en el Body, que es lo único que llega.
+    Devuelve (None, None) sin enviar si falta PUBLIC_BASE_URL.
     """
-    ruta = signed_media_path(Path(file_path).name)
-    if not ruta or not settings.public_base_url:
+    if not settings.public_base_url:
         logger.error(
-            "Adjunto para %s NO enviado: falta PUBLIC_BASE_URL o SESSION_SECRET "
-            "para firmar la URL que Twilio necesita. Archivo: %s",
+            "Adjunto para %s NO enviado: falta PUBLIC_BASE_URL para la URL que Twilio descarga",
             mask_phone(to_phone),
-            filename or file_path,
         )
-        return None
-
-    data = {"MediaUrl": f"{settings.public_base_url}{ruta}"}
+        return None, None
+    token = publicar_efimero(data, mime_type, filename)
+    if token is None:
+        return None, None
+    payload = {"MediaUrl": f"{settings.public_base_url}/media/efimero/{token}"}
     if caption:
-        data["Body"] = caption[:BODY_MAX]
-    return _post_message(to_phone, data)
+        payload["Body"] = caption[:BODY_MAX]
+    sid = _post_message(to_phone, payload)
+    return sid, (f"msg:{sid}" if sid else None)
+
+
+def _es_url_de_twilio(url: str) -> bool:
+    return url.startswith(API_BASE + "/")
+
+
+def descargar_media(ref: str, max_bytes: int) -> tuple[bytes, str] | None:
+    """(contenido, mime) de un archivo guardado en Twilio, o None.
+
+    `ref` es la MediaUrl0 de un entrante o «msg:<MessageSid>» de un saliente
+    (se busca el primer Media de ese mensaje). Solo se le habla a la API de
+    Twilio —la URL entrante vino en un form con firma verificada, pero aun así
+    se rechaza cualquier otro host para no mandar la credencial a donde no es—.
+    Twilio exige HTTP Basic en todas las URLs de media; su respuesta puede
+    redirigir al almacenamiento donde vive el archivo, y httpx no reenvía la
+    autenticación a otro host.
+    """
+    sid = credencial("TWILIO_ACCOUNT_SID", office_id=OFICINA_TLAXCALA_ID)
+    token = credencial("TWILIO_AUTH_TOKEN", office_id=OFICINA_TLAXCALA_ID)
+    if not sid or not token:
+        return None
+    auth = (sid, token)
+    try:
+        if ref.startswith("msg:"):
+            lista = httpx.get(
+                f"{API_BASE}/Accounts/{quote(sid)}/Messages/{quote(ref[4:])}/Media.json",
+                auth=auth, timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            lista.raise_for_status()
+            medios = lista.json().get("media_list") or []
+            if not medios or not medios[0].get("uri"):
+                return None
+            url = "https://api.twilio.com" + medios[0]["uri"].removesuffix(".json")
+        else:
+            url = ref
+        if not _es_url_de_twilio(url):
+            logger.error("Referencia de media de Twilio con host inesperado; no se descarga")
+            return None
+        with httpx.stream("GET", url, auth=auth, follow_redirects=True, timeout=30) as r:
+            r.raise_for_status()
+            mime = (r.headers.get("content-type") or "").split(";")[0].strip()
+            partes, total = [], 0
+            for trozo in r.iter_bytes():
+                total += len(trozo)
+                if total > max_bytes:
+                    return None
+                partes.append(trozo)
+        return b"".join(partes), mime
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+        logger.error("Fallo al descargar media de Twilio: %s", exc)
+        return None

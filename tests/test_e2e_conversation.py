@@ -579,18 +579,27 @@ def test_botones_de_feedback_registran_una_sola_vez_y_no_los_de_otro_chat(wa):
         assert rows[0].rating == "up"
 
 
-def test_adjunto_recibe_aviso_y_se_guarda_como_archivo_adjunto(wa):
-    """Regla: el bot no recibe documentos — avisa, guarda el cuerpo como
-    '[archivo adjunto]' y no mueve el estado de la conversación."""
-    assert _post(_envelope(_media_msg())).status_code == 200
+def test_adjunto_se_guarda_como_referencia_y_el_bot_acusa_recibo(wa, monkeypatch):
+    """Regla (2026-09-28): el archivo del cliente se recibe SIN guardarlo en el
+    VPS — queda su media id de Meta (7 días) y se agenda la renovación a 30 —;
+    el bot acusa recibo y no mueve el estado de la conversación."""
+    from app import adjuntos
+
+    agendados = []
+    monkeypatch.setattr(adjuntos, "renovar_en_segundo_plano", agendados.append)
+    msg = _media_msg()
+    assert _post(_envelope(msg)).status_code == 200
 
     assert wa.kinds == ["text"]
-    assert "no puedo recibir documentos" in wa.texts[0].lower()
+    assert wa.texts[0] == adjuntos.ACUSE
+    assert agendados == [msg["id"]]
 
     with _db() as session:
         entrantes = [m for m in _messages(session) if m.direction == Direction.IN]
         assert len(entrantes) == 1
-        assert entrantes[0].body == "[archivo adjunto]"
+        assert entrantes[0].body == "[imagen]"
+        assert (entrantes[0].media_ref, entrantes[0].media_mime) == ("media-abc", "image/jpeg")
+        assert entrantes[0].media_vence_at is not None and entrantes[0].media_path is None
         assert _conv(session).state == "inicio"
 
 

@@ -234,7 +234,7 @@ def test_composer_envia_archivo_con_el_texto_como_pie(monkeypatch, session, tmp_
     monkeypatch.setattr(media_store.settings, "media_dir", str(tmp_path))
     enviados = []
     monkeypatch.setattr(
-        whatsapp_client, "send_media", lambda *a: enviados.append(a) or "wamid.MEDIA1"
+        whatsapp_client, "send_media", lambda *a: enviados.append(a) or ("wamid.MEDIA1", "mid.1")
     )
     monkeypatch.setattr(
         whatsapp_client, "send_text",
@@ -250,15 +250,20 @@ def test_composer_envia_archivo_con_el_texto_como_pie(monkeypatch, session, tmp_
         Message.phone == "777", Message.direction == Direction.OUT
     )).one()
     assert sent.body == "aquí está tu acta"       # el pie queda como cuerpo
-    assert sent.media_path is not None            # y el archivo queda ligado
+    # El archivo queda ligado por su referencia en Meta, no por un archivo en el
+    # VPS (regla del operador, 2026-09-28): la carpeta de medios sigue vacía.
+    assert sent.media_ref == "mid.1" and sent.media_mime == "application/pdf"
+    assert sent.media_path is None
+    assert list(tmp_path.iterdir()) == []
     assert sent.wa_message_id == "wamid.MEDIA1"
+    assert enviados[0][1] == b"%PDF-1.4 x"        # el contenido viaja en memoria
     assert enviados[0][3] == "aquí está tu acta"  # caption enviado a Meta
 
 
 def test_composer_sin_texto_registra_el_tipo_de_archivo(monkeypatch, session, tmp_path):
     monkeypatch.setattr(db, "engine", session.get_bind())
     monkeypatch.setattr(media_store.settings, "media_dir", str(tmp_path))
-    monkeypatch.setattr(whatsapp_client, "send_media", lambda *a: "wamid.MEDIA2")
+    monkeypatch.setattr(whatsapp_client, "send_media", lambda *a: ("wamid.MEDIA2", "mid.2"))
     _atendido_por(session, "778")
     session.add(_msg("778", Direction.IN, "hola", hours_ago=1))
     session.commit()
@@ -334,7 +339,7 @@ def test_composer_manda_el_adjunto_por_http_real(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "mssql_host", "")  # sin espejo en pruebas
     enviados = []
     monkeypatch.setattr(
-        whatsapp_client, "send_media", lambda *a: enviados.append(a) or "wamid.HTTP1"
+        whatsapp_client, "send_media", lambda *a: enviados.append(a) or ("wamid.HTTP1", "mid.h")
     )
     monkeypatch.setattr(
         whatsapp_client, "send_text",
@@ -370,7 +375,8 @@ def test_composer_manda_el_adjunto_por_http_real(monkeypatch, tmp_path):
         sent = s.exec(select(Message).where(
             Message.phone == "900", Message.direction == Direction.OUT
         )).one()
-    assert sent.media_path is not None
+    assert sent.media_ref == "mid.h" and sent.media_path is None
+    assert list(tmp_path.iterdir()) == []  # nada en la carpeta de medios del VPS
     assert sent.wa_message_id == "wamid.HTTP1"
 
 

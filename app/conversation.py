@@ -5,7 +5,7 @@ from datetime import timedelta, timezone
 
 from sqlmodel import Session, select
 
-from app import agent_tools, asignacion, codigos, horario, nlu, rag
+from app import adjuntos, agent_tools, asignacion, codigos, horario, nlu, rag
 from app.catalog import (
     PAGE_SIZE,
     catalog,
@@ -300,8 +300,12 @@ def handle_incoming(
     wa_message_id: str | None = None,
     provider: str = PROVIDER_META,
     office_id: int = OFICINA_TLAXCALA_ID,
+    adjunto: dict | None = None,
 ) -> list[str]:
-    """`office_id` viaja por el mismo túnel explícito que `provider` (§4).
+    """`adjunto` es la referencia del archivo en el proveedor (app/adjuntos.py);
+    solo se guarda la referencia, nunca el archivo.
+
+    `office_id` viaja por el mismo túnel explícito que `provider` (§4).
 
     Lleva default —a diferencia de credenciales.credencial(), donde uno sería el
     fallback silencioso que ese módulo prohíbe— por dos razones que no aplican
@@ -319,7 +323,8 @@ def handle_incoming(
     # —el entrante y las respuestas— hereda de aquí el canal correcto.
     conv = _get_or_create_conversation(session, phone, provider, office_id)
     _log_message(
-        session, phone, Direction.IN, "[archivo adjunto]" if is_media else text, wa_message_id
+        session, phone, Direction.IN, adjuntos.cuerpo(adjunto, text) if is_media else text,
+        wa_message_id, adjunto=adjunto if is_media else None,
     )
     # El rate limit se decide con el entrante YA registrado —es la base del
     # contador y de la idempotencia— y ANTES de derivar nada más: 60 entrantes
@@ -332,7 +337,15 @@ def handle_incoming(
         _extract_client_data(session, phone, text)
 
     if is_media:
-        replies = ["Por ahora no puedo recibir documentos en este chat. Un asesor te indicará cómo enviarlos."]
+        # El archivo ya quedó en el chat del CRM (solo su referencia). El bot
+        # acusa recibo y nada más —revisarlo es del asesor—, y calla si alguien
+        # apagó el agente en su folio, igual que con un mensaje de texto.
+        if any(not t.agent_active for t in _folios_abiertos(session, phone)):
+            replies = []
+        elif adjuntos.soportado(adjunto):
+            replies = [adjuntos.ACUSE]
+        else:
+            replies = [adjuntos.NO_SOPORTADO]
     elif (fb := FEEDBACK_RE.match(text.strip())):
         # Botón 👍/👎 del aviso de cierre con el id viejo: se registra y se
         # agradece, en cualquier estado (no pasa por la máquina de estados ni
@@ -1723,6 +1736,7 @@ def _log_message(
     body: str,
     wa_message_id: str | None = None,
     provider: str | None = None,
+    adjunto: dict | None = None,
 ) -> None:
     if provider is None:
         # Se hereda de la conversación, que handle_incoming ya dejó apuntando al
@@ -1730,19 +1744,20 @@ def _log_message(
         # correcto sin pasar el proveedor por cada punto de registro.
         conv = session.get(Conversation, phone)
         provider = conv.provider if conv else PROVIDER_META
-    session.add(
-        Message(
-            phone=phone,
-            direction=direction,
-            body=body[:MAX_STORED_TEXT],
-            wa_message_id=wa_message_id,
-            provider=provider,
-            # Sin office_id A PROPÓSITO: `message` no es una de las 15 tablas de
-            # §2.3. El mensaje pertenece a la conversación, que sí la lleva, así
-            # que la oficina es derivable y duplicarla abriría la puerta a que
-            # las dos discrepen. OJO: SQLModel ACEPTA Y DESCARTA en silencio un
-            # kwarg que no es columna, así que ponerlo aquí no daría error —
-            # sería un no-op mudo. Lo amarra test_ruteo_oficina.py.
-        )
+    mensaje = Message(
+        phone=phone,
+        direction=direction,
+        body=body[:MAX_STORED_TEXT],
+        wa_message_id=wa_message_id,
+        provider=provider,
+        # Sin office_id A PROPÓSITO: `message` no es una de las 15 tablas de
+        # §2.3. El mensaje pertenece a la conversación, que sí la lleva, así
+        # que la oficina es derivable y duplicarla abriría la puerta a que
+        # las dos discrepen. OJO: SQLModel ACEPTA Y DESCARTA en silencio un
+        # kwarg que no es columna, así que ponerlo aquí no daría error —
+        # sería un no-op mudo. Lo amarra test_ruteo_oficina.py.
     )
+    # Solo la referencia del archivo en el proveedor: el archivo no toca el VPS.
+    adjuntos.sellar(mensaje, adjunto, provider)
+    session.add(mensaje)
     session.commit()

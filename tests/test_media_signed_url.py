@@ -172,29 +172,46 @@ def test_la_ruta_con_sesion_sigue_exigiendo_sesion(adjunto):
 # ---------------------------------------------------------------------------
 
 
-def test_twilio_manda_el_adjunto_como_media_url_publica(adjunto, tmp_path, monkeypatch):
+def test_twilio_manda_el_adjunto_desde_memoria_por_url_efimera(monkeypatch):
+    # Sin disco (regla del operador, 2026-09-28): Twilio descarga el archivo de
+    # una URL que sirve la RAM unos minutos, y la referencia «msg:<sid>» es lo
+    # único que queda para volver a abrirlo desde Twilio.
     enviados = {}
     monkeypatch.setattr(
         twilio_client, "_post_message", lambda to, data: enviados.update(data) or "SM1"
     )
 
-    sid = twilio_client.send_media(
-        CANONICO, str(tmp_path / adjunto), "application/pdf", "tu acta", adjunto
+    sid, ref = twilio_client.send_media(
+        CANONICO, b"%PDF-1.4 acta", "application/pdf", "tu acta", "acta.pdf"
     )
 
-    assert sid == "SM1"
-    assert enviados["MediaUrl"].startswith(f"{BASE}/media/publico/{adjunto}?exp=")
+    assert (sid, ref) == ("SM1", "msg:SM1")
+    assert enviados["MediaUrl"].startswith(f"{BASE}/media/efimero/")
     assert enviados["Body"] == "tu acta"
+    ruta = enviados["MediaUrl"].removeprefix(BASE)
+    respuesta = TestClient(app, base_url=BASE).get(ruta)
+    assert respuesta.status_code == 200
+    assert respuesta.content == b"%PDF-1.4 acta"
+    assert respuesta.headers["content-type"].startswith("application/pdf")
 
 
-def test_sin_url_publica_el_adjunto_no_se_manda(adjunto, tmp_path, monkeypatch):
+def test_la_url_efimera_no_sirve_con_un_token_inventado_ni_vencida(monkeypatch):
+    token = media_store.publicar_efimero(b"%PDF-1.4", "application/pdf")
+    cliente = TestClient(app, base_url=BASE)
+    assert cliente.get("/media/efimero/inventado").status_code == 404
+    assert cliente.get(f"/media/efimero/{token}").status_code == 200
+    monkeypatch.setattr(time, "time", lambda: 10**12)
+    assert cliente.get(f"/media/efimero/{token}").status_code == 404
+
+
+def test_sin_url_publica_el_adjunto_no_se_manda(monkeypatch):
     # REGLA: sin PUBLIC_BASE_URL la MediaUrl apuntaría a un host que Twilio no
     # puede alcanzar. Mejor no enviar y dejarlo en el log que mandar un mensaje
     # roto al cliente.
     monkeypatch.setattr(settings, "public_base_url", "")
     monkeypatch.setattr(twilio_client, "_post_message", lambda *a, **k: "NO-DEBIO-LLAMARSE")
 
-    assert twilio_client.send_media(CANONICO, str(tmp_path / adjunto), "application/pdf") is None
+    assert twilio_client.send_media(CANONICO, b"%PDF-1.4", "application/pdf") == (None, None)
 
 
 # ---------------------------------------------------------------------------

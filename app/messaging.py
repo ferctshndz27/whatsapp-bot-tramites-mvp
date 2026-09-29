@@ -85,10 +85,27 @@ def send_buttons(
 
 def send_media(
     phone: str,
-    file_path: str,
+    data: bytes,
     mime_type: str,
     caption: str = "",
     filename: str | None = None,
     provider: str | None = None,
-) -> str | None:
-    return _resolver(phone, provider).send_media(phone, file_path, mime_type, caption, filename)
+) -> tuple[str | None, str | None]:
+    """Envía un archivo EN MEMORIA. Devuelve (id del mensaje, referencia del
+    archivo en el proveedor): la referencia es lo único que el VPS guarda."""
+    return _resolver(phone, provider).send_media(phone, data, mime_type, caption, filename)
+
+
+def descargar_media(ref: str, provider: str, max_bytes: int) -> tuple[bytes, str] | None:
+    """Trae un archivo del proveedor que lo guarda, sin escribirlo a disco.
+    A diferencia de enviar, aquí el canal es el del MENSAJE, no el actual del
+    cliente: un archivo que entró por Twilio vive en Twilio aunque hoy el
+    cliente escriba por Meta."""
+    return _adaptador(provider).descargar_media(ref, max_bytes)
+
+
+def subir_media_meta(data: bytes, mime_type: str, filename: str | None = None) -> str | None:
+    """Sube un archivo a Meta sin enviarlo (renovación de 7 a 30 días,
+    app/adjuntos.py). Solo Meta: Twilio no conserva por referencia de webhook
+    con vencimiento, así que no necesita renovarse."""
+    return whatsapp_client.subir_media(data, mime_type, filename)

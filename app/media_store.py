@@ -2,6 +2,8 @@ import hashlib
 import hmac
 import logging
 import re
+import secrets
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -43,20 +45,32 @@ def _firma_coincide(ext: str, data: bytes) -> bool:
     return any(data.startswith(firma) for firma in _FIRMAS[ext])
 
 
+def validar_bytes(content_type: str | None, data: bytes, permitidos: dict = ALLOWED_MEDIA) -> str | None:
+    """Código de error («tipo» o «peso») o None si el archivo pasa.
+
+    Separado de `save_upload` para los chats con clientes, que validan igual pero
+    NO escriben a disco (app/adjuntos.py): el archivo vive en Meta o en Twilio.
+    """
+    if content_type not in permitidos:
+        return "tipo"
+    ext, max_size = permitidos[content_type]
+    if len(data) > max_size:
+        return "peso"
+    if not _firma_coincide(ext, data):
+        return "tipo"
+    return None
+
+
 def save_upload(file: UploadFile) -> tuple[str | None, str | None, str | None]:
-    """Valida y guarda un archivo subido.
+    """Valida y guarda un archivo subido (chat de equipo).
 
     Devuelve (ruta_web, ruta_disco, None) o (None, None, código_de_error).
     """
-    if file.content_type not in ALLOWED_MEDIA:
-        return None, None, "tipo"
-    ext, max_size = ALLOWED_MEDIA[file.content_type]
-
     data = file.file.read()
-    if len(data) > max_size:
-        return None, None, "peso"
-    if not _firma_coincide(ext, data):
-        return None, None, "tipo"
+    error = validar_bytes(file.content_type, data)
+    if error:
+        return None, None, error
+    ext, _ = ALLOWED_MEDIA[file.content_type]
 
     media_dir = Path(settings.media_dir)
     media_dir.mkdir(parents=True, exist_ok=True)
@@ -108,3 +122,59 @@ def verify_media_token(name: str, expira: str, firma: str) -> bool:
     if vence < time.time():
         return False
     return hmac.compare_digest(_firmar(name, vence), firma or "")
+
+
+# --------------------------------------------------------------------------
+# Almacén efímero EN MEMORIA (salida por Twilio, sin disco)
+# --------------------------------------------------------------------------
+# Twilio no acepta subir el archivo: exige una MediaUrl pública de la que él lo
+# descarga. Los archivos de los chats con clientes ya no se escriben al VPS
+# (regla del operador, 2026-09-28), así que el archivo se sirve desde RAM
+# durante unos minutos con un token imposible de adivinar
+# (inbox.media_efimero). Funciona porque uvicorn corre con UN proceso
+# (Dockerfile): con varios workers, el que recibe la descarga de Twilio no
+# tendría el archivo.
+# ponytail: un reinicio del contenedor entre el envío y la descarga de Twilio
+# pierde el archivo (Twilio marca el mensaje como fallido y el asesor reintenta).
+# Si algún día hay varios workers, esto pasa a un almacén compartido.
+EFIMERO_TTL_SEGUNDOS = 15 * 60
+# Tope de la RAM que puede ocupar el almacén entero. Sin él, envíos seguidos de
+# 16 MB se acumulan 15 min cada uno en el único proceso (revisión de seguridad,
+# 2026-09-29). 64 MB son cuatro documentos al tope a la vez: de sobra para el
+# ritmo de un equipo que envía a mano. Lleno, el envío falla y el asesor
+# reintenta en unos minutos; es mejor eso que tumbar el bot.
+EFIMERO_MAX_BYTES = 64 * 1024 * 1024
+_EFIMEROS: dict[str, tuple[float, bytes, str, str | None]] = {}
+_EFIMEROS_LOCK = threading.Lock()
+
+
+def _purgar_efimeros(ahora: float) -> None:
+    for token in [t for t, (vence, *_) in _EFIMEROS.items() if vence < ahora]:
+        del _EFIMEROS[token]
+
+
+def publicar_efimero(data: bytes, mime: str, nombre: str | None = None) -> str | None:
+    """Guarda el archivo en memoria y devuelve el token de su URL pública, o
+    None si el almacén ya llegó a EFIMERO_MAX_BYTES."""
+    token = secrets.token_urlsafe(32)
+    ahora = time.time()
+    with _EFIMEROS_LOCK:
+        _purgar_efimeros(ahora)
+        ocupado = sum(len(d) for _, d, _, _ in _EFIMEROS.values())
+        if ocupado + len(data) > EFIMERO_MAX_BYTES:
+            logger.warning("Almacén efímero lleno (%d bytes); adjunto no publicado", ocupado)
+            return None
+        _EFIMEROS[token] = (ahora + EFIMERO_TTL_SEGUNDOS, data, mime, nombre)
+    return token
+
+
+def tomar_efimero(token: str) -> tuple[bytes, str, str | None] | None:
+    """(contenido, mime, nombre) si el token existe y no venció. No se borra al
+    leerlo: Twilio puede reintentar la descarga dentro del plazo."""
+    with _EFIMEROS_LOCK:
+        _purgar_efimeros(time.time())
+        entrada = _EFIMEROS.get(token)
+    if entrada is None:
+        return None
+    _, data, mime, nombre = entrada
+    return data, mime, nombre

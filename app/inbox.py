@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from app.templating import templates
 from sqlalchemy import update
 from sqlmodel import select
 
-from app import messaging, ventana
+from app import adjuntos, messaging, ventana
 from app.audit import log_admin
 from app.clients import conversacion_escribible, folio_de
 from app.auth import is_admin, alcance
@@ -18,7 +18,7 @@ from app.config import settings
 from app import asignacion
 from app.conversation import _folios_abiertos
 from app.db import get_session
-from app.media_store import MEDIA_NAME_RE, save_upload, verify_media_token
+from app.media_store import MEDIA_NAME_RE, tomar_efimero, validar_bytes, verify_media_token
 from app.team_chat import archivo_de_chat_visible
 from app.utils import mask_phone
 from app.models import (
@@ -317,36 +317,39 @@ def inbox_send(
         if not ventana.abierta_para(session, phone):
             return RedirectResponse(f"/inbox/{phone}?err=window", status_code=303)
 
-        media_path = None
         # El canal se resuelve UNA vez y sirve para enviar Y para sellar la
         # fila: resolverlo dos veces dejaría divergir el registro del envío.
         canal = messaging.canal_de(phone)
+        mensaje = Message(
+            phone=phone, direction=Direction.OUT, body=body, sent_by=user, provider=canal
+        )
         if adjunto is None:
-            wamid = messaging.send_text(phone, body, provider=canal)
-            registro = body
+            mensaje.wa_message_id = messaging.send_text(phone, body, provider=canal)
         else:
-            media_path, disk_path, error = save_upload(adjunto)
+            # Sin disco (regla del operador, 2026-09-28): el archivo se valida en
+            # memoria y se sube al proveedor, que lo conserva; el VPS guarda solo
+            # la referencia (app/adjuntos.py).
+            data = adjunto.file.read()
+            mime = adjunto.content_type
+            error = validar_bytes(mime, data, adjuntos.TIPOS_CLIENTE)
             if error:
                 return RedirectResponse(f"/inbox/{phone}?err={error}", status_code=303)
+            nombre = (adjunto.filename or "archivo")[:255]
             # El texto del composer viaja como pie del archivo, igual que en
             # WhatsApp; si no hay texto se registra el tipo y el nombre.
-            wamid = messaging.send_media(
-                phone, disk_path, adjunto.content_type, body, adjunto.filename, provider=canal
-            )
-            kind = "imagen" if (adjunto.content_type or "").startswith("image/") else "documento"
-            registro = body or f"[{kind}: {adjunto.filename}]"
-
-        session.add(
-            Message(
-                phone=phone,
-                direction=Direction.OUT,
-                body=registro,
-                wa_message_id=wamid,
-                media_path=media_path,
-                sent_by=user,
-                provider=canal,
-            )
-        )
+            wamid, ref = messaging.send_media(phone, data, mime, body, nombre, provider=canal)
+            kind = "imagen" if mime.startswith("image/") else "documento"
+            mensaje.body = body or f"[{kind}: {nombre}]"
+            mensaje.wa_message_id = wamid
+            if ref:
+                mensaje.media_ref, mensaje.media_mime = ref, mime
+                mensaje.media_nombre, mensaje.media_bytes = nombre, len(data)
+                # Lo que sube el negocio a Meta dura 30 días; Twilio no lo vence.
+                mensaje.media_vence_at = (
+                    utcnow() + adjuntos.VIDA_META_SUBIDA if canal == PROVIDER_META else None
+                )
+        wamid = mensaje.wa_message_id
+        session.add(mensaje)
         # Primera respuesta HUMANA (fase 1): sella los folios abiertos de este
         # teléfono que aún no la tienen. El bot nunca pasa por aquí — el inbox
         # es de personas — y por eso este es EL punto de llenado, no _deliver.
@@ -477,6 +480,25 @@ def media_file_publico(request: Request, name: str, exp: str = "", sig: str = ""
     if not path.is_file():
         raise HTTPException(status_code=404, detail="No encontrado")
     return FileResponse(path)
+
+
+@router.get("/media/efimero/{token}")
+def media_efimero(token: str):
+    """Archivo que Twilio descarga para mandarlo por WhatsApp, servido desde RAM.
+
+    Sin sesión, como `/media/publico`: Twilio no inicia sesión. Lo que protege
+    el archivo es el token (32 bytes aleatorios) y su vida de minutos
+    (media_store.publicar_efimero). 404 sin distinguir vencido de inexistente.
+    """
+    entrada = tomar_efimero(token)
+    if entrada is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    data, mime, _ = entrada
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"},
+    )
 
 
 @router.get("/media/{name}")
