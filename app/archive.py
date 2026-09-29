@@ -674,6 +674,12 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "pricing_category": "NVARCHAR(40) NULL",
         "pricing_type": "NVARCHAR(40) NULL",
         "pricing_billable": "BIT NULL",
+        # Archivos en el proveedor (app/adjuntos.py): solo la referencia.
+        "media_ref": "NVARCHAR(400) NULL",
+        "media_mime": "NVARCHAR(120) NULL",
+        "media_nombre": "NVARCHAR(255) NULL",
+        "media_bytes": "BIGINT NULL",
+        "media_vence_at": "DATETIME2 NULL",
     },
     "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL, "room_id": "BIGINT NULL"},
     # «Eliminar chat» solo para él. NULL = nunca lo eliminó (igual que db.py).
@@ -854,9 +860,10 @@ def archive_wa_message(m) -> None:
             text(
                 "INSERT INTO wa_messages (source_id, phone, direction, body, wa_message_id,"
                 " wa_status, media_path, sent_by, habilitado, provider, pricing_category,"
-                " pricing_type, pricing_billable, created_at)"
+                " pricing_type, pricing_billable, media_ref, media_mime, media_nombre,"
+                " media_bytes, media_vence_at, created_at)"
                 " VALUES (:sid, :p, :d, :b, :wid, :ws, :mp, :sb, :hab, :prov, :pcat, :ptype,"
-                " :pbill, :c)"
+                " :pbill, :mref, :mmime, :mnom, :mbytes, :mvence, :c)"
             ),
             {
                 "sid": m.id,
@@ -872,9 +879,23 @@ def archive_wa_message(m) -> None:
                 "pcat": m.pricing_category,
                 "ptype": m.pricing_type,
                 "pbill": m.pricing_billable,
+                **_media_espejo(m),
                 "c": _naive_utc(m.created_at),
             },
         )
+
+
+def _media_espejo(m) -> dict:
+    """Los campos del archivo en el proveedor, para el INSERT y el UPDATE: la
+    renovación de Meta (7 → 30 días) cambia `media_ref` y `media_vence_at` DESPUÉS
+    del alta, así que el UPDATE también los lleva."""
+    return {
+        "mref": m.media_ref,
+        "mmime": m.media_mime,
+        "mnom": m.media_nombre,
+        "mbytes": m.media_bytes,
+        "mvence": _naive_utc(m.media_vence_at) if m.media_vence_at else None,
+    }
 
 
 def sync_wa_message(m) -> None:
@@ -891,10 +912,13 @@ def sync_wa_message(m) -> None:
         resultado = conn.execute(
             text(
                 "UPDATE wa_messages SET wa_message_id = :wid, wa_status = :ws, habilitado = :hab,"
-                " pricing_category = :pcat, pricing_type = :ptype, pricing_billable = :pbill"
+                " pricing_category = :pcat, pricing_type = :ptype, pricing_billable = :pbill,"
+                " media_ref = :mref, media_mime = :mmime, media_nombre = :mnom,"
+                " media_bytes = :mbytes, media_vence_at = :mvence"
                 " WHERE source_id = :sid"
             ),
             {
+                **_media_espejo(m),
                 "wid": m.wa_message_id,
                 "ws": m.wa_status,
                 "hab": m.habilitado,

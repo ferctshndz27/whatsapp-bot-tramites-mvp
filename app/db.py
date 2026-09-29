@@ -58,6 +58,13 @@ _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     "pricing_category": "VARCHAR",
     "pricing_type": "VARCHAR",
     "pricing_billable": "BOOLEAN",
+    # Archivos que viven en el proveedor (app/adjuntos.py). Nullable: los
+    # mensajes viejos no tienen archivo o lo tienen en disco (media_path).
+    "media_ref": "VARCHAR",
+    "media_mime": "VARCHAR",
+    "media_nombre": "VARCHAR",
+    "media_bytes": "INTEGER",
+    "media_vence_at": "DATETIME",
 }
 _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH = {
     "provider": "VARCHAR NOT NULL DEFAULT 'meta'",

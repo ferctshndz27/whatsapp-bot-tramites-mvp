@@ -498,12 +498,38 @@ def test_two_failed_attempts_auto_escalates(session):
     assert ticket.escalado is True
 
 
-def test_media_message_is_not_processed(session):
-    replies = handle_incoming(session, PHONE, "", is_media=True)
-    assert "documentos" in replies[0].lower()
+def test_un_adjunto_soportado_se_acusa_y_no_mueve_la_conversacion(session):
+    """Desde 2026-09-28 el archivo sí se recibe: queda su referencia en el
+    proveedor y el bot acusa recibo, sin validarlo ni mover el estado."""
+    from sqlmodel import select
 
-    conv = session.get(Conversation, PHONE)
-    assert conv.state == "inicio"  # no cambia de estado por un adjunto
+    from app import adjuntos
+    from app.models import Message
+
+    adjunto = {"ref": "media-1", "mime": "application/pdf", "nombre": "acta.pdf", "caption": ""}
+    replies = handle_incoming(session, PHONE, "", is_media=True, adjunto=adjunto)
+    assert replies == [adjuntos.ACUSE]
+    assert session.get(Conversation, PHONE).state == "inicio"
+    from app.models import Direction
+
+    m = session.exec(
+        select(Message).where(Message.phone == PHONE, Message.direction == Direction.IN)
+    ).one()
+    assert (m.body, m.media_ref, m.media_mime) == ("[documento: acta.pdf]", "media-1", "application/pdf")
+    assert m.media_path is None
+
+
+def test_un_adjunto_no_soportado_pide_otro_formato_y_no_guarda_referencia(session):
+    from sqlmodel import select
+
+    from app import adjuntos
+    from app.models import Message
+
+    webp = {"ref": "media-2", "mime": "image/webp", "nombre": None, "caption": ""}
+    assert handle_incoming(session, PHONE, "", is_media=True, adjunto=webp) == [adjuntos.NO_SOPORTADO]
+    # Un audio o un sticker llegan sin adjunto reconocible: mismo aviso.
+    assert handle_incoming(session, PHONE, "", is_media=True) == [adjuntos.NO_SOPORTADO]
+    assert all(m.media_ref is None for m in session.exec(select(Message)).all())
 
 
 def test_menu_keyword_shows_listing_from_any_state(session):

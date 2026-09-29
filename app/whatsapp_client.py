@@ -183,53 +183,117 @@ def send_buttons(
     return _send(to_phone, _buttons_payload(to_phone, body, buttons))
 
 
-def send_media(
-    to_phone: str, file_path: str, mime_type: str, caption: str = "", filename: str | None = None
-) -> str | None:
-    """Sube un archivo a Meta y lo envía como imagen o documento. Devuelve el wamid."""
-    # Se resuelven AQUÍ, fuera del try de abajo: ese except caza KeyError y
-    # credencial() levanta KeyError con una clave desconocida — dentro, un typo
-    # se volvería un `return None` mudo en vez de un fallo ruidoso.
+def _credenciales_media() -> tuple[str, str] | None:
     token = credencial("WHATSAPP_TOKEN", office_id=OFICINA_TLAXCALA_ID)
     pnid = credencial("WHATSAPP_PHONE_NUMBER_ID", office_id=OFICINA_TLAXCALA_ID)
-    if not token or not pnid:
+    return (token, pnid) if token and pnid else None
+
+
+def subir_media(data: bytes, mime_type: str, filename: str | None = None) -> str | None:
+    """Sube un archivo EN MEMORIA a Meta y devuelve su media id (vive 30 días).
+
+    Sin disco a propósito (regla del operador, 2026-09-28): los archivos de los
+    chats con clientes viven en Meta, no en el VPS. La usan el envío y la
+    renovación de lo que manda el cliente (app/adjuntos.py).
+    """
+    cred = _credenciales_media()
+    if cred is None:
+        return None
+    token, pnid = cred
+    try:
+        upload = httpx.post(
+            f"https://graph.facebook.com/{GRAPH_API_VERSION}/{pnid}/media",
+            data={"messaging_product": "whatsapp"},
+            files={"file": (filename or "archivo", data, mime_type)},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        upload.raise_for_status()
+        return upload.json()["id"]
+    except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
+        logger.error("Fallo al subir media a Meta: %s", exc)
         return None
 
-    base = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{pnid}"
-    headers = {"Authorization": f"Bearer {token}"}
 
+def descargar_media(media_id: str, max_bytes: int) -> tuple[bytes, str] | None:
+    """(contenido, mime) de un media id de Meta, o None si no se pudo o pesa de más.
+
+    Dos pasos, como documenta Meta: GET /{media-id} da una URL que vence en 5
+    minutos, y esa URL se descarga con el mismo token. Se pide URL nueva en cada
+    llamada. No se fija el host de la URL porque Meta no lo documenta; sí se
+    exige https, para no mandar el token en claro. El tope se revisa contra lo
+    que Meta declara Y contra lo que llega, para no cargar a memoria de más.
+    """
+    cred = _credenciales_media()
+    if cred is None:
+        return None
+    token, pnid = cred
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        info = httpx.get(
+            f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}",
+            params={"phone_number_id": pnid},
+            headers=headers,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        info.raise_for_status()
+        datos = info.json()
+        url = datos.get("url") or ""
+        if not url.startswith("https://"):
+            logger.error("Meta devolvió una URL de media que no es https")
+            return None
+        if int(datos.get("file_size") or 0) > max_bytes:
+            return None
+        with httpx.stream("GET", url, headers=headers, timeout=30) as r:
+            r.raise_for_status()
+            partes, total = [], 0
+            for trozo in r.iter_bytes():
+                total += len(trozo)
+                if total > max_bytes:
+                    return None
+                partes.append(trozo)
+        return b"".join(partes), (datos.get("mime_type") or "")
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+        logger.error("Fallo al descargar media de Meta: %s", exc)
+        return None
+
+
+def send_media(
+    to_phone: str, data: bytes, mime_type: str, caption: str = "", filename: str | None = None
+) -> tuple[str | None, str | None]:
+    """Sube el archivo (en memoria) y lo envía como imagen o documento.
+
+    Devuelve (wamid, media_id): el media id es la referencia con la que el CRM lo
+    vuelve a abrir durante los 30 días que Meta lo conserva.
+    """
+    media_id = subir_media(data, mime_type, filename)
+    if media_id is None:
+        return None, None
+    cred = _credenciales_media()
+    if cred is None:
+        return None, None
+    token, pnid = cred
+
+    kind = "image" if mime_type.startswith("image/") else "document"
+    media_obj: dict = {"id": media_id}
+    if caption:
+        # Meta rechaza el mensaje completo si el pie pasa de 1024
+        # caracteres: mejor recortar el texto que perder el archivo.
+        media_obj["caption"] = caption[:CAPTION_MAX]
+    if kind == "document" and filename:
+        media_obj["filename"] = filename
     # ponytail: sin reintentos para media (el asesor ve el error y reintenta a mano);
     # añadir backoff como en send_text si los fallos de red se vuelven frecuentes.
     try:
-        with open(file_path, "rb") as fh:
-            upload = httpx.post(
-                f"{base}/media",
-                data={"messaging_product": "whatsapp"},
-                files={"file": (filename or "archivo", fh, mime_type)},
-                headers=headers,
-                timeout=30,
-            )
-        upload.raise_for_status()
-        media_id = upload.json()["id"]
-
-        kind = "image" if mime_type.startswith("image/") else "document"
-        media_obj: dict = {"id": media_id}
-        if caption:
-            # Meta rechaza el mensaje completo si el pie pasa de 1024
-            # caracteres: mejor recortar el texto que perder el archivo.
-            media_obj["caption"] = caption[:CAPTION_MAX]
-        if kind == "document" and filename:
-            media_obj["filename"] = filename
-
         response = httpx.post(
-            f"{base}/messages",
+            f"https://graph.facebook.com/{GRAPH_API_VERSION}/{pnid}/messages",
             json={"messaging_product": "whatsapp", "to": to_phone, "type": kind, kind: media_obj},
-            headers=headers,
+            headers={"Authorization": f"Bearer {token}"},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         logger.info("Media %s enviado a %s", kind, mask_phone(to_phone))
-        return _wamid(response)
-    except (httpx.HTTPError, OSError, KeyError) as exc:
+        return _wamid(response), media_id
+    except httpx.HTTPError as exc:
         logger.error("Fallo al enviar media a %s: %s", mask_phone(to_phone), exc)
-        return None
+        return None, media_id

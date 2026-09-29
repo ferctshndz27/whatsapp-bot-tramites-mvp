@@ -144,7 +144,20 @@ class Message(SQLModel, table=True):
     wa_message_id: str | None = Field(default=None, index=True)
     wa_status: str | None = None
     wa_status_at: datetime | None = None
+    # Archivo guardado EN EL VPS (/data/media). Solo el histórico: desde
+    # 2026-09-28 los archivos de los chats con clientes no se escriben a disco
+    # y viven con el proveedor (ver media_ref).
     media_path: str | None = None
+    # Archivo que vive en Meta o en Twilio (app/adjuntos.py): el VPS guarda solo
+    # la referencia y lo trae al abrirlo. Meta: el media id. Twilio: la URL de
+    # su API (entrante) o «msg:<MessageSid>» (saliente). NULL = sin archivo.
+    media_ref: str | None = None
+    media_mime: str | None = None
+    media_nombre: str | None = None
+    media_bytes: int | None = None
+    # Hasta cuándo lo conserva el proveedor. NULL = no caduca (Twilio lo guarda
+    # hasta que alguien lo borre).
+    media_vence_at: datetime | None = None
     sent_by: str | None = None
     habilitado: bool = True
     # Canal por el que entró o salió este mensaje. Sin esto no se puede

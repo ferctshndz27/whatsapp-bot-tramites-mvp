@@ -68,8 +68,8 @@
      desde cualquiera de las dos vistas mientras conviven. */
   var ERRORES_ENVIO = {
     window: "No se pudo enviar: la ventana de " + VENTANA_HORAS + " h está cerrada. El cliente debe escribir primero.",
-    tipo: "Tipo de archivo no permitido. Solo JPG, PNG, WebP o PDF.",
-    peso: "Archivo demasiado grande (máx. 5 MB imágenes, 16 MB PDF).",
+    tipo: "Tipo de archivo no permitido. Solo PDF, JPG, PNG, Word o Excel.",
+    peso: "Archivo demasiado grande (máx. 5 MB imágenes, 16 MB documentos).",
     acceso: "Sin acceso a esta conversación.",
     sesion: "Tu sesión caducó; vuelve a entrar.",
     red: "No se pudo enviar. Revisa tu conexión."
@@ -333,8 +333,10 @@
   function previewOf(msg) {
     if (!msg) return { ticks: "", read: false, text: "Sin mensajes" };
     var media = msg.media_path ? String(msg.media_path) : "";
+    var mime = msg.media_mime ? String(msg.media_mime) : "";
     var text;
-    if (media && /\.pdf$/i.test(media)) text = "📄 Documento";
+    if (mime) text = /^image\//.test(mime) ? "📷 Imagen" : "📄 Documento";
+    else if (media && /\.pdf$/i.test(media)) text = "📄 Documento";
     else if (media) text = "📷 Imagen";
     else if (msg.body === "[archivo adjunto]") text = "📎 Adjunto";
     else text = (msg.body !== null && msg.body !== undefined && String(msg.body).trim()) ? String(msg.body) : "Mensaje";
@@ -1883,13 +1885,50 @@
     }
   }
 
+  function tamanoLegible(n) {
+    n = Number(n) || 0;
+    if (!n) return "";
+    return n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + " KB" : (n / 1024 / 1024).toFixed(1) + " MB";
+  }
+
+  /* Archivo que vive en Meta o Twilio: el VPS solo guarda la referencia y el
+     visor (/crm/api/adjunto/{id}) lo trae al abrirlo. Uno vencido ya no se
+     puede traer, y se dice con texto. */
+  function adjuntoDe(adj) {
+    var nombre = adj.nombre || (/^image\//.test(adj.mime || "") ? "Imagen" : "Documento");
+    if (adj.vencido) {
+      var v = document.createElement("span");
+      v.className = "bubble-adjunto vencido";
+      v.textContent = "📎 " + nombre + " · ya no está en WhatsApp";
+      return v;
+    }
+    var a = document.createElement("a");
+    a.className = "bubble-adjunto";
+    a.href = adj.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    if (/^image\//.test(adj.mime || "")) {
+      var img = document.createElement("img");
+      img.src = adj.url;
+      img.alt = nombre;
+      img.loading = "lazy";
+      a.appendChild(img);
+    } else {
+      var tam = tamanoLegible(adj.bytes);
+      a.textContent = "📄 " + nombre + (tam ? " · " + tam : "");
+    }
+    return a;
+  }
+
   function makeBubble(m) {
     var b = tpl("crm-tpl-bubble");
     b.classList.add(m.direction === "out" ? "out" : "in");
     b.dataset.messageId = String(m.id);
     setText(b, ".bubble-text", m.body || "");
     var meta = $(".meta", b);
-    if (m.media_path) {
+    if (m.adjunto) {
+      b.insertBefore(adjuntoDe(m.adjunto), meta);
+    } else if (m.media_path) {
       var a = document.createElement("a");
       a.className = "bubble-adjunto";
       a.href = m.media_path;

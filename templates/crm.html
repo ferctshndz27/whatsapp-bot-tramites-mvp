@@ -124,11 +124,11 @@
           <form method="post" enctype="multipart/form-data" id="crm-composer">
             <div class="composer-bar">
               <input type="file" id="crm-file" name="file" class="sr-only"
-                accept=".jpg,.jpeg,.png,.webp,.pdf" aria-describedby="crm-composer-hint">
+                accept=".jpg,.jpeg,.png,.pdf,.docx,.xlsx" aria-describedby="crm-composer-hint">
               <div class="field">
-                <label for="crm-file" class="attach" title="Adjuntar imagen o PDF">
+                <label for="crm-file" class="attach" title="Adjuntar PDF, imagen, Word o Excel">
                   <span aria-hidden="true">📎</span>
-                  <span class="sr-only">Adjuntar archivo: JPG, PNG, WebP o PDF</span>
+                  <span class="sr-only">Adjuntar archivo: PDF, JPG, PNG, Word o Excel</span>
                 </label>
                 <label for="crm-body" class="sr-only">Mensaje</label>
                 <textarea id="crm-body" name="body" rows="1" placeholder="Escribe un mensaje…"></textarea>
@@ -137,7 +137,7 @@
             </div>
             <div id="crm-attach-chip" class="attach-chip" role="status" aria-live="polite" hidden></div>
             <p class="composer-hint" id="crm-composer-hint">
-              Adjunta JPG, PNG, WebP o PDF (máx. 5 MB imágenes, 16 MB PDF).
+              Adjunta PDF, JPG, PNG, Word o Excel (máx. 5 MB imágenes, 16 MB documentos).
               Si adjuntas un archivo, tu texto se envía como pie.
             </p>
           </form>

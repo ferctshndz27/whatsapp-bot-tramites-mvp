@@ -43,6 +43,8 @@ ARCHIVE_DDL = [
         wa_message_id TEXT, wa_status TEXT, media_path TEXT, sent_by TEXT,
         habilitado INTEGER DEFAULT 1, provider TEXT DEFAULT 'meta',
         pricing_category TEXT, pricing_type TEXT, pricing_billable INTEGER,
+        media_ref TEXT, media_mime TEXT, media_nombre TEXT, media_bytes INTEGER,
+        media_vence_at TIMESTAMP,
         created_at TIMESTAMP)""",
     "CREATE TABLE team_users (username TEXT PRIMARY KEY)",
     """CREATE TABLE team_messages (

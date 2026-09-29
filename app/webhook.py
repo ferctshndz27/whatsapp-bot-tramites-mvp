@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from sqlmodel import select
 from starlette.concurrency import run_in_threadpool
 
-from app import conversation, messaging, twilio_client
+from app import adjuntos, conversation, messaging, twilio_client
 from app.conversation import handle_incoming
 from app.credenciales import credencial
 from app.db import get_session
@@ -126,12 +126,22 @@ def _process_message(message: dict, office_id: int) -> None:
     if not phone:
         return
     text, is_media = _extract_text(message)
-    handle_inbound(phone, text, is_media, message.get("id"), PROVIDER_META, office_id)
+    adjunto = adjuntos.de_meta(message)
+    if adjunto is not None:
+        # El pie de la imagen o del documento es lo que el cliente escribió.
+        text = adjunto["caption"]
+    handle_inbound(
+        phone, text, is_media, message.get("id"), PROVIDER_META, office_id, adjunto=adjunto
+    )
+    if adjuntos.soportado(adjunto) and message.get("id"):
+        # El media id de un webhook dura 7 días (documentación de Meta); se
+        # renueva a 30 en segundo plano, sin hacer esperar a Meta su 200.
+        adjuntos.renovar_en_segundo_plano(message["id"])
 
 
 def handle_inbound(
     phone: str, text: str, is_media: bool, message_id: str | None, provider: str,
-    office_id: int,
+    office_id: int, adjunto: dict | None = None,
 ) -> None:
     """Tronco común a los dos proveedores.
 
@@ -153,7 +163,7 @@ def handle_inbound(
     with get_session() as session:
         replies = handle_incoming(
             session, phone, text, is_media=is_media, wa_message_id=message_id,
-            provider=provider, office_id=office_id,
+            provider=provider, office_id=office_id, adjunto=adjunto,
         )
         outbound = conversation.presentation(session, phone, replies)
 
@@ -313,6 +323,7 @@ async def receive_twilio(request: Request) -> Response:
                 datos["message_id"],
                 PROVIDER_TWILIO,
                 office_id,
+                datos["adjunto"],
             )
         except Exception:
             logger.exception("Error procesando mensaje de Twilio sid=%s", datos["message_id"])
