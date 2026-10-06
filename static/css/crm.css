@@ -932,6 +932,66 @@
   box-shadow: none;
 }
 
+/* Trámites en curso (varios folios en un chat): una fila de chips enlazados, cada uno con el
+   número de folio, el trámite, su estado y quién lo atiende. El estado va en texto y color
+   (WCAG 1.4.1), con los mismos tonos que .chip-<estado>. */
+.crm .chat-folios {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.crm .chat-folios .folios-titulo {
+  font-size: 12px;
+  color: var(--wa-muted-2);
+  margin-right: 2px;
+}
+.crm .chat-folios a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid #cfd6d9;
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+}
+.crm .chat-folios a:hover { background: rgba(0, 0, 0, .04); }
+.crm .chat-folios .folio-num { font-weight: 600; }
+.crm .chat-folios .folio-estado { color: var(--wa-muted-2); }
+/* El folio sobre el que quien mira NO puede contestar: se dice con texto («atiende: bob»)
+   y se atenúa; sigue siendo un enlace, porque verlo sí se puede. */
+.crm .chat-folios a.ajeno { background: #f3f4f6; color: #5f6572; }
+
+/* «Sobre el trámite»: selector del compositor, solo con dos o más folios que se pueden tomar. */
+.crm .composer-folio {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0 0 .4rem;
+  font-size: .8rem;
+  color: #5f6572;
+}
+.crm .composer-folio select {
+  min-height: 32px;
+  padding: .2rem .5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: .8rem;
+}
+
+/* La burbuja de un colaborador dice su folio: «ana · #46 · Acta de nacimiento · 10:32». */
+.crm .bubble .meta .folio { font-weight: 600; }
+
 .crm .chat-thread {
   flex: 1 1 auto;
   min-height: 0;

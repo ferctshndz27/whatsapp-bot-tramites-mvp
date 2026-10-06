@@ -67,7 +67,7 @@ from app import adjuntos, cartera, eventos, tablero, ventana
 from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
 from app.authlog import sesion_vigente
-from app.clients import MAX_NOMBRE, _cliente_visible, folio_vigente
+from app.clients import MAX_NOMBRE, _cliente_visible, folio_vigente, folios_escribibles
 from app.db import get_session
 from app.inbox import QUICK_REPLIES
 from app.models import (
@@ -235,7 +235,7 @@ def _agregar(session, clientes: list[Client], viewer: str | None = None) -> dict
         c.phone: {
             "last": None, "unread": 0, "last_in": None,
             "ticket": None, "labels": [], "conv": None,
-            "apagado_por": [], "bot_callado": False,
+            "apagado_por": [], "bot_callado": False, "abiertos": [], "folios": [],
         }
         for c in clientes
     }
@@ -321,6 +321,12 @@ def _agregar(session, clientes: list[Client], viewer: str | None = None) -> dict
         apagados = [t for t in folios if t.status != TicketStatus.CERRADO and not t.agent_active]
         agg[phone]["bot_callado"] = bool(apagados)
         agg[phone]["apagado_por"] = sorted({t.assigned_to for t in apagados if t.assigned_to})
+        # Todos los trámites en curso, del más viejo al más nuevo (el orden en que el cliente
+        # los pidió): la cabecera del chat los lista todos, no solo el de la tarjeta.
+        agg[phone]["abiertos"] = [
+            t for t in reversed(folios) if t.status != TicketStatus.CERRADO
+        ]
+        agg[phone]["folios"] = folios
 
     ids_folios = [a["ticket"].id for a in agg.values() if a["ticket"] is not None]
     if ids_folios:
@@ -407,7 +413,11 @@ def _adjunto_json(m: Message) -> dict | None:
     }
 
 
-def _mensaje_json(m: Message, user: str) -> dict:
+def _mensaje_json(m: Message, user: str, folios: dict[int, Ticket] | None = None) -> dict:
+    # El folio sobre el que contestó un colaborador, para la burbuja «ana · #46 · Acta de
+    # nacimiento». `folios` trae los del teléfono ya cargados; un ticket_id que no esté ahí
+    # (folio deshabilitado) se pinta sin folio, como los mensajes anteriores a la columna.
+    folio = (folios or {}).get(m.ticket_id) if m.ticket_id is not None else None
     return {
         "id": m.id,
         "direction": m.direction.value,
@@ -418,7 +428,25 @@ def _mensaje_json(m: Message, user: str) -> dict:
         "created_at": _iso(m.created_at),
         "sent_by": m.sent_by,
         "mio": m.direction == Direction.OUT and m.sent_by == user,
+        "folio": None if folio is None else {"id": folio.id, "service_name": folio.service_name},
     }
+
+
+def _folios_abiertos_json(abiertos: list[Ticket], escribibles: list[Ticket]) -> list[dict]:
+    """Los trámites en curso de la conversación, para la cabecera del chat y el selector del
+    compositor. `puedo_escribir`: si quien mira puede contestar sobre ese folio
+    (`clients.folios_escribibles`, la misma lista que autoriza el envío)."""
+    ids = {t.id for t in escribibles}
+    return [
+        {
+            "id": t.id,
+            "service_name": t.service_name,
+            "status": t.status.value,
+            "assigned_to": t.assigned_to,
+            "puedo_escribir": t.id in ids,
+        }
+        for t in abiertos
+    ]
 
 
 def _coincide(cliente: Client, q: str) -> bool:
@@ -927,12 +955,18 @@ def crm_chat(request: Request, phone: str):
             .limit(MAX_MENSAJES_CHAT)
         ).all()
         mensajes.reverse()
-        contacto = _contacto_json(
-            cliente, agg[cliente.phone], tablero.cargar(session, user).columna_de(cliente)
+        a = agg[cliente.phone]
+        contacto = _contacto_json(cliente, a, tablero.cargar(session, user).columna_de(cliente))
+        # Los trámites en curso van solo en el chat, no en la tarjeta: `puedo_escribir` cuesta
+        # una consulta por folio provisional ajeno (asignacion._por_producto), y el tablero se
+        # sirve cada 20 s con hasta LIMITE_CONTACTOS contactos.
+        contacto["folios_abiertos"] = _folios_abiertos_json(
+            a["abiertos"], folios_escribibles(session, cliente.phone, user)
         )
+        por_id = {t.id: t for t in a["folios"]}
         return JSONResponse({
             "contacto": contacto,
-            "mensajes": [_mensaje_json(m, user) for m in mensajes],
+            "mensajes": [_mensaje_json(m, user, por_id) for m in mensajes],
             "ventana": contacto["ventana"],
             "bot_pausado": contacto["bot_pausado"],
             # Si el bot habla de verdad: ningún folio abierto con el agente apagado. Antes era

@@ -160,6 +160,14 @@ class Message(SQLModel, table=True):
     # hasta que alguien lo borre).
     media_vence_at: datetime | None = None
     sent_by: str | None = None
+    # Folio sobre el que un COLABORADOR contestó (NULL: mensajes del cliente, del bot y los
+    # anteriores a esta columna). Con varios trámites en curso en un mismo chat, es lo que
+    # dice en el panel «#47 · Descarga de Recibo CFE» en cada burbuja; el cliente recibe el
+    # texto tal cual (decisión del operador, 2026-10-06). Sin FK declarada, como
+    # TicketLabel.ticket_id. Se llena al enviar (app/inbox.py); el bot no pasa por ahí. Sin
+    # índice a propósito: se lee por mensaje (el hilo trae su folio), nunca al revés, y un
+    # índice que create_all crea pero el ALTER de db.py no dejaría dos esquemas distintos.
+    ticket_id: int | None = None
     habilitado: bool = True
     # Canal por el que entró o salió este mensaje. Sin esto no se puede
     # interpretar `wa_status` (los estados de Twilio y los de Meta no son el

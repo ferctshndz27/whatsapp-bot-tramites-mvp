@@ -12,7 +12,7 @@ from sqlmodel import select
 
 from app import adjuntos, messaging, ventana
 from app.audit import log_admin
-from app.clients import conversacion_escribible, folio_de
+from app.clients import conversacion_escribible, folio_de, folios_escribibles
 from app.auth import is_admin, alcance
 from app.config import settings
 from app import asignacion
@@ -200,7 +200,7 @@ def inbox_chat(request: Request, phone: str, err: str | None = None):
 
     Se conserva por los enlaces guardados y porque los POST de abajo (enviar,
     reactivar el bot, bloquear, ocultar) siguen redirigiendo aquí al terminar:
-    el ?err= que traen (window | tipo | peso) viaja al CRM, que lo muestra en su
+    el ?err= que traen (window | tipo | peso | folio) viaja al CRM, que lo muestra en su
     compositor. `volver`, `folio` y `todo` ya no significan nada —el CRM tiene su
     propia navegación y muestra la conversación completa— y se descartan, con
     lo que un `volver` fabricado tampoco puede convertirse en un redirect abierto.
@@ -211,12 +211,35 @@ def inbox_chat(request: Request, phone: str, err: str | None = None):
     if not re.fullmatch(r"\d{8,15}", phone or ""):
         return RedirectResponse("/crm", status_code=303)
     destino = f"/crm?chat={phone}"
-    if err in ("window", "tipo", "peso"):
+    if err in ("window", "tipo", "peso", "folio"):
         destino += f"&err={err}"
     return RedirectResponse(destino, status_code=303)
 
 
-def _pause_bot(session, phone: str, user: str) -> None:
+class FolioNoElegible(ValueError):
+    """El `ticket_id` del compositor no es un folio que este usuario pueda tomar aquí."""
+
+
+def _folio_elegido(session, phone: str, user: str, ticket_id: int | None) -> Ticket | None:
+    """El folio sobre el que se contesta. Sin `ticket_id`, el de siempre (`clients.folio_de`:
+    el propio de quien contesta, o el vigente), que es lo que la bandeja hacía hasta ahora.
+    Con `ticket_id` —el selector «Sobre el trámite» del CRM—, ese folio, y solo si es uno de
+    los que este usuario puede tomar en ESTE teléfono (`clients.folios_escribibles`): el id
+    viene del navegador, y aceptarlo sin más dejaría colgar un mensaje de un folio ajeno, cerrado
+    o de otro cliente. Si no pasa, `FolioNoElegible`.
+
+    Lo que se envía al cliente no cambia con el folio: la identificación «#47 · Descarga de
+    Recibo CFE» es del panel (decisión del operador, 2026-10-06)."""
+    if ticket_id is None:
+        return folio_de(session, phone, user)
+    for t in folios_escribibles(session, phone, user):
+        if t.id == ticket_id:
+            return t
+    logger.warning("%s intentó contestar sobre un folio que no puede tomar", user)
+    raise FolioNoElegible(ticket_id)
+
+
+def _pause_bot(session, phone: str, user: str, ticket: Ticket | None = None) -> None:
     """Primer mensaje humano en un chat: la conversación queda escalada y el
     agente IA se apaga solo — sin que el asesor tenga que ir al detalle del
     ticket. Regla: quien responde se queda el chat; si el ticket no tenía
@@ -236,6 +259,9 @@ def _pause_bot(session, phone: str, user: str) -> None:
     quien contesta (`clients.folio_de`, el mismo que le pinta la tarjeta y le
     da permiso de escribir), y solo si `asignacion.puede_tomar`: contestar ya no
     le quita a un compañero el trámite que él atiende y quien contesta no.
+
+    `ticket`: el folio sobre el que se contestó (`_folio_elegido`), cuando quien
+    llama ya lo resolvió; sin él se resuelve aquí como siempre.
     """
     # Antes de escribir nada: is_admin abre su propia sesión (ver clients.folio_de).
     admin = is_admin(user)
@@ -243,7 +269,8 @@ def _pause_bot(session, phone: str, user: str) -> None:
     if conv and conv.state != "escalado":
         conv.state = "escalado"
         session.add(conv)
-    ticket = folio_de(session, phone, user, admin=admin)
+    if ticket is None:
+        ticket = folio_de(session, phone, user, admin=admin)
     if ticket is not None and ticket.status != TicketStatus.CERRADO:
         if (
             ticket.assigned_to is None or asignacion.provisional(ticket)
@@ -288,13 +315,17 @@ def inbox_send(
     phone: str,
     body: str = Form(""),
     file: UploadFile | None = File(None),
+    ticket_id: int | None = Form(None),
 ):
     """Composer unificado (como WhatsApp): texto, archivo, o archivo con pie.
 
     La decisión la toma el servidor según lo que llegue, NO el navegador: así
     el composer sigue funcionando con JavaScript deshabilitado. Un input de
     archivo vacío llega como parte sin filename — eso cuenta como "sin
-    adjunto"."""
+    adjunto".
+
+    `ticket_id`: el folio sobre el que se contesta, del selector «Sobre el
+    trámite» del CRM (varios trámites en curso). Sin él, el de siempre."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -307,13 +338,22 @@ def inbox_send(
     # se cubren los cuatro casos: sin parte, parte vacía (input sin elegir),
     # marcador File(None) al llamar la función directo, y archivo real.
     adjunto = file if getattr(file, "filename", "") else None
+    # Mismo cuidado que `adjunto`: llamada directo (pruebas, otros módulos) el marcador
+    # Form(None) llega como objeto, no como None. Solo un entero cuenta como folio elegido.
+    folio_elegido = ticket_id if isinstance(ticket_id, int) else None
     if not body and adjunto is None:
         return RedirectResponse(f"/inbox/{phone}", status_code=303)
 
     with get_session() as session:
         if not _puede_escribir(session, phone, user):
             return RedirectResponse("/", status_code=303)
-            
+
+        # El folio se resuelve ANTES de enviar: un id que no pasa no manda nada.
+        try:
+            folio = _folio_elegido(session, phone, user, folio_elegido)
+        except FolioNoElegible:
+            return RedirectResponse(f"/inbox/{phone}?err=folio", status_code=303)
+
         if not ventana.abierta_para(session, phone):
             return RedirectResponse(f"/inbox/{phone}?err=window", status_code=303)
 
@@ -321,7 +361,10 @@ def inbox_send(
         # fila: resolverlo dos veces dejaría divergir el registro del envío.
         canal = messaging.canal_de(phone)
         mensaje = Message(
-            phone=phone, direction=Direction.OUT, body=body, sent_by=user, provider=canal
+            phone=phone, direction=Direction.OUT, body=body, sent_by=user, provider=canal,
+            # Solo un folio ABIERTO: el vigente de un chat sin abiertos es uno cerrado, y un
+            # mensaje no se cuelga de un trámite terminado.
+            ticket_id=folio.id if folio is not None and folio.status != TicketStatus.CERRADO else None,
         )
         if adjunto is None:
             mensaje.wa_message_id = messaging.send_text(phone, body, provider=canal)
@@ -373,7 +416,7 @@ def inbox_send(
             t.first_response_by = user
             session.add(t)
         session.commit()
-        _pause_bot(session, phone, user)
+        _pause_bot(session, phone, user, folio)
 
     if wamid is None:
         logger.warning("Mensaje a %s registrado pero sin confirmación de envío", mask_phone(phone))

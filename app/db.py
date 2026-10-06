@@ -65,6 +65,9 @@ _MESSAGE_COLUMNS_ADDED_AFTER_LAUNCH = {
     "media_nombre": "VARCHAR",
     "media_bytes": "INTEGER",
     "media_vence_at": "DATETIME",
+    # Folio sobre el que contestó un colaborador (varios trámites en un chat). Nullable: el
+    # histórico y los mensajes del bot y del cliente no lo tienen.
+    "ticket_id": "INTEGER",
 }
 _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH = {
     "provider": "VARCHAR NOT NULL DEFAULT 'meta'",
