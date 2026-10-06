@@ -708,6 +708,8 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "media_nombre": "NVARCHAR(255) NULL",
         "media_bytes": "BIGINT NULL",
         "media_vence_at": "DATETIME2 NULL",
+        # Folio sobre el que contestó un colaborador (varios trámites en un chat).
+        "ticket_id": "BIGINT NULL",
     },
     "team_messages": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL, "room_id": "BIGINT NULL"},
     # «Eliminar chat» solo para él. NULL = nunca lo eliminó (igual que db.py).
@@ -889,9 +891,9 @@ def archive_wa_message(m) -> None:
                 "INSERT INTO wa_messages (source_id, phone, direction, body, wa_message_id,"
                 " wa_status, media_path, sent_by, habilitado, provider, pricing_category,"
                 " pricing_type, pricing_billable, media_ref, media_mime, media_nombre,"
-                " media_bytes, media_vence_at, created_at)"
+                " media_bytes, media_vence_at, ticket_id, created_at)"
                 " VALUES (:sid, :p, :d, :b, :wid, :ws, :mp, :sb, :hab, :prov, :pcat, :ptype,"
-                " :pbill, :mref, :mmime, :mnom, :mbytes, :mvence, :c)"
+                " :pbill, :mref, :mmime, :mnom, :mbytes, :mvence, :tid, :c)"
             ),
             {
                 "sid": m.id,
@@ -907,6 +909,7 @@ def archive_wa_message(m) -> None:
                 "pcat": m.pricing_category,
                 "ptype": m.pricing_type,
                 "pbill": m.pricing_billable,
+                "tid": m.ticket_id,
                 **_media_espejo(m),
                 "c": _naive_utc(m.created_at),
             },
@@ -942,7 +945,7 @@ def sync_wa_message(m) -> None:
                 "UPDATE wa_messages SET wa_message_id = :wid, wa_status = :ws, habilitado = :hab,"
                 " pricing_category = :pcat, pricing_type = :ptype, pricing_billable = :pbill,"
                 " media_ref = :mref, media_mime = :mmime, media_nombre = :mnom,"
-                " media_bytes = :mbytes, media_vence_at = :mvence"
+                " media_bytes = :mbytes, media_vence_at = :mvence, ticket_id = :tid"
                 " WHERE source_id = :sid"
             ),
             {
@@ -953,6 +956,7 @@ def sync_wa_message(m) -> None:
                 "pcat": m.pricing_category,
                 "ptype": m.pricing_type,
                 "pbill": m.pricing_billable,
+                "tid": m.ticket_id,
                 "sid": m.id,
             },
         )

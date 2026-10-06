@@ -117,18 +117,44 @@ def folio_de(session, phone: str, user: str, admin: bool | None = None) -> Ticke
     return folio_vigente(_folios_de(session, phone), None if admin else user)
 
 
+def folios_abiertos_de(session, phone: str) -> list[Ticket]:
+    """Los folios ABIERTOS de un teléfono, del más viejo al más nuevo: el orden en que el
+    cliente los pidió, que es como se listan en el chat («trámites en curso»)."""
+    return [t for t in reversed(_folios_de(session, phone)) if t.status != TicketStatus.CERRADO]
+
+
+def folios_escribibles(session, phone: str, user: str, admin: bool | None = None) -> list[Ticket]:
+    """Los folios abiertos sobre los que `user` puede contestarle al cliente, del más viejo al
+    más nuevo. Un admin, todos; quien no lo es, los que `asignacion.puede_tomar` acepta —suyos,
+    sin dueño, o provisionales de un servicio que atiende o que nadie de la oficina atiende—.
+
+    Con varios trámites en curso, es la lista que decide el permiso de escribir
+    (`conversacion_escribible`) y la que pinta el selector «Sobre el trámite» del compositor:
+    una sola lista para las dos cosas, por la misma razón que `folio_vigente` (AUTHZ-2).
+    Antes el permiso miraba SOLO el folio vigente de quien escribe: con el #47 tomado por otro
+    y el #46 libre, el vigente era el #47 y el chat se bloqueaba con un trámite esperando
+    (petición del operador, 2026-10-06).
+    """
+    if admin is None:
+        admin = is_admin(user)
+    abiertos = folios_abiertos_de(session, phone)
+    if admin:
+        return abiertos
+    return [t for t in abiertos if asignacion.puede_tomar(session, t, user)]
+
+
 def conversacion_escribible(session, phone: str, user: str) -> Client | None:
     """El cliente, si este usuario puede ESCRIBIRLE (mandar WhatsApp como el
     negocio, pausar o reactivar su bot, ocultar mensajes, bloquearlo); None si no.
 
     Corte de oficina como la lectura (`_cliente_visible`), y para quien no es
-    admin, SU folio (`folio_vigente` con `user`) tiene que poder ser suyo:
-    `asignacion.puede_tomar` —suyo, sin dueño, o provisional de un servicio que
-    él atiende o que nadie de la oficina atiende—, porque contestar se lo queda
-    (`inbox._pause_bot`). Un folio TOMADO por otro, o ningún folio, cierra la
-    puerta: antes bastaba la oficina y un colaborador sin folios del cliente le
-    mandaba WhatsApp firmado por el negocio mientras el CRM le negaba el chat
-    (auditoría 2026-09, AUTHZ-2). Sin fila Client tampoco.
+    admin, ALGÚN folio que pueda ser suyo (`folios_escribibles`): `asignacion.puede_tomar`
+    —suyo, sin dueño, o provisional de un servicio que él atiende o que nadie de la oficina
+    atiende—, porque contestar se lo queda (`inbox._pause_bot`). Sin folios abiertos cuenta el
+    vigente (`folio_vigente` con `user`), que entonces es uno cerrado o ninguno. Solo folios
+    TOMADOS por otros, o ningún folio, cierran la puerta: antes bastaba la oficina y un
+    colaborador sin folios del cliente le mandaba WhatsApp firmado por el negocio mientras el
+    CRM le negaba el chat (auditoría 2026-09, AUTHZ-2). Sin fila Client tampoco.
 
     La CARTERA no entra aquí, a propósito (decisión del operador, 2026-09-25):
     deja ver la conversación (`crm._conversacion_visible`), nunca escribirle.
@@ -143,7 +169,13 @@ def conversacion_escribible(session, phone: str, user: str) -> Client | None:
     cliente = _cliente_visible(session, phone, user)
     if cliente is None or is_admin(user):
         return cliente
-    folio = folio_vigente(_folios_de(session, phone), user)
+    folios = _folios_de(session, phone)
+    if any(t.status != TicketStatus.CERRADO for t in folios):
+        if folios_escribibles(session, phone, user, admin=False):
+            return cliente
+        logger.warning("%s intentó escribirle a un cliente cuyos folios atienden otros", user)
+        return None
+    folio = folio_vigente(folios, user)
     if folio is None:
         return None
     if asignacion.puede_tomar(session, folio, user):

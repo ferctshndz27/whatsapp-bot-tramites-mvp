@@ -70,6 +70,10 @@
         </div>
         <button class="chat-close" type="button" aria-label="Cerrar el chat y volver al tablero">✕</button>
         <div class="chat-badges" id="crm-chat-badges"></div>
+        {# Trámites en curso de la conversación (varios folios en un chat): uno por folio, del
+           más viejo al más nuevo, con quién lo atiende. crm.js lo llena; con un solo folio no
+           aparece, porque «Ver solicitud #N» y «atiende:» de arriba ya lo dicen. #}
+        <ul class="chat-folios" id="crm-chat-folios" aria-label="Trámites en curso" hidden></ul>
       </header>
 
       {# Riel de acciones del folio: abre el cajón de la derecha. Son las
@@ -122,6 +126,14 @@
                     title="Guardar lo que escribiste o administrar tus respuestas"><span aria-hidden="true">⚡</span> Mis respuestas</button>
           </div>
           <form method="post" enctype="multipart/form-data" id="crm-composer">
+            {# Sobre qué trámite se contesta (varios folios en un chat). crm.js lo llena con los
+               folios abiertos que este usuario puede tomar y lo oculta si solo hay uno; el
+               servidor vuelve a validar el id (app/inbox.py::_folio_elegido). Lo que recibe el
+               cliente no cambia: la identificación «#47 · trámite» es del panel. #}
+            <p class="composer-folio" id="crm-composer-folio" hidden>
+              <label for="crm-ticket-id">Sobre el trámite</label>
+              <select id="crm-ticket-id" name="ticket_id"></select>
+            </p>
             <div class="composer-bar">
               <input type="file" id="crm-file" name="file" class="sr-only"
                 accept=".jpg,.jpeg,.png,.pdf,.docx,.xlsx" aria-describedby="crm-composer-hint">

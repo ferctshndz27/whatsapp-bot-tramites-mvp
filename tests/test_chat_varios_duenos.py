@@ -388,3 +388,108 @@ def test_dos_que_contestan_a_la_vez_no_se_quedan_los_dos_el_folio(tmp_path, monk
     assert dueno in {"ana", "bob"}
     assert [a.username for a in tomas] == [dueno], f"la bitácora dice que lo tomaron: {tomas}"
     engine.dispose()
+
+
+# --- Varios trámites en curso: el chat los muestra y no se bloquea ------------
+# (petición del operador, 2026-10-06: el chat dice qué trámites se van a realizar, dos o más
+# folios en curso no bloquean el chat a los colaboradores, y cada mensaje de colaborador va
+# identificado por folio y trámite — en el panel; el cliente recibe el texto tal cual.)
+
+
+def _ultimo_mensaje() -> Message:
+    with Session(db.engine) as s:
+        return s.exec(select(Message).order_by(Message.id.desc())).first()
+
+
+def test_la_cabecera_lista_todos_los_tramites_en_curso():
+    """Antes la cabecera pintaba UN folio (el vigente de quien mira) y los demás trámites del
+    cliente no se veían en el chat. Del más viejo al más nuevo, con quién lo atiende."""
+    visa, pasaporte = _division()
+    cerrado = _folio("curp", "ana", status=TicketStatus.CERRADO, hace_s=120)
+    chat = _sesion("ana").get(f"/crm/api/chat/{CLI}").json()
+    abiertos = chat["contacto"]["folios_abiertos"]
+    assert [f["id"] for f in abiertos] == [visa, pasaporte], "faltan trámites o sobra el cerrado"
+    assert cerrado not in [f["id"] for f in abiertos]
+    assert abiertos[0] == {
+        "id": visa, "service_name": "Visa", "status": TicketStatus.NUEVO.value, "assigned_to": "ana",
+        "puedo_escribir": True,
+    }
+    assert abiertos[1]["puedo_escribir"] is False, "ana no atiende pasaporte: no es suyo"
+    # El admin puede escribir sobre cualquiera.
+    chat = _sesion("jefa").get(f"/crm/api/chat/{CLI}").json()
+    assert all(f["puedo_escribir"] for f in chat["contacto"]["folios_abiertos"])
+
+
+def test_un_folio_libre_abre_el_chat_aunque_el_vigente_sea_de_otro(escena):
+    """El caso del cliente 8: un folio TOMADO por otro y uno sin dueño. Para quien no tiene
+    folio ahí, el vigente era el tomado y `puede_tomar` lo rechazaba: el chat quedaba bloqueado
+    con un trámite libre esperando. Escribir se permite si ALGUNO de los abiertos se puede
+    tomar, y contestar toma ese, no el de otro."""
+    tomado = _folio("pasaporte", "bob", status=TicketStatus.TOMADO, hace_s=60)
+    libre = _folio("curp", None, hace_s=30)
+    r = inbox_send(_req("pedro"), CLI, body="le ayudo con la curp")
+    assert r.headers["location"] != "/", "el chat se bloqueó con un folio libre"
+    assert escena == ["le ayudo con la curp"]
+    assert (_ticket(libre).assigned_to, _ticket(libre).status) == ("pedro", TicketStatus.TOMADO)
+    assert (_ticket(tomado).assigned_to, _ticket(tomado).status) == ("bob", TicketStatus.TOMADO)
+    assert _ultimo_mensaje().ticket_id == libre
+
+
+def test_sin_ningun_folio_que_se_pueda_tomar_el_chat_sigue_cerrado(escena):
+    """La regla de AUTHZ-2 no se abre de más: todos los abiertos son de otros (trabajados o
+    provisionales de servicios que pedro no atiende) → sin acceso, y nada sale a WhatsApp."""
+    _division()
+    _folio("curp", "bob", status=TicketStatus.TOMADO, hace_s=10)
+    r = inbox_send(_req("pedro"), CLI, body="hola")
+    assert r.headers["location"] == "/" and escena == []
+
+
+def test_el_mensaje_se_manda_sobre_el_folio_elegido(escena):
+    """Con dos folios que puede tomar, el colaborador elige sobre cuál contesta; el mensaje
+    queda ligado a ese folio y ese es el que se toma."""
+    acta = _folio("acta", None, hace_s=60)
+    curp = _folio("curp", None, hace_s=30)
+    inbox_send(_req("pedro"), CLI, body="sobre su acta", ticket_id=acta)
+    assert _ultimo_mensaje().ticket_id == acta
+    assert (_ticket(acta).assigned_to, _ticket(acta).status) == ("pedro", TicketStatus.TOMADO)
+    assert _ticket(curp).assigned_to is None, "tomó el folio que no eligió"
+    inbox_send(_req("pedro"), CLI, body="y sobre su curp", ticket_id=curp)
+    assert _ultimo_mensaje().ticket_id == curp
+    assert _ticket(curp).assigned_to == "pedro"
+    assert escena == ["sobre su acta", "y sobre su curp"], "el cliente recibe el texto tal cual"
+
+
+def test_un_folio_que_no_se_puede_tomar_o_de_otro_telefono_no_se_elige(escena):
+    """`ticket_id` viene del navegador: un folio de otro teléfono, cerrado, o trabajado por
+    otro se rechaza sin mandar nada."""
+    _division()
+    with Session(db.engine) as s:
+        s.add(Client(phone="525500000054", name="Otra", office_id=1))
+        s.commit()
+    ajeno = _folio("curp", None, phone="525500000054")
+    cerrado = _folio("curp", "ana", status=TicketStatus.CERRADO)
+    de_bob = _folio("curp", "bob", status=TicketStatus.TOMADO)
+    for elegido in (ajeno, cerrado, de_bob, 999999):
+        r = inbox_send(_req("ana"), CLI, body="hola", ticket_id=elegido)
+        assert r.headers["location"].endswith("err=folio"), f"aceptó el folio {elegido}"
+    assert escena == []
+
+
+def test_sin_elegir_folio_se_contesta_sobre_el_propio(escena):
+    """Compatibilidad con la bandeja de siempre: sin `ticket_id`, contestar consolida el folio
+    de quien contesta (el vigente de `clients.folio_de`), como hasta ahora."""
+    visa, _ = _division()
+    inbox_send(_req("ana"), CLI, body="te ayudo con la visa")
+    assert _ultimo_mensaje().ticket_id == visa
+    assert _ticket(visa).status == TicketStatus.TOMADO
+
+
+def test_cada_mensaje_de_colaborador_dice_su_folio_y_tramite(escena):
+    """En el panel: «ana · #N · Visa». El bot y el cliente no llevan folio, y un mensaje viejo
+    sin folio tampoco."""
+    visa, _ = _division()
+    inbox_send(_req("ana"), CLI, body="te ayudo con la visa")
+    mensajes = _sesion("ana").get(f"/crm/api/chat/{CLI}").json()["mensajes"]
+    assert mensajes[0]["folio"] is None, "el «hola» del cliente no lleva folio"
+    assert mensajes[-1]["folio"] == {"id": visa, "service_name": "Visa"}
+    assert mensajes[-1]["sent_by"] == "ana"

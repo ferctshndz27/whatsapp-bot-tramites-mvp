@@ -34,6 +34,7 @@ const CLAVE = "clave-qa-123";
 const ANA = "525500000011";
 const BETO = "525500000012";
 const DIEGO = "525500000013";
+const ELENA = "525500000014";
 // Filtro de la pestaña «Folios cerrados» en static/js/crm.js.
 const CERRADAS = "__cerradas__";
 const CARLA = "522200000021";
@@ -569,6 +570,15 @@ const enPagina = {
       })),
       estadoHilo: document.querySelector("#crm-chat-thread > p")?.className ?? null,
       composerVisible: visible(document.querySelector("#crm-composer-abierto")),
+      // Varios trámites en curso: la fila de chips de la cabecera y el selector del compositor.
+      folios: [...document.querySelectorAll("#crm-chat-folios a")].map((a) => ({
+        texto: a.textContent.trim(), href: a.getAttribute("href"), ajeno: a.classList.contains("ajeno"),
+      })),
+      foliosVisible: visible(document.querySelector("#crm-chat-folios")),
+      foliosTitulo: document.querySelector("#crm-chat-folios .folios-titulo")?.textContent.trim() ?? null,
+      selectorVisible: visible(document.querySelector("#crm-composer-folio")),
+      selectorOpciones: [...document.querySelectorAll("#crm-ticket-id option")].map((o) => ({ valor: o.value, texto: o.textContent.trim() })),
+      selectorValor: document.querySelector("#crm-ticket-id")?.value ?? null,
       bannerVisible: visible(document.querySelector("#crm-banner-cerrada")),
       siNunca: visible(document.querySelector("#crm-banner-cerrada .si-nunca")),
       siCerrada: visible(document.querySelector("#crm-banner-cerrada .si-cerrada")),
@@ -594,6 +604,16 @@ const enPagina = {
     ta.dispatchEvent(new Event("input", { bubbles: true }));
     form.requestSubmit();
     return { ok: true };
+  },
+
+  // Elige el folio del selector «Sobre el trámite» antes de enviar (varios trámites en curso).
+  elegirFolio: (valor) => {
+    const sel = document.querySelector("#crm-ticket-id");
+    if (!sel || sel.disabled) return { error: "no hay selector de folio" };
+    if (![...sel.options].some((o) => o.value === String(valor))) return { error: `el selector no ofrece ${valor}` };
+    sel.value = String(valor);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true, valor: sel.value };
   },
 
   enviarVacio: () => {
@@ -1511,6 +1531,99 @@ async function criterioEnviar(ctx) {
   if ((await ctx.chat(ANA)).mensajes.length !== antes) fallos.push("la API sigue devolviendo el mensaje ocultado");
   if (fallos.length) throw new Error(fallos.join("; "));
   return `envío vacío avisado; «${texto}» enviado por POST /inbox/${ANA}/send, visto en hilo, API y tarjeta; ocultado con confirm y desaparecido`;
+}
+
+async function criterioVariosTramites(ctx) {
+  // Elena tiene DOS trámites en curso (siembra): el acta, tomada por jefa1, y la cita de
+  // pasaporte, NUEVA y sin dueño. Como admin, jefa1 puede contestar sobre los dos.
+  const fallos = [];
+  const chat = await ctx.chat(ELENA);
+  const abiertos = chat.contacto.folios_abiertos;
+  if (!Array.isArray(abiertos) || abiertos.length !== 2) throw new Error(`la API trae ${JSON.stringify(abiertos)} como folios abiertos de Elena`);
+  const [acta, pasaporte] = abiertos;
+  if (acta.service_name !== "Acta de nacimiento" || acta.assigned_to !== "jefa1" || !acta.puedo_escribir) fallos.push(`primer folio de la API: ${JSON.stringify(acta)}`);
+  if (pasaporte.service_name !== "Cita de pasaporte" || pasaporte.assigned_to !== null || !pasaporte.puedo_escribir) fallos.push(`segundo folio de la API: ${JSON.stringify(pasaporte)}`);
+  // Ana, con UN folio, no muestra ni la fila ni el selector: la cabecera ya lo dice.
+  let r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "bandeja");
+  if (r.error) throw new Error(r.error);
+  const ana = await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.nombre === "Ana Lucía Ramírez" && s.composerVisible ? s : null;
+  }, { timeout: 6000, label: "el chat de Ana" });
+  if (ana.foliosVisible || ana.selectorVisible) fallos.push(`Ana (un folio) muestra fila de trámites o selector: ${JSON.stringify([ana.foliosVisible, ana.selectorVisible])}`);
+  // Elena: la fila lista los dos, en orden, con estado y quién atiende; el selector ofrece los dos.
+  r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ELENA, "bandeja");
+  if (r.error) throw new Error(r.error);
+  const e = await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.nombre === "Elena Ortiz" && s.composerVisible && s.foliosVisible ? s : null;
+  }, { timeout: 6000, label: "el chat de Elena con la fila de trámites" });
+  await ctx.capturar("09b-chat-elena-dos-tramites-1400");
+  if (e.foliosTitulo !== "Trámites en curso (2):") fallos.push(`título de la fila: ${JSON.stringify(e.foliosTitulo)}`);
+  if (e.folios.length !== 2) fallos.push(`${e.folios.length} chips de trámite (esperaba 2)`);
+  const volver = encodeURIComponent(`/crm?chat=${ELENA}`);
+  const esperados = [
+    { texto: `#${acta.id} Acta de nacimiento · tomado · atiende: jefa1`, href: `/tickets/${acta.id}?volver=${volver}`, ajeno: false },
+    { texto: `#${pasaporte.id} Cita de pasaporte · nuevo · sin asignar`, href: `/tickets/${pasaporte.id}?volver=${volver}`, ajeno: false },
+  ];
+  esperados.forEach((esp, i) => {
+    const chip = e.folios[i];
+    if (!chip || chip.texto !== esp.texto || chip.href !== esp.href || chip.ajeno !== esp.ajeno) fallos.push(`chip ${i + 1}: ${JSON.stringify(chip)} (esperaba ${JSON.stringify(esp)})`);
+  });
+  if (!e.selectorVisible) fallos.push("el selector «Sobre el trámite» no se ve con dos folios tomables");
+  const opciones = e.selectorOpciones.map((o) => o.texto);
+  if (JSON.stringify(opciones) !== JSON.stringify([`#${acta.id} · Acta de nacimiento`, `#${pasaporte.id} · Cita de pasaporte`])) fallos.push(`opciones del selector: ${JSON.stringify(opciones)}`);
+  // El compositor queda bajo el pliegue a 750 px de alto: una segunda captura con él a la vista.
+  await ctx.cdp.evaluate(() => document.querySelector("#crm-composer")?.scrollIntoView({ block: "end" }));
+  await ctx.capturar("09b-chat-elena-selector-folio-1400");
+  // Contestar sobre el segundo: la burbuja lleva «jefa1 · #N · Cita de pasaporte», la API
+  // devuelve el folio, y el folio NUEVO sin dueño pasa a quien contestó.
+  r = await ctx.cdp.evaluate(enPagina.elegirFolio, pasaporte.id);
+  if (r.error) throw new Error(r.error);
+  const antes = chat.mensajes.length;
+  const texto = "Su cita de pasaporte queda para el lunes ✓";
+  r = await ctx.cdp.evaluate(enPagina.escribirYEnviar, texto);
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Mensaje enviado", 8000);
+  const estado = await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.burbujas.length === antes + 1 ? s : null;
+  }, { timeout: 8000, label: "la burbuja nueva en el hilo de Elena" });
+  const ultima = estado.burbujas[estado.burbujas.length - 1];
+  if (ultima.dir !== "out" || ultima.texto !== texto || !ultima.meta.startsWith(`jefa1 · #${pasaporte.id} · Cita de pasaporte · `)) fallos.push(`burbuja con folio: ${JSON.stringify(ultima)}`);
+  // La burbuja vieja de jefa1 (sin folio, anterior a la columna) sigue sin etiqueta.
+  const vieja = estado.burbujas.find((b) => b.texto === "Sí, a las 10:00.");
+  if (!vieja || !vieja.meta.startsWith("jefa1 · ") || vieja.meta.includes("#")) fallos.push(`burbuja sin folio: ${JSON.stringify(vieja)}`);
+  const despues = await ctx.chat(ELENA);
+  const enApi = despues.mensajes[despues.mensajes.length - 1];
+  if (!enApi.folio || enApi.folio.id !== pasaporte.id || enApi.folio.service_name !== "Cita de pasaporte") fallos.push(`la API no trae el folio del mensaje: ${JSON.stringify(enApi.folio)}`);
+  const pasaporteDespues = despues.contacto.folios_abiertos.find((f) => f.id === pasaporte.id);
+  if (!pasaporteDespues || pasaporteDespues.assigned_to !== "jefa1") fallos.push(`contestar sobre el pasaporte debía dejárselo a jefa1: ${JSON.stringify(pasaporteDespues)}`);
+  // El acta no se tocó.
+  const actaDespues = despues.contacto.folios_abiertos.find((f) => f.id === acta.id);
+  if (!actaDespues || actaDespues.assigned_to !== "jefa1" || actaDespues.status !== "tomado") fallos.push(`el acta cambió al contestar sobre el pasaporte: ${JSON.stringify(actaDespues)}`);
+  // La elección se conserva tras el sondeo (el <select> solo se reconstruye si cambia la lista).
+  const tras = await ctx.cdp.evaluate(enPagina.estadoChat);
+  if (tras.selectorValor !== String(pasaporte.id)) fallos.push(`el selector perdió la elección tras enviar: ${JSON.stringify(tras.selectorValor)}`);
+  // Un ticket_id que no es de este chat se rechaza: nada se envía y el CRM avisa.
+  const cookie = await sesionHttp(ctx, "jefa1");
+  const ajeno = await fetch(`${ctx.base}/inbox/${ELENA}/send`, {
+    method: "POST", redirect: "manual",
+    headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ body: "esto no debe salir", ticket_id: String(acta.id + 1000) }),
+  });
+  const destino = ajeno.headers.get("location") ?? "";
+  if (ajeno.status !== 303 || !destino.includes("err=folio")) fallos.push(`un ticket_id ajeno respondió ${ajeno.status} → ${destino}`);
+  if ((await ctx.chat(ELENA)).mensajes.length !== antes + 1) fallos.push("un ticket_id ajeno mandó un mensaje de todos modos");
+  // Los criterios siguientes (reactivar el bot, bloquear) trabajan sobre el chat de Ana.
+  r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "bandeja");
+  if (r.error) throw new Error(r.error);
+  await waitFor(async () => {
+    const s = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return s.nombre === "Ana Lucía Ramírez" && s.composerVisible ? true : null;
+  }, { timeout: 6000, label: "volver al chat de Ana" });
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `Elena: fila con 2 trámites (#${acta.id} tomado por jefa1, #${pasaporte.id} sin asignar), selector con 2 opciones; contestar sobre #${pasaporte.id} etiqueta la burbuja, lo registra la API y se lo queda jefa1; Ana (un folio) no muestra nada extra; un ticket_id ajeno → err=folio`;
 }
 
 async function criterioReactivarBot(ctx) {
@@ -2537,6 +2650,7 @@ async function main() {
     await criterio(ctx, "7c. El stream avisa: un mensaje de otro panel entra sin sondeo", criterioAvisoEnVivo);
     await criterio(ctx, "8. Ventana cerrada: variantes «nunca» y «caducó»", criterioVentanaCerrada);
     await criterio(ctx, "9. Enviar un mensaje y ocultarlo", criterioEnviar);
+    await criterio(ctx, "9b. Varios trámites en curso: cabecera, selector «Sobre el trámite» y burbuja con folio", criterioVariosTramites);
     await criterio(ctx, "10. Reactivar el bot", criterioReactivarBot);
     await criterio(ctx, "11. Bloquear y desbloquear (admin)", criterioBloquear);
     await criterio(ctx, "12. Cerrar el chat: ✕, «Tablero» y Escape", criterioCerrarChat);

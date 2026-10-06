@@ -79,6 +79,17 @@ with Session(db.engine) as s:
     s.add(Ticket(phone=DIEGO, client_name="Diego Solís", category="CURP",
                  service_id="curp", service_name="CURP certificada", price_info="$80",
                  status=TicketStatus.CERRADO, assigned_to="jefa1", office_id=1))
+    # Elena: DOS trámites en curso en un mismo chat (criterio 9b): la cabecera los lista y el
+    # compositor pregunta sobre cuál se contesta. El primero ya lo tomó jefa1; el segundo
+    # sigue NUEVO y sin dueño.
+    s.add(Ticket(phone=ELENA, client_name="Elena Ortiz", category="Actas",
+                 service_id="acta", service_name="Acta de nacimiento", price_info="$150",
+                 status=TicketStatus.TOMADO, assigned_to="jefa1", office_id=1,
+                 created_at=ahora - timedelta(hours=23)))
+    s.add(Ticket(phone=ELENA, client_name="Elena Ortiz", category="Pasaportes",
+                 service_id="pasaporte", service_name="Cita de pasaporte", price_info="$300",
+                 status=TicketStatus.NUEVO, office_id=1,
+                 created_at=ahora - timedelta(hours=22)))
 
     # Ana: ventana abierta, dos entrantes sin contestar.
     s.add(Message(phone=ANA, direction=Direction.IN, body="Hola, ¿cuánto cuesta un acta?",

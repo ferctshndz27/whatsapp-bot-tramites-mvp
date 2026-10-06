@@ -73,6 +73,7 @@
     tipo: "Tipo de archivo no permitido. Solo PDF, JPG, PNG, Word o Excel.",
     peso: "Archivo demasiado grande (máx. 5 MB imágenes, 16 MB documentos).",
     acceso: "Sin acceso a esta conversación.",
+    folio: "Ese trámite ya no se puede contestar desde aquí (lo atiende otra persona o se cerró). Elige otro.",
     sesion: "Tu sesión caducó; vuelve a entrar.",
     red: "No se pudo enviar. Revisa tu conexión."
   };
@@ -100,6 +101,8 @@
   var timerPendiente = null;
   var ultimoHilo = null;     // firma del hilo pintado
   var ultimaCabecera = null; // firma de la cabecera del chat pintada
+  var ultimosFolios = null;        // firma de la fila «Trámites en curso» pintada
+  var ultimoSelectorFolio = null;  // firma del selector «Sobre el trámite» pintado
   var timerAvisoChat = null;    // agrupan los avisos del stream (conectarEventos)
   var timerAvisoTablero = null;
   var ultimasRespuestas = null;
@@ -1867,6 +1870,8 @@
       state.chatDatos = null;
       ultimoHilo = null;
       ultimaCabecera = null;
+      ultimosFolios = null;
+      ultimoSelectorFolio = null;
       ultimasRespuestas = null;
       ocultarErrorEnvio();
     }
@@ -1904,6 +1909,8 @@
     state.chatDatos = null;
     ultimoHilo = null;
     ultimaCabecera = null;
+    ultimosFolios = null;
+    ultimoSelectorFolio = null;
     els.root.classList.remove("chat-abierto");
     els.chat.hidden = true;
     els.board.hidden = false;
@@ -1953,8 +1960,81 @@
   function pintarChat(data, opts) {
     var c = data.contacto || {};
     pintarCabecera(c, data);
+    pintarFolios(c);
     pintarCompositor(data);
     pintarHilo(Array.isArray(data.mensajes) ? data.mensajes : [], !!(opts.completa || opts.irAlFondo));
+  }
+
+  /* Trámites en curso (varios folios en un chat): un chip enlazado por folio abierto, del
+     más viejo al más nuevo, con su estado y quién lo atiende. Con uno solo no se pinta: la
+     cabecera ya lo dice con «Ver solicitud #N» y «atiende:». Solo lo trae /crm/api/chat; con
+     la tarjeta (sin `folios_abiertos`) se deja lo que había. */
+  function pintarFolios(c) {
+    var ul = els.chatFolios;
+    if (!ul || !Array.isArray(c.folios_abiertos)) return;
+    var folios = c.folios_abiertos;
+    var firma = JSON.stringify(folios);
+    if (firma === ultimosFolios) return;
+    ultimosFolios = firma;
+    clear(ul);
+    if (folios.length < 2) {
+      ul.hidden = true;
+      return;
+    }
+    var volver = encodeURIComponent("/crm?chat=" + c.phone);
+    var titulo = document.createElement("li");
+    titulo.className = "folios-titulo";
+    titulo.textContent = "Trámites en curso (" + folios.length + "):";
+    ul.appendChild(titulo);
+    folios.forEach(function (f) {
+      var li = document.createElement("li");
+      var a = document.createElement("a");
+      a.href = "/tickets/" + f.id + "?volver=" + volver;
+      if (!f.puedo_escribir) a.className = "ajeno";
+      var num = document.createElement("span");
+      num.className = "folio-num";
+      num.textContent = "#" + f.id;
+      a.appendChild(num);
+      a.appendChild(document.createTextNode(" " + (f.service_name || "") + " · "));
+      var estado = document.createElement("span");
+      estado.className = "folio-estado";
+      estado.textContent = (ESTADOS_FOLIO[f.status] || String(f.status || ""))
+        + " · " + (f.assigned_to ? "atiende: " + f.assigned_to : "sin asignar");
+      a.appendChild(estado);
+      a.title = f.puedo_escribir ? "Puedes contestar sobre este trámite" : "Este trámite lo atiende otra persona";
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+    ul.hidden = false;
+  }
+
+  /* «Sobre el trámite»: con dos o más folios que quien mira puede tomar, elige sobre cuál
+     contesta; el id viaja en el formulario y el servidor lo vuelve a validar. Con uno (o
+     ninguno) el selector no aparece y el servidor usa el folio de siempre. La elección se
+     conserva entre sondeos: el <select> solo se reconstruye si cambió la lista. */
+  function pintarSelectorFolio(c) {
+    var p = els.composerFolio, sel = els.ticketId;
+    if (!p || !sel) return;
+    var mios = (Array.isArray(c.folios_abiertos) ? c.folios_abiertos : []).filter(function (f) { return f.puedo_escribir; });
+    var firma = JSON.stringify(mios.map(function (f) { return [f.id, f.service_name]; }));
+    if (firma === ultimoSelectorFolio) return;
+    ultimoSelectorFolio = firma;
+    var anterior = sel.value;
+    clear(sel);
+    if (mios.length < 2) {
+      p.hidden = true;
+      sel.disabled = true;
+      return;
+    }
+    mios.forEach(function (f) {
+      var o = document.createElement("option");
+      o.value = String(f.id);
+      o.textContent = "#" + f.id + " · " + (f.service_name || "");
+      sel.appendChild(o);
+    });
+    if (anterior && mios.some(function (f) { return String(f.id) === anterior; })) sel.value = anterior;
+    sel.disabled = false;
+    p.hidden = false;
   }
 
   /* Cabecera: avatar, nombre, teléfono e insignias con sus acciones. Solo se
@@ -2146,6 +2226,19 @@
     if (m.direction === "out" && m.wa_status) partes.push(m.wa_status);
     if (meta) {
       meta.textContent = partes.filter(Boolean).join(" · ");
+      /* El folio sobre el que contestó el colaborador, después de su nombre: «ana · #46 · Acta
+         de nacimiento · 10:32». Solo en el panel; el cliente recibió el texto tal cual. */
+      if (m.folio && m.direction === "out") {
+        var quien = document.createTextNode(partes[0] + " · ");
+        var folio = document.createElement("span");
+        folio.className = "folio";
+        folio.textContent = "#" + m.folio.id + " · " + (m.folio.service_name || "");
+        var resto = document.createTextNode(" · " + partes.slice(1).filter(Boolean).join(" · "));
+        meta.textContent = "";
+        meta.appendChild(quien);
+        meta.appendChild(folio);
+        meta.appendChild(resto);
+      }
       if (m.mio) {
         meta.appendChild(document.createTextNode(" · "));
         var del = document.createElement("button");
@@ -2174,6 +2267,7 @@
       }
       if (els.windowIco) els.windowIco.textContent = v.urgente ? "⚠️" : "⏳";
       if (els.windowLeft) els.windowLeft.textContent = v.texto || "";
+      pintarSelectorFolio(data.contacto || {});
       pintarRespuestasRapidas(Array.isArray(data.respuestas_rapidas) ? data.respuestas_rapidas : (DATOS.respuestas_rapidas || []));
     } else {
       els.composerAbierto.hidden = true;
@@ -2348,6 +2442,10 @@
     if (els.sendBtn) els.sendBtn.disabled = true;
     ocultarErrorEnvio();
     var cuerpo = new FormData(els.composerForm);
+    /* Selector oculto (un solo folio o ninguno): no viaja ticket_id y el servidor usa el
+       folio de siempre. Un <select disabled> ya no entra en FormData, pero se quita igual por
+       si el formulario se construyó antes de desactivarlo. */
+    if (els.ticketId && (els.ticketId.disabled || !els.ticketId.value)) cuerpo.delete("ticket_id");
     accionBandeja("/inbox/" + phone + "/send", cuerpo)
       .then(function (r) {
         if (!r.ok) {
@@ -2355,7 +2453,11 @@
           return;
         }
         if (state.chat === phone) {
+          /* reset() devuelve el <select> a la primera opción; el folio elegido se conserva:
+             quien contesta tres veces sobre el mismo trámite no tiene que reelegirlo. */
+          var folioElegido = els.ticketId ? els.ticketId.value : "";
           els.composerForm.reset();
+          if (els.ticketId && folioElegido) els.ticketId.value = folioElegido;
           limpiarChip();
           crecer();
         }
@@ -2539,6 +2641,9 @@
       chatThread: document.getElementById("crm-chat-thread"),
       chatClose: chat ? $(".chat-close", chat) : null,
       composerAbierto: document.getElementById("crm-composer-abierto"),
+      composerFolio: document.getElementById("crm-composer-folio"),
+      ticketId: document.getElementById("crm-ticket-id"),
+      chatFolios: document.getElementById("crm-chat-folios"),
       windowNote: document.getElementById("crm-window-note"),
       windowIco: document.getElementById("crm-window-ico"),
       windowLeft: document.getElementById("crm-window-left"),
