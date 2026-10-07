@@ -1,0 +1,135 @@
+/* «Estrategia» en el chat del CRM (/crm): el menú emergente que mueve la
+   conversación a otra etapa del tablero de quien mira, sin volver al tablero.
+
+   El marcado está en templates/crm.html y el comportamiento en
+   static/js/crm-estrategia.js. Vive bajo .crm, como el resto del módulo; el
+   botón es una .accion más del riel y se viste con crm-panel.css. */
+
+/* Encima del cajón (z-index 3) y de su velo (2). El JS lo coloca bajo el botón:
+   vive fuera del riel porque el overflow-x del riel lo recortaría. */
+.crm .estrategia-menu {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  z-index: 4;
+  width: min(300px, calc(100% - 16px));
+  max-height: min(60vh, 440px);
+  overflow-y: auto;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid var(--wa-border);
+  border-radius: var(--wa-radius);
+  box-shadow: 0 12px 32px rgba(17, 27, 33, .18);
+}
+
+.crm .estrategia-grupo {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.crm .estrategia-titulo {
+  padding: 0;
+  font-size: .9rem;
+  font-weight: 700;
+  color: var(--wa-text);
+}
+
+/* #54656F sobre blanco: 6.1:1. */
+.crm .estrategia-nota {
+  margin: 2px 0 8px;
+  font-size: .78rem;
+  color: var(--wa-muted-2);
+}
+
+.crm .estrategia-lista {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Toda la fila es la etiqueta: el blanco del clic es la fila, no el cuadrito
+   (WCAG 2.5.8). Anula el label de components.css: bloque, gris y con margen. */
+.crm .estrategia-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: .9rem;
+  color: var(--wa-text);
+  cursor: pointer;
+}
+
+.crm .estrategia-label:hover { background: var(--wa-panel); }
+
+/* La etapa actual: marcada y no se desmarca. Fondo oliva muy tenue; la marca de
+   la casilla y aria-disabled dicen lo mismo sin depender del color (1.4.1). */
+.crm .estrategia-opcion.is-actual .estrategia-label {
+  background: color-mix(in srgb, var(--olive) 10%, #fff);
+  font-weight: 600;
+  cursor: default;
+}
+
+.crm .estrategia-check {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--olive);
+  cursor: inherit;
+}
+
+/* components.css le quita el contorno a todo input enfocado (input:focus) y deja
+   un halo casi invisible; aquí el foco de teclado se ve (2.4.7). */
+.crm .estrategia-check:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.crm .estrategia-nombre {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* El contador: círculo verde oliva con número blanco, 6.88:1 (AA pide 4.5:1), y
+   el círculo contra el menú blanco, también 6.88:1 (1.4.11 pide 3:1). Con 3
+   cifras se estira a píldora en lugar de apretar el número. */
+.crm .estrategia-num {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--olive);
+  color: #fff;
+  font-size: .75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Mientras viaja el movimiento no se acepta otro. */
+.crm .estrategia-lista[aria-busy="true"] .estrategia-label { cursor: progress; }
+
+.crm .estrategia-estado {
+  margin: 0;
+  font-size: .82rem;
+  color: var(--wa-muted-2);
+}
+
+.crm .estrategia-estado:not(:empty) { margin-top: 8px; }
+
+/* Alto contraste de Windows: el fondo se pierde, el borde mantiene el círculo. */
+@media (forced-colors: active) {
+  .crm .estrategia-num { border: 1px solid CanvasText; }
+}

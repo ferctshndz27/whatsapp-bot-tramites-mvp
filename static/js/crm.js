@@ -50,6 +50,9 @@
      refetch, no cinco. El chat es lo que se está mirando; el tablero es contexto y pesa más. */
   var COALESCENCIA_CHAT_MS = 350;
   var COALESCENCIA_TABLERO_MS = 2000;
+  /* Lo que dura el timbre del ícono de WhatsApp de la tarjeta: las tres vueltas de 1.2 s de
+     crm-wa-timbre y crm-wa-onda (crm.css). Si cambia allá, cambia aquí. */
+  var TIMBRE_MS = 3600;
   var ZONA_HORARIA = "America/Mexico_City";
   var ESTADOS_FOLIO = { nuevo: "nuevo", tomado: "tomado", en_proceso: "en proceso", cerrado: "cerrado" };
   /* Miembros: la disponibilidad es la de «Mi día» (User.estado). */
@@ -97,6 +100,8 @@
   var loadSeq = 0;           // ignora respuestas del tablero ya superadas
   var chatSeq = 0;           // ídem para el chat
   var ultimoTablero = null;  // JSON del último tablero pintado: sin cambios no se repinta
+  var unreadVisto = {};      // teléfono → no leídos de la última tarjeta pintada (marcarWhatsApp)
+  var porTimbrar = {};       // teléfono → {inicio}: timbre del ícono de WhatsApp sin terminar (marcarWhatsApp)
   var tableroPendiente = null; // tablero recibido mientras había una edición a medias
   var timerPendiente = null;
   var ultimoHilo = null;     // firma del hilo pintado
@@ -800,7 +805,7 @@
 
   /* --- tablero --- */
 
-  /* El re-render destruye el nodo enfocado (el select «Mover a…», el input de
+  /* El re-render destruye el nodo enfocado (la tarjeta, el input de
      renombrar, el formulario de alta) y el foco caería a <body>. Se guarda un
      descriptor y se devuelve al equivalente nuevo. */
   function captureBoardFocus() {
@@ -892,7 +897,7 @@
         empty.textContent = "Arrastra aquí un contacto";
         body.appendChild(empty);
       } else {
-        contactos.forEach(function (c) { body.appendChild(makeCard(c, etapa, color, now)); });
+        contactos.forEach(function (c) { body.appendChild(makeCard(c, color, now)); });
       }
     }
 
@@ -1024,7 +1029,7 @@
 
   /* --- tarjetas --- */
 
-  function makeCard(c, etapa, color, now) {
+  function makeCard(c, color, now) {
     var card = tpl("crm-tpl-card");
     card.dataset.contactId = c.phone;
     card.style.borderTopColor = color;
@@ -1050,39 +1055,9 @@
         quitar(unread);
       }
     }
+    marcarWhatsApp($(".card-wa", card), c);
 
-    var sel = $(".card-move", card);
-    if (sel) {
-      var first = document.createElement("option");
-      first.value = "";
-      first.textContent = "Mover a…";
-      sel.appendChild(first);
-      state.etapas.forEach(function (other) {
-        if (other.id === etapa.id) return;
-        var opt = document.createElement("option");
-        opt.value = String(other.id);
-        opt.textContent = other.nombre;
-        sel.appendChild(opt);
-      });
-      sel.value = "";
-      sel.addEventListener("change", function () {
-        var target = Number(sel.value);
-        sel.value = "";
-        if (target) moveContact(c.phone, target);
-      });
-      sel.addEventListener("click", function (e) { e.stopPropagation(); });
-      sel.addEventListener("keydown", function (e) { e.stopPropagation(); });
-      /* Mientras el select tiene el foco la tarjeta no se arrastra; así el
-         control nativo funciona igual dentro de un elemento draggable. */
-      sel.addEventListener("focus", function () { card.draggable = false; });
-      sel.addEventListener("blur", function () { card.draggable = true; });
-    }
-
-    card.addEventListener("click", function (e) {
-      var t = e.target;
-      if (t && t.closest && t.closest(".card-move")) return;
-      openChat(c.phone);
-    });
+    card.addEventListener("click", function () { openChat(c.phone); });
     card.addEventListener("keydown", function (e) {
       if (e.target !== card) return;
       if (e.key === "Enter" || e.key === " ") {
@@ -1093,6 +1068,51 @@
     card.addEventListener("dragstart", onDragStart);
     card.addEventListener("dragend", onDragEnd);
     return card;
+  }
+
+  /* El ícono de WhatsApp del pie de la tarjeta, donde estaba el select «Mover a…»
+     (mover sin arrastrar es «Estrategia», en el chat). `has-unread` lo pone en
+     verde mientras el cliente espera respuesta —los mismos no leídos del círculo—;
+     `is-ringing` lo hace timbrar cuando la cuenta sube, o la primera vez que esta
+     pestaña ve la tarjeta con pendientes.
+     El timbre es corto a propósito (tres vueltas, crm.css): lo que se mueve más
+     de 5 s necesita un botón para pararlo (WCAG 2.2.2), y veinte íconos latiendo
+     sin parar son ruido. Por eso dura TIMBRE_MS contados desde que de verdad se
+     ve (animationstart), no desde cada nodo: el tablero se repinta entero con la
+     búsqueda, un filtro, un arrastre o un mensaje de otro, y la tarjeta nueva
+     retoma el timbre donde iba (`--wa-desfase`, un animation-delay negativo) en
+     vez de empezarlo otra vez; si ya se cumplió, no suena. Un mensaje más a media
+     animación tampoco la alarga. Mientras no se ha visto —tablero oculto por el
+     chat: sin caja no hay animación— sigue pendiente en `porTimbrar` y suena
+     entero cuando vuelve a verse. Con «reducir movimiento» no hay animación;
+     quedan el verde y el número. */
+  function marcarWhatsApp(icono, c) {
+    if (!icono) return;
+    var n = Number(c.unread) || 0;
+    var antes = unreadVisto[c.phone];
+    unreadVisto[c.phone] = n;
+    if (n <= 0) {
+      delete porTimbrar[c.phone];
+      return;
+    }
+    icono.classList.add("has-unread");
+    var timbre = porTimbrar[c.phone];
+    if (timbre && timbre.inicio !== null && Date.now() - timbre.inicio >= TIMBRE_MS) {
+      // Ya sonó entero; el nodo que lo iba a cerrar (animationend) se repintó antes.
+      delete porTimbrar[c.phone];
+      timbre = null;
+    }
+    if (!timbre && (antes === undefined || n > antes)) timbre = porTimbrar[c.phone] = { inicio: null };
+    if (!timbre) return;
+    if (timbre.inicio !== null) icono.style.setProperty("--wa-desfase", timbre.inicio - Date.now() + "ms");
+    icono.classList.add("is-ringing");
+    icono.addEventListener("animationstart", function () {
+      if (timbre.inicio === null) timbre.inicio = Date.now();
+    });
+    icono.addEventListener("animationend", function () {
+      if (porTimbrar[c.phone] === timbre) delete porTimbrar[c.phone];
+      icono.classList.remove("is-ringing");
+    });
   }
 
   /* ------------------------------------------------------------------ */
@@ -1159,40 +1179,68 @@
   }
 
   /* Mueve un contacto de etapa con actualización optimista; si el PUT falla,
-     revierte. Lo usan el drop y el select.card-move. */
-  function moveContact(phone, targetId) {
+     revierte. Lo usan el drop y «Estrategia» del chat
+     (static/js/crm-estrategia.js). Resuelve true si el contacto quedó en esa
+     etapa —o ya estaba— y false si no; nunca rechaza.
+     Un chat que el tablero no tiene cargado (la búsqueda, el tope de contactos o
+     sus folios cerrados lo dejan fuera) se mueve igual: el servidor valida, solo
+     que no hay tarjeta que pintar antes. `nombreDestino` nombra la etapa en el
+     aviso si el tablero todavía no la conoce (creada en otra pestaña). */
+  function moveContact(phone, targetId, nombreDestino) {
     var contacto = contactoByPhone(phone);
     var target = etapaById(targetId);
-    if (!contacto || !target) return Promise.resolve();
-    if (contacto.etapa_id === target.id) return Promise.resolve();
+    var id = Number(targetId);
+    var nombre = target ? target.nombre : nombreDestino;
+    if (!isFinite(id) || !nombre) return Promise.resolve(false);
+    if (contacto && contacto.etapa_id === id) return Promise.resolve(true);
 
-    var from = contacto.etapa_id;
-    contacto.etapa_id = target.id;
-    bumpCount(from, -1);
-    bumpCount(target.id, 1);
+    var from = contacto ? contacto.etapa_id : null;
+    if (contacto) {
+      contacto.etapa_id = id;
+      bumpCount(from, -1);
+      bumpCount(id, 1);
+    }
     /* Una carga que salió antes de este movimiento trae el estado anterior; si
        llegara ahora —o estuviera esperando su turno—, la tarjeta rebotaría a su
        columna de origen. Se invalidan las dos. */
     loadSeq++;
     ultimoTablero = null;
     tableroPendiente = null;
-    render();
+    if (contacto) render();
 
-    return api("PUT", API + "/contactos/" + encodeURIComponent(phone) + "/etapa", { etapa_id: target.id })
+    return api("PUT", API + "/contactos/" + encodeURIComponent(phone) + "/etapa", { etapa_id: id })
       .then(function () {
-        toast("Movido a «" + target.nombre + "»");
-        return load();
+        /* El chat abierto también lo sabe: es de donde lee la etapa un chat sin tarjeta. */
+        var datos = state.chatDatos;
+        if (state.chat === String(phone) && datos && datos.contacto) datos.contacto.etapa_id = id;
+        toast("Movido a «" + nombre + "»");
+        return load().then(function () { return true; });
       })
       .catch(function (err) {
         var actual = contactoByPhone(phone);
-        if (actual && actual.etapa_id === target.id) {
+        if (contacto && actual && actual.etapa_id === id) {
           actual.etapa_id = from;
           bumpCount(from, 1);
-          bumpCount(target.id, -1);
+          bumpCount(id, -1);
           render();
         }
         toast(mensajeDe(err, "No se pudo mover") === "Sin conexión con el servidor" ? "No se pudo mover" : "No se pudo mover: " + mensajeDe(err, "error"));
+        return false;
       });
+  }
+
+  /* Etapa de una conversación en el tablero de quien mira: la de su tarjeta si
+     el tablero la tiene cargada y, si no, la que trajo el chat abierto (el
+     servidor la calcula igual para los dos). null si no se sabe todavía. */
+  function etapaDe(phone) {
+    var p = String(phone);
+    var c = contactoByPhone(p);
+    if (c) return c.etapa_id;
+    var datos = state.chatDatos;
+    if (state.chat === p && datos && datos.contacto && datos.contacto.etapa_id != null) {
+      return datos.contacto.etapa_id;
+    }
+    return null;
   }
 
   /* ------------------------------------------------------------------ */
@@ -1419,6 +1467,11 @@
             /* El h2 vuelve con el nombre nuevo antes de recargar: mientras
                exista el input, el tablero está ocupado y no se repinta. */
             h2.textContent = value;
+            /* Y el estado, en el mismo instante (como etapa.color en
+               pintarColorEtapa): lo que se repinte o se anuncie antes de que
+               llegue la recarga —reordenarla justo después, «quedó en el
+               lugar…»— ya dice el nombre nuevo, no el viejo. */
+            etapa.nombre = value;
             if (input.parentNode) input.parentNode.replaceChild(h2, input);
             var menuBtn = $(".column-menu-btn", section);
             if (menuBtn) menuBtn.focus(); // y el repintado lo conserva ahí
@@ -2706,6 +2759,12 @@
     openChat: abrirChat,
     closeChat: cerrarChat,
     toast: toast,
+    /* Para «Estrategia» (static/js/crm-estrategia.js): el mismo movimiento que el
+       arrastre, la etapa de un chat y la llamada JSON que vuelve al login si la
+       sesión caducó. */
+    moverContacto: moveContact,
+    etapaDe: etapaDe,
+    api: api,
     usuario: USUARIO,
     version: VERSION
   };

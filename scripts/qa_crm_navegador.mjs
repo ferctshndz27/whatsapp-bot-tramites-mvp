@@ -394,7 +394,40 @@ const enPagina = {
         draggable: card.draggable === true,
         role: card.getAttribute("role"),
         aria: card.getAttribute("aria-label"),
-        opciones: [...(q("select.card-move")?.options ?? [])].map((o) => o.textContent.trim()),
+        selects: card.querySelectorAll("select, .card-move").length,
+        wa: q(".card-wa") ? {
+          oculto: q(".card-wa").getAttribute("aria-hidden") === "true",
+          svg: !!q(".card-wa > svg[focusable='false']"),
+          enPie: q(".card-wa").parentElement?.classList.contains("card-bottom") ?? false,
+          nuevos: q(".card-wa").classList.contains("has-unread"),
+        } : null,
+      };
+    }),
+
+  /* El ícono de WhatsApp de cada tarjeta del tablero: sus clases, las animaciones que corren
+     DE VERDAD (getAnimations con subtree incluye la onda del ::before; sin caja —tablero
+     oculto o «reducir movimiento»— no hay ninguna), cuándo acaban y su color sobre la tarjeta. */
+  iconosWa: () =>
+    [...document.querySelectorAll("#crm-board article.card[data-contact-id]")].map((card) => {
+      const w = card.querySelector(".card-wa");
+      if (!w) return { id: card.dataset.contactId, existe: false };
+      const anims = w.getAnimations({ subtree: true }).filter((a) => a.playState === "running");
+      const fines = anims.map((a) => a.effect.getComputedTiming().endTime);
+      const restantes = anims.map((a) => {
+        const t = a.effect.getComputedTiming();
+        return t.endTime - (t.localTime ?? 0);
+      });
+      return {
+        id: card.dataset.contactId,
+        existe: true,
+        nuevos: w.classList.contains("has-unread"),
+        timbre: w.classList.contains("is-ringing"),
+        corriendo: anims.map((a) => a.animationName),
+        finitas: fines.every((f) => Number.isFinite(f)),
+        finMs: fines.length ? Math.max(...fines.filter((f) => Number.isFinite(f)), 0) : 0,
+        restanteMs: restantes.length ? Math.round(Math.max(...restantes.filter((f) => Number.isFinite(f)), 0)) : 0,
+        color: getComputedStyle(w).color,
+        fondo: getComputedStyle(card).backgroundColor,
       };
     }),
 
@@ -459,6 +492,20 @@ const enPagina = {
     return { clase: a?.className ?? null, columna: a?.closest?.("section.column")?.dataset.columnId ?? null };
   },
 
+  /* Bitácora de #crm-toast desde ahora: cada aviso que aparece, aunque otro lo pise antes de
+     que el sondeo de esperarToast (cada 80 ms) lo alcance a leer. */
+  grabarToasts: () => {
+    const t = document.querySelector("#crm-toast");
+    window.__qaToastObs?.disconnect();
+    window.__qaToasts = [];
+    if (!t) return;
+    const t0 = performance.now();
+    const anotar = () => window.__qaToasts.push(
+      `${Math.round(performance.now() - t0)}ms ${t.classList.contains("is-visible") ? "◉" : "○"} ${t.textContent.trim()}`);
+    window.__qaToastObs = new MutationObserver(anotar);
+    window.__qaToastObs.observe(t, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+  },
+
   toast: () => {
     const t = document.querySelector("#crm-toast");
     return t && t.classList.contains("is-visible") ? t.textContent.trim() : null;
@@ -511,18 +558,6 @@ const enPagina = {
     i.value = texto;
     i.dispatchEvent(new Event("input", { bubbles: true }));
     return true;
-  },
-
-  cambiarSelect: (contactId, valor) => {
-    const card = document.querySelector(`#crm-board article.card[data-contact-id="${contactId}"]`);
-    if (!card) return { error: `no existe article.card[data-contact-id="${contactId}"]` };
-    const sel = card.querySelector("select.card-move");
-    if (!sel) return { error: "la tarjeta no tiene select.card-move" };
-    sel.value = valor;
-    if (sel.value !== valor) return { error: `no se pudo fijar select.card-move.value = ${JSON.stringify(valor)}` };
-    document.querySelector("#crm-toast")?.classList.remove("is-visible");
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-    return { ok: true };
   },
 
   abrirTarjeta: (phone, desde) => {
@@ -799,7 +834,8 @@ const enPagina = {
       anchoPanel: panel ? Math.round(panel.getBoundingClientRect().width) : null,
       anchoChat: chat ? Math.round(chat.getBoundingClientRect().width) : null,
       empuje: chat ? getComputedStyle(chat).paddingRight : null,
-      riel: [...document.querySelectorAll("#crm-acciones .accion")].map((b) => ({
+      // Solo las píldoras del cajón: «Estrategia» comparte el riel pero no es una sección.
+      riel: [...document.querySelectorAll("#crm-acciones .accion[data-seccion]")].map((b) => ({
         seccion: b.dataset.seccion,
         titulo: b.dataset.titulo,
         expandido: b.getAttribute("aria-expanded") === "true",
@@ -858,6 +894,89 @@ const enPagina = {
     if (!b) return { error: `no existe ${sel}` };
     b.click();
     return { ok: true };
+  },
+
+  // ---- «Estrategia» (crm-estrategia.js) ----
+  estrategiaEstado: () => {
+    const vis = (el) => !!el && !el.hidden && getComputedStyle(el).display !== "none" && el.getClientRects().length > 0;
+    const boton = document.querySelector("#crm-btn-estrategia");
+    const menu = document.querySelector("#crm-estrategia");
+    const activo = document.activeElement;
+    const num = document.querySelector("#crm-estrategia-lista .estrategia-num");
+    const cs = num ? getComputedStyle(num) : null;
+    const rn = num ? num.getBoundingClientRect() : null;
+    const rm = menu ? menu.getBoundingClientRect() : null;
+    const rb = boton ? boton.getBoundingClientRect() : null;
+    const sigue = (a, b) => !!a && !!b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+      && a.getBoundingClientRect().left < b.getBoundingClientRect().left;
+    return {
+      boton: boton ? {
+        texto: boton.textContent.replace(/\s+/g, " ").trim().split(" ").pop(),
+        antes: boton.previousElementSibling?.dataset.seccion ?? null,
+        enRiel: !!boton.closest("#crm-acciones"),
+        seccion: boton.dataset.seccion ?? null,
+        deshabilitado: boton.disabled || boton.getAttribute("aria-disabled") === "true",
+        expandido: boton.getAttribute("aria-expanded") === "true",
+      } : null,
+      abierto: vis(menu),
+      chatAbierto: document.querySelector("#crm").classList.contains("chat-abierto"),
+      cajonAbierto: document.querySelector("#crm").classList.contains("panel-abierto"),
+      foco: activo ? (activo.id || activo.className || activo.tagName) : null,
+      opciones: [...document.querySelectorAll("#crm-estrategia-lista .estrategia-opcion")].map((li) => {
+        const c = li.querySelector(".estrategia-check");
+        const nombre = li.querySelector(".estrategia-nombre");
+        const n = li.querySelector(".estrategia-num");
+        return {
+          id: li.dataset.etapaId,
+          tipo: c?.type ?? null,
+          nombre: nombre?.textContent ?? null,
+          num: n?.textContent ?? null,
+          // Lo que lee un lector de pantalla en la etiqueta: nombre, número y «chats».
+          leido: li.querySelector("label")?.textContent.replace(/\s+/g, " ").trim() ?? null,
+          marcada: !!c && c.checked,
+          bloqueada: c?.getAttribute("aria-disabled") === "true",
+          enfocada: !!c && activo === c,
+          // Casilla → nombre → contador, en el DOM y en pantalla.
+          orden: sigue(c, nombre) && sigue(nombre, n),
+        };
+      }),
+      circulo: cs ? {
+        fondo: cs.backgroundColor, color: cs.color, radio: parseFloat(cs.borderTopLeftRadius),
+        ancho: rn.width, alto: rn.height, texto: num.textContent,
+      } : null,
+      menuCaja: rm ? { izq: rm.left, der: rm.right, arriba: rm.top } : null,
+      botonAbajo: rb ? rb.bottom : null,
+      anchoVentana: document.documentElement.clientWidth,
+      scrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  },
+
+  estrategiaPulsar: () => {
+    const b = document.querySelector("#crm-btn-estrategia");
+    if (!b) return { error: "no existe #crm-btn-estrategia" };
+    if (b.disabled) return { error: "«Estrategia» está deshabilitado" };
+    b.click();
+    return { ok: true };
+  },
+
+  // Como el mouse: en la casilla o en el nombre, que como etiqueta le pasa el clic a la casilla.
+  estrategiaMarcar: (id, donde) => {
+    const li = document.querySelector(`#crm-estrategia-lista .estrategia-opcion[data-etapa-id="${id}"]`);
+    if (!li) return { error: `el menú no tiene la etapa ${id}` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    li.querySelector(donde === "nombre" ? ".estrategia-nombre" : ".estrategia-check").click();
+    return { ok: true, marcada: li.querySelector(".estrategia-check").checked };
+  },
+
+  estrategiaEnfocar: (id) => {
+    const sel = id === "ultima"
+      ? "#crm-estrategia-lista .estrategia-opcion:last-child .estrategia-check"
+      : `#crm-estrategia-lista .estrategia-opcion[data-etapa-id="${id}"] .estrategia-check`;
+    const c = document.querySelector(sel);
+    if (!c) return { error: `no existe ${sel}` };
+    document.querySelector("#crm-toast")?.classList.remove("is-visible");
+    c.focus();
+    return { ok: document.activeElement === c };
   },
 
   panelBoton: (id) => {
@@ -1150,7 +1269,11 @@ async function criterioTarjetas(ctx) {
     if (t.avatar !== c.initials) fallos.push(`${c.phone}: avatar ${JSON.stringify(t.avatar)} vs initials ${JSON.stringify(c.initials)}`);
     if (c.unread > 0 ? t.noLeidos !== String(c.unread) : t.noLeidos !== null) fallos.push(`${c.phone}: badge no leídos ${JSON.stringify(t.noLeidos)} vs unread ${c.unread}`);
     if (!t.draggable || t.role !== "button" || !t.aria?.startsWith("Abrir chat con")) fallos.push(`${c.phone}: draggable/role/aria ${JSON.stringify([t.draggable, t.role, t.aria])}`);
-    if (t.opciones.length !== api.etapas.length) fallos.push(`${c.phone}: select con ${t.opciones.length} opciones (esperaba ${api.etapas.length}: «Mover a…» + las otras etapas)`);
+    if (t.selects) fallos.push(`${c.phone}: la tarjeta todavía trae un select («Mover a…»)`);
+    if (!t.wa) fallos.push(`${c.phone}: sin el ícono de WhatsApp (.card-wa)`);
+    else if (!t.wa.oculto || !t.wa.svg || !t.wa.enPie || t.wa.nuevos !== c.unread > 0) {
+      fallos.push(`${c.phone}: ícono de WhatsApp ${JSON.stringify(t.wa)} con unread=${c.unread} (decorativo, en el pie y verde solo con pendientes)`);
+    }
   }
   for (const e of api.etapas) {
     const col = columnas.find((x) => x.id === String(e.id));
@@ -1333,13 +1456,132 @@ async function criterioArrastre(ctx) {
   return `Ana pasó de «${origen.nombre}» a «${destino.nombre}» por drag & drop, la API la guardó (etapa_id=${c.etapa_id}) y sigue ahí tras recargar; contadores al día`;
 }
 
-async function criterioSelectMover(ctx) {
+const timbresQuietos = (xs) => xs.length > 0 && xs.every((x) => !x.timbre && !x.corriendo.length);
+
+async function criterioIconoWhatsApp(ctx) {
+  // La tarjeta ya no trae el select «Mover a…»: mover sin arrastrar es «Estrategia», en el chat
+  // (17c y 17d). En su lugar va el ícono de WhatsApp: verde con mensajes sin contestar, y un
+  // timbre corto la primera vez que la pestaña los ve o cuando llegan más (el del mensaje en
+  // vivo es el 28). Primero Ana vuelve a la primera etapa, que es lo que hacía el select, y
+  // ahora arrastrando: el resto del recorrido la espera ahí.
   const api = await ctx.tablero();
-  const destino = api.etapas[0];
-  const r = await ctx.cdp.evaluate(enPagina.cambiarSelect, ANA, String(destino.id));
+  const primera = api.etapas[0];
+  const r = await ctx.cdp.evaluate(enPagina.soltar, ANA, String(primera.id));
   if (r.error) throw new Error(r.error);
-  await ctx.esperarMovimiento(ANA, destino.id, destino.nombre);
-  return `select «Mover a…» devolvió a Ana a «${destino.nombre}»`;
+  await ctx.esperarMovimiento(ANA, primera.id, primera.nombre);
+
+  await recargar(ctx.cdp);
+  await esperarTablero(ctx.cdp);
+  const fallos = [];
+  const selects = await ctx.cdp.evaluate(() => document.querySelectorAll(".card-move, #crm-board article.card select").length);
+  if (selects) fallos.push(`quedan ${selects} select «Mover a…» en el tablero`);
+  const conPendientes = new Set((await ctx.tablero()).contactos.filter((c) => c.unread > 0).map((c) => c.phone));
+  if (!conPendientes.size) throw new Error("la siembra no dejó ninguna tarjeta con mensajes sin contestar");
+
+  // Recién cargada la página: las tarjetas con pendientes timbran (sacudida y onda), las demás
+  // no se mueven, y ningún timbre pasa de 5 s.
+  const recien = await ctx.cdp.evaluate(enPagina.iconosWa);
+  for (const i of recien) {
+    if (!i.existe) { fallos.push(`${i.id}: sin ícono de WhatsApp`); continue; }
+    const espera = conPendientes.has(i.id);
+    if (i.nuevos !== espera) fallos.push(`${i.id}: has-unread=${i.nuevos} y la API dice ${espera ? "con" : "sin"} pendientes`);
+    if (espera && !(i.timbre && i.corriendo.includes("crm-wa-timbre") && i.corriendo.includes("crm-wa-onda"))) {
+      fallos.push(`${i.id}: tiene pendientes y no timbró al cargar (${JSON.stringify(i.corriendo)})`);
+    }
+    if (!espera && (i.timbre || i.corriendo.length)) fallos.push(`${i.id}: sin pendientes y timbra (${JSON.stringify(i.corriendo)})`);
+    if (!i.finitas || i.finMs > 5000) fallos.push(`${i.id}: el timbre acaba a los ${i.finMs} ms (finito: ${i.finitas}); WCAG 2.2.2 pide ≤ 5 s sin un control para pararlo`);
+  }
+  await ctx.capturar("06-tarjetas-timbre");
+
+  // Se calma solo y se queda en verde; repintar sin mensajes nuevos no lo vuelve a despertar.
+  const t0 = Date.now();
+  await waitFor(async () => (timbresQuietos(await ctx.cdp.evaluate(enPagina.iconosWa)) ? true : null),
+    { timeout: 8000, interval: 200, label: "que los timbres de la carga terminen solos" });
+  const duro = Date.now() - t0;
+  await ctx.cdp.evaluate(async () => { await window.CRMKanban.reload(); });
+  const calma = await ctx.cdp.evaluate(enPagina.iconosWa);
+  if (!timbresQuietos(calma)) fallos.push(`repintar sin mensajes nuevos volvió a timbrar: ${JSON.stringify(calma.filter((x) => x.timbre || x.corriendo.length).map((x) => x.id))}`);
+  if (calma.some((x) => x.nuevos !== conPendientes.has(x.id))) fallos.push("tras el timbre, has-unread ya no coincide con la API");
+  const verde = calma.find((x) => conPendientes.has(x.id));
+  const gris = calma.find((x) => !conPendientes.has(x.id));
+  const cVerde = verde ? contrasteRgb(verde.color, verde.fondo) : 0;
+  const cGris = gris ? contrasteRgb(gris.color, gris.fondo) : 0;
+  if (verde?.color !== "rgb(18, 140, 126)" || cVerde < 3) fallos.push(`con pendientes: ${verde?.color} sobre ${verde?.fondo} (${cVerde.toFixed(2)}:1; esperaba --wa-teal-2 ≥ 3:1)`);
+  if (gris && (gris.color !== "rgb(102, 119, 129)" || cGris < 3)) fallos.push(`sin pendientes: ${gris.color} sobre ${gris.fondo} (${cGris.toFixed(2)}:1; esperaba --wa-muted ≥ 3:1)`);
+  await ctx.capturar("06-tarjetas-whatsapp");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  const fin = Math.round(Math.max(...recien.map((x) => x.finMs)));
+  return `Ana volvió a «${primera.nombre}» arrastrando; ninguna tarjeta trae «Mover a…»; las ${conPendientes.size} con pendientes timbran al cargar (acaba a los ${fin} ms) y se calman solas en ${(duro / 1000).toFixed(1)} s en verde ${cVerde.toFixed(2)}:1; las demás, gris ${cGris.toFixed(2)}:1 y quietas; repintar no las despierta`;
+}
+
+async function criterioTimbreEnVivo(ctx) {
+  // Llega un mensaje con el tablero a la vista: timbra SOLO esa tarjeta, se calma sola y se queda
+  // en verde. Con «reducir movimiento» no se mueve nada, pero el verde sigue. Va al final porque
+  // deja un mensaje más en la base.
+  await ctx.login("jefa1");
+  await ctx.abrirCrm();
+  await waitFor(async () => (timbresQuietos(await ctx.cdp.evaluate(enPagina.iconosWa)) ? true : null),
+    { timeout: 8000, interval: 200, label: "que terminen los timbres de la carga" });
+  const api = await ctx.tablero();
+  const objetivo = api.contactos.find((c) => c.unread === 0);
+  if (!objetivo) throw new Error("no queda ninguna tarjeta sin pendientes que pueda recibir el mensaje");
+  const texto = `Timbre QA ${Date.now()}`;
+  const r = spawnSync(PYTHON, ["-c", `
+import sys; sys.path.insert(0, ${JSON.stringify(REPO)})
+from sqlmodel import Session
+import app.db as db
+from app.models import Client, Direction, Message, utcnow
+with Session(db.engine) as s:
+    s.add(Message(phone=${JSON.stringify(objetivo.phone)}, direction=Direction.IN, body=${JSON.stringify(texto)}))
+    c = s.get(Client, ${JSON.stringify(objetivo.phone)}); c.last_activity_at = utcnow(); s.add(c); s.commit()
+print("ok")`], { cwd: REPO, env: ctx.env, encoding: "utf8" });
+  if (r.status !== 0 || !r.stdout.includes("ok")) throw new Error(`no se pudo insertar el mensaje: ${(r.stderr || "").slice(-300)}`);
+  // El sondeo de 20 s lo traería igual (lo prueba el 7b); aquí se repinta ya.
+  await ctx.cdp.evaluate(async () => { await window.CRMKanban.reload(); });
+  const fallos = [];
+  const llego = await waitFor(async () => {
+    const xs = await ctx.cdp.evaluate(enPagina.iconosWa);
+    return xs.find((i) => i.id === objetivo.phone)?.nuevos ? xs : null;
+  }, { timeout: 6000, interval: 100, label: `la tarjeta de ${objetivo.phone} con el mensaje nuevo` });
+  const suyo = llego.find((i) => i.id === objetivo.phone);
+  const t0 = Date.now();
+  if (!suyo.timbre || !suyo.corriendo.includes("crm-wa-timbre")) fallos.push(`el ícono de ${objetivo.phone} no timbró al llegarle el mensaje: ${JSON.stringify(suyo)}`);
+  const otros = llego.filter((i) => i.id !== objetivo.phone && (i.timbre || i.corriendo.length)).map((i) => i.id);
+  if (otros.length) fallos.push(`timbraron también ${JSON.stringify(otros)}, que no recibieron nada`);
+  await ctx.capturar("44-timbre-en-vivo");
+  // Repintar a media animación —la búsqueda, un filtro, un arrastre o el mensaje de otro
+  // repintan el tablero entero— no vuelve a empezar el timbre: la tarjeta nueva lo retoma
+  // donde iba, y el total sigue en 3.6 s aunque se repinte cada cuarto de segundo.
+  await dormir(1200);
+  await ctx.cdp.evaluate(async () => { await window.CRMKanban.reload(); });
+  const transcurrido = Date.now() - t0;
+  const repintado = (await ctx.cdp.evaluate(enPagina.iconosWa)).find((i) => i.id === objetivo.phone);
+  if (!repintado?.timbre || !repintado.corriendo.includes("crm-wa-timbre")) {
+    fallos.push(`repintar a media animación cortó el timbre de ${objetivo.phone}: ${JSON.stringify(repintado)}`);
+  } else if (repintado.restanteMs > 3600 - transcurrido + 250) {
+    fallos.push(`repintar a los ${transcurrido} ms volvió a empezar el timbre: le quedan ${repintado.restanteMs} ms (esperaba ≤ ${3600 - transcurrido + 250})`);
+  }
+  await waitFor(async () => {
+    const x = (await ctx.cdp.evaluate(enPagina.iconosWa)).find((i) => i.id === objetivo.phone);
+    return x && x.nuevos && !x.timbre && !x.corriendo.length ? true : null;
+  }, { timeout: 6000, interval: 200, label: "que el timbre del mensaje nuevo termine y deje el verde" });
+
+  // «Reducir movimiento»: al cargar no timbra nadie, pero el verde sigue donde hay pendientes.
+  let quietos = [];
+  await ctx.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  try {
+    await recargar(ctx.cdp);
+    await esperarTablero(ctx.cdp);
+    await dormir(300);
+    quietos = await ctx.cdp.evaluate(enPagina.iconosWa);
+  } finally {
+    await ctx.cdp.send("Emulation.setEmulatedMedia", { media: "", features: [] });
+  }
+  const moviendose = quietos.filter((i) => i.corriendo.length).map((i) => i.id);
+  if (moviendose.length) fallos.push(`con «reducir movimiento» se mueven ${JSON.stringify(moviendose)}`);
+  if (!quietos.find((i) => i.id === objetivo.phone)?.nuevos) fallos.push(`con «reducir movimiento» el ícono de ${objetivo.phone} perdió el verde`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `entra un mensaje para ${objetivo.name || objetivo.phone}: timbra solo su tarjeta (${suyo.corriendo.join(" + ")}); repintada a los ${transcurrido} ms lo retoma con ${repintado.restanteMs} ms por delante, se calma sola y queda en verde; con «reducir movimiento» nada se mueve y el verde sigue (${quietos.filter((i) => i.nuevos).length} tarjetas)`;
 }
 
 async function criterioAbrirChat(ctx) {
@@ -1716,8 +1958,8 @@ async function criterioEtapas(ctx) {
     const t = await ctx.cdp.evaluate(enPagina.tablero);
     return cols.some((c) => c.id === String(nueva.id) && c.nombre === "Por cobrar") && t.tabs.some((x) => x.nombre === "Por cobrar") ? true : null;
   }, { timeout: 6000, label: "la columna y la pestaña «Por cobrar»" });
-  // Mover a Beto ahí con el select y comprobar contadores.
-  r = await ctx.cdp.evaluate(enPagina.cambiarSelect, BETO, String(nueva.id));
+  // Mover a Beto ahí arrastrando (la tarjeta ya no trae «Mover a…») y comprobar contadores.
+  r = await ctx.cdp.evaluate(enPagina.soltar, BETO, String(nueva.id));
   if (r.error) throw new Error(r.error);
   await ctx.esperarMovimiento(BETO, nueva.id, "Por cobrar");
   // Renombrar desde el menú ⋮.
@@ -1880,7 +2122,7 @@ async function criterioColaborador(ctx) {
   if (!mismoConjunto(t.bandeja, [ANA])) fallos.push(`la bandeja muestra ${JSON.stringify(t.bandeja)}`);
   if (t.tarjetas !== 1) fallos.push(`${t.tarjetas} tarjetas en el tablero (esperaba 1)`);
   const destino = api.etapas[2];
-  const r = await ctx.cdp.evaluate(enPagina.cambiarSelect, ANA, String(destino.id));
+  const r = await ctx.cdp.evaluate(enPagina.soltar, ANA, String(destino.id));
   if (r.error) throw new Error(r.error);
   await ctx.esperarMovimiento(ANA, destino.id, destino.nombre);
   // Abre el chat: no hay botón de bloqueo para quien no es admin.
@@ -1936,7 +2178,7 @@ async function criterioTableroPersonal(ctx) {
     { timeout: 6000, label: "la etapa «Mis urgentes» en el tablero de colab1" });
   await waitFor(async () => (await ctx.cdp.evaluate(enPagina.columnasDOM)).some((c) => c.id === String(nueva.id)) ? true : null,
     { timeout: 6000, label: "la columna «Mis urgentes» en el DOM" });
-  r = await ctx.cdp.evaluate(enPagina.cambiarSelect, ANA, String(nueva.id));
+  r = await ctx.cdp.evaluate(enPagina.soltar, ANA, String(nueva.id));
   if (r.error) throw new Error(r.error);
   await ctx.esperarMovimiento(ANA, nueva.id, "Mis urgentes");
   r = await ctx.cdp.evaluate(enPagina.abrirMenuColumna, String(nueva.id));
@@ -1948,9 +2190,19 @@ async function criterioTableroPersonal(ctx) {
   await ctx.esperarToast("Etapa renombrada a «Urgentes»", 8000);
   await waitFor(async () => (await ctx.cdp.evaluate(enPagina.columnasDOM)).some((c) => c.id === String(nueva.id) && c.nombre === "Urgentes") ? true : null,
     { timeout: 6000, label: "la columna renombrada en el DOM" });
+  // Si el aviso no llega, que el fallo diga qué pasó: «visible: null» a los 8 s no distingue
+  // «el arrastre no reordenó» de «llegó otro aviso» ni de «el PUT sigue en vuelo».
+  await ctx.cdp.evaluate(enPagina.grabarToasts);
   r = await ctx.cdp.evaluate(enPagina.arrastrarColumna, String(nueva.id), String(antes.etapas[0].id), "antes");
   if (r.error) throw new Error(r.error);
-  await ctx.esperarToast(`«Urgentes» quedó en el lugar 1 de ${antes.etapas.length + 1}`, 8000);
+  try {
+    await ctx.esperarToast(`«Urgentes» quedó en el lugar 1 de ${antes.etapas.length + 1}`, 8000);
+  } catch (e) {
+    const avisos = await ctx.cdp.evaluate(() => window.__qaToasts ?? null);
+    const columnas = (await ctx.cdp.evaluate(enPagina.columnasDOM)).map((c) => c.nombre);
+    const enVuelo = [...ctx.recolector.urls.values()].filter((u) => !u.includes("/crm/api/eventos"));
+    throw new Error(`${e.message}; arrastre ${JSON.stringify(r)}; avisos ${JSON.stringify(avisos)}; columnas ${JSON.stringify(columnas)}; en vuelo ${JSON.stringify(enVuelo)}`);
+  }
   await waitFor(async () => (await ctx.tablero()).etapas[0]?.id === nueva.id ? true : null,
     { timeout: 6000, label: "«Urgentes» primera en el tablero de colab1" });
 
@@ -1976,6 +2228,223 @@ async function criterioTableroPersonal(ctx) {
   if (JSON.stringify(jefaDespues) !== JSON.stringify(jefaAntes)) fallos.push("eliminar una etapa de colab1 cambió el tablero de jefa1");
   if (fallos.length) throw new Error(fallos.join("; "));
   return "colab1 creó, llenó, renombró, arrastró al principio y eliminó «Urgentes» en SU tablero (Ana volvió a su primera etapa); el de jefa1 no cambió en ningún momento";
+}
+
+// ---- «Estrategia»: mover el chat de etapa sin salir de él (crm-estrategia.js) --------
+
+const esperarEstrategia = (ctx, condicion, label) =>
+  waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estrategiaEstado);
+    return condicion(e) ? e : null;
+  }, { timeout: 8000, label });
+
+const marcadasEstrategia = (e) => JSON.stringify(e.opciones.filter((o) => o.marcada).map((o) => o.id));
+
+// Contraste WCAG entre dos colores calculados del navegador («rgb(r, g, b)»).
+function contrasteRgb(a, b) {
+  const lum = (s) => {
+    const [r, g, bl] = s.match(/[\d.]+/g).slice(0, 3).map((c) => {
+      const v = Number(c) / 255;
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [claro, oscuro] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (claro + 0.05) / (oscuro + 0.05);
+}
+
+// Espacio de verdad sobre la casilla enfocada: así se marca una casilla con el teclado.
+async function teclaEspacio(ctx) {
+  const base = { key: " ", code: "Space", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 };
+  await ctx.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", text: " ", unmodifiedText: " ", ...base });
+  await ctx.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+}
+
+async function criterioEstrategiaColaborador(ctx) {
+  // colab1 sitúa a Ana —su folio— en otra etapa de SU tablero sin salir del chat: una casilla
+  // por etapa con su contador, una sola marcada, la actual no se desmarca, el menú se queda
+  // abierto con los números nuevos, y el tablero de jefa1 no se entera.
+  await ctx.login("colab1");
+  const cookieJefa = await sesionHttp(ctx, "jefa1");
+  const anaDeJefa = async () => (await tableroHttp(ctx, cookieJefa)).contactos.find((c) => c.phone === ANA)?.etapa_id ?? null;
+  const jefaAntes = await anaDeJefa();
+  await abrirChatDe(ctx, ANA);
+  const etapas = await ctx.api("/crm/api/etapas");
+  const origen = (await ctx.chat(ANA)).contacto.etapa_id;
+  const destino = etapas.find((x) => x.id !== origen);
+  if (!destino) throw new Error("colab1 necesita al menos dos etapas");
+  const fallos = [];
+
+  let e = await ctx.cdp.evaluate(enPagina.estrategiaEstado);
+  if (!e.boton) throw new Error("no existe #crm-btn-estrategia");
+  if (!e.boton.enRiel || e.boton.antes !== "transferir" || e.boton.texto !== "Estrategia") fallos.push(`la píldora no va justo después de «Transferir»: ${JSON.stringify(e.boton)}`);
+  if (e.boton.seccion !== null) fallos.push("«Estrategia» lleva data-seccion: el cajón la tomaría como suya");
+  if (e.abierto || e.boton.expandido) fallos.push("el menú nace abierto");
+
+  let r = await ctx.cdp.evaluate(enPagina.estrategiaPulsar);
+  if (r.error) throw new Error(r.error);
+  e = await esperarEstrategia(ctx, (s) => s.abierto && s.opciones.length === etapas.length, "el menú con las etapas de colab1");
+  const visto = e.opciones.map((o) => [o.id, o.nombre, o.num]);
+  const esperado = etapas.map((x) => [String(x.id), x.nombre, String(x.count)]);
+  if (JSON.stringify(visto) !== JSON.stringify(esperado)) fallos.push(`opciones ${JSON.stringify(visto)} ≠ GET /crm/api/etapas ${JSON.stringify(esperado)}`);
+  if (!e.opciones.every((o) => o.tipo === "checkbox" && o.orden)) fallos.push(`no todas van casilla → nombre → contador: ${JSON.stringify(e.opciones)}`);
+  if (marcadasEstrategia(e) !== JSON.stringify([String(origen)])) fallos.push(`marcadas ${marcadasEstrategia(e)} con Ana en ${origen}`);
+  const actual = e.opciones.find((o) => o.id === String(origen));
+  if (!actual?.bloqueada) fallos.push("la etapa actual no lleva aria-disabled");
+  if (!actual?.enfocada) fallos.push(`al abrir, el foco quedó en ${JSON.stringify(e.foco)} y no en la etapa actual`);
+  if (!/ \d+ chats?$/.test(actual?.leido ?? "")) fallos.push(`la etiqueta se lee ${JSON.stringify(actual?.leido)}: el número va sin «chats»`);
+  if (!e.boton.expandido) fallos.push("abierto, el botón no dice aria-expanded=true");
+  if (e.cajonAbierto) fallos.push("«Estrategia» abrió el cajón del folio");
+  await ctx.capturar("40-estrategia-colab1");
+
+  // La actual no se desmarca: el clic se cancela y no sale ningún PUT.
+  r = await ctx.cdp.evaluate(enPagina.estrategiaMarcar, String(origen), "casilla");
+  if (r.error) throw new Error(r.error);
+  if (!r.marcada) fallos.push("un clic desmarcó la etapa actual");
+  await dormir(700);
+  if (await ctx.cdp.evaluate(enPagina.toast)) fallos.push("el clic en la etapa actual sacó un aviso");
+  if ((await ctx.chat(ANA)).contacto.etapa_id !== origen) fallos.push("el clic en la etapa actual movió a Ana");
+
+  // Marcar otra —clic en el nombre—: el PUT del arrastre mueve a Ana y el menú se queda.
+  r = await ctx.cdp.evaluate(enPagina.estrategiaMarcar, String(destino.id), "nombre");
+  if (r.error) throw new Error(r.error);
+  const aviso = await ctx.esperarToast("Movido a");
+  if (!aviso.includes(destino.nombre)) fallos.push(`el aviso dice ${JSON.stringify(aviso)}`);
+  await waitFor(async () => (await ctx.chat(ANA)).contacto.etapa_id === destino.id ? true : null,
+    { timeout: 6000, label: `Ana en «${destino.nombre}» según la API` });
+  const nuevas = await ctx.api("/crm/api/etapas");
+  const numsApi = JSON.stringify(nuevas.map((x) => [String(x.id), String(x.count)]));
+  e = await esperarEstrategia(ctx, (s) => s.abierto
+    && JSON.stringify(s.opciones.map((o) => [o.id, o.num])) === numsApi
+    && marcadasEstrategia(s) === JSON.stringify([String(destino.id)]),
+    "el menú abierto con la marca nueva y los contadores del servidor");
+  const cuenta = (lista, id) => lista.find((x) => x.id === id)?.count;
+  if (cuenta(nuevas, origen) !== cuenta(etapas, origen) - 1 || cuenta(nuevas, destino.id) !== cuenta(etapas, destino.id) + 1) {
+    fallos.push(`los contadores no siguieron a Ana: ${JSON.stringify(etapas.map((x) => x.count))} → ${JSON.stringify(nuevas.map((x) => x.count))}`);
+  }
+  const columna = await ctx.cdp.evaluate(enPagina.columnaDeTarjeta, ANA);
+  if (columna !== String(destino.id)) fallos.push(`la tarjeta de Ana quedó en la columna ${columna}`);
+  await ctx.capturar("41-estrategia-movida");
+
+  // Escape de verdad: cierra el menú y NADA más, y el foco vuelve al botón.
+  await teclaReal(ctx, "Escape", 27);
+  e = await esperarEstrategia(ctx, (s) => !s.abierto, "que Escape cierre el menú");
+  if (!e.chatAbierto) fallos.push("Escape cerró el chat junto con el menú");
+  if (e.foco !== "crm-btn-estrategia") fallos.push(`tras Escape el foco quedó en ${JSON.stringify(e.foco)}`);
+  if (e.boton.expandido) fallos.push("cerrado, el botón sigue con aria-expanded=true");
+
+  // Con el teclado: reabrir, ir a la etapa de origen y marcarla con Espacio. El foco se queda
+  // en la casilla: la lista no se rehace al moverse.
+  await ctx.cdp.evaluate(enPagina.estrategiaPulsar);
+  await esperarEstrategia(ctx, (s) => s.abierto && marcadasEstrategia(s) === JSON.stringify([String(destino.id)]),
+    "el menú reabierto con Ana en su etapa nueva");
+  r = await ctx.cdp.evaluate(enPagina.estrategiaEnfocar, String(origen));
+  if (r.error || !r.ok) throw new Error(r.error ?? "no se pudo enfocar la casilla de origen");
+  await teclaEspacio(ctx);
+  await ctx.esperarToast("Movido a");
+  await waitFor(async () => (await ctx.chat(ANA)).contacto.etapa_id === origen ? true : null,
+    { timeout: 6000, label: "Ana de vuelta en su etapa con Espacio" });
+  e = await esperarEstrategia(ctx, (s) => s.abierto && marcadasEstrategia(s) === JSON.stringify([String(origen)]),
+    "el menú con Ana de vuelta");
+  if (!e.opciones.find((o) => o.id === String(origen))?.enfocada) fallos.push(`tras mover con Espacio el foco quedó en ${JSON.stringify(e.foco)}`);
+
+  // Tab tras la última casilla: el foco sale del menú y el menú se cierra.
+  r = await ctx.cdp.evaluate(enPagina.estrategiaEnfocar, "ultima");
+  if (r.error) throw new Error(r.error);
+  await teclaReal(ctx, "Tab", 9);
+  await esperarEstrategia(ctx, (s) => !s.abierto, "que salir del menú con Tab lo cierre");
+
+  // Un clic fuera también lo cierra, sin cerrar el chat.
+  await ctx.cdp.evaluate(enPagina.estrategiaPulsar);
+  await esperarEstrategia(ctx, (s) => s.abierto, "el menú reabierto");
+  await ctx.cdp.evaluate(() => { document.querySelector("#crm-chat-thread").click(); return true; });
+  e = await esperarEstrategia(ctx, (s) => !s.abierto, "que un clic fuera cierre el menú");
+  if (!e.chatAbierto) fallos.push("el clic fuera cerró el chat");
+
+  const jefaDespues = await anaDeJefa();
+  if (jefaDespues !== jefaAntes) fallos.push(`mover a Ana en el tablero de colab1 la movió en el de jefa1: ${jefaAntes} → ${jefaDespues}`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `colab1 marcó «${destino.nombre}» y Ana se movió en SU tablero (API, tarjeta y contadores), con el menú abierto y una sola marcada; la actual no se desmarca; Escape, Tab y un clic fuera solo cierran el menú; con Espacio volvió a su etapa; el tablero de jefa1 no cambió`;
+}
+
+async function criterioEstrategiaAdmin(ctx) {
+  // jefa1 con la búsqueda puesta: el menú cuenta TODO su tablero, no lo que se ve. Beto no tiene
+  // folio y la píldora sigue viva; Diego —todos sus folios cerrados, fuera del tablero— se mueve
+  // igual y no cuenta en ninguna columna. El círculo es oliva con número blanco y cabe a 400 px.
+  await ctx.login("jefa1");
+  await ctx.abrirCrm();
+  const fallos = [];
+  await ctx.cdp.evaluate(enPagina.buscar, "Beto");
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.tablero)).tarjetas === 1 ? true : null,
+    { timeout: 6000, label: "el tablero filtrado a Beto" });
+  let r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, BETO, "tarjeta");
+  if (r.error) throw new Error(r.error);
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.estadoChat)).abierto ? true : null,
+    { timeout: 6000, label: "el chat de Beto" });
+  const cajon = await esperarCajon(ctx);
+  if (!cajon.riel.find((b) => b.seccion === "transferir")?.deshabilitado) ctx.avisar("sin folio «Transferir» no se apagó: la comparación con «Estrategia» no dice nada");
+  const etapas = await ctx.api("/crm/api/etapas");
+  const nums = (lista) => JSON.stringify(lista.map((x) => String(x.count)));
+  if (nums(etapas) === nums((await ctx.api("/crm/api/tablero?q=Beto")).etapas)) ctx.avisar("con «Beto» el tablero cuenta igual que sin búsqueda: la prueba de «sin filtros» no discrimina");
+
+  let e = await ctx.cdp.evaluate(enPagina.estrategiaEstado);
+  if (e.boton?.deshabilitado) fallos.push("sin folio «Estrategia» quedó apagado: la etapa es del chat");
+  r = await ctx.cdp.evaluate(enPagina.estrategiaPulsar);
+  if (r.error) throw new Error(r.error);
+  e = await esperarEstrategia(ctx, (s) => s.abierto && s.opciones.length === etapas.length, "el menú de jefa1");
+  const vistos = JSON.stringify(e.opciones.map((o) => o.num));
+  if (vistos !== nums(etapas)) fallos.push(`con la búsqueda puesta el menú cuenta ${vistos} y el tablero completo ${nums(etapas)}`);
+  const c = e.circulo;
+  if (!c || c.fondo !== "rgb(86, 95, 29)" || c.color !== "rgb(255, 255, 255)") {
+    fallos.push(`el contador no es oliva con número blanco: ${JSON.stringify(c)}`);
+  } else {
+    const k = contrasteRgb(c.fondo, c.color);
+    if (k < 4.5) fallos.push(`contraste del contador ${k.toFixed(2)}:1`);
+    if (c.radio < c.alto / 2 - 0.5) fallos.push(`el contador no es redondo (radio ${c.radio}, alto ${c.alto})`);
+    if (c.texto.length === 1 && Math.abs(c.ancho - c.alto) > 1) fallos.push(`con una cifra no es un círculo: ${c.ancho}×${c.alto}`);
+  }
+  if (e.menuCaja.arriba < e.botonAbajo) fallos.push("el menú no quedó debajo de la píldora");
+  await ctx.capturar("42-estrategia-jefa1");
+  await teclaReal(ctx, "Escape", 27);
+  await esperarEstrategia(ctx, (s) => !s.abierto, "que Escape cierre el menú");
+
+  // Diego: todos sus folios cerrados, sin tarjeta. Se mueve igual y no cambia ningún contador.
+  await abrirChatDe(ctx, DIEGO);
+  const antes = await ctx.api("/crm/api/etapas");
+  const origen = (await ctx.chat(DIEGO)).contacto.etapa_id;
+  const destino = antes.find((x) => x.id !== origen);
+  if ((await ctx.cdp.evaluate(enPagina.columnaDeTarjeta, DIEGO)) !== null) ctx.avisar("Diego tiene tarjeta: el caso «chat fuera del tablero» no se está probando");
+  await ctx.cdp.evaluate(enPagina.estrategiaPulsar);
+  e = await esperarEstrategia(ctx, (s) => s.abierto && s.opciones.length === antes.length, "el menú en el chat de Diego");
+  if (marcadasEstrategia(e) !== JSON.stringify([String(origen)])) fallos.push(`Diego: marcadas ${marcadasEstrategia(e)} y su etapa es ${origen}`);
+  r = await ctx.cdp.evaluate(enPagina.estrategiaMarcar, String(destino.id), "casilla");
+  if (r.error) throw new Error(r.error);
+  await ctx.esperarToast("Movido a");
+  await waitFor(async () => (await ctx.chat(DIEGO)).contacto.etapa_id === destino.id ? true : null,
+    { timeout: 6000, label: `Diego en «${destino.nombre}» según la API` });
+  const despues = await ctx.api("/crm/api/etapas");
+  if (nums(despues) !== nums(antes)) fallos.push(`mover a Diego (fuera del tablero) cambió los contadores: ${nums(antes)} → ${nums(despues)}`);
+  await esperarEstrategia(ctx, (s) => s.abierto && marcadasEstrategia(s) === JSON.stringify([String(destino.id)])
+    && JSON.stringify(s.opciones.map((o) => o.num)) === nums(despues), "el menú de Diego con la marca nueva");
+
+  // 400 px: el menú cabe en la pantalla, sin scroll horizontal de página.
+  await ctx.ancho(400, 800);
+  await dormir(300);
+  e = await ctx.cdp.evaluate(enPagina.estrategiaEstado);
+  if (!e.abierto) fallos.push("cambiar el ancho cerró el menú");
+  if (e.menuCaja.izq < 0 || e.menuCaja.der > e.anchoVentana || e.scrollX) {
+    fallos.push(`a 400 px el menú se sale: ${JSON.stringify({ caja: e.menuCaja, ventana: e.anchoVentana, scrollX: e.scrollX })}`);
+  }
+  await ctx.capturar("43-estrategia-400");
+
+  // Diego de vuelta a su etapa: lo que sigue no cuenta con este cambio.
+  r = await ctx.cdp.evaluate(enPagina.estrategiaMarcar, String(origen), "nombre");
+  if (r.error) throw new Error(r.error);
+  await waitFor(async () => (await ctx.chat(DIEGO)).contacto.etapa_id === origen ? true : null,
+    { timeout: 6000, label: "Diego de vuelta en su etapa" });
+  await ctx.cdp.send("Emulation.clearDeviceMetricsOverride");
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return `con «Beto» buscado el menú cuenta todo el tablero (${nums(etapas)}); sin folio la píldora sigue viva; círculo oliva con blanco a ${contrasteRgb(c.fondo, c.color).toFixed(2)}:1; Diego, sin tarjeta, se movió y volvió sin tocar los contadores; a 400 px cabe`;
 }
 
 async function criterioAdminOficina(ctx) {
@@ -2557,6 +3026,14 @@ async function recorridoMisRespuestas(ctx, fallos) {
   if (s.url !== "/crm?respuestas=1") fallos.push(`/replies aterrizó en ${s.url}`);
   await teclaReal(ctx, "Escape", 27);
   s = await esperarRespuestas(ctx, (e) => !e.abierto, "cerrar el diálogo que abrió la ruta vieja");
+  // ?respuestas=1 se quita en el evento close, que el navegador encola en una tarea aparte
+  // DESPUÉS de poner open=false: leer la URL en la misma foto que vio el diálogo cerrado era una
+  // carrera del juez (salía en rojo una de cada dos con tarjetas timbrando detrás). Se espera a
+  // que se limpie; si nunca se limpia, sigue fallando igual.
+  s = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.respuestasEstado);
+    return !e.abierto && e.url === "/crm" ? e : null;
+  }, { timeout: 2000, interval: 50, label: "que el cierre quite ?respuestas=1" }).catch(() => s);
   if (s.url !== "/crm") fallos.push(`al cerrar, la URL quedó en ${s.url} (recargar lo reabriría)`);
 
   // Teléfono: el diálogo cabe sin scroll horizontal.
@@ -2646,7 +3123,7 @@ async function main() {
     await criterio(ctx, "3b. Miembros de la oficina: tira, estado, conteos y filtro", criterioMiembros);
     await criterio(ctx, "4. Búsqueda sin acentos y por teléfono con formato", criterioBusqueda);
     await criterio(ctx, "5. Drag & drop persistente tras recargar", criterioArrastre);
-    await criterio(ctx, "6. Select «Mover a…»", criterioSelectMover);
+    await criterio(ctx, "6. La tarjeta trae el ícono de WhatsApp y no «Mover a…»: timbra con pendientes y se calma", criterioIconoWhatsApp);
     await criterio(ctx, "7. Abrir el chat de un contacto", criterioAbrirChat);
     await criterio(ctx, "7b. Un mensaje entrante aparece en el chat y en la tarjeta sin recargar", criterioEntranteEnVivo);
     await criterio(ctx, "7c. El stream avisa: un mensaje de otro panel entra sin sondeo", criterioAvisoEnVivo);
@@ -2664,6 +3141,8 @@ async function main() {
     await criterio(ctx, "16. Ocultar/mostrar bandeja", criterioToggleTray);
     await criterio(ctx, "17. Colaborador: alcance y sin controles de admin", criterioColaborador);
     await criterio(ctx, "17b. Tablero personal: lo que colab1 hace con sus etapas no toca el de jefa1", criterioTableroPersonal);
+    await criterio(ctx, "17c. «Estrategia» (colaborador): casillas de SU tablero, una sola marcada, mover sin salir del chat", criterioEstrategiaColaborador);
+    await criterio(ctx, "17d. «Estrategia» (admin): contadores sin filtros, sin folio, chat fuera del tablero, círculo oliva y 400 px", criterioEstrategiaAdmin);
     await criterio(ctx, "18. Admin de oficina: solo su oficina", criterioAdminOficina);
     await criterio(ctx, "19. Pantallas de 900 y 400 px", criterioResponsivo);
     await criterio(ctx, "20. Cajón del folio: abrir cada sección, cambiar y cerrar", criterioCajonAbrirCerrar);
@@ -2674,6 +3153,7 @@ async function main() {
     await criterio(ctx, "25. Transferir la solicitud desde el cajón", criterioCajonTransferir);
     await criterio(ctx, "26. Folios cerrados: salen del panel y viven en su pestaña", criterioFoliosCerrados);
     await criterio(ctx, "27. Mis respuestas: guardar desde el chat, usar, eliminar y la ruta vieja /replies", criterioMisRespuestas);
+    await criterio(ctx, "28. Llega un mensaje: timbra solo esa tarjeta, y con «reducir movimiento» nada se mueve", criterioTimbreEnVivo);
     criterioConsola(recolector);
 
     const ok = resultados.filter((r) => r.ok).length;
