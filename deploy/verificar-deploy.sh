@@ -83,8 +83,87 @@ revisar_ollama() {
     *)       fallo "contenedor tramites-ollama: $st";;
   esac
 }
-estado_de()      { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || echo "ausente"; }
+# Con un contenedor que no existe, `docker inspect -f` imprime un renglón vacío
+# Y sale con 1 (docker 29): sin limpiar, el estado era «\nausente», no casaba con
+# `ausente` y un ollama apagado salía ❌ en vez de aviso (lo vio el ensayo contra
+# un contenedor real, no el banco).
+estado_de()      { local st; st=$(docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null | tr -d '[:space:]'); echo "${st:-ausente}"; }
 log_del_cron()   { crontab -l 2>/dev/null | grep pull-deploy | sed -n 's/.*>>[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1; }
+
+# --- qué código sirve ---------------------------------------------------------
+# Ni el ID de la imagen ni el reinicio dicen qué código corre: en el almacén
+# containerd del VPS cada build estrena ID aunque el contenido sea idéntico (la
+# atestación lleva su hora), y un commit que no cambia la imagen no reinicia
+# nada. Lo dice una huella del código, calculada igual en el checkout y dentro
+# del contenedor.
+
+# Lo que la imagen copia del repo, leído del Dockerfile del checkout: una ruta
+# por renglón, la misma en el repo que bajo el WORKDIR del contenedor. Entiende
+# la forma de este Dockerfile —una sola etapa, ningún WORKDIR después de un COPY
+# y cada COPY con un origen que cae en la misma ruta: `COPY app/ app/`, o un
+# archivo de la raíz a `.`—. Ante otra imprime «?» y el renglón y sale con 1:
+# comparar rutas distintas daría un ❌ falso, y adivinar, un ✅ falso.
+fuentes_de_la_imagen() {
+  [ -f Dockerfile ] || return 0
+  local -a campos fuentes=()
+  local froms=0 origen destino
+  while read -r -a campos; do
+    [ "${#campos[@]}" -gt 0 ] || continue
+    case "${campos[0]^^}" in
+      FROM)    froms=$((froms + 1))
+               [ "$froms" -eq 1 ] || { echo "?${campos[*]}"; return 1; } ;;
+      WORKDIR) [ "${#fuentes[@]}" -eq 0 ] || { echo "?${campos[*]}"; return 1; } ;;
+      ADD)     echo "?${campos[*]}"; return 1 ;;
+      COPY)    [ "${#campos[@]}" -eq 3 ] || { echo "?${campos[*]}"; return 1; }
+               origen=${campos[1]%/}; destino=${campos[2]%/}
+               if [ "$origen" != . ] && { [ "$origen" = "$destino" ] ||
+                    { [ "$destino" = . ] && [ "$origen" = "${origen##*/}" ] && [ -f "$origen" ]; }; }; then
+                 fuentes+=("$origen")
+               else
+                 echo "?${campos[*]}"; return 1
+               fi ;;
+    esac
+  done < Dockerfile
+  [ "${#fuentes[@]}" -eq 0 ] || printf '%s\n' "${fuentes[@]}"
+}
+
+# Un lado de la huella: una línea `sha256  ruta` por archivo, en orden de bytes.
+# La ruta va en la línea, así que un archivo de más, de menos o renombrado
+# también la cambia. __pycache__ no cuenta: el .dockerignore lo deja fuera de la
+# imagen. Lo corre `sh` con find, sort, xargs y sha256sum, que la imagen base
+# (Debian) trae; las comillas simples son a propósito: "$@" son las rutas, y lo
+# expande el sh de cada lado.
+LISTA_DEL_CODIGO='find "$@" -name __pycache__ -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum'
+huella() { printf '%s\n' "$1" | sha256sum | cut -c1-16; }
+
+# Lo que cambió entre dos commits de lo que obliga a recrear el contenedor: lo
+# que el Dockerfile copia, sus instrucciones y el servicio `bot` del compose.
+# No cuentan los comentarios ni los renglones vacíos (no cambian la imagen), ni
+# los otros servicios (subir el digest de ollama no toca al bot), ni el
+# .dockerignore: solo saca lo que la imagen no copia, y
+# tests/test_verificar_deploy.py lo fija. Imprime un resumen, nada si no cambió
+# nada, y una explicación si no puede saberlo, que el llamador toma por cambio.
+cambios_de_imagen() {
+  local antes="$1" ahora="$2" fuentes_txt
+  git cat-file -e "$antes^{commit}" 2>/dev/null || { echo "algo que no puedo comparar (no conozco ${antes:0:7})"; return; }
+  fuentes_txt=$(fuentes_de_la_imagen) || { echo "algo que no puedo comparar (no sé leer el Dockerfile)"; return; }
+  local -a fuentes=() cambios=()
+  [ -z "$fuentes_txt" ] || mapfile -t fuentes <<< "$fuentes_txt"
+  [ "${#fuentes[@]}" -eq 0 ] || mapfile -t cambios < <(git diff --name-only "$antes" "$ahora" -- "${fuentes[@]}")
+  [ "$(sin_comentarios "$antes" Dockerfile)" = "$(sin_comentarios "$ahora" Dockerfile)" ] || cambios+=("el Dockerfile")
+  [ "$(servicio_bot "$antes")" = "$(servicio_bot "$ahora")" ] || cambios+=("el servicio bot del compose")
+  [ "${#cambios[@]}" -gt 0 ] || return 0
+  local resumen="${cambios[*]:0:3}"
+  [ "${#cambios[@]}" -le 3 ] || resumen+=" y $(( ${#cambios[@]} - 3 )) más"
+  echo "$resumen"
+}
+sin_comentarios() { git show "$1:$2" 2>/dev/null | grep -vE '^[[:space:]]*(#|$)'; }
+# El bloque del servicio `bot` (servicios a dos espacios, como el compose de hoy).
+servicio_bot() {
+  git show "$1:docker-compose.yml" 2>/dev/null \
+    | awk '/^  bot:/ { dentro = 1; print; next } dentro && (/^[^ #]/ || /^ [^ #]/ || /^  [^ #]/) { dentro = 0 } dentro' \
+    | grep -vE '^[[:space:]]*(#|$)'
+}
 
 # --- antes --------------------------------------------------------------------
 
@@ -253,18 +332,36 @@ fase_despues() {
   [ "$head" = "$completo" ]       && ok "HEAD es $esperado"                  || fallo "HEAD es ${head:0:7}, no $esperado"
   [ "$desplegado" = "$completo" ] && ok "data/deploy-info dice $esperado"    || fallo "data/deploy-info dice ${desplegado:0:7}: ese commit no pasó el health check"
 
-  # Un deploy real reinicia el contenedor; deploy-info solo dice qué sirve.
-  local antes_arranque="" ahora_arranque
-  [ -f "$ESTADO" ] && antes_arranque=$(sed -n 's/^ARRANQUE=//p' "$ESTADO")
+  # deploy-info solo dice qué commit pasó el health check; qué código corre lo
+  # dice la huella.
+  codigo_del_contenedor "$esperado"
+
+  # ¿Tenía que reiniciarse? Solo si de «antes» a este commit cambió algo que
+  # obliga a recrear el contenedor (cambios_de_imagen). Un commit de ci/ o de
+  # tests/ sale entero de la caché y compose deja el contenedor corriendo, con
+  # razón: exigir el reinicio siempre daba un ❌ falso en cada deploy así
+  # (ba8dfab, 2026-10-06).
+  local antes_head="" antes_arranque="" ahora_arranque cambios
+  if [ -f "$ESTADO" ]; then
+    antes_head=$(sed -n 's/^HEAD=//p' "$ESTADO")
+    antes_arranque=$(sed -n 's/^ARRANQUE=//p' "$ESTADO")
+  fi
   ahora_arranque=$(arranque || true)
   if [ -z "$ahora_arranque" ]; then
     fallo "el contenedor $CONTENEDOR no existe"
   elif [ -z "$antes_arranque" ]; then
-    aviso "sin nota de «antes»: no puedo probar que el contenedor se reinició (arrancó $ahora_arranque)"
-  elif [[ "$ahora_arranque" > "$antes_arranque" ]]; then
-    ok "el contenedor se reinició ($ahora_arranque > $antes_arranque)"
+    aviso "sin nota de «antes»: no sé si el contenedor tenía que reiniciarse (arrancó $ahora_arranque)"
+  elif [ "$antes_head" = "$completo" ]; then
+    aviso "la nota de «antes» ya es de $esperado (¿corrió después del deploy?): no sé si el contenedor tenía que reiniciarse"
   else
-    fallo "el contenedor NO se reinició desde «antes» ($ahora_arranque): sirve el código viejo"
+    cambios=$(cambios_de_imagen "$antes_head" "$completo")
+    if [ -z "$cambios" ]; then
+      ok "el contenedor no tenía por qué reiniciarse: ${antes_head:0:7}..$esperado no cambia la imagen ni el servicio bot"
+    elif [[ "$ahora_arranque" > "$antes_arranque" ]]; then
+      ok "el contenedor se reinició ($ahora_arranque > $antes_arranque): ${antes_head:0:7}..$esperado cambia $cambios"
+    else
+      fallo "el contenedor NO se reinició desde «antes» ($ahora_arranque) y ${antes_head:0:7}..$esperado cambia $cambios: corre una imagen vieja"
+    fi
   fi
 
   [ "$(estado_de "$CONTENEDOR")" = "running" ] && ok "contenedor running" || fallo "contenedor $(estado_de "$CONTENEDOR")"
@@ -275,6 +372,43 @@ fase_despues() {
   sondas_http
   errores_en_logs
   resumen
+}
+
+codigo_del_contenedor() {
+  local esperado="$1" fuentes_txt
+  if [ ! -f Dockerfile ]; then
+    aviso "no hay Dockerfile en $REPO_DIR: sin huella, nada prueba qué código sirve"; return
+  fi
+  if ! fuentes_txt=$(fuentes_de_la_imagen); then
+    aviso "no sé comparar el código con este Dockerfile («${fuentes_txt#\?}»): sin huella, nada prueba qué código sirve"; return
+  fi
+  if [ -z "$fuentes_txt" ]; then
+    aviso "el Dockerfile no copia nada del repo: no hay código que comparar"; return
+  fi
+  local -a fuentes
+  mapfile -t fuentes <<< "$fuentes_txt"
+
+  local aqui alla
+  aqui=$(sh -c "$LISTA_DEL_CODIGO" huella "${fuentes[@]}" 2>/dev/null)
+  if ! alla=$(timeout 60 docker exec "$CONTENEDOR" sh -c "$LISTA_DEL_CODIGO" huella "${fuentes[@]}" 2>/dev/null) || [ -z "$alla" ]; then
+    fallo "no pude leer el código dentro de $CONTENEDOR"; return 1
+  fi
+  if [ "$(huella "$aqui")" != "$(huella "$alla")" ]; then
+    fallo "el código del contenedor (huella $(huella "$alla")) no es el del checkout ($(huella "$aqui")); difieren:"
+    diff <(echo "$aqui") <(echo "$alla") \
+      | sed -n 's/^< [0-9a-f]*  /checkout:   /p; s/^> [0-9a-f]*  /contenedor: /p' | head -6 | sed 's/^/     │ /'
+    return 1
+  fi
+  # El contenedor es el checkout; ¿y el checkout es el commit? Un archivo sin
+  # commit, o ignorado por git, dentro de lo que la imagen copia también entra.
+  local ajenos
+  ajenos=$(git status --porcelain --untracked-files=all --ignored -- "${fuentes[@]}" 2>/dev/null | grep -v __pycache__)
+  if [ -n "$ajenos" ]; then
+    fallo "el contenedor corre el checkout, pero en lo que la imagen copia hay archivos que no son de $esperado:"
+    echo "$ajenos" | head -5 | sed 's/^/     │ /'
+    return 1
+  fi
+  ok "el contenedor corre el código de $esperado (huella $(huella "$aqui") de ${fuentes[*]})"
 }
 
 pines_en_el_contenedor() {
@@ -338,7 +472,10 @@ errores_en_logs() {
 # --- entrada ------------------------------------------------------------------
 
 uso() {
-  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  # Por contenido y no por número de renglón: la directiva de shellcheck del
+  # encabezado ya recorrió los renglones una vez y la ayuda dejó de mostrar las
+  # tres fases sin que nadie lo viera.
+  sed -n '/^# Verificación de un deploy/,/^#   deploy\/verificar-deploy.sh despues/p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
