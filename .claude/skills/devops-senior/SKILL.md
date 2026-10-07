@@ -52,8 +52,14 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
   `deploy()` against fake `docker`/`curl`: build-fails and health-never-answers both keep the
   previous SHA.
   Still true, and the reason to keep the habit: the file says what is *serving*, not what is
-  *running*. For "did this exact container restart", the container is the source:
-  `docker inspect -f '{{.State.StartedAt}}' tramites-bot`.
+  *running*. What is running is answered by the code itself: `deploy/verificar-deploy.sh despues`
+  hashes what the Dockerfile copies, in the checkout and inside the container, and the two must
+  match. Neither the image ID nor a restart answers it here. The VPS uses the containerd image
+  store, where every build gets a new ID even with identical content (its attestation carries the
+  build time): the 684ba5e and ba8dfab builds exported the same manifest under two IDs. And a
+  commit that changes nothing the image copies leaves the container running — compose is right not
+  to recreate it. A restart is evidence only when the deploy changed what the image copies, the
+  Dockerfile's instructions or the `bot` service; then the script requires it.
 - **Did `promote` even run?** `ci-cd.yml:41` is `git push origin HEAD:production` with no
   `--force`. Any direct push to `production` makes promote fail permanently and the VPS keeps
   serving the old SHA in silence. Compare `git rev-parse origin/main` and
@@ -116,7 +122,15 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
   succeeded, report the part that did not.
 
 ## Common mistakes
-- **Trusting `/system`'s deploy SHA after a failed build.** See the checklist; use `StartedAt`.
+- **Trusting `/system`'s deploy SHA after a failed build.** See the checklist; the proof is the
+  code fingerprint `verificar-deploy.sh despues` prints.
+- **Requiring a restart on every deploy, or comparing image IDs.** Both flag a correct deploy as
+  failed: ba8dfab (CI only, 2026-10-06) came out of the layer cache, compose rightly left the
+  container running, and the old `despues` said it served the old code. Every ❌ like that teaches
+  the operator to skip the ❌s.
+- **Excluding something inside `app/`, `templates/`, `static/` or `landing/` in `.dockerignore`.**
+  The fingerprint would count it in the checkout and not in the container: a false ❌ on every
+  deploy. `tests/test_verificar_deploy.py` fails first; teach the fingerprint to skip it too.
 - **Adding `--workers 4` to `Dockerfile:9`.** N uvicorn workers + the nightly `docker exec`
   process all contend for one SQLite writer lock with a 5s `busy_timeout`. Under WhatsApp burst
   traffic that surfaces as `database is locked` in the webhook path.
@@ -213,8 +227,11 @@ Verification sequence, in order — do not declare success before step 5:
 2. CI `test` + `promote` both green (`gh run list --limit 3`).
 3. `git rev-parse origin/main` == `git rev-parse origin/production` (one ref per call).
 4. Wait ≤ 2 min for the VPS cron tick; the SHA in `/system` matches.
-5. `docker inspect -f '{{.State.StartedAt}}' tramites-bot` shows a restart *after* the merge —
-   this is what distinguishes a real deploy from a `deploy-info` written before a failed build.
+5. `deploy/verificar-deploy.sh despues <sha>` on the VPS (`durante <sha>` ends there) without a ❌:
+   the code fingerprint inside `tramites-bot` equals the checkout's, and when the deploy changed
+   what the image copies, the Dockerfile's instructions or the `bot` service, the container
+   restarted after `antes`. Run `antes` before the merge: without its note the restart cannot be
+   judged.
 6. One functional probe through the real path (a WhatsApp message, or the dashboard page the
    change touches). `curl -sf http://127.0.0.1:8000/health` alone is not evidence.
 7. If any step fails: `docker compose logs --tail 30 bot` — `pull-deploy.sh:57` already dumps
