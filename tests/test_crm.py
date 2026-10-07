@@ -215,6 +215,116 @@ def test_el_menu_lateral_trae_la_entrada_del_crm():
     assert 'href="/crm" aria-current="page"' in html
 
 
+def test_estrategia_va_junto_a_transferir_y_no_es_una_seccion_del_cajon():
+    """«Estrategia» mueve el chat a otra etapa del tablero de quien mira. Va en el riel justo
+    después de «Transferir», pero sin data-seccion: crm-panel.js toma esas píldoras para abrir
+    el cajón y apagarlas sin folio, y la etapa es del chat, no del folio. Su menú vive fuera del
+    riel —el overflow-x del riel lo recortaría— y justo después, para que el Tab llegue a él."""
+    import re
+
+    html = _sesion("colab1").get("/crm").text
+    riel = re.search(r'<nav class="chat-acciones" id="crm-acciones".*?</nav>', html, re.S).group(0)
+    botones = re.findall(r"<button\b([^>]*)>(.*?)</button>", riel, re.S)
+    assert 'data-seccion="transferir"' in botones[-2][0]
+    atributos, texto = botones[-1]
+    assert re.sub(r"<[^>]+>|\s+", " ", texto).split()[-1] == "Estrategia"
+    assert 'id="crm-btn-estrategia"' in atributos and "data-seccion" not in atributos
+    assert 'aria-expanded="false"' in atributos and 'aria-controls="crm-estrategia"' in atributos
+    assert "disabled" not in atributos
+
+    despues = html[html.index(riel) + len(riel):]
+    assert re.match(r'\s*<div class="estrategia-menu" id="crm-estrategia" hidden>', despues)
+    menu = despues[: despues.index("</div>")]
+    assert "<fieldset" in menu and "<legend" in menu and 'role="status"' in menu
+
+    # Cada etapa: casilla nativa, nombre y el contador; y el JS y el CSS del menú se cargan.
+    opcion = re.search(r'<template id="crm-tpl-estrategia-opcion">(.*?)</template>', html, re.S).group(1)
+    assert 'type="checkbox"' in opcion and "estrategia-nombre" in opcion and "estrategia-num" in opcion
+    assert "js/crm-estrategia.js" in html and "css/crm-estrategia.css" in html
+
+
+def _luminancia(hex_color: str) -> float:
+    canales = [int(hex_color.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    lineal = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in canales]
+    return 0.2126 * lineal[0] + 0.7152 * lineal[1] + 0.0722 * lineal[2]
+
+
+def _contraste(a: str, b: str) -> float:
+    claro, oscuro = sorted((_luminancia(a), _luminancia(b)), reverse=True)
+    return (claro + 0.05) / (oscuro + 0.05)
+
+
+def test_el_contador_de_estrategia_es_un_circulo_oliva_con_numero_blanco_legible():
+    """El contador de cada etapa: círculo verde oliva (--olive) con el número en blanco, a
+    contraste AA de texto pequeño (4.5:1). Aclarar el oliva lo rompe sin que se note a simple
+    vista: el «olive» puro, #808000, da 4.2:1."""
+    import pathlib
+    import re
+
+    tokens = pathlib.Path("static/css/tokens.css").read_text(encoding="utf-8")
+    oliva = re.search(r"--olive:\s*(#[0-9a-fA-F]{6})\s*;", tokens).group(1)
+    css = pathlib.Path("static/css/crm-estrategia.css").read_text(encoding="utf-8")
+    regla = re.search(r"\.crm \.estrategia-num \{(.*?)\}", css, re.S).group(1)
+    assert re.search(r"background:\s*var\(--olive\)\s*;", regla)
+    assert re.search(r"(?<![-\w])color:\s*#fff\s*;", regla)
+    assert re.search(r"border-radius:\s*999px\s*;", regla)
+    assert _contraste(oliva, "#ffffff") >= 4.5
+    assert _contraste("#808000", "#ffffff") < 4.5  # por qué no el «olive» de nombre
+
+
+def test_la_tarjeta_trae_el_icono_de_whatsapp_y_no_el_select_mover_a():
+    """El select «Mover a…» (card-move) ya no existe: mover un chat sin arrastrar es «Estrategia»,
+    en el chat. Donde terminaba, al final del pie de la tarjeta, va el ícono de WhatsApp. Es
+    decorativo (aria-hidden): el número de no leídos y el nombre accesible de la tarjeta ya lo
+    dicen, y un lector de pantalla no tiene por qué anunciar un dibujo."""
+    import re
+
+    html = _sesion("colab1").get("/crm").text
+    assert "card-move" not in html
+    tarjeta = re.search(r'<template id="crm-tpl-card">(.*?)</template>', html, re.S).group(1)
+    assert "<select" not in tarjeta
+    pie = re.search(r'<div class="card-bottom">(.*?)</div>', tarjeta, re.S).group(1)
+    icono = re.search(r'<span class="card-wa" aria-hidden="true">\s*<svg\b([^>]*)>', pie)
+    assert icono, "falta el ícono de WhatsApp en el pie de la tarjeta"
+    assert 'focusable="false"' in icono.group(1) and 'fill="currentColor"' in icono.group(1)
+    assert pie.index("card-wa") > pie.index("card-time")
+
+
+def test_el_icono_de_whatsapp_timbra_poco_y_respeta_reducir_movimiento():
+    """Con mensajes nuevos el ícono timbra, pero acotado: lo que se mueve más de 5 s necesita un
+    botón para pararlo (WCAG 2.2.2, nivel A), y solo si el sistema no pide reducir el movimiento.
+    Gris sin pendientes y verde azulado con pendientes, los dos a 3:1 sobre la tarjeta blanca
+    (1.4.11); el verde de marca no llega y por eso solo pinta la onda, que es adorno."""
+    import pathlib
+    import re
+
+    css = pathlib.Path("static/css/crm.css").read_text(encoding="utf-8")
+    assert ".card-move" not in css
+    paleta = dict(re.findall(r"(--wa-[a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})", css))
+    base = re.search(r"\.crm \.card-wa \{(.*?)\}", css, re.S).group(1)
+    pendientes = re.search(r"\.crm \.card-wa\.has-unread \{(.*?)\}", css, re.S).group(1)
+    gris = paleta[re.search(r"(?<![-\w])color:\s*var\((--wa-[a-z0-9-]+)\)", base).group(1)]
+    verde = paleta[re.search(r"(?<![-\w])color:\s*var\((--wa-[a-z0-9-]+)\)", pendientes).group(1)]
+    assert _contraste(gris, "#ffffff") >= 3 and _contraste(verde, "#ffffff") >= 3
+    assert _contraste(paleta["--wa-green"], "#ffffff") < 3  # por qué no el verde de marca
+
+    # El timbre solo existe dentro de prefers-reduced-motion: no-preference, y acaba solo. El único
+    # retraso admitido es el desfase (negativo) con que una tarjeta repintada a media animación
+    # retoma el timbre donde iba, en vez de empezarlo otra vez.
+    bloque = re.search(r"@media \(prefers-reduced-motion: no-preference\) \{(.*?)\n\}", css, re.S).group(1)
+    timbres = re.findall(
+        r"animation:\s*([a-z-]+)\s+([\d.]+)s\s+[a-z-]+\s+(?:var\(--wa-desfase, 0s\)\s+)?(\d+)\s*;", bloque
+    )
+    assert {nombre for nombre, _, _ in timbres} == {"crm-wa-timbre", "crm-wa-onda"}
+    assert all(float(segundos) * int(veces) <= 5 for _, segundos, veces in timbres)
+    # crm.js cuenta el mismo total para saber cuánto le queda a un timbre que se repintó.
+    js = pathlib.Path("static/js/crm.js").read_text(encoding="utf-8")
+    timbre_ms = int(re.search(r"var TIMBRE_MS = (\d+);", js).group(1))
+    assert {round(float(segundos) * int(veces) * 1000) for _, segundos, veces in timbres} == {timbre_ms}
+    assert "animation" not in css.replace(bloque, "")
+    assert "@keyframes crm-wa-timbre" in css and "@keyframes crm-wa-onda" in css
+
+
 def test_la_api_contesta_403_json_a_un_anonimo():
     anonimo = TestClient(app, base_url="https://testserver")
     for metodo, ruta in (

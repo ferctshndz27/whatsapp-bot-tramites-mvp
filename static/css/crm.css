@@ -851,16 +851,58 @@
   white-space: nowrap;
 }
 
-.crm .card-move {
-  width: 100%;
-  max-width: none;
-  min-height: 32px;
-  padding: 5px 6px;
-  border: 1px solid var(--wa-border);
-  border-radius: 6px;
-  background: var(--wa-panel);
-  font-size: 12px;
-  cursor: pointer;
+/* Ícono de WhatsApp del pie, donde estaba el select «Mover a…». Decorativo —el
+   número de no leídos lo dice en texto—, pero cada estado pasa 3:1 sobre la
+   tarjeta blanca (1.4.11): gris 4.65:1 sin pendientes y verde azulado 4.14:1
+   con mensajes sin contestar. El verde de marca (#25D366) da 1.98:1: solo pinta
+   la onda del timbre, que es adorno. */
+.crm .card-wa {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  color: var(--wa-muted);
+}
+.crm .card-wa svg {
+  position: relative; /* por encima de la onda (::before) */
+  width: 18px;
+  height: 18px;
+}
+.crm .card-wa.has-unread { color: var(--wa-teal-2); }
+
+/* El timbre: tres sacudidas con su onda, 3.6 s en total —menos de los 5 s a
+   partir de los cuales WCAG 2.2.2 pide poder pararlo— y solo si el sistema no
+   pide reducir el movimiento. crm.js (marcarWhatsApp) quita la clase al acabar
+   y, si la tarjeta se repinta a media animación, pone --wa-desfase (negativo)
+   para que la nueva siga donde iba la vieja: el total no pasa de 3.6 s. La
+   duración vive también en TIMBRE_MS de crm.js. */
+@media (prefers-reduced-motion: no-preference) {
+  .crm .card-wa.is-ringing svg {
+    transform-origin: 50% 55%;
+    animation: crm-wa-timbre 1.2s ease-in-out var(--wa-desfase, 0s) 3;
+  }
+  .crm .card-wa.is-ringing::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--wa-green);
+    opacity: 0;
+    animation: crm-wa-onda 1.2s ease-out var(--wa-desfase, 0s) 3;
+  }
+}
+
+@keyframes crm-wa-timbre {
+  0%, 50%, 100% { transform: rotate(0); }
+  10%, 30% { transform: rotate(-14deg); }
+  20%, 40% { transform: rotate(14deg); }
+}
+
+@keyframes crm-wa-onda {
+  0% { transform: scale(.7); opacity: .55; }
+  80%, 100% { transform: scale(1.9); opacity: 0; }
 }
 
 /* ---------- panel de chat ---------- */

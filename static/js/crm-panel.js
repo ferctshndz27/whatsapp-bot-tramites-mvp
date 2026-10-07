@@ -828,7 +828,9 @@
     els.panel = document.getElementById("crm-panel");
     els.panelBody = document.getElementById("crm-panel-body");
     els.titulo = document.getElementById("crm-panel-title");
-    els.acciones = $$("#crm-acciones .accion");
+    /* Solo las píldoras con sección son del cajón: «Estrategia» comparte el riel
+       pero no abre el cajón ni depende del folio (static/js/crm-estrategia.js). */
+    els.acciones = $$("#crm-acciones .accion[data-seccion]");
     if (!els.raiz || !els.panel || !els.panelBody || !els.acciones.length) return;
     cablear();
     /* Si crm.js ya abrió una conversación —se llega con ?chat= y la abre dentro

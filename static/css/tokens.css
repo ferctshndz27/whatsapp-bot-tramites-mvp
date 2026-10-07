@@ -7,6 +7,9 @@
       --lime: #dcf24c;      --lime-ink: #23260f;
       /* Borde oliva de los botones de acción (rgb(86,95,29)). */
       --btn-border: #565f1d;
+      /* El mismo oliva como FONDO con texto blanco: 6.88:1 (AA pide 4.5:1). Lo usan los
+         contadores de «Estrategia» del CRM; el «olive» puro (#808000) daba 4.2:1. */
+      --olive: #565f1d;
       --btn-border-width: 3px;
       --green: #10b981;     --green-2: #0c9b6c;
       --blue: #2563eb;      --blue-2: #1d4fd7;
