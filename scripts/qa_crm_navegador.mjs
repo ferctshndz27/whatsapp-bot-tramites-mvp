@@ -15,6 +15,8 @@
  *
  * Uso: node scripts/qa_crm_navegador.mjs [--verbose] [--keep] [--capturas=DIR]
  *   --capturas=DIR  guarda capturas PNG (tablero, chat, diálogo y anchos de 900 y 400 px) en DIR
+ * Variables: CHROME_BIN (def. /usr/bin/google-chrome) y QA_PYTHON (def. .venv/bin/python). La imagen
+ * de CI de Jenkins (ci/Dockerfile) las apunta a su Chromium y a su Python, que no viven en un venv.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -27,7 +29,7 @@ import { fileURLToPath } from "node:url";
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(AQUI, "..");
-const PYTHON = path.join(REPO, ".venv", "bin", "python");
+const PYTHON = process.env.QA_PYTHON || path.join(REPO, ".venv", "bin", "python");
 const SEED = path.join(AQUI, "qa_crm_seed.py");
 const CHROME = process.env.CHROME_BIN || "/usr/bin/google-chrome";
 const CLAVE = "clave-qa-123";

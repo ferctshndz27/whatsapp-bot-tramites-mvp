@@ -73,7 +73,7 @@ _FILA_RUTEO = re.compile(r"^\|.+\|\s*`([a-z0-9-]+)`\s*\|\s*$", re.M)
 # caracteres que forman una ruta, no cualquier no-espacio: si excluyera el
 # backtick, que es justo lo que las precede, no casaría ninguna.
 _CITA = re.compile(
-    r"((?:\b(?:app|tests|scripts|templates|deploy|docs)"
+    r"((?:\b(?:app|tests|scripts|templates|deploy|docs|ci)"
     r"|(?<![A-Za-z0-9_./-])\.(?:claude|gemini))"
     r"/[A-Za-z0-9_./-]+\.(?:py|html|sh|json|md|yml|toml|mjs))(?::(\d+))?"
 )

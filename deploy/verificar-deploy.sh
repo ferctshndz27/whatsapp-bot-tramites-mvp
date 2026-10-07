@@ -1,4 +1,7 @@
 #!/bin/bash
+# shellcheck disable=SC2015
+# SC2015 («A && B || C no es if/else»): aquí cada `prueba && ok … || fallo …` es a propósito. ok, aviso
+# y fallo solo imprimen y siempre devuelven 0, así que C nunca corre con A verdadera. (CI: ci/shellcheck.sh)
 # Verificación de un deploy en el VPS, en tres fases, con un veredicto por paso.
 # NO despliega: eso lo hace el cron con pull-deploy.sh. Esto mira antes, espera
 # durante y comprueba después, y termina en 1 si algún paso quedó en ❌.
@@ -212,6 +215,9 @@ fase_durante() {
       ok "el commit $esperado está sirviendo"
       echo
       fase_despues "$esperado"
+      # fase_despues hoy termina en exit (por eso shellcheck lo ve inalcanzable); si un día no, este
+      # return es lo que corta el bucle.
+      # shellcheck disable=SC2317
       return
     fi
     local rollbacks

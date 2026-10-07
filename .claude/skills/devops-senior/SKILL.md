@@ -1,6 +1,6 @@
 ---
 name: devops-senior
-description: Usar al tocar deploy, infraestructura o el contenedor de este bot — Dockerfile, docker-compose.yml, deploy/pull-deploy.sh, .github/workflows/ci-cd.yml, la rama production, el cron del VPS, /health, data/deploy-info, volúmenes data/ y mssql_data, .env/.env.example, rollback, o al diagnosticar "desplegué y el VPS sigue con el código viejo".
+description: Usar al tocar deploy, infraestructura o el contenedor de este bot — Dockerfile, docker-compose.yml, deploy/pull-deploy.sh, .github/workflows/ci-cd.yml, el Jenkinsfile y ci/ (CI local en Jenkins), la rama production, el cron del VPS, /health, data/deploy-info, volúmenes data/ y mssql_data, .env/.env.example, rollback, o al diagnosticar "desplegué y el VPS sigue con el código viejo".
 ---
 
 # DevOps senior — pull-based deploy of the trámites bot
@@ -13,6 +13,8 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 ## When to use
 - Editing `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `requirements.txt`.
 - Editing `deploy/pull-deploy.sh`, `.github/workflows/ci-cd.yml`, `scripts/ship.sh`.
+- Editing the local CI: `Jenkinsfile`, `ci/` (its Dockerfile and one script per stage), or reading a
+  `tramites` build in the operator's Jenkins.
 - Adding a new env var (`.env.example` + `app/config.py` + possibly `docker-compose.yml`).
 - Anything that runs at boot: `on_startup()` in `app/main.py:154`, or the nightly cron
   `docker exec tramites-bot python -m app.jobs` (documented in `app/jobs.py` docstring).
@@ -27,9 +29,11 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 - Never run `git push` or any deploy command yourself — the operator does it (`AGENTS.md`).
 
 ## Responsibilities
-1. Keep the two Python pins in agreement: `Dockerfile:1` (`python:3.12-slim`) and
-   `.github/workflows/ci-cd.yml:22` (`python-version: "3.12"`). CI green on one version proves
-   nothing about an image built on another.
+1. Keep the three Python pins in agreement: `Dockerfile:7` (`python:3.12-slim@sha256:…`),
+   `.github/workflows/ci-cd.yml:28` (`python-version: "3.12"`) and the first `FROM` of `ci/Dockerfile`
+   (the local Jenkins image, which must start word for word like `Dockerfile` up to `pip install` —
+   `tests/test_ci_jenkins.py` fails otherwise). CI green on one version proves nothing about an image
+   built on another.
 2. Preserve the rollback invariant in `deploy/pull-deploy.sh`: HEAD must NOT advance past a
    deploy that failed to serve, or the next cron tick sees `LOCAL == REMOTE`, exits 0 forever,
    and the bot stays down until a human SSHes in.
@@ -96,6 +100,14 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 - `scripts/ship.sh` is a LOCAL operator tool, never committed to the repo. It enforces: on `main`
   → `pytest` → branch `claude/<slug>` → `git add -- "$@"` with an explicit file list → PR → wait
   for `main == production`.
+- **Two CIs, two jobs.** GitHub Actions is the gate: `test` + `build` on every push/PR, and the only
+  thing that moves `production`. The operator's local Jenkins (job `tramites`, `Jenkinsfile`) runs on
+  every *local* commit, before any push: shellcheck, `pytest` on the production base image, the
+  image build and the CRM browser judge (`scripts/qa_crm_navegador.mjs`, which Actions never runs).
+  It publishes and deploys nothing and holds no credential. Stage logic lives in `ci/*.sh`, which
+  run by hand too; the trigger is a local `post-commit` hook installed by `ci/instalar-hook.sh`, plus
+  a 2-min scan. Read it with `jenkinsctl result tramites <rama>` — always with the branch: without
+  one, `jenkinsctl` resolves Coin's current branch.
 - **Carrying on after a failure and reporting success are two different things.** Best-effort is
   the right shape for the nightly job — a broken sweep must not stop the alerts — but a process
   that keeps going *and* exits 0 leaves a job that has been failing for weeks looking healthy.
@@ -126,12 +138,12 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
   is not". Today both assignments are identical so nothing breaks; the day one grows a validation
   and the other does not, the second one wins in silence. `grep -c` the key in both files before
   adding it.
-- **Reading CI green as "the image builds".** `.github/workflows/ci-cd.yml` contains **zero**
-  mentions of docker: it installs `requirements.txt` on 3.12 and runs `pytest`. The image is only
-  ever built on the VPS, by `pull-deploy.sh`, after `promote` already moved `production`. A
-  dependency that resolves for pip but breaks the Docker build passes CI, and the first thing that
-  notices is the deploy — which is exactly why `rollback()` has to keep working. Build it locally
-  before pushing anything that touches `requirements.txt` or the `Dockerfile`.
+- **Reading CI green as "the image boots".** Both CIs *build* the image — the `build` job of
+  `.github/workflows/ci-cd.yml` (`promote` needs it) and the local Jenkins stage `ci/imagen.sh` — but
+  neither *runs* it. A boot that dies in `on_startup()`, an env var the container needs, a `/data`
+  it cannot write: the first thing that notices is still the VPS health check, which is exactly why
+  `rollback()` has to keep working. Before pushing anything that touches the `Dockerfile` or boot,
+  run the image locally with the production `.env` shape.
 - **`git add .` in the deploy flow.** `.env.old` exists locally and is untracked; `ship.sh:43-46`
   and `:64` exist precisely to prevent staging it.
 - **Assuming the nightly cron writes DB tables.** `app/db.py:6-11` documents that importing
@@ -148,10 +160,13 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
   that died during the build — killed the script under `set -e` and the rollback never ran, leaving
   HEAD on the broken commit and the cron exiting 0 forever. Anything between the failure and
   `rollback` needs `|| true`. `tests/test_deploy_rollback.py` runs the real script against a fake
-  git repo to keep it that way.
+  git repo to keep it that way. `ci/shellcheck.sh` enforces the first half on every local commit,
+  for every `deploy/*.sh` and `ci/*.sh`, at severity `info` (it catches SC2086); a deliberate
+  exception is a directive next to the code, with its reason, as in `deploy/verificar-deploy.sh`.
 - Every change to `docker-compose.yml` or `Dockerfile`: state which of the three persistence
   surfaces it touches (image layer / `./data` bind mount / `mssql_data` named volume).
-- `pytest -q` green locally before the operator pushes; CI runs only `pytest` (no linter).
+- `pytest -q` green locally, and the branch's local Jenkins build green, before the operator pushes.
+  Actions runs `pytest` + the image build; shellcheck and the CRM judge run only in Jenkins.
 
 ## Security
 - **No server credentials in GitHub.** `promote` uses the ephemeral `GITHUB_TOKEN`
@@ -167,6 +182,11 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 - The dashboard session cookie is `Secure` by default (`SECURE_COOKIES`, `app/config.py`); never
   flip that default to make production easier.
 - Security headers and CSP live in `_security_headers` in `app/main.py` — outermost middleware.
+- **The local Jenkins sees only `.git`.** Its compose mounts this repo's `.git` read-only, never the
+  working tree, so `.env`, `data/` (client PII) and `media/` stay out. But build agents inherit the
+  controller's volumes (`--volumes-from`), the host Docker socket included: any `Jenkinsfile` —
+  and any test or dependency it runs — is root-equivalent on the operator's machine (operator
+  decision, 2026-10-03). Never add a credential to the pipeline; it has nothing to publish.
 
 ## Performance
 - **Health budget:** 60s total. `archive.backfill()` runs on every boot and grows with the mirror;
@@ -188,7 +208,8 @@ credentials. See `AGENTS.md` for the one-paragraph summary; this file is the ope
 
 ## Definition of done
 Verification sequence, in order — do not declare success before step 5:
-1. `pytest -q` green locally; PR merged to `main` by the operator.
+1. `pytest -q` green locally and the branch's local Jenkins build SUCCESS
+   (`jenkinsctl result tramites <rama>`); PR merged to `main` by the operator.
 2. CI `test` + `promote` both green (`gh run list --limit 3`).
 3. `git rev-parse origin/main` == `git rev-parse origin/production` (one ref per call).
 4. Wait ≤ 2 min for the VPS cron tick; the SHA in `/system` matches.
