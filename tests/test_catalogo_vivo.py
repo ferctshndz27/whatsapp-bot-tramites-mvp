@@ -16,23 +16,7 @@ en el PR.
 
 import app.nlu as nlu
 from app.catalog import catalog
-
-# El caso del diseño §1 con claves y nombre sintéticos: las CURP son las del diseño
-# y los NSS están inventados (11 dígitos con espacios, como los escribió el
-# cliente). El original tenía 929 caracteres; este conserva lo que lee la capa
-# literal.
-CASO_2026_09_24 = (
-    "Se solicita el apoyo para el C. <NOMBRE DEL TRABAJADOR>. El trabajador presenta la "
-    "siguiente situación: CURP cancelada: AAAA000101HDFBBB01 asociada al NSS 12 34567890 1, "
-    "el cual cuenta con 694 semanas cotizadas. CURP oficial vigente: AAAA000101HDFBBB09 "
-    "asociada al NSS 98 76543210 0, el cual cuenta con 0 semanas cotizadas. El trabajador ya "
-    "realizó la corrección ante RENAPO...\n"
-    "Por lo anterior se solicita:\n"
-    "1. La unificación de ambos Números de Seguridad Social, dejando como NSS único el más "
-    "antiguo...\n"
-    "2. Que dicho NSS quede vinculado a la CURP oficial y vigente...\n"
-    "3. La cancelación definitiva en sistema del NSS ... con 0 semanas."
-)
+from tests.datos.set_dorado_casos import CASO_2026_09_24
 
 
 def test_el_bot_lee_el_catalogo_de_produccion_y_no_la_semilla(catalogo_vivo):
