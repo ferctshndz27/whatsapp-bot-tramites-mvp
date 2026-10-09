@@ -42,6 +42,19 @@ ESCALATION_KEYWORDS = [
     "reclamo",
     "hablar con alguien",
     "hablar con una persona",
+    # Frases, no palabras sueltas: «agente», «transferir» y «trasferir» solos
+    # aparecen en preguntas legítimas («¿se hace con un agente aduanal?»). Las
+    # frases casi no se dan en un trámite (FTD-SALUDO-MENU §C, opción A).
+    "transferir agente",
+    "trasferir agente",
+    "transfiereme",
+    "pasame con",
+    "pasarme con",
+    "comunicame con",
+    "atencion humana",
+    # «operador» va suelto a propósito: riesgo aceptado por el operador (2026-10-09)
+    # («soy operador de tráiler» escalaría a un asesor).
+    "operador",
 ]
 
 YES_WORDS = {"si", "sí", "s", "yes", "confirmo"}
@@ -56,9 +69,10 @@ MENU_KEYWORDS = {"menu", "menú", "inicio", "reiniciar"}
 # ver nlu._norm), así "¿Qué tal?" == "que tal".
 GREETING_PHRASES = {
     "hola", "holaa", "holaaa", "holi", "ola", "buenas", "buen dia",
-    "buenos dias", "buena tarde", "buenas tardes", "buena noche",
-    "buenas noches", "hey", "que tal", "que onda", "que hay", "saludos",
-    "como estas", "como esta", "como estan", "disculpa", "disculpe",
+    "buenos dias", "buena tarde", "buenas tardes", "buenos tardes", "buena noche",
+    "buenas noches", "buenos noches", "buenas dias", "buenas dia", "hey", "que tal",
+    "que onda", "que hay", "saludos", "como estas", "como esta", "como estan",
+    "disculpa", "disculpe",
 }
 FAREWELL_PHRASES = {
     "gracias", "muchas gracias", "mil gracias", "gracias por todo",
@@ -104,7 +118,8 @@ _STATUS_INTENT_RE = re.compile(
 # Reglas del agente (definidas por el negocio, 2026-07-19): siempre español,
 # mensajes cortos (<30 palabras, máx. 2 emojis, sin listas salvo que pidan el
 # catálogo), nunca inventar precios (solo los del catálogo), molestia → humano,
-# saludo → pregunta abierta sin listar servicios, servicio directo → ticket.
+# saludo → saludo + menú principal de categorías (cambio del operador,
+# 2026-10-08, D7: el cliente debe ver qué puede pedir), servicio directo → ticket.
 ANNOYANCE_KEYWORDS = [
     "molesto", "molesta", "enojado", "enojada", "furioso", "furiosa",
     "queja", "quejarme", "pesimo", "pésimo", "mal servicio", "muy mal",
@@ -538,9 +553,10 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
     if not capturando and _asks_status(text):
         return [_status_reply(session, client.phone)]
 
-    # Saludo o despedida: trato social, no un trámite. Al saludo se responde
-    # con pregunta abierta (sin listar servicios) y a la despedida con un
-    # cierre cálido; ninguno pasa por la deducción ni ensucia la bitácora.
+    # Saludo o despedida: trato social, no un trámite. Al saludo se responde con
+    # el saludo y el menú principal de categorías (D7, 2026-10-08: un cliente que
+    # no ve las opciones no sabe qué puede pedir); a la despedida, con un cierre
+    # cálido. Ninguno pasa por la deducción ni ensucia la bitácora.
     # Exclusiones: "esperando_nombre" (un saludo podría ser el nombre real) y
     # "pidiendo_requisitos" (un "ok" o un "hola" ahí es la respuesta al dato).
     # En "confirmar" solo aplica el saludo — "ok"/"listo" son intentos de
@@ -548,7 +564,7 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
     social = _social_kind(text)
     if social == "saludo" and conv.state not in {"esperando_nombre", "pidiendo_requisitos"}:
         _set_state(session, conv, "menu_categoria")
-        return [_greeting_for(client)]
+        return [_greeting_for(client) + "\n\n" + catalog.format_category_menu()]
     if social == "despedida" and conv.state not in {
         "esperando_nombre", "confirmar", "pidiendo_requisitos"
     }:
