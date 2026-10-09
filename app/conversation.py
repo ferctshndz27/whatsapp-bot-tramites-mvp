@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from collections.abc import Callable
 from datetime import timedelta, timezone
 
 from sqlmodel import Session, select
@@ -384,30 +385,12 @@ def handle_incoming(
         # solo porque el folio más nuevo es de otro.
         replies = []
     elif conv.state == "escalado":
+        # Su handler sale del dict de la FSM, pero se invoca AQUÍ y no desde
+        # _dispatch: el cliente que espera a un asesor no pasa por el preludio
+        # (menú por palabra, identidad, catálogo, saludo, despedida) ni por la
+        # molestia o el pedido de humano de abajo — ya lo atiende un humano.
         normalized = text.strip().lower()
-        if normalized in MENU_KEYWORDS:
-            _set_state(session, conv, "menu_categoria")
-            replies = ["Claro, continuemos aquí. " + catalog.format_category_menu()]
-        elif _asks_status(text):
-            replies = [_status_reply(session, phone)]
-        else:
-            # Aunque esté esperando a un asesor, un pedido concreto de trámite
-            # se atiende (deducción, multi-servicio o mini-menú de parecidos):
-            # el "espera" enlatado es solo para mensajes sin petición clara.
-            replies = _try_service_request(session, conv, text)
-            if not replies:
-                if _latest_open_ticket(session, phone) is None:
-                    # Promesa sin registro: el ticket de la escalada ya se
-                    # cerró (o nunca existió) y el cliente sigue escribiendo.
-                    # Sin esto, "un asesor te contactará" no avisa a NADIE —
-                    # se re-crea la solicitud para que el panel la muestre.
-                    replies = _escalate(session, client, conv, text, reply=ESCALATED_WAIT_REPLY)
-                else:
-                    # Ruta de MAYOR frecuencia de todo el flujo: cada mensaje de
-                    # seguimiento de un cliente ya escalado cae aquí. Sin el
-                    # aviso, es donde más veces se prometería atención inmediata
-                    # a las 3 de la mañana.
-                    replies = [_con_horario(ESCALATED_WAIT_REPLY)]
+        replies = _handler_de(conv.state)(session, client, conv, text, normalized)
     else:
         normalized = text.strip().lower()
         # Captura caducada (CAPTURE_TTL_HOURS sin respuesta): este mensaje ya
@@ -570,25 +553,40 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
     }:
         return [FAREWELL_REPLY]
 
-    # ponytail: la FSM vive en este dict y no en un submódulo propio. Una
-    # auditoría pidió extraerla (septiembre de 2026,
-    # docs/PLAN-CORRECCION-AUDITORIA.md) describiendo el archivo como un bloque
-    # indivisible; en la práctica ya está desacoplada aquí —un estado es una
-    # entrada y una función— y el archivo son 63 funciones sueltas, no una
-    # madeja. Reabrir cuando un estado necesite datos que no quepan en la firma
-    # `(session, client, conv, text, normalized)`, que es la señal real de que
-    # la máquina pide su propio módulo.
-    handlers = {
-        "inicio": _handle_inicio,
-        "esperando_nombre": _handle_esperando_nombre,
-        "menu_categoria": _handle_menu_categoria,
-        "menu_servicio": _handle_menu_servicio,
-        "confirmar": _handle_confirmar,
-        "eligiendo_sugerencia": _handle_sugerencia,
-        "pidiendo_requisitos": _handle_requisitos,
-    }
-    handler = handlers.get(conv.state, _handle_inicio)
-    return handler(session, client, conv, text, normalized)
+    # La FSM es `_HANDLERS`, debajo del último handler (un dict de módulo solo
+    # puede nombrar funciones ya definidas).
+    return _handler_de(conv.state)(session, client, conv, text, normalized)
+
+
+def _handle_escalado(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
+    """El cliente ya espera a un asesor: el bot no lo deja sin respuesta, pero
+    tampoco lo trata como una conversación nueva.
+
+    Orden: «menu» retoma el bot → «¿cómo va?» contesta el estatus → un pedido
+    concreto de trámite se atiende → lo demás recibe la espera. `handle_incoming`
+    lo invoca sin el preludio de `_dispatch` (ver su rama `escalado`)."""
+    if normalized in MENU_KEYWORDS:
+        _set_state(session, conv, "menu_categoria")
+        return ["Claro, continuemos aquí. " + catalog.format_category_menu()]
+    if _asks_status(text):
+        return [_status_reply(session, client.phone)]
+    # Aunque esté esperando a un asesor, un pedido concreto de trámite
+    # se atiende (deducción, multi-servicio o mini-menú de parecidos):
+    # el "espera" enlatado es solo para mensajes sin petición clara.
+    replies = _try_service_request(session, conv, text)
+    if replies:
+        return replies
+    if _latest_open_ticket(session, client.phone) is None:
+        # Promesa sin registro: el ticket de la escalada ya se
+        # cerró (o nunca existió) y el cliente sigue escribiendo.
+        # Sin esto, "un asesor te contactará" no avisa a NADIE —
+        # se re-crea la solicitud para que el panel la muestre.
+        return _escalate(session, client, conv, text, reply=ESCALATED_WAIT_REPLY)
+    # Ruta de MAYOR frecuencia de todo el flujo: cada mensaje de
+    # seguimiento de un cliente ya escalado cae aquí. Sin el
+    # aviso, es donde más veces se prometería atención inmediata
+    # a las 3 de la mañana.
+    return [_con_horario(ESCALATED_WAIT_REPLY)]
 
 
 def _greeting_for(client: Client) -> str:
@@ -1540,6 +1538,37 @@ def _handle_sugerencia(session: Session, client: Client, conv: Conversation, tex
         return _confirmar(session, conv, resueltos, text, detectados=detectados)
     # Cualquier otra cosa se procesa como texto libre normal.
     return _handle_menu_categoria(session, client, conv, text, normalized)
+
+
+Handler = Callable[[Session, Client, Conversation, str, str], list[str]]
+
+# ponytail: la FSM vive en este dict y no en un submódulo propio. Una
+# auditoría pidió extraerla (septiembre de 2026,
+# docs/PLAN-CORRECCION-AUDITORIA.md) describiendo el archivo como un bloque
+# indivisible; en la práctica ya está desacoplada aquí —un estado es una
+# entrada y una función— y el archivo son 63 funciones sueltas, no una
+# madeja. Reabrir cuando un estado necesite datos que no quepan en la firma
+# `(session, client, conv, text, normalized)`, que es la señal real de que
+# la máquina pide su propio módulo.
+# Vive en el módulo, no dentro de _dispatch (PR1 de «casos para análisis»,
+# 2026-10-09): `escalado` también es una entrada, pero handle_incoming la
+# invoca sin el preludio de _dispatch, así que los dos leen este mismo dict.
+_HANDLERS: dict[str, Handler] = {
+    "inicio": _handle_inicio,
+    "esperando_nombre": _handle_esperando_nombre,
+    "menu_categoria": _handle_menu_categoria,
+    "menu_servicio": _handle_menu_servicio,
+    "confirmar": _handle_confirmar,
+    "eligiendo_sugerencia": _handle_sugerencia,
+    "pidiendo_requisitos": _handle_requisitos,
+    "escalado": _handle_escalado,
+}
+
+
+def _handler_de(state: str) -> Handler:
+    """El handler del estado; uno que la FSM no conoce (una fila vieja, un
+    estado retirado) se atiende como `inicio`, nunca con silencio o un error."""
+    return _HANDLERS.get(state, _handle_inicio)
 
 
 def _confirm_message(service, detectados: dict | None = None) -> str:
