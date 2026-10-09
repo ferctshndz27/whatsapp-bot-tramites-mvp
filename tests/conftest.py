@@ -1,7 +1,15 @@
+import json
+from pathlib import Path
+
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 import app.db as db
+
+# Volcado de solo lectura del catálogo de producción (docs/AUTOEVALUACION-V3.md §4).
+# Se refresca cuando el catálogo vivo cambie de forma relevante: archivo nuevo con su
+# fecha y esta constante apuntando a él.
+CATALOGO_VIVO = Path(__file__).parent / "fixtures" / "catalogo-prod-2026-10-09.json"
 
 
 @pytest.fixture(autouse=True)
@@ -76,3 +84,30 @@ def session():
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
         yield s
+
+
+@pytest.fixture()
+def catalogo_vivo(monkeypatch):
+    """Siembra la base de la prueba con el catálogo de PRODUCCIÓN, no con la semilla.
+
+    El panel edita sinónimos en vivo y `app/catalog.json` se queda atrás: en
+    producción «NSS en PDF» trae "nss" y en la semilla no, así que una prueba de NLU
+    contra la semilla aprueba frases que en producción se trocean. Devuelve el
+    volcado para comparar contra él.
+
+    Deja el singleton `catalog` como lo encontró: su caché vuelve al terminar y la
+    base en memoria muere con `_isolated_db`.
+    """
+    from app.catalog import Catalog, catalog
+
+    for atributo in ("_categories", "_service_by_id", "_category_by_id", "_contenido_anterior"):
+        monkeypatch.setattr(catalog, atributo, getattr(catalog, atributo))
+    volcado = json.loads(CATALOGO_VIVO.read_text(encoding="utf-8"))
+    esperados = [s["id"] for c in volcado["categories"] for s in c["services"]]
+    # Con las tablas vacías, el primer acceso importa el JSON que recibe Catalog.
+    cargados = [s.id for c in Catalog(CATALOGO_VIVO).categories for s in c.services]
+    assert cargados == esperados, (
+        "la base de la prueba no quedó con el volcado de producción: ya traía un "
+        "catálogo (algo leyó `catalog` antes que este fixture) o se importó otro JSON"
+    )
+    return volcado
