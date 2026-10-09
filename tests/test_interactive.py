@@ -79,13 +79,19 @@ def test_category_menu_becomes_list(monkeypatch, session):
 
 
 def test_greeting_stays_plain_text(monkeypatch, session):
+    """El saludo con el menú principal sale como lista nativa, no como texto plano
+    (D7, 2026-10-08): el menú va en el mismo mensaje y `presentation` lo convierte
+    por el marcador. Si se rompe, el cliente recibe el menú como texto que no se
+    puede tocar y el número sigue siendo la única forma de elegir."""
     monkeypatch.setattr(db, "engine", session.get_bind())
     _keywords_only(monkeypatch)
 
     replies = handle_incoming(session, PHONE, "hola")
     outbound = presentation(session, PHONE, replies)
 
-    assert outbound == replies  # sin menú ni confirmación: texto tal cual
+    assert len(outbound) == 1
+    assert isinstance(outbound[0], dict) and "list" in outbound[0], "el saludo debe salir como lista"
+    assert outbound[0]["text"] == replies[0], "el cuerpo es el saludo con el menú, tal cual"
 
 
 def test_big_service_menu_paginates_as_list(monkeypatch, session):

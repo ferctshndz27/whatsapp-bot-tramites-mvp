@@ -46,7 +46,7 @@ def test_greeting_gets_open_question_not_service_list(session):
     replies = handle_incoming(session, PHONE, "Hola")
 
     assert "ayudarte" in replies[0].lower()
-    assert "1." not in replies[0]  # regla: no listar servicios en la primera respuesta
+    assert "esponde con el número" in replies[0]  # D7: el saludo trae el menú principal
 
 
 def test_direct_service_request_skips_menu_and_creates_ticket(session):
@@ -564,7 +564,8 @@ def test_greeting_after_closed_ticket_is_cordial_short(session):
 
     assert "no logré" not in replies[0].lower()
     assert "ayud" in replies[0].lower()
-    assert "1." not in replies[0]  # el saludo no lista servicios
+    assert "1." not in replies[0].split("\n\n")[0]  # el saludo va antes del menú, no es el menú
+    assert "esponde con el número" in replies[0]  # D7: el saludo trae el menú principal
 
 
 def test_escalated_user_resumes_bot_with_menu_if_ticket_unclaimed(session):

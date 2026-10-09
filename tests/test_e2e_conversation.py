@@ -294,11 +294,14 @@ def test_jornada_completa_por_menu_crea_ticket_con_datos_del_catalogo(wa):
     for text in ["hola", "servicios", "1", "1", "si"]:
         assert _send_text(text).status_code == 200
 
-    # (a) lo que ve el cliente
-    assert wa.kinds == ["text", "list", "list", "buttons", "text"]
+    # (a) lo que ve el cliente: el saludo trae el menú (list), «servicios» vuelve a
+    # listar las categorías (list), «1» lista los servicios (list), luego la
+    # confirmación con botones y el folio.
+    assert wa.kinds == ["list", "list", "list", "buttons", "text"]
     assert "ayudarte" in wa.texts[0].lower()
+    assert "esponde con el número" in wa.sent[0]["text"]
+    assert [r[0] for r in wa.sent[0]["rows"]] == [str(i) for i in range(1, 10)]  # 9 categorías
     assert [r[0] for r in wa.sent[1]["rows"]] == [str(i) for i in range(1, 10)]  # 9 categorías
-    assert [r[0] for r in wa.sent[2]["rows"]] == ["1", "2", "3", "4", "5", "6", "0"]
     assert [b[0] for b in wa.sent[3]["buttons"]] == ["si", "no"]
     assert "folio #1" in wa.texts[4]
     assert all(s["to"] == PHONE for s in wa.sent)
@@ -639,7 +642,7 @@ def test_un_mensaje_que_revienta_no_tumba_el_webhook_ni_al_siguiente(wa, monkeyp
     response = _post(_envelope(_text_msg("explota ahora"), _text_msg("hola")))
 
     assert response.status_code == 200
-    assert wa.kinds == ["text"]  # solo la respuesta del segundo mensaje
+    assert wa.kinds == ["list"]  # solo la respuesta del segundo mensaje: el saludo con menú (D7)
     assert "ayudarte" in wa.texts[0].lower()
 
 
@@ -758,7 +761,7 @@ def test_lote_de_meta_con_varios_mensajes_del_mismo_telefono_avanza_la_maquina(w
     )
 
     assert response.status_code == 200
-    assert wa.kinds == ["text", "buttons", "text"]
+    assert wa.kinds == ["list", "buttons", "text"]  # el saludo ya trae el menú (D7)
     assert "folio #1" in wa.texts[2]
 
     with _db() as session:
