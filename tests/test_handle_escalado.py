@@ -80,12 +80,13 @@ def test_en_escalado_menu_retoma_el_bot_con_su_propio_aviso(session):
 
 def test_en_escalado_preguntar_el_estatus_no_saca_de_escalado(session):
     """«¿Cómo va mi trámite?» contesta el estatus y deja al cliente esperando a su asesor. El
-    folio interno de la escalada no es un trámite: no aparece en el estatus."""
+    folio de la escalada SÍ aparece, como «Revisión con asesor» (operador, 2026-10-09: excluirlo le
+    daba al cliente el estatus de folios viejos; ver tests/test_estatus_ticket_escalado.py)."""
     _escalar(session)
 
     replies = handle_incoming(session, PHONE, "¿cómo va mi trámite?")
 
-    assert replies == [conversation.NO_TICKETS_REPLY]
+    assert len(replies) == 1 and "• Revisión con asesor (folio #" in replies[0], replies
     session.expire_all()
     assert session.get(Conversation, PHONE).state == "escalado"
 
