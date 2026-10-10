@@ -227,11 +227,15 @@ def test_dos_tramites_ambos_claros_siguen_por_la_via_multi(session):
 
 def test_si_no_elige_no_se_pierde_lo_que_ya_se_habia_entendido(session):
     # Piso duro: antes de este flujo el cliente ya tendría el folio del rfc.
-    # Responder cualquier cosa NO puede dejarlo con menos que eso.
+    # Responder cualquier cosa NO puede dejarlo con menos que eso. Desde la
+    # decisión «C» (operador, 2026-10-10) la primera respuesta que no elige
+    # vuelve a preguntar —recordando lo anotado— y la segunda confirma.
     _sin_requisitos("sat-csf-original")
     _hasta_pedir(session)
     handle_incoming(session, PHONE, AMBIGUO_Y_CLARO)
 
+    repregunta = handle_incoming(session, PHONE, "mmm no sé")[0]
+    assert "Constancia de situación fiscal original" in repregunta
     confirmacion = handle_incoming(session, PHONE, "mmm no sé")[0]
 
     assert "Constancia de situación fiscal original" in confirmacion
