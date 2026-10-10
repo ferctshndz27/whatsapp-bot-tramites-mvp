@@ -47,7 +47,6 @@ ESTADOS_NUEVOS = {"aclarando_folio", "aclarando_caso"}
 
 # Caso → el PR que lo resuelve. Al resolverlo, ese PR borra su línea.
 PENDIENTES = {
-    "vinculacion-nss-curp": "PR9: el nombre que contiene a otros ya no se trocea",
     "real-24-09-con-folio": "PR4: la información para un folio abierto pregunta por él",
     "situacion-del-trabajador": "PR4: una frase de revisión con folio pregunta por él",
     "lo-de-curp-ya-lo-tengo": "PR4: D17, dos servicios con folio preguntan por él",

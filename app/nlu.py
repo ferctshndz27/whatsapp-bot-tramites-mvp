@@ -847,14 +847,34 @@ def deduce_all(text: str) -> list[Service]:
     acta de nacimiento y mi curp"). Solo usa la capa literal (nombre o
     sinónimo contenido en el texto): es barata, determinista y no llama a
     Claude. Devuelve [] salvo que haya 2+ menciones claras — el caso de un
-    solo servicio lo sigue resolviendo deduce()."""
+    solo servicio lo sigue resolviendo deduce().
+
+    La mención más larga gana por tramo (D1 reabierta, PR9): un servicio cuenta
+    solo si alguna de sus menciones no cae dentro de una mención MÁS LARGA de
+    otro servicio. Sin esto, «Acta de matrimonio» contaba también el acta de
+    nacimiento (su sinónimo «acta») y el cliente recibía dos trámites que no
+    pidió. Dos menciones del mismo tramo y el mismo largo («vigencia de
+    derechos», de dos servicios) cuentan las dos: esa ambigüedad es real."""
     normalized = _norm(text)
     if len(normalized) < 3:
         return []
+    menciones: list[tuple[Service, int, int]] = []
+    for service, words in _service_terms():
+        for w in {w for w in words if w}:
+            for m in re.finditer(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", normalized):
+                menciones.append((service, m.start(), m.end()))
+
+    def _tapada(s: Service, ini: int, fin: int) -> bool:
+        return any(
+            o.id != s.id and o_ini <= ini and fin <= o_fin and (o_fin - o_ini) > (fin - ini)
+            for o, o_ini, o_fin in menciones
+        )
+
+    sueltos = {s.id for s, ini, fin in menciones if not _tapada(s, ini, fin)}
     found: list[Service] = []
     seen: set[str] = set()
-    for service, words in _service_terms():
-        if service.id not in seen and any(w and _contains_term(w, normalized) for w in words):
+    for service, _ in _service_terms():  # el orden del catálogo, como antes
+        if service.id in sueltos and service.id not in seen:
             seen.add(service.id)
             found.append(service)
     return found[:MULTI_MAX_SERVICES] if len(found) >= 2 else []
