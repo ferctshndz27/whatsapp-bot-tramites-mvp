@@ -190,6 +190,7 @@ STATUS_LABELS = {
     TicketStatus.CERRADO: "completado ✅",
 }
 STATUS_NUEVO_ASIGNADO = "recibido, con asesor asignado"
+ESCALADO_NOMBRE_CLIENTE = "Revisión con asesor"
 
 
 def _etiqueta_estado(ticket: Ticket) -> str:
@@ -497,18 +498,27 @@ def _asks_status(text: str) -> bool:
     return _STATUS_INTENT_RE.search(nlu._norm(text)) is not None
 
 
+def _nombre_para_el_cliente(ticket: Ticket) -> str:
+    """El folio de la escalada se guarda como «Escalado a asesor» (así lo reconocen el CRM y el
+    panel); al cliente se le nombra por lo que pidió."""
+    return ESCALADO_NOMBRE_CLIENTE if ticket.service_id == "escalado" else ticket.service_name
+
+
 def _status_reply(session: Session, phone: str) -> str:
+    # El folio de la escalada SÍ se lista (operador, 2026-10-09): es lo que el cliente pidió
+    # revisar y lo que un asesor ya lleva. Excluirlo le daba el estatus de folios viejos.
     tickets = session.exec(
         select(Ticket)
         .where(Ticket.phone == phone)
         .where(Ticket.habilitado == True)  # noqa: E712
-        .where(Ticket.service_id != "escalado")  # ese ticket es interno, no un trámite real
         .order_by(Ticket.created_at.desc())
         .limit(STATUS_LIST_LIMIT)
     ).all()
     if not tickets:
         return NO_TICKETS_REPLY
-    lines = "\n".join(f"• {t.service_name} (folio #{t.id}): {_etiqueta_estado(t)}" for t in tickets)
+    lines = "\n".join(
+        f"• {_nombre_para_el_cliente(t)} (folio #{t.id}): {_etiqueta_estado(t)}" for t in tickets
+    )
     return f"Estatus de tus solicitudes:\n{lines}"
 
 
