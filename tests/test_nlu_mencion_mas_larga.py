@@ -98,3 +98,64 @@ def test_acta_de_matrimonio_confirma_solo_ese_tramite(session, catalogo_vivo):
     pendientes = session.get(Conversation, PHONE)
     assert pedidos <= {"sb-acta-matrimonio"}, f"folios de trámites que no pidió: {pedidos}"
     assert "sb-acta-nacimiento" not in pendientes.context_json, "quedó pendiente un acta que no pidió"
+
+
+# --- Empate en el mismo tramo: se pregunta cuál (A1, operador 2026-10-10) -----------------------
+#
+# «vigencia de derechos» es nombre de un servicio y sinónimo de otro. La regla de arriba deja los
+# dos porque el texto de verdad no dice cuál; lo que estaba mal era lo siguiente: el bot pedía
+# confirmar LOS DOS, y el cliente que quería uno solo no tenía cómo decirlo. Ahora pregunta cuál.
+
+
+def _estado(session) -> str:
+    session.expire_all()
+    return session.get(Conversation, PHONE).state
+
+
+def test_el_empate_se_detecta_solo_en_el_mismo_tramo(catalogo_vivo):
+    vigencia = "vigencia de derechos"
+    assert sorted(s.id for s in nlu.empate_por_tramo(vigencia, nlu.deduce_all(vigencia))) == [
+        "con-vigencia-derechos",
+        "sin-vigencia-derechos",
+    ]
+    pedido = "quiero acta y curp"
+    assert nlu.empate_por_tramo(pedido, nlu.deduce_all(pedido)) == [], "dos pedidos distintos no son un empate"
+
+
+def test_un_empate_pregunta_cual_en_vez_de_confirmar_los_dos(session, catalogo_vivo):
+    replies = handle_incoming(session, PHONE, "vigencia de derechos")
+
+    texto = "\n".join(replies)
+    assert "¿Cuál necesitas?" in texto, f"confirmó los dos en vez de preguntar: {texto!r}"
+    assert "Confirmas estos 2" not in texto
+    assert "Sindo de vigencia de derechos" in texto and "Vigencia de derechos" in texto
+    assert _estado(session) == "eligiendo_sugerencia"
+
+
+def test_al_elegir_del_empate_se_confirma_solo_lo_elegido(session, catalogo_vivo):
+    replies = handle_incoming(session, PHONE, "vigencia de derechos")
+    opciones = [linea for linea in replies[-1].splitlines() if linea[:2] in ("1.", "2.")]
+    elegido = opciones[0].split(". ", 1)[1]
+
+    replies = handle_incoming(session, PHONE, "1")
+
+    texto = "\n".join(replies)
+    assert _estado(session) == "confirmar"
+    assert f"¿Confirmas '{elegido}'" in texto, texto
+    assert "estos 2" not in texto
+
+
+def test_un_empate_junto_a_otro_tramite_anota_el_claro_y_pregunta_el_otro(session, catalogo_vivo):
+    """«vigencia de derechos y mi curp»: la CURP es clara y no se pierde; la vigencia se pregunta."""
+    replies = handle_incoming(session, PHONE, "necesito vigencia de derechos y mi curp")
+
+    texto = "\n".join(replies)
+    assert "Voy anotando 'Descarga de CURP'" in texto, texto
+    assert "¿Cuál necesitas?" in texto
+    assert _estado(session) == "eligiendo_sugerencia"
+
+    replies = handle_incoming(session, PHONE, "2")
+
+    texto = "\n".join(replies)
+    assert "Confirmas estos 2 trámites" in texto, texto
+    assert "Descarga de CURP" in texto
