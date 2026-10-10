@@ -983,7 +983,20 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
             # corrigiendo. Solo con UNO: "mejor el básico, no el semiestable"
             # nombra dos y ahí no se puede saber cuál quiere sin adivinar.
             nombrados = list(mencionados.values())
+        if not nombrados and len(services) > 1:
+            # Eligió por número sobre la lista numerada (B1, operador
+            # 2026-10-10). Un número fuera de la lista no elige nada y cae a
+            # la repregunta de abajo, con la lista completa.
+            idx = _parse_int(normalized)
+            picks = [idx] if idx is not None else _parse_indices(normalized)
+            nombrados = _unique_services(
+                services[i - 1] for i in picks if 1 <= i <= len(services)
+            )
         pedidos = {s.id for s in services}
+        if nombrados and {s.id for s in nombrados} == pedidos and len(services) > 1:
+            # Eligió todos por número: es un sí a la lista, que se vuelve a
+            # mostrar tal cual para el sí final.
+            return [_confirm_multi_message(services)]
         if nombrados and {s.id for s in nombrados} != pedidos:
             _set_state(
                 session, conv, "confirmar",
@@ -1649,8 +1662,13 @@ def _confirm_multi_message(services) -> str:
     # Con varios servicios distintos NO se reparten los códigos: adivinar cuál
     # de los trámites lleva cuál clave sería inventar. Uno de cada uno, y el
     # asesor ajusta si el cliente quería más.
-    lines = "\n".join(f"• {s.name} ({s.price_info})" for s in services)
-    return f"¿Confirmas estos {len(services)} trámites?\n{lines}\nResponde sí o no."
+    # Numerados para que el cliente pueda quedarse con algunos respondiendo el
+    # número (B1, operador 2026-10-10): WhatsApp no tiene casillas múltiples.
+    lines = "\n".join(f"{i}. {s.name} ({s.price_info})" for i, s in enumerate(services, 1))
+    return (
+        f"¿Confirmas estos {len(services)} trámites?\n{lines}\n"
+        "Responde sí o no, o el número de los que sí quieres (por ejemplo: 1, o 1 y 2)."
+    )
 
 
 def _parse_indices(normalized: str) -> list[int]:
