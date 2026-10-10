@@ -847,17 +847,70 @@ def deduce_all(text: str) -> list[Service]:
     acta de nacimiento y mi curp"). Solo usa la capa literal (nombre o
     sinónimo contenido en el texto): es barata, determinista y no llama a
     Claude. Devuelve [] salvo que haya 2+ menciones claras — el caso de un
-    solo servicio lo sigue resolviendo deduce()."""
+    solo servicio lo sigue resolviendo deduce().
+
+    La mención más larga gana por tramo (D1 reabierta, PR9): un servicio cuenta
+    solo si alguna de sus menciones no cae dentro de una mención MÁS LARGA de
+    otro servicio. Sin esto, «Acta de matrimonio» contaba también el acta de
+    nacimiento (su sinónimo «acta») y el cliente recibía dos trámites que no
+    pidió. Dos menciones del mismo tramo y el mismo largo («vigencia de
+    derechos», de dos servicios) cuentan las dos: esa ambigüedad es real."""
     normalized = _norm(text)
     if len(normalized) < 3:
         return []
+    sueltos = {s.id for s, _, _ in _menciones_sueltas(normalized)}
     found: list[Service] = []
     seen: set[str] = set()
-    for service, words in _service_terms():
-        if service.id not in seen and any(w and _contains_term(w, normalized) for w in words):
+    for service, _ in _service_terms():  # el orden del catálogo, como antes
+        if service.id in sueltos and service.id not in seen:
             seen.add(service.id)
             found.append(service)
     return found[:MULTI_MAX_SERVICES] if len(found) >= 2 else []
+
+
+def _menciones_sueltas(normalized: str) -> list[tuple[Service, int, int]]:
+    """Cada mención de un nombre o sinónimo en la frase, con su tramo, salvo las que caen dentro de
+    una mención MÁS LARGA de otro servicio (la regla de PR9). Dos menciones del mismo tramo y largo
+    sobreviven las dos: ahí el texto no dice cuál."""
+    menciones: list[tuple[Service, int, int]] = []
+    for service, words in _service_terms():
+        for w in {w for w in words if w}:
+            for m in re.finditer(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", normalized):
+                menciones.append((service, m.start(), m.end()))
+
+    def _tapada(s: Service, ini: int, fin: int) -> bool:
+        return any(
+            o.id != s.id and o_ini <= ini and fin <= o_fin and (o_fin - o_ini) > (fin - ini)
+            for o, o_ini, o_fin in menciones
+        )
+
+    return [(s, ini, fin) for s, ini, fin in menciones if not _tapada(s, ini, fin)]
+
+
+def empate_por_tramo(text: str, services: list[Service]) -> list[Service]:
+    """De los servicios que dio `deduce_all`, los que el cliente nombró con UNA misma mención que
+    comparten («vigencia de derechos», nombre de uno y sinónimo de otro) y con ninguna otra propia.
+    Esos no son dos pedidos: es uno que el texto no alcanza a decir cuál, y se le pregunta al
+    cliente (operador, 2026-10-10, «A1»). [] si no hay empate.
+
+    ponytail: atiende solo el primer empate de la frase; con dos empates distintos en un mensaje, el
+    segundo se confirma como hoy. Si aparece en producción, preguntar uno tras otro."""
+    if len(services) < 2:
+        return []
+    pedidos = {s.id for s in services}
+    sueltas = [(s, ini, fin) for s, ini, fin in _menciones_sueltas(_norm(text)) if s.id in pedidos]
+    por_tramo: dict[tuple[int, int], list[Service]] = {}
+    for s, ini, fin in sueltas:
+        grupo = por_tramo.setdefault((ini, fin), [])
+        if all(o.id != s.id for o in grupo):
+            grupo.append(s)
+    compartidos = {tramo for tramo, grupo in por_tramo.items() if len(grupo) >= 2}
+    claros = {s.id for s, ini, fin in sueltas if (ini, fin) not in compartidos}
+    for tramo in sorted(compartidos):
+        empate = [s for s in services if s.id in {o.id for o in por_tramo[tramo]} and s.id not in claros]
+        if len(empate) >= 2:
+            return empate
+    return []
 
 
 def _norm(text: str) -> str:

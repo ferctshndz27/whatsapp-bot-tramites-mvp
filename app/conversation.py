@@ -712,22 +712,44 @@ def _confirmar_o_aclarar(
     libre, nunca desde _confirmar mismo. Si viviera dentro de _confirmar, el
     turno en que el cliente elige del mini-menú volvería a detectar ambigüedad
     y el agente preguntaría en círculos."""
+    empate = nlu.empate_por_tramo(text, services)
+    if empate:
+        # Empate de un mismo tramo («vigencia de derechos»): no son dos pedidos, es uno que el
+        # texto no alcanza a decir cuál. Se pregunta cuál y lo claro del mismo mensaje se anota
+        # (A1, operador 2026-10-10). Antes el bot pedía confirmar los dos.
+        claros = [s for s in services if s.id not in {e.id for e in empate}]
+        if not claros:
+            _set_state(session, conv, "eligiendo_sugerencia", {"suggestion_ids": [s.id for s in empate]})
+            opciones = "\n".join(f"{i}. {s.name}" for i, s in enumerate(empate, 1))
+            carita = "" if prefijo else " 😊"  # el saludo del prefijo ya trae la suya
+            return [
+                f"{prefijo}Tenemos varios trámites parecidos{carita} ¿Cuál necesitas? "
+                f"Responde con el número:\n{opciones}"
+            ]
+        return _preguntar_cual(session, conv, empate, claros, text, prefijo)
     pendientes = _pendientes_por_aclarar(text, services)
     if not pendientes:
         return _confirmar(session, conv, services, text, prefijo)
+    return _preguntar_cual(session, conv, pendientes, services, text, prefijo)
+
+
+def _preguntar_cual(
+    session: Session, conv: Conversation, pendientes: list, resueltos: list, text: str, prefijo: str
+) -> list[str]:
+    """Anota lo ya resuelto y pregunta cuál de `pendientes` era el otro trámite del mensaje."""
     # Los códigos se detectan (y clasifican con Ollama) AQUÍ, en el turno que
     # ya pagó la deducción: el turno de la elección solo trae "1" y ahí ya no
     # habría de dónde sacarlos. Viajan en el contexto hasta el _confirmar real.
     context: dict = {
         "suggestion_ids": [s.id for s in pendientes],
-        "resueltos_ids": [s.id for s in services],
+        "resueltos_ids": [s.id for s in resueltos],
     }
     detectados = _detectar_codigos(text)
     if detectados:
         context["codigos"] = detectados
     _set_state(session, conv, "eligiendo_sugerencia", context)
     lines = "\n".join(f"{i}. {s.name}" for i, s in enumerate(pendientes, 1))
-    ya = ", ".join(f"'{s.name}'" for s in services)
+    ya = ", ".join(f"'{s.name}'" for s in resueltos)
     return [
         f"{prefijo}Voy anotando {ya} ✅\n\n"
         "También me pediste otro trámite y tenemos varios parecidos 😊 "
