@@ -998,6 +998,16 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     # letras — y así un "sí" que llegue después sigue costando cero.
     if services:
         mencionados = nlu._exact_matches(text)[0]
+        pedidos = {s.id for s in services}
+        fuera = set(mencionados) - pedidos
+        if fuera and set(mencionados) & pedidos:
+            # Nombra cosas de la lista Y cosas que no están: no está recortando la
+            # lista, está haciendo un pedido nuevo («quiero acta y curp» sobre
+            # CURP + NSS). Se atiende igual que desde el menú. Antes se tomaba como
+            # recorte: quedaba solo la CURP y el acta se perdía sin aviso (prueba
+            # del operador, 2026-10-10, folio #70).
+            _set_state(session, conv, "menu_categoria")
+            return _handle_menu_categoria(session, client, conv, text, normalized)
         # Nombró parte de lo que está en la lista: quiere QUITAR el resto.
         nombrados = [s for s in services if s.id in mencionados]
         if not nombrados and len(mencionados) == 1:
