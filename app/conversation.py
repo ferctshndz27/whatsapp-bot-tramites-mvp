@@ -1528,6 +1528,11 @@ def _handle_sugerencia(session: Session, client: Client, conv: Conversation, tex
     detectados = context.get("codigos")
     idx = _parse_int(normalized)
     picks = [idx] if idx is not None else _parse_indices(normalized)
+    if not picks and options:
+        # El nombre vale igual que el número (operador, 2026-10-10, «C»): «acta de matrimonio» o
+        # «la de matrimonio» sobre la lista de actas. Antes solo se entendían números y, con
+        # trámites ya anotados, la elección se tiraba en silencio.
+        picks = [options.index(s) + 1 for s in _elegidos_por_nombre(options, normalized)]
     if picks and options:
         chosen = _unique_services(options[i - 1] for i in picks if 1 <= i <= len(options))
         if chosen:
@@ -1539,15 +1544,47 @@ def _handle_sugerencia(session: Session, client: Client, conv: Conversation, tex
             juntos = _unique_services(chosen + resueltos)[: nlu.MULTI_MAX_SERVICES]
             return _confirmar(session, conv, juntos, text, detectados=detectados)
     if resueltos:
-        # Piso duro: si el cliente no eligió, lo que YA se había entendido NO
-        # se tira. Sin esto el flujo nuevo sería PEOR que el viejo, donde ese
-        # trámite se confirmaba de inmediato.
-        # ponytail: aquí no se reintenta deducir su texto libre ("el de
-        # nacimiento"); si hace falta, deducir y sumar a `resueltos` antes de
-        # confirmar.
-        return _confirmar(session, conv, resueltos, text, detectados=detectados)
+        # Piso duro: si el cliente no eligió, lo que YA se había entendido NO se tira. Pero lo que
+        # pidió y no se entendió tampoco se tira EN SILENCIO: primero se vuelve a preguntar, y a la
+        # segunda se confirma lo anotado diciéndole que el otro quedó fuera.
+        anotados = ", ".join(f"'{s.name}'" for s in resueltos)
+        if options and not context.get("reintento"):
+            _set_state(session, conv, "eligiendo_sugerencia", {**context, "reintento": True})
+            lines = "\n".join(f"{i}. {s.name}" for i, s in enumerate(options, 1))
+            return [
+                f"No identifiqué cuál de estos necesitas 🙏 Ya tengo anotado {anotados}.\n\n"
+                f"Responde con el número o el nombre:\n{lines}"
+            ]
+        aviso = (
+            "No identifiqué cuál de las opciones querías, así que por ahora la dejo fuera; "
+            "si la necesitas, escríbemela después.\n\n"
+            if options else ""
+        )
+        return _confirmar(session, conv, resueltos, text, aviso, detectados=detectados)
     # Cualquier otra cosa se procesa como texto libre normal.
     return _handle_menu_categoria(session, client, conv, text, normalized)
+
+
+def _elegidos_por_nombre(options: list, normalized: str) -> list:
+    """Las opciones del mini-menú que el cliente nombró con texto en vez de número.
+
+    Primero el nombre o un sinónimo completos («acta de matrimonio»). Si no, la palabra que
+    distingue a una opción de las demás («matrimonio», «la de matrimonio»): una palabra que
+    comparten varias («acta») no elige nada, porque no dice cuál."""
+    completos = [
+        s for s in options
+        if any(t and nlu._contains_term(nlu._norm(t), normalized) for t in [s.name, *s.synonyms])
+    ]
+    if completos:
+        return completos
+    palabras = {s.id: {w for w in re.findall(r"[a-z0-9]+", nlu._norm(s.name)) if len(w) >= 4} for s in options}
+    del_texto = set(re.findall(r"[a-z0-9]+", normalized))
+    elegidos = []
+    for s in options:
+        de_otras = set().union(*(palabras[o.id] for o in options if o.id != s.id))
+        if (palabras[s.id] - de_otras) & del_texto:
+            elegidos.append(s)
+    return elegidos
 
 
 Handler = Callable[[Session, Client, Conversation, str, str], list[str]]
