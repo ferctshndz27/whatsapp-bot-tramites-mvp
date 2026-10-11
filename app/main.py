@@ -1,4 +1,5 @@
 import logging
+import re
 import secrets
 from contextlib import asynccontextmanager
 
@@ -40,6 +41,24 @@ from app.db import init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class SinBusquedaEnLogs(logging.Filter):
+    """El log de acceso de uvicorn escribe la ruta con su query: `q` del buscador de /crm puede
+    traer un nombre, una CURP o un pedazo de un mensaje del cliente (casos-analisis PR8). Aquí se
+    tacha su valor; la ruta y el resto de la query quedan."""
+
+    _Q = re.compile(r"([?&]q=)[^&\s]*")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
+            args = list(record.args)
+            args[2] = self._Q.sub(r"\1…", args[2])
+            record.args = tuple(args)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(SinBusquedaEnLogs())
 
 # La sesión del panel caduca a las 12 h (una jornada); tras eso hay que
 # volver a iniciar sesión.

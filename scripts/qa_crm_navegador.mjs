@@ -552,6 +552,20 @@ const enPagina = {
     };
   },
 
+  hallazgos: () => {
+    const de = (el) => el && { texto: el.textContent.trim(), hallazgo: el.classList.contains("con-hallazgo"),
+      cursiva: getComputedStyle(el).fontStyle === "italic", lineas: Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight || "16")) };
+    return {
+      bandeja: [...document.querySelectorAll("#crm-tray-list li.tray-item")].map((li) => ({
+        phone: li.dataset.contactId, aria: li.getAttribute("aria-label"), preview: de(li.querySelector(".tray-preview")),
+      })),
+      tarjetas: [...document.querySelectorAll("#crm-board article.card")].map((c) => ({
+        phone: c.dataset.contactId, preview: de(c.querySelector(".card-preview")),
+      })),
+      quedan: document.querySelectorAll(".con-hallazgo").length,
+    };
+  },
+
   buscar: (texto) => {
     const i = document.querySelector("#crm-search");
     if (!i) return false;
@@ -1428,6 +1442,35 @@ async function criterioBusqueda(ctx) {
     return t.bandeja.length === api.contactos.length ? true : null;
   }, { timeout: 4000, label: "que al borrar la búsqueda vuelvan todos" });
   return `«ramirez» → solo Ana (tarjetas: ${t1.tarjetas}, «Todos»: ${t1.tabs[0].conteo}); «+52 55 0000 0012» → solo Beto; vacío → ${api.contactos.length}`;
+}
+
+async function criterioBusquedaEnMensajes(ctx) {
+  // «transferencia» solo está en un mensaje de Ana («¿Aceptan transferencia?»), no en su nombre.
+  const api = await ctx.api("/crm/api/tablero?q=transferencia");
+  const ana = api.contactos.find((c) => c.phone === ANA);
+  if (api.contactos.length !== 1 || ana?.en_mensajes?.n !== 1 || !ana.en_mensajes.fragmento.includes("transferencia"))
+    throw new Error(`la API no encontró el mensaje: ${JSON.stringify(api.contactos.map((c) => [c.phone, c.en_mensajes]))}`);
+  await ctx.cdp.evaluate(enPagina.buscar, "TRANSFERENCIA");
+  const h = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.hallazgos);
+    return e.bandeja.length === 1 && e.bandeja[0].preview?.hallazgo ? e : null;
+  }, { timeout: 4000, label: "que «TRANSFERENCIA» deje a Ana con el fragmento" });
+  const fallos = [];
+  const b = h.bandeja[0];
+  if (b.phone !== ANA) fallos.push(`la bandeja trae ${b.phone}`);
+  if (!b.preview.texto.startsWith("🔎 ") || !b.preview.texto.includes("¿Aceptan transferencia?")) fallos.push(`bandeja: ${JSON.stringify(b.preview)}`);
+  if (!b.preview.cursiva) fallos.push("el fragmento no va en cursiva");
+  if (!/1 mensaje coincide con la búsqueda/.test(b.aria)) fallos.push(`aria-label: ${b.aria}`);
+  const t = h.tarjetas.find((x) => x.phone === ANA);
+  if (!t?.preview?.hallazgo || !t.preview.texto.includes("transferencia")) fallos.push(`tarjeta: ${JSON.stringify(t)}`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  await ctx.capturar("04b-busqueda-en-mensajes-1400");
+  await ctx.cdp.evaluate(enPagina.buscar, "");
+  await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.hallazgos);
+    return e.bandeja.length > 1 && e.quedan === 0 ? true : null;
+  }, { timeout: 4000, label: "que al borrar la búsqueda vuelva el último mensaje" });
+  return `«TRANSFERENCIA» → Ana, con «${b.preview.texto}» en bandeja y tarjeta; al borrar, sin fragmentos`;
 }
 
 async function criterioArrastre(ctx) {
@@ -3153,6 +3196,7 @@ async function main() {
     await criterio(ctx, "3. Pestañas-filtro y columna enfocada", criterioPestanas);
     await criterio(ctx, "3b. Miembros de la oficina: tira, estado, conteos y filtro", criterioMiembros);
     await criterio(ctx, "4. Búsqueda sin acentos y por teléfono con formato", criterioBusqueda);
+    await criterio(ctx, "4b. La búsqueda encuentra el texto de los mensajes y enseña el fragmento", criterioBusquedaEnMensajes);
     await criterio(ctx, "5. Drag & drop persistente tras recargar", criterioArrastre);
     await criterio(ctx, "6. La tarjeta trae el ícono de WhatsApp y no «Mover a…»: timbra con pendientes y se calma", criterioIconoWhatsApp);
     await criterio(ctx, "7. Abrir el chat de un contacto", criterioAbrirChat);

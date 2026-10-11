@@ -361,9 +361,20 @@
     return { ticks: ticks, read: read, text: text };
   }
 
+  /* Con búsqueda en curso, si el texto buscado salió en sus mensajes, la tarjeta enseña el
+     fragmento (±60 caracteres, recortado por el servidor dentro del alcance de cada quien) y
+     cuántos mensajes coinciden, en lugar del último mensaje. */
+  function previewDeContacto(c) {
+    var h = c.en_mensajes;
+    if (!h) return previewOf(c.last_message);
+    var cuenta = h.n > 1 ? h.n + " mensajes · " : "";
+    return { ticks: "", read: false, text: "🔎 " + cuenta + h.fragmento, hallazgo: true };
+  }
+
   function fillPreview(el, pv) {
     if (!el) return;
     clear(el);
+    el.classList.toggle("con-hallazgo", !!pv.hallazgo);
     if (pv.ticks) {
       var t = document.createElement("span");
       t.className = "ticks" + (pv.read ? " read" : "");
@@ -757,6 +768,7 @@
     var extra = "";
     if (Number(c.unread) > 0) extra += ", " + c.unread + " sin leer";
     if (c.pinned) extra += ", fijado";
+    if (c.en_mensajes) extra += ", " + c.en_mensajes.n + (c.en_mensajes.n === 1 ? " mensaje coincide" : " mensajes coinciden") + " con la búsqueda";
     return "Abrir chat con " + nombreDe(c) + (c.alias ? " (alias " + c.alias + ")" : "") + extra;
   }
 
@@ -769,7 +781,7 @@
     setText(li, ".tray-name", nombreDe(c));
     fillAlias($(".alias-tag", li), c);
     setTiempo($(".tray-time", li), lastActivity(c), now);
-    fillPreview($(".tray-preview", li), previewOf(c.last_message));
+    fillPreview($(".tray-preview", li), previewDeContacto(c));
     fillBadges($(".tray-badges", li), c);
     var pin = $(".tray-pin", li);
     if (pin && !c.pinned) quitar(pin);
@@ -1039,7 +1051,7 @@
     setText(card, ".card-name", nombreDe(c));
     fillAlias($(".alias-tag", card), c);
     setText(card, ".card-phone", c.name ? formatoTelefono(c.phone) : "");
-    fillPreview($(".card-preview", card), previewOf(c.last_message));
+    fillPreview($(".card-preview", card), previewDeContacto(c));
     setTiempo($(".card-time", card), lastActivity(c), now);
     fillBadges($(".card-badges", card), c);
 

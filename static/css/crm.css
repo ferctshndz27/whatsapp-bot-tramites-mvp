@@ -1418,3 +1418,18 @@
 @media (prefers-reduced-motion: reduce) {
   .crm *, .crm *::before, .crm *::after { transition: none !important; }
 }
+
+/* Tarjeta con coincidencia en el texto de sus mensajes (buscador): el fragmento va en cursiva
+   para que no se confunda con el último mensaje. */
+.crm .card-preview.con-hallazgo,
+.crm .tray-preview.con-hallazgo {
+  font-style: italic;
+  /* Hasta tres líneas: en una sola, la palabra buscada (a 60 caracteres del inicio) quedaba
+     tapada por la elipsis. */
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}

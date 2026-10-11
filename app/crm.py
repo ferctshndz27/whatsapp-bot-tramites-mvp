@@ -458,6 +458,83 @@ def _coincide(cliente: Client, q: str) -> bool:
     return bool(digitos) and digitos in cliente.phone
 
 
+# Búsqueda en el texto de los mensajes (casos-analisis PR8). Con menos de 3 caracteres
+# coincidiría casi todo. El fragmento es de ±60 caracteres alrededor de la primera coincidencia
+# del mensaje más reciente que coincide.
+MIN_BUSQUEDA_CUERPO = 3
+FRAGMENTO_RADIO = 60
+# Letras que pueden llevar acento o diacrítico en español. En el LIKE de SQLite valen «_» (un
+# carácter cualquiera): «unificacion» encuentra «unificación» en SQL, y Python confirma después
+# con _normalizar, que es la misma comparación que la del nombre.
+_ACENTUABLES = frozenset("aeiounc")
+
+
+def _patron_like(aguja: str) -> str:
+    esc = []
+    for ch in aguja:
+        if ch in _ACENTUABLES:
+            esc.append("_")
+        elif ch in "%_\\":
+            esc.append("\\" + ch)
+        else:
+            esc.append(ch)
+    return "%" + "".join(esc) + "%"
+
+
+def _fragmento(body: str, aguja: str) -> str | None:
+    """±FRAGMENTO_RADIO caracteres del texto ORIGINAL alrededor de la primera coincidencia sin
+    acentos ni mayúsculas; None si no coincide. Normaliza carácter por carácter para conservar
+    las posiciones (una ligadura o un emoji no corren el recorte)."""
+    normal, origen = [], []
+    for i, ch in enumerate(body):
+        for n in _normalizar(ch):
+            normal.append(n)
+            origen.append(i)
+    pos = "".join(normal).find(aguja)
+    if pos < 0:
+        return None
+    ini, fin = origen[pos], origen[pos + len(aguja) - 1] + 1
+    a, b = max(0, ini - FRAGMENTO_RADIO), min(len(body), fin + FRAGMENTO_RADIO)
+    texto = " ".join(body[a:b].split())
+    return ("…" if a > 0 else "") + texto + ("…" if b < len(body) else "")
+
+
+def _buscar_en_mensajes(session, alcance_clientes, q: str) -> dict[str, dict]:
+    """{teléfono: {"n": mensajes que coinciden, "fragmento": del más reciente}} dentro del alcance.
+
+    El alcance va en SQL ANTES de leer un solo cuerpo: `alcance_clientes` es la consulta de
+    clientes ya acotada por oficina y, para un colaborador, por sus folios y su cartera. Solo
+    mensajes habilitados; a lo más LIMITE_CONTACTOS teléfonos, los de coincidencia más reciente.
+    `q` no se registra en ningún log.
+
+    # ponytail: el LIKE recorre `message` entero (sin índice que sirva a «%…%»). Medido con 100k
+    # mensajes sintéticos: +30 ms p50 por búsqueda (PR8). Si un día son millones, el siguiente
+    # escalón es una tabla FTS5 espejo, no una columna normalizada."""
+    aguja = _normalizar(q).strip()
+    if len(aguja) < MIN_BUSQUEDA_CUERPO:
+        return {}
+    telefonos = alcance_clientes.with_only_columns(Client.phone)
+    filas = session.exec(
+        select(Message.phone, Message.body)
+        .where(Message.habilitado == True)  # noqa: E712
+        .where(Message.phone.in_(telefonos))
+        .where(Message.body.like(_patron_like(aguja), escape="\\"))  # type: ignore[attr-defined]
+        .order_by(Message.created_at.desc(), Message.id.desc())  # type: ignore[union-attr]
+    ).all()
+    hallados: dict[str, dict] = {}
+    for phone, body in filas:
+        if phone in hallados:
+            if aguja in _normalizar(body):
+                hallados[phone]["n"] += 1
+            continue
+        if len(hallados) >= LIMITE_CONTACTOS:
+            continue
+        fragmento = _fragmento(body, aguja)
+        if fragmento is not None:
+            hallados[phone] = {"n": 1, "fragmento": fragmento}
+    return hallados
+
+
 def _atiende(a: dict, user: str) -> bool:
     """¿El folio con el que este usuario mira la conversación (el de la tarjeta) es suyo?"""
     return a["ticket"] is not None and a["ticket"].assigned_to == user
@@ -526,6 +603,8 @@ def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> 
     elif not q:
         # La búsqueda sí alcanza a las cerradas: es como se encuentra una por nombre.
         consulta = consulta.where(or_(~tiene_folio, tiene_abierto))
+    # El alcance sin el filtro de la búsqueda: la de los mensajes se acota con él.
+    alcance_clientes = consulta
     digitos = re.sub(r"\D", "", q)
     if digitos:
         # Con dígitos se busca teléfono en SQL, antes del tope de LIMITE_CONTACTOS: un cliente
@@ -541,12 +620,27 @@ def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> 
     ).all()
     if q and not digitos:
         clientes = [c for c in clientes if _coincide(c, q)]
+    # Además del nombre y el teléfono, el texto de los mensajes: los clientes que coinciden solo
+    # ahí se suman, aunque no estén entre los LIMITE_CONTACTOS más recientes.
+    en_mensajes = _buscar_en_mensajes(session, alcance_clientes, q) if q else {}
+    # El total sigue topado en LIMITE_CONTACTOS: _agregar enlaza un parámetro por teléfono y
+    # SQLite viejo admite 999.
+    faltan = set(en_mensajes) - {c.phone for c in clientes}
+    cupo = LIMITE_CONTACTOS - len(clientes)
+    if faltan and cupo > 0:
+        clientes = list(clientes) + list(session.exec(
+            # La coincidencia más reciente primero (en_mensajes viene en ese orden).
+            alcance_clientes.where(Client.phone.in_([p for p in en_mensajes if p in faltan][:cupo]))  # type: ignore[attr-defined]
+        ).all())
 
     agg = _agregar(session, clientes, user if solo_mios else None)
     if solo_mios:
         mi_cartera = cartera.clientes_de(session, user)
         clientes = [c for c in clientes if _atiende(agg[c.phone], user) or c.phone in mi_cartera]
     contactos = [_contacto_json(c, agg[c.phone], mio.columna_de(c)) for c in clientes]
+    if q:
+        for x in contactos:
+            x["en_mensajes"] = en_mensajes.get(x["phone"])
     contactos.sort(
         key=lambda x: (x["last_message"] or {}).get("created_at") or x["created_at"] or "",
         reverse=True,
