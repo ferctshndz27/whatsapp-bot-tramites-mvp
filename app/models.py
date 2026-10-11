@@ -113,6 +113,11 @@ class Client(SQLModel, table=True):
 
 class Conversation(SQLModel, table=True):
     phone: str = Field(primary_key=True)
+    # Estados de la FSM de app/conversation.py (_HANDLERS). "aclarando_folio" (casos-analisis PR4)
+    # guarda en context_json el texto que el cliente fue sumando, `desde_id` (el Message.id del
+    # mensaje que disparó la pregunta: un id, no una marca de reloj) y el estado previo con su
+    # contexto y su updated_at, para volver sin rejuvenecer la captura. Sin columna nueva: el
+    # texto del cliente vive aquí solo mientras dura la pregunta y se descarta al resolver.
     state: str = "inicio"
     context_json: str = "{}"
     failed_attempts: int = 0
@@ -671,8 +676,10 @@ class Feedback(SQLModel, table=True):
 # conversation registra ADEMÁS de la capa que sí acabó respondiendo: el
 # mensaje ya está contado, y contarlo otra vez diluiría el % de no entendidos
 # justo cuando el servidor está caído — que es cuando la alerta debe sonar.
+# "folio": el mensaje se anexó a un folio abierto (casos-analisis PR4). No es un intento de pedir
+# un trámite —ni acierto ni fallo del NLU—, así que no cuenta en el % de «no entendidos».
 CAPAS_EXTRA = frozenset(
-    {"rag", "rag_descartado", "tools", "tool", "tool_error", "ollama_error"}
+    {"rag", "rag_descartado", "tools", "tool", "tool_error", "ollama_error", "folio"}
 )
 
 
