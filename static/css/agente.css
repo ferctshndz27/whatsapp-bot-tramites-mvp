@@ -156,3 +156,8 @@
 .agente-error{color:#f85149;font-size:.85rem;min-height:1.2em}
 .sr-solo{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (prefers-reduced-motion: reduce){ .glow{animation:none!important} }
+
+/* Matriz de conducta de las perillas de casos-analisis (nodo «Asesor humano»). */
+.agente-panel table.mini{width:100%;border-collapse:collapse;font-size:.8rem;margin-top:8px}
+.agente-panel table.mini caption{text-align:left;padding-bottom:4px}
+.agente-panel table.mini th,.agente-panel table.mini td{padding:4px 6px;text-align:left;vertical-align:top;border-top:1px solid var(--borde, #d0d2d7)}
