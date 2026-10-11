@@ -20,7 +20,11 @@ from app import nlu
 # Formatos oficiales. Se aplican sobre el texto en mayúsculas.
 CURP_RE = re.compile(r"\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b")
 RFC_RE = re.compile(r"\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b")
-NSS_RE = re.compile(r"\b\d{11}\b")
+# NSS: 11 dígitos, pegados o con UN espacio o guion entre dígitos («12 34 56 7890 1», como viene en
+# la constancia del IMSS). Las vueltas evitan tomar 11 dígitos dentro de un número más largo
+# («+52 55 1234 5678» es un teléfono de 12) o pegado a letras. `detectar` lo devuelve sin
+# separadores; `enmascarar` lo cubre antes que al teléfono.
+NSS_RE = re.compile(r"(?<![\w+])(?<!\d[ -])\d(?:[ -]?\d){10}(?![ -]?\d)(?!\w)")
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 # Cadena con FORMA de clave oficial que no cuadra con ningún patrón exacto: una
 # CURP mal tecleada, un folio institucional, una clave copiada de otro
@@ -106,7 +110,7 @@ def detectar(text: str) -> dict[str, list[str]]:
     _agregar("CURP", curps)
     # El prefijo de una CURP tiene forma de RFC, pero no lo es.
     _agregar("RFC", [r for r in RFC_RE.findall(upper) if not any(r in c for c in curps)])
-    _agregar("NSS", NSS_RE.findall(upper))
+    _agregar("NSS", [re.sub(r"[ -]", "", n) for n in NSS_RE.findall(upper)])
     _agregar("Email", [e.lower() for e in EMAIL_RE.findall(text)])
 
     exactos = {v.upper() for valores in encontrados.values() for v in valores}
