@@ -175,6 +175,13 @@ _SINONIMOS_VACIOS = {
     "trámites", "servicio", "servicios", "precio", "costo", "quiero", "necesito", "favor",
 }
 
+
+def _norm_termino(texto: str) -> str:
+    """Minúsculas y sin acentos: la misma normalización que `nlu._norm`. Va duplicada aquí porque
+    `nlu` importa este módulo y no al revés; `tests/test_pide_revision.py` fija que coinciden."""
+    return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower().strip()
+
+
 def slugify(name: str) -> str:
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "item"
@@ -219,6 +226,7 @@ class Catalog:
         self._category_by_id: dict[str, Category] = {}
         self._suscritos: list[Callable[[], None]] = []
         self._contenido_anterior: list[Category] | None = None
+        self._terminos_vivos: frozenset[str] = frozenset()
 
     # ---- Carga ----
 
@@ -271,7 +279,23 @@ class Catalog:
 
         self._service_by_id = {s.id: s for c in self._categories for s in c.services}
         self._category_by_id = {c.id: c for c in self._categories}
+        # Nombres y sinónimos habilitados, normalizados como los compara nlu: se recalculan en
+        # cada carga, así que un sinónimo dado de alta en /catalog cuenta desde la siguiente
+        # lectura. nlu.pide_revision excluye las frases de revisión que caigan aquí (diseño §5.2,
+        # capa 2 de la colisión).
+        self._terminos_vivos = frozenset(
+            _norm_termino(t)
+            for c in self._categories
+            for s in c.services
+            for t in (s.name, *s.synonyms)
+            if t.strip()
+        )
         self._avisar_si_cambio()
+
+    def terminos_vivos(self) -> frozenset[str]:
+        """Nombres y sinónimos de los servicios habilitados, normalizados (minúsculas, sin acentos)."""
+        self._refresh()
+        return self._terminos_vivos
 
     # ---- Aviso de cambio (2026-09-23) ----
     # Diez métodos mutan el catálogo desde tres módulos; en vez de un gancho en

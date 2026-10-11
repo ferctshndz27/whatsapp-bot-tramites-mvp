@@ -882,6 +882,48 @@ def servicios_nombrados(text: str) -> list[Service]:
     return found
 
 
+# ---- Regla de la revisión (diseño §5.2; D5, D9) ----
+# Frases con las que el cliente pide que un asesor revise su caso en vez de un trámite del
+# catálogo. Dos familias (D5): cómo se expresa y de qué trata el caso. Normalizadas (sin acentos,
+# minúsculas) y buscadas por palabra completa. Fuera, a propósito, lo que también es un pedido
+# normal ("apoyo para", "me apoyas", "orientacion", "dos curp", "duplicado"): los jueces de la v3.1
+# mostraron que mandaban a revisión pedidos de diez pesos. "resolucion" sola choca con «Resolución
+# de pensión», por eso solo va como "con una resolucion". Una lista en código y no aprendida:
+# cambiarla es un PR revisado (nada se aprende solo).
+FRASES_REVISION: tuple[str, ...] = (
+    # cómo se expresa el cliente
+    "situacion", "una situacion", "que se puede hacer", "que puedo hacer", "me revisas",
+    "me puedes revisar", "se solicita el apoyo", "con una resolucion", "me orientas",
+    "necesito que revisen",
+    # contenido del caso
+    "curp cancelada", "curp duplicada", "nss cancelado", "duplicidad", "ambas curp", "ambos nss",
+    "dos nss", "ambos numeros de seguridad social", "controversia", "improcedente", "no coinciden",
+    "ante renapo", "homonimia",
+)
+
+
+def pide_revision(text: str, min_palabras: int = 40) -> bool:
+    """¿El cliente pide que un asesor revise su caso, más que un trámite concreto?
+
+    (a) trae alguna de `FRASES_REVISION` y NO nombra exactamente un servicio, o es largo; o
+    (b) D9: nombra 2+ servicios en un texto largo. «Largo» es `min_palabras` o más, contadas con
+    `_norm(text).split()`. La compuerta de (a) evita el falso positivo clásico: «necesito que
+    revisen mi acta de nacimiento» nombra UN trámite y es corto: es ese trámite, no un caso.
+
+    Las frases que el catálogo vivo tenga como nombre o sinónimo se ignoran (capa 2 de la
+    colisión): si en /catalog «controversia» se vuelve sinónimo de un trámite, deja de mandar a
+    revisión en la siguiente lectura. `min_palabras` llega como parámetro: la perilla
+    `contexto_min_palabras` la pasa el llamador (PR4/PR5), esta función no lee `settings`."""
+    normalized = _norm(text)
+    if len(normalized) < 3:
+        return False
+    vivos = catalog.terminos_vivos()
+    con_frase = any(f not in vivos and _contains_term(f, normalized) for f in FRASES_REVISION)
+    n = len(servicios_nombrados(text))
+    largo = len(normalized.split()) >= min_palabras
+    return (con_frase and (n != 1 or largo)) or (n >= 2 and largo)
+
+
 def _menciones_sueltas(normalized: str) -> list[tuple[Service, int, int]]:
     """Cada mención de un nombre o sinónimo en la frase, con su tramo, salvo las que caen dentro de
     una mención MÁS LARGA de otro servicio (la regla de PR9). Dos menciones del mismo tramo y largo
