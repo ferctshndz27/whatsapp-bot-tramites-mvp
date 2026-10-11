@@ -676,11 +676,17 @@ class Feedback(SQLModel, table=True):
 # conversation registra ADEMÁS de la capa que sí acabó respondiendo: el
 # mensaje ya está contado, y contarlo otra vez diluiría el % de no entendidos
 # justo cuando el servidor está caído — que es cuando la alerta debe sonar.
-# "folio": el mensaje se anexó a un folio abierto (casos-analisis PR4). No es un intento de pedir
-# un trámite —ni acierto ni fallo del NLU—, así que no cuenta en el % de «no entendidos».
+# "folio" y "analisis": el mensaje se anexó a un folio abierto o abrió un caso para análisis
+# (casos-analisis PR4 y PR5). No son un intento de pedir un trámite —ni acierto ni fallo del NLU—,
+# así que no cuentan en el % de «no entendidos».
 CAPAS_EXTRA = frozenset(
-    {"rag", "rag_descartado", "tools", "tool", "tool_error", "ollama_error", "folio"}
+    {"rag", "rag_descartado", "tools", "tool", "tool_error", "ollama_error", "folio", "analisis"}
 )
+
+# Folios SIN producto: su `service_id` no existe en el catálogo. "escalado" lo abre la escalada a
+# un asesor; "analisis", el caso para análisis (casos-analisis §5.3). Quien resuelva un
+# `Ticket.service_id` fuera del catálogo los trata igual: aviso genérico, sin nombre de trámite.
+SERVICIOS_SIN_CATALOGO = frozenset({"escalado", "analisis"})
 
 
 class NluEvent(SQLModel, table=True):
