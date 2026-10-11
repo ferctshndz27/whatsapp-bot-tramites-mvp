@@ -403,6 +403,8 @@ def handle_incoming(
         # Dentro del escalado la regla del folio va después de «menu» y del estatus, que
         # `_regla_del_folio` deja pasar (diseño §5.4, parche 1).
         regla = _regla_del_folio(session, conv, text, normalized, entrante.id)
+        if regla is None:
+            regla = _regla_de_la_revision(session, conv, text, normalized, entrante.id)
         if regla is not None:
             replies, extraer = regla, False
         else:
@@ -429,6 +431,8 @@ def handle_incoming(
         elif pide_humano:
             replies = _escalate(session, client, conv, text)
         elif (regla := _regla_del_folio(session, conv, text, normalized, entrante.id)) is not None:
+            replies, extraer = regla, False
+        elif (regla := _regla_de_la_revision(session, conv, text, normalized, entrante.id)) is not None:
             replies, extraer = regla, False
         else:
             replies = _dispatch(session, client, conv, text, normalized)
@@ -815,48 +819,67 @@ def _sumar_o_repreguntar(
     return _bump_or_escalate(session, client, conv, text, reprompt)
 
 
-def _anexar_a_folio(session: Session, ticket: Ticket, contexto: dict, hasta_id: int) -> int:
-    """Anexa el texto acumulado a las notas del folio y le liga los mensajes que se sumaron.
-    Devuelve cuántos archivos se ligaron. Nada se deduce del texto.
-
-    La liga va por pertenencia y con el ORM (el espejo MSSQL escucha `after_update` de Message en
-    el mapper; un UPDATE de Core no lo dispararía): del teléfono, entrantes, habilitados, sin
-    folio, con id entre `desde_id` y `hasta_id`, y que cumplan el mismo predicado con que se
-    sumaron —archivo o informativo—. Un «ok» o un número en medio no se ligan."""
+def _anexar_a_folio(
+    session: Session, ticket: Ticket, contexto: dict, mensajes: list[Message],
+    capa: str = "folio", en_notas: bool = True,
+) -> int:
+    """Anexa el texto acumulado a las notas del folio y le liga `mensajes` (los de
+    `_mensajes_a_ligar`). Devuelve cuántos archivos se ligaron. Nada se deduce del texto.
+    `en_notas=False` cuando el texto ya va en las notas de un folio recién creado (el caso)."""
     texto = contexto.get("texto") or ""
     if texto:
-        sello = horario.ahora().strftime("%Y-%m-%d %H:%M")
-        ticket.notes = (ticket.notes or "") + f"\n\n[cliente, {sello}] " + texto[:MAX_NOTE_TEXT_CASO]
-        session.add(ticket)
+        if en_notas:
+            sello = horario.ahora().strftime("%Y-%m-%d %H:%M")
+            ticket.notes = (ticket.notes or "") + f"\n\n[cliente, {sello}] " + texto[:MAX_NOTE_TEXT_CASO]
+            session.add(ticket)
         session.add(TicketActivity(
             ticket_id=ticket.id, username=asignacion.ACTOR, action=f"info-cliente:{len(texto)}c",
         ))
-    mensajes = session.exec(
+    archivos = _ligar_mensajes(session, ticket, mensajes)
+    # Un evento por mensaje y SIN texto: el texto vive en el folio; el largo, en la actividad.
+    session.add(NluEvent(
+        phone=ticket.phone, text="", capa=capa, service_id=None,
+        office_id=_oficina_de(session, ticket.phone),
+    ))
+    session.commit()
+    return archivos
+
+
+def _mensajes_a_ligar(session: Session, phone: str, desde_id: int, hasta_id: int) -> list[Message]:
+    """Los mensajes que el cliente sumó mientras se aclaraba, por pertenencia: del teléfono,
+    entrantes, habilitados, sin folio, con id entre `desde_id` y `hasta_id`, y que cumplan el mismo
+    predicado con que se sumaron —archivo o informativo—. Un «ok» o un número en medio no entran.
+
+    Solo lee, y se llama ANTES de la primera escritura del turno: `es_informativo` lee el catálogo,
+    que abre su propia sesión (`catalog._refresh`), y con escrituras pendientes en la misma
+    conexión su cierre las desharía (la trampa de `asignacion._por_producto`)."""
+    candidatos = session.exec(
         select(Message)
-        .where(Message.phone == ticket.phone)
+        .where(Message.phone == phone)
         .where(Message.direction == Direction.IN)
         .where(Message.habilitado == True)  # noqa: E712
         .where(Message.ticket_id == None)  # noqa: E711
-        .where(Message.id >= contexto.get("desde_id", hasta_id))
+        .where(Message.id >= desde_id)
         .where(Message.id <= hasta_id)
     ).all()
+    return [
+        m for m in candidatos
+        if m.media_ref is not None or nlu.es_informativo(m.body, settings.contexto_min_palabras)
+    ]
+
+
+def _ligar_mensajes(session: Session, ticket: Ticket, mensajes: list[Message]) -> int:
+    """Liga `mensajes` al folio con el ORM (el espejo MSSQL escucha `after_update` de Message en
+    el mapper; un UPDATE de Core no lo dispararía). Devuelve cuántos archivos. No hace commit."""
     archivos = 0
     for mensaje in mensajes:
-        es_archivo = mensaje.media_ref is not None
-        if es_archivo or nlu.es_informativo(mensaje.body, settings.contexto_min_palabras):
-            mensaje.ticket_id = ticket.id
-            session.add(mensaje)
-            archivos += es_archivo
+        mensaje.ticket_id = ticket.id
+        session.add(mensaje)
+        archivos += mensaje.media_ref is not None
     if archivos:
         session.add(TicketActivity(
             ticket_id=ticket.id, username=asignacion.ACTOR, action=f"archivo-cliente:{archivos}",
         ))
-    # Un evento por mensaje y SIN texto: el texto vive en el folio; el largo, en la actividad.
-    session.add(NluEvent(
-        phone=ticket.phone, text="", capa="folio", service_id=None,
-        office_id=_oficina_de(session, ticket.phone),
-    ))
-    session.commit()
     return archivos
 
 
@@ -871,14 +894,22 @@ def _volver_al_estado_previo(session: Session, conv: Conversation, contexto: dic
     return estado
 
 
-def _anexar_y_volver(session: Session, conv: Conversation, contexto: dict, ticket: Ticket) -> list[str]:
+def _por_ligar(session: Session, phone: str, contexto: dict) -> list[Message]:
+    """`_mensajes_a_ligar` desde `desde_id` hasta el mensaje que resuelve la pregunta."""
     hasta = session.exec(
         select(Message.id)
-        .where(Message.phone == conv.phone)
+        .where(Message.phone == phone)
         .where(Message.direction == Direction.IN)
         .order_by(Message.id.desc())  # type: ignore[union-attr]
     ).first()
-    _anexar_a_folio(session, ticket, contexto, hasta or contexto.get("desde_id", 0))
+    desde = contexto.get("desde_id")
+    if desde is None or hasta is None:
+        return []
+    return _mensajes_a_ligar(session, phone, desde, hasta)
+
+
+def _anexar_y_volver(session: Session, conv: Conversation, contexto: dict, ticket: Ticket) -> list[str]:
+    _anexar_a_folio(session, ticket, contexto, _por_ligar(session, conv.phone, contexto))
     replies = [_con_horario(FOLIO_ANEXADO.format(folio=ticket.id, servicio=_nombre_folio(ticket)))]
     estado = _volver_al_estado_previo(session, conv, contexto)
     if estado == "pidiendo_requisitos":
@@ -896,6 +927,10 @@ def _es_algo_nuevo(session: Session, client: Client, conv: Conversation, context
     `_dispatch` —sus atajos son por subcadena, y un caso de 900 caracteres con la palabra
     «servicios» dentro respondería con el catálogo—."""
     texto = contexto.get("texto") or ""
+    # Regla de la revisión sobre el texto acumulado, en el mismo turno y heredando `desde_id`
+    # (§5.1). Solo archivos con la revisión encendida: los botones, con texto vacío.
+    if settings.revision_enabled and (not texto or nlu.pide_revision(texto, settings.contexto_min_palabras)):
+        return _preguntar_caso(session, conv, {**contexto, "texto": texto})
     estado = _volver_al_estado_previo(session, conv, contexto)
     if not texto:
         _set_state(session, conv, "menu_categoria")
@@ -920,6 +955,190 @@ def _caduca_aclaracion(session: Session, conv: Conversation) -> None:
         _volver_al_estado_previo(session, conv, contexto)
     else:
         _set_state(session, conv, "menu_categoria")
+
+
+
+# ---- Regla de la revisión y caso para análisis (casos-analisis, diseño §5.2 y §5.3) ----
+#
+# El cliente sin folio abierto que pide que alguien revise su caso («tengo una situación con mi
+# pensión, ¿qué se puede hacer?») o que mete varios trámites en un texto largo recibe una lista:
+# «Revisión de un asesor» primero, cada servicio que nombró, y «Otro trámite». Antes se le
+# troceaba en «¿Confirmas estos 3 trámites?». Detrás de `revision_enabled` (apagada).
+
+CASO_SERVICE_ID = "analisis"
+CASO_NOMBRE = "Caso para análisis"
+CASO_NOTA = "Caso para análisis. Mensaje del cliente:\n"
+CASO_NOTA_ARCHIVOS = "Caso para análisis. Archivos del cliente."
+# Revisión + 7 servicios + «Otro trámite» = 9 filas (≤ 10 de Meta).
+MAX_SERVICIOS_EN_CASO = 7
+# Dónde corre: la tabla de §5.2. `pidiendo_requisitos` no, a propósito: ahí el cliente tiene un
+# folio abierto (el que pide el dato), y con folio la que pregunta es la regla del folio.
+ESTADOS_REGLA_REVISION = frozenset({"inicio", "menu_categoria", "menu_servicio", "escalado"})
+# Copy de §5.2 y D18: claro y corto, sin precio ni cotización (D11).
+CASO_PREGUNTA_LISTA = (
+    "Puedo pedir a un asesor que revise tu caso completo, o abrir ahora uno de estos trámites. "
+    "¿Qué prefieres? Responde con el número:"
+)
+CASO_PREGUNTA_BOTONES = "¿Quieres que un asesor revise tu caso, o buscas un trámite en concreto?"
+CASO_BOTONES = [("revision", "🔎 Revisión"), ("tramite", "📋 Un trámite")]
+CASO_FILA_REVISION = "🔎 Revisión de un asesor"
+CASO_FILA_OTRO = "📋 Otro trámite"
+CASO_RECIBIDO = "Gracias, recibí tu caso. 🙏 Un asesor lo revisará y te contactará."
+CASO_ANEXADO = "Lo agregué a tu caso #{folio}. Un asesor lo revisará."
+CASO_OTRO_TRAMITE = "Claro. "
+# Por igualdad con el texto normalizado, como las respuestas del folio.
+REVISION_WORDS = frozenset({"revision", "revision de un asesor", "revisar"})
+OTRO_TRAMITE_WORDS = frozenset({"tramite", "un tramite", "otro tramite", "otro"})
+
+
+def _pregunta_caso(servicios: list[str]) -> str:
+    nombres = [s.name for s in (catalog.service_by_id(i) for i in servicios) if s is not None]
+    if not nombres:
+        return CASO_PREGUNTA_BOTONES
+    lineas = [f"1. {CASO_FILA_REVISION}"]
+    lineas += [f"{i}. {nombre}" for i, nombre in enumerate(nombres, start=2)]
+    lineas.append(f"{len(nombres) + 2}. {CASO_FILA_OTRO}")
+    return CASO_PREGUNTA_LISTA + "\n" + "\n".join(lineas)
+
+
+def _servicios_del_caso(conv: Conversation) -> list:
+    ids = _get_context(conv).get("servicios", [])
+    return [s for s in (catalog.service_by_id(i) for i in ids) if s is not None]
+
+
+def _filas_caso(conv: Conversation) -> list[tuple[str, str]]:
+    """Filas de la lista nativa de `aclarando_caso` (solo con servicios; sin ellos, botones). Un
+    nombre de más de 24 caracteres lo pasa entero a la descripción `whatsapp_client`."""
+    servicios = _servicios_del_caso(conv)
+    if not servicios:
+        return []
+    filas = [("1", CASO_FILA_REVISION)]
+    filas += [(str(i), s.name) for i, s in enumerate(servicios, start=2)]
+    filas.append((str(len(servicios) + 2), CASO_FILA_OTRO))
+    return filas
+
+
+def _regla_de_la_revision(
+    session: Session, conv: Conversation, text: str, normalized: str, desde_id: int,
+) -> list[str] | None:
+    """La lista «¿revisión de un asesor o un trámite?» si toca; None para seguir por el camino de
+    hoy. Solo sin folios abiertos: con folio, la que pregunta es la regla del folio (y con esa
+    perilla apagada, el fallo original sigue: es la fila OFF/ON de la matriz)."""
+    if not settings.revision_enabled or conv.state not in ESTADOS_REGLA_REVISION:
+        return None
+    if normalized in MENU_KEYWORDS or _asks_status(text) or _social_kind(text) == "saludo":
+        return None
+    if not nlu.pide_revision(text, settings.contexto_min_palabras):
+        return None
+    if _folios_abiertos(session, conv.phone):
+        return None
+    return _preguntar_caso(session, conv, {
+        "texto": text[:MAX_NOTE_TEXT_CASO],
+        "desde_id": desde_id,
+        "estado_previo": conv.state,
+        "contexto_previo": _get_context(conv),
+        "updated_previo": conv.updated_at.isoformat(),
+    })
+
+
+def _preguntar_caso(session: Session, conv: Conversation, contexto: dict) -> list[str]:
+    """Pasa a `aclarando_caso`. `contexto` trae texto, `desde_id` y el estado previo; si viene de
+    `aclarando_folio` («Es algo nuevo») los hereda tal cual."""
+    texto = contexto.get("texto") or ""
+    servicios = [s.id for s in nlu.servicios_nombrados(texto)][:MAX_SERVICIOS_EN_CASO] if texto else []
+    nuevo = {
+        "texto": texto,
+        "servicios": servicios,
+        "desde_id": contexto.get("desde_id"),
+        "estado_previo": contexto.get("estado_previo"),
+        "contexto_previo": contexto.get("contexto_previo") or {},
+        "updated_previo": contexto.get("updated_previo"),
+    }
+    _set_state(session, conv, "aclarando_caso", nuevo)
+    return [_pregunta_caso(servicios)]
+
+
+def _handle_aclarando_caso(
+    session: Session, client: Client, conv: Conversation, text: str, normalized: str,
+) -> list[str]:
+    contexto = _get_context(conv)
+    servicios = _servicios_del_caso(conv)
+    n = nlu._norm(text)
+    eleccion = None
+    if servicios:
+        indice = _parse_int(n)
+        if indice == 1 or n in REVISION_WORDS:
+            eleccion = "revision"
+        elif indice is not None and 2 <= indice <= len(servicios) + 1:
+            eleccion = servicios[indice - 2]
+        elif indice == len(servicios) + 2 or n in OTRO_TRAMITE_WORDS:
+            eleccion = "otro"
+        else:
+            # El cliente escribe el nombre en vez del número (C, operador 2026-10-10).
+            eleccion = next((s for s in servicios if nlu._norm(s.name) == n), None)
+    elif n in REVISION_WORDS:
+        eleccion = "revision"
+    elif n in OTRO_TRAMITE_WORDS:
+        eleccion = "otro"
+
+    if eleccion == "revision":
+        return _abrir_caso(session, client, conv, contexto)
+    texto = contexto.get("texto") or ""
+    if eleccion == "otro":
+        # Los mensajes quedan sin folio; lo que traiga el texto va a la ficha, como hoy.
+        if texto:
+            _extract_client_data(session, conv.phone, texto)
+        _set_state(session, conv, "menu_categoria")
+        return [CASO_OTRO_TRAMITE + catalog.format_category_menu()]
+    if eleccion is not None:
+        if texto:
+            _extract_client_data(session, conv.phone, texto)
+        replies = _confirmar(session, conv, [eleccion], texto, detectados=_detectar_codigos(texto))
+        pendiente = _get_context(conv)
+        pendiente["desde_id"] = contexto.get("desde_id")
+        _set_state(session, conv, "confirmar", pendiente)
+        return replies
+    return _sumar_o_repreguntar(session, client, conv, contexto, text, _pregunta_caso(contexto.get("servicios", [])))
+
+
+def _abrir_caso(session: Session, client: Client, conv: Conversation, contexto: dict) -> list[str]:
+    """Abre el caso para análisis (§5.3), o anexa al que ya está abierto: un caso por teléfono.
+
+    Sin producto (D2): `asignacion.elegir` SIN `service_ids`, como la escalada; el asesor puede
+    salir `None` y el folio queda en el pool de la oficina. Sin consultar `MAX_FOLIOS_ABIERTOS`:
+    un caso no es un trámite que el cliente multiplica. La carrera de dos webhooks simultáneos es
+    la misma clase que la del alta normal y queda fuera, como el candado (§11)."""
+    mensajes = _por_ligar(session, conv.phone, contexto)  # antes de escribir nada
+    texto = contexto.get("texto") or ""
+    existente = next(
+        (t for t in _folios_abiertos(session, conv.phone) if t.service_id == CASO_SERVICE_ID), None
+    )
+    if existente is not None:
+        _anexar_a_folio(session, existente, contexto, mensajes, capa=CASO_SERVICE_ID)
+        _set_state(session, conv, "escalado")
+        return [_con_horario(CASO_ANEXADO.format(folio=existente.id))]
+    asesor, motivo = asignacion.elegir(session, client.phone)
+    ticket = Ticket(
+        phone=client.phone,
+        client_name=client.name,
+        category="(análisis)",
+        service_id=CASO_SERVICE_ID,
+        service_name=CASO_NOMBRE,
+        price_info="N/A",
+        status=TicketStatus.NUEVO,
+        escalado=True,
+        notes=(CASO_NOTA + texto[:MAX_NOTE_TEXT_CASO]) if texto else CASO_NOTA_ARCHIVOS,
+        provider=conv.provider,
+        office_id=client.office_id,
+        assigned_to=asesor,
+    )
+    session.add(ticket)
+    session.commit()
+    session.refresh(ticket)
+    asignacion.bitacora(session, ticket, motivo)  # no escribe nada si `asesor` es None
+    _anexar_a_folio(session, ticket, contexto, mensajes, capa=CASO_SERVICE_ID, en_notas=False)
+    _set_state(session, conv, "escalado")
+    return [_con_horario(CASO_RECIBIDO)]
 
 
 def _greeting_for(client: Client) -> str:
@@ -1221,6 +1440,9 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         # Códigos que venían en el mensaje con que pidió el trámite: se copian
         # al folio antes de preguntar nada (ver _requisitos_con_codigos).
         detectados = context.get("codigos") or {}
+        # Viene de la lista del caso (§5.2): lo que el cliente fue sumando es del folio que nace.
+        # Se calcula antes de escribir (ver `_mensajes_a_ligar`).
+        por_ligar = _por_ligar(session, client.phone, context) if len(services) == 1 else []
         tickets = []
         prellenado = False
         # A quién le toca cada uno: se decide POR SERVICIO (decisión del
@@ -1263,6 +1485,8 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         # La bitácora va después del commit porque necesita el id del folio.
         for ticket in tickets:
             asignacion.bitacora(session, ticket, decisiones[ticket.service_id].motivo)
+        if por_ligar:
+            _ligar_mensajes(session, tickets[0], por_ligar)
         session.commit()
 
         # Cola plana de preguntas: [[folio, índice del requisito], …] en orden
@@ -1671,6 +1895,14 @@ def presentation(session: Session, phone: str, replies: list[str]) -> list:
         # Solo la pregunta lleva botones: «Lo sumo 👍» y los re-prompts de «Otro folio» son texto.
         out[-1] = {"text": last, "buttons": list(FOLIO_BOTONES)}
         return out
+    if conv.state == "aclarando_caso" and last == CASO_PREGUNTA_BOTONES:
+        out[-1] = {"text": last, "buttons": list(CASO_BOTONES)}
+        return out
+    if conv.state == "aclarando_caso" and MENU_MARKER in last:
+        rows = _filas_caso(conv)
+        if rows:
+            out[-1] = {"text": last, "list": rows, "button": LIST_BUTTON_LABEL}
+        return out
     if conv.state == "aclarando_folio" and MENU_MARKER in last:
         rows = _filas_folio(session, conv)
         if rows:
@@ -1987,6 +2219,7 @@ _HANDLERS: dict[str, Handler] = {
     "pidiendo_requisitos": _handle_requisitos,
     "escalado": _handle_escalado,
     "aclarando_folio": _handle_aclarando_folio,
+    "aclarando_caso": _handle_aclarando_caso,
 }
 
 

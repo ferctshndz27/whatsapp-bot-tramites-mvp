@@ -47,14 +47,6 @@ ESTADOS_NUEVOS = {"aclarando_folio", "aclarando_caso"}
 
 # Caso → el PR que lo resuelve. Al resolverlo, ese PR borra su línea.
 PENDIENTES = {
-    "real-24-09-sin-folio": "PR5: el caso real sin folio ofrece la revisión",
-    "situacion-con-mi-pension": "PR5: una frase sin servicios ofrece la revisión",
-    "me-revisas-mi-acta-40": "PR5: frase, un servicio y 40 palabras ofrecen la revisión",
-    "me-orientas-licencia": "PR5: una frase sin servicios ofrece la revisión",
-    "corregi-ante-renapo": "PR5: una frase sin servicios ofrece la revisión",
-    "real-24-09-sin-frases": "PR5: D9, tres servicios en un texto largo",
-    "dos-servicios-en-45-palabras": "PR5: D9, dos servicios en un texto largo",
-    "se-solicita-apoyo-ante-renapo": "PR5: una frase sin servicios ofrece la revisión",
 }
 
 
