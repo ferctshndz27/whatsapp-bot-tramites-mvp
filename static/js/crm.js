@@ -2279,9 +2279,11 @@
     if (m.direction === "out" && m.wa_status) partes.push(m.wa_status);
     if (meta) {
       meta.textContent = partes.filter(Boolean).join(" · ");
-      /* El folio sobre el que contestó el colaborador, después de su nombre: «ana · #46 · Acta
-         de nacimiento · 10:32». Solo en el panel; el cliente recibió el texto tal cual. */
-      if (m.folio && m.direction === "out") {
+      /* El folio de la burbuja, después de quien la escribió: «ana · #46 · Acta de nacimiento ·
+         10:32» si contestó un colaborador sobre ese folio, «Cliente · #63 · Unificación de NSS ·
+         09:10» si el bot ligó el mensaje del cliente a su folio (casos-analisis). Solo en el
+         panel; el cliente recibió el texto tal cual. */
+      if (m.folio) {
         var quien = document.createTextNode(partes[0] + " · ");
         var folio = document.createElement("span");
         folio.className = "folio";

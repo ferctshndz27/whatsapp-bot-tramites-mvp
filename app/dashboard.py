@@ -768,6 +768,7 @@ def ticket_detail(
             .order_by(Label.nombre)
         ).all()
         alias_cliente = alias_por_telefono(session, [ticket.phone]).get(ticket.phone)
+        veredicto = _veredicto_actual(session, ticket) if ticket.service_id == "analisis" else None
         # Para el datalist del formulario «+ etiqueta».
         todas_las_etiquetas = [
             l.nombre
@@ -804,6 +805,10 @@ def ticket_detail(
             # catálogo. Es un ESTIMADO para que el asesor no cuente a mano; el
             # monto que se cobra lo sigue tecleando él.
             "cotizacion": cotizacion_estimada(ticket.price_info, requisitos),
+            # Solo en el folio «analisis»: el último veredicto del equipo, o "" si nadie lo ha dado.
+            "es_caso_analisis": ticket.service_id == "analisis",
+            "veredicto": veredicto,
+            "veredictos": VEREDICTOS,
             "err": err,
             "ok": ok,
             # Ruta de la lista de origen (filtros y página incluidos) para el
@@ -1191,6 +1196,41 @@ def toggle_ticket_agent(request: Request, ticket_id: int):
             action = "agente:reanudado" if ticket.agent_active else "agente:pausado"
             _log_activity(session, ticket_id, user, action)
             logger.info("Ticket #%s: %s (por %s)", ticket_id, action, user)
+    return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+
+
+# Veredicto del equipo sobre un «caso para análisis» (casos-analisis §5.3 y §9): ¿era de verdad un
+# caso, o un trámite normal que la regla de la revisión desvió? Es el KPI de la regla: se cuenta
+# en TicketActivity (`veredicto:caso` / `veredicto:tramite-normal`), el último manda, y no cambia
+# nada del folio.
+VEREDICTOS = {"caso": "Sí, era un caso", "tramite-normal": "No, era un trámite normal"}
+
+
+def _veredicto_actual(session, ticket: Ticket) -> str:
+    ultima = session.exec(
+        select(TicketActivity)
+        .where(TicketActivity.ticket_id == ticket.id)
+        .where(TicketActivity.action.startswith("veredicto:"))  # type: ignore[attr-defined]
+        .where(TicketActivity.habilitado == True)  # noqa: E712
+        .order_by(TicketActivity.id.desc())  # type: ignore[union-attr]
+    ).first()
+    return ultima.action.split(":", 1)[1] if ultima else ""
+
+
+@router.post("/tickets/{ticket_id}/veredicto")
+def ticket_veredicto(request: Request, ticket_id: int, valor: str = Form("")):
+    """Cualquiera del alcance del folio lo da (es juicio del equipo, no del dueño). Solo en el
+    folio «analisis» y con un valor de VEREDICTOS; lo demás se ignora en silencio, como los otros
+    POST del folio."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    vista = alcance(user)
+    with get_session() as session:
+        ticket = session.get(Ticket, ticket_id)
+        if (ticket is not None and vista.alcanza(ticket.office_id)
+                and ticket.service_id == "analisis" and valor in VEREDICTOS):
+            _log_activity(session, ticket_id, user, f"veredicto:{valor}")
     return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
 

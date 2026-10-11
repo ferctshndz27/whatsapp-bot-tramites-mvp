@@ -602,6 +602,7 @@ const enPagina = {
         dir: b.classList.contains("out") ? "out" : "in",
         texto: b.querySelector(".bubble-text")?.textContent ?? "",
         meta: b.querySelector(".meta")?.textContent.trim() ?? "",
+        folio: b.querySelector(".meta .folio")?.textContent.trim() ?? null,
         eliminar: !!b.querySelector(".msg-delete"),
         adjunto: b.querySelector(".bubble-adjunto")?.getAttribute("href") ?? null,
       })),
@@ -1176,6 +1177,11 @@ function crearContexto({ cdp, base, recolector, dialogos, env, db }) {
     if (!toast.includes(destinoNombre)) ctx.avisar(`el toast dice ${JSON.stringify(toast)} y no menciona «${destinoNombre}»`);
   };
   ctx.login = async (usuario) => {
+    // Primero se descarga la página anterior: si las cookies se borran con ella viva, su sondeo
+    // o un fetch en vuelo (p. ej. /crm/api/etapas) sale ya sin sesión, recibe 403 y el criterio
+    // SIGUIENTE se lo cobra como error de consola. Un usuario real que cambia de cuenta sale de
+    // la página; esto lo imita.
+    await navegar(cdp, "about:blank");
     await cdp.send("Network.clearBrowserCookies");
     await navegar(cdp, base + "/login");
     const cargado = cdp.esperarEvento("Page.loadEventFired", 20000);
@@ -1775,6 +1781,31 @@ async function criterioEnviar(ctx) {
   if ((await ctx.chat(ANA)).mensajes.length !== antes) fallos.push("la API sigue devolviendo el mensaje ocultado");
   if (fallos.length) throw new Error(fallos.join("; "));
   return `envío vacío avisado; «${texto}» enviado por POST /inbox/${ANA}/send, visto en hilo, API y tarjeta; ocultado con confirm y desaparecido`;
+}
+
+async function criterioBurbujaLigada(ctx) {
+  // Ana: el bot ligó «¿Aceptan transferencia?» a su folio (siembra). Esa burbuja del cliente
+  // lleva «#N · Acta de nacimiento»; las otras entrantes, no.
+  const chat = await ctx.chat(ANA);
+  const folio = chat.contacto.folios_abiertos?.[0] ?? chat.mensajes.find((m) => m.folio)?.folio;
+  if (!folio) throw new Error("la API no trae el folio de Ana");
+  const ligado = chat.mensajes.find((m) => m.body === "¿Aceptan transferencia?");
+  if (ligado?.folio?.id !== folio.id) throw new Error(`la API no liga el mensaje: ${JSON.stringify(ligado)}`);
+  const r = await ctx.cdp.evaluate(enPagina.abrirTarjeta, ANA, "bandeja");
+  if (r.error) throw new Error(r.error);
+  const s = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return e.nombre === "Ana Lucía Ramírez" && e.burbujas.length >= 4 ? e : null;
+  }, { timeout: 6000, label: "el chat de Ana" });
+  const fallos = [];
+  const esperado = `#${folio.id} · Acta de nacimiento`;
+  const b = s.burbujas.find((x) => x.texto === "¿Aceptan transferencia?");
+  if (b?.dir !== "in" || b.folio !== esperado || !b.meta.startsWith(`Cliente · ${esperado} · `)) fallos.push(`burbuja ligada: ${JSON.stringify(b)}`);
+  const sueltas = s.burbujas.filter((x) => x.dir === "in" && x.texto !== "¿Aceptan transferencia?");
+  if (sueltas.some((x) => x.folio !== null)) fallos.push(`una entrante sin ligar lleva folio: ${JSON.stringify(sueltas)}`);
+  if (fallos.length) throw new Error(fallos.join("; "));
+  await ctx.capturar("09c-burbuja-ligada-1400");
+  return `«Cliente · ${esperado} · …» en la ligada; ${sueltas.length} entrantes sin ligar, sin folio`;
 }
 
 async function criterioVariosTramites(ctx) {
@@ -3130,6 +3161,7 @@ async function main() {
     await criterio(ctx, "8. Ventana cerrada: variantes «nunca» y «caducó»", criterioVentanaCerrada);
     await criterio(ctx, "9. Enviar un mensaje y ocultarlo", criterioEnviar);
     await criterio(ctx, "9b. Varios trámites en curso: cabecera, selector «Sobre el trámite» y burbuja con folio", criterioVariosTramites);
+    await criterio(ctx, "9c. La burbuja del cliente ligada a su folio lleva «#N · servicio»", criterioBurbujaLigada);
     await criterio(ctx, "10. Reactivar el bot", criterioReactivarBot);
     await criterio(ctx, "11. Bloquear y desbloquear (admin)", criterioBloquear);
     await criterio(ctx, "12. Cerrar el chat: ✕, «Tablero» y Escape", criterioCerrarChat);

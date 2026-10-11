@@ -96,8 +96,10 @@ with Session(db.engine) as s:
                   created_at=ahora - timedelta(hours=3)))
     s.add(Message(phone=ANA, direction=Direction.OUT, body="Hola Ana, son $150.",
                   sent_by="colab1", wa_status="read", created_at=ahora - timedelta(hours=2)))
-    s.add(Message(phone=ANA, direction=Direction.IN, body="¿Aceptan transferencia?",
-                  created_at=ahora - timedelta(minutes=30)))
+    # Ligado al folio por el bot (casos-analisis, regla del folio): su burbuja lleva el folio.
+    transferencia = Message(phone=ANA, direction=Direction.IN, body="¿Aceptan transferencia?",
+                            created_at=ahora - timedelta(minutes=30))
+    s.add(transferencia)
     s.add(Message(phone=ANA, direction=Direction.IN, body="Y ¿cuánto tarda?",
                   created_at=ahora - timedelta(minutes=5)))
     # Diego: la ventana caducó hace días; el último es un saliente entregado.
@@ -119,6 +121,8 @@ with Session(db.engine) as s:
     s.commit()
     # Un cobro pendiente en el folio de Ana: el cajón del chat resume su estado.
     s.refresh(folio_ana)
+    transferencia.ticket_id = folio_ana.id
+    s.add(transferencia)
     s.add(Cobro(ticket_id=folio_ana.id, phone=ANA,
                 concepto=f"Acta de nacimiento (folio #{folio_ana.id})",
                 monto_centavos=15000, estado="pendiente", creado_por="colab1",
