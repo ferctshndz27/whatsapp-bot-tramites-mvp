@@ -30,6 +30,7 @@ from app.models import (
     Message,
     OFICINA_TLAXCALA_ID,
     Office,
+    SERVICIOS_SIN_CATALOGO,
     Ticket,
     TicketActivity,
     TicketLabel,
@@ -1074,7 +1075,7 @@ def _notify_finish(ticket_id: int) -> None:
                 monto=formato_monto(cobro_vivo.monto_centavos, cobro_vivo.moneda),
                 vence=vence,
             )
-        elif ticket.service_id == "escalado":
+        elif ticket.service_id in SERVICIOS_SIN_CATALOGO:
             body = FINISH_NOTICE_GENERIC
         else:
             body = FINISH_NOTICE_SERVICE.format(service=ticket.service_name, folio=ticket.id)
@@ -1133,7 +1134,7 @@ def _notify_release(ticket_id: int) -> None:
         if not ventana.abierta_para(session, phone):
             logger.info("Sin aviso de soltado a %s: ventana de 24h cerrada", mask_phone(phone))
             return
-        if ticket.service_id == "escalado":
+        if ticket.service_id in SERVICIOS_SIN_CATALOGO:
             body = RELEASE_NOTICE_GENERIC
         else:
             body = RELEASE_NOTICE_SERVICE.format(service=ticket.service_name, folio=ticket.id)
