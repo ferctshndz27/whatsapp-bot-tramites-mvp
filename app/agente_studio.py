@@ -431,8 +431,14 @@ def probar(request: Request, data: PruebaIn):
     if not user:
         return JSONResponse({"error": "solo administradores"}, status_code=403)
     texto = data.texto.strip()
-    if not texto or len(texto) > 500:
-        return JSONResponse({"error": "el mensaje va de 1 a 500 caracteres"}, status_code=400)
+    # El tope es el del caso que se anexa a un folio (2000): un caso real pasaba de 900. Las capas
+    # con modelo siguen recortando a su MAX_INPUT_CHARS por su cuenta.
+    from app.conversation import MAX_NOTE_TEXT_CASO
+
+    if not texto or len(texto) > MAX_NOTE_TEXT_CASO:
+        return JSONResponse(
+            {"error": f"el mensaje va de 1 a {MAX_NOTE_TEXT_CASO} caracteres"}, status_code=400
+        )
 
     inicio = time.perf_counter()
     service, category, capa, confianza = nlu.deduce_explained(texto)
@@ -463,6 +469,12 @@ def probar(request: Request, data: PruebaIn):
             resultado["retrieval"] = rag.explicar_retrieval(texto, alcance(user).office_id)
         if resultado["respuesta_rag"] is None and not sugerencias:
             resultado["le_tocaria_tools"] = settings.agent_tools_enabled
+    # Lo que verían las reglas del folio y de la revisión (casos-analisis §5.6), con sus perillas.
+    resultado["caso"] = {
+        **nlu.explicar_caso(texto, settings.contexto_min_palabras),
+        "contexto_folio_enabled": settings.contexto_folio_enabled,
+        "revision_enabled": settings.revision_enabled,
+    }
     # Un timeout de Ollama y un "no sé" del modelo daban EXACTAMENTE el mismo
     # resultado en el probador; aquí se separan.
     resultado["ollama_error"] = nlu.limpiar_fallo_ollama()

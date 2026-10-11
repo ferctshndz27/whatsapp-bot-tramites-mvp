@@ -743,9 +743,33 @@ document.getElementById("btn-probar").onclick = () => {
     if (r.sugerencias && r.sugerencias.length && !r.respuesta_rag)
       msg += `<br>Mini-menú: ${r.sugerencias.map(esc).join(", ")}`;
     if (r.le_tocaria_tools) msg += `<br><em>Le tocaría al nodo agéntico (no se ejecuta en pruebas).</em>`;
+    // Lo que verían las reglas del folio y de la revisión (casos-analisis), aunque estén apagadas.
+    if (r.caso) msg += pintarCaso(r.caso);
     res.innerHTML = `<span class="ok">${msg}</span>`;
   }).catch(e => res.innerHTML = `<span class="err">${esc(e.message)}</span>`);
 };
+const VIAS_INFORMATIVO = {
+  largo: "por largo",
+  revision: "porque pide revisión",
+  servicios: "porque nombra 2+ servicios",
+};
+function pintarCaso(c) {
+  const servicios = c.servicios_nombrados.length
+    ? c.servicios_nombrados.map(s => esc(s.nombre)).join(", ")
+    : "ninguno";
+  let html = `<br><small><strong>Casos (${c.palabras} palabras):</strong> ` +
+    `servicios nombrados: ${c.servicios_nombrados.length} (${servicios}) · ` +
+    `informativo: ${c.informativo ? "sí, " + esc(VIAS_INFORMATIVO[c.informativo_via] || "") : "no"} · ` +
+    `pide revisión: ${c.pide_revision ? "sí" : "no"}`;
+  if (c.frases.length) html += ` · frases: ${c.frases.map(esc).join(", ")}`;
+  if (c.colisiones.length)
+    html += `<br>⚠ Ignoradas porque el catálogo las tiene como nombre o sinónimo: ${c.colisiones.map(esc).join(", ")}`;
+  const apagadas = [];
+  if (!c.contexto_folio_enabled) apagadas.push("folio");
+  if (!c.revision_enabled) apagadas.push("revisión");
+  if (apagadas.length) html += `<br><em>Regla${apagadas.length > 1 ? "s" : ""} apagada${apagadas.length > 1 ? "s" : ""}: ${apagadas.join(" y ")} (se muestra lo que verían).</em>`;
+  return html + "</small>";
+}
 document.getElementById("probar-texto").addEventListener("keydown",
   e => { if (e.key === "Enter") document.getElementById("btn-probar").click(); });
 

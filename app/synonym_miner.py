@@ -353,6 +353,9 @@ CAPA_COLORS = {
     # Rojo oscuro, distinto del rosa de "ninguna": no entender es normal, que
     # el servidor de Ollama no conteste no lo es.
     "ollama_error": "#991b1b",
+    # casos-analisis: el mensaje se anexó a un folio o abrió un caso. Extras (CAPAS_EXTRA): no
+    # entran al % de no entendidos, pero sí a la dona para que se vean y no salgan en gris.
+    "folio": "#0ea5e9", "analisis": "#7c3aed",
 }
 
 

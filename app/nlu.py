@@ -951,6 +951,38 @@ def es_informativo(text: str, min_palabras: int = 40) -> bool:
     )
 
 
+def explicar_caso(text: str, min_palabras: int = 40) -> dict:
+    """Lo que ven las reglas del folio y de la revisión, para el probador del Estudio (§5.6).
+
+    Solo lee: las mismas funciones que usa la conversación, con su porqué. `informativo_via` es la
+    primera vía que dispara ("largo", "revision", "servicios") o None; `frases` las de
+    `FRASES_REVISION` que casaron y `colisiones` las que casaron pero se ignoran porque el
+    catálogo vivo las tiene como nombre o sinónimo."""
+    normalized = _norm(text)
+    vivos = catalog.terminos_vivos()
+    casadas = [f for f in FRASES_REVISION if _contains_term(f, normalized)]
+    servicios = servicios_nombrados(text)
+    palabras = len(normalized.split())
+    revision = pide_revision(text, min_palabras)
+    via = None
+    if not _es_respuesta_corta(normalized):
+        if palabras >= min_palabras:
+            via = "largo"
+        elif revision:
+            via = "revision"
+        elif len(servicios) >= 2:
+            via = "servicios"
+    return {
+        "palabras": palabras,
+        "servicios_nombrados": [{"id": s.id, "nombre": s.name} for s in servicios],
+        "informativo": via is not None,
+        "informativo_via": via,
+        "pide_revision": revision,
+        "frases": [f for f in casadas if f not in vivos],
+        "colisiones": [f for f in casadas if f in vivos],
+    }
+
+
 def _menciones_sueltas(normalized: str) -> list[tuple[Service, int, int]]:
     """Cada mención de un nombre o sinónimo en la frase, con su tramo, salvo las que caen dentro de
     una mención MÁS LARGA de otro servicio (la regla de PR9). Dos menciones del mismo tramo y largo

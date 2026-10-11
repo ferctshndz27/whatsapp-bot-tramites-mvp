@@ -19,11 +19,14 @@ operador, 2026-09-18). Dos cosas lo sostienen:
 """
 
 import logging
+from typing import Annotated
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import select
 
+from app import nlu
 from app.templating import templates
 from app.audit import log_admin
 from app.auth import alcance
@@ -52,7 +55,7 @@ def _visibles(user: str) -> set[str]:
         return set(session.exec(consulta).all())
 
 
-def _render(request: Request, admin: str, error: str | None = None):
+def _render(request: Request, admin: str, error: str | None = None, choques: list[str] | None = None):
     visibles = _visibles(admin)
     return templates.TemplateResponse(
         request, "catalog.html",
@@ -62,6 +65,7 @@ def _render(request: Request, admin: str, error: str | None = None):
             "categories": catalog.admin_view(visibles),
             "changes": catalog.recent_changes(60, visibles),
             "error": error,
+            "choques_revision": choques or [],
         },
     )
 
@@ -76,11 +80,20 @@ def _apply(request: Request, admin: str, action: str, target: str, error: str | 
 
 
 @router.get("/catalog")
-def catalog_view(request: Request):
+def catalog_view(request: Request, choque: Annotated[list[str] | None, Query()] = None):
     admin, redirect = _usuario_o_redirect(request)
     if redirect:
         return redirect
-    return _render(request, admin)
+    return _render(request, admin, choques=[c[:80] for c in (choque or [])[:10]])
+
+
+def choques_con_revision(sinonimos: list[str]) -> list[str]:
+    """Los sinónimos que son, tal cual, una frase de `nlu.FRASES_REVISION` (casos-analisis §5.2,
+    capa 3 de la colisión). Mientras lo sean, `pide_revision` ignora esa frase (capa 2): el
+    cliente que la escriba irá a ese trámite en vez de que se le ofrezca la revisión. No bloquea:
+    el colaborador decide; solo se le avisa."""
+    frases = set(nlu.FRASES_REVISION)
+    return [s for s in sinonimos if nlu._norm(s).strip() in frases]
 
 
 @router.post("/catalog/categories")
@@ -152,12 +165,16 @@ def service_update(
     if not name.strip() or not price_info.strip():
         return _render(request, admin, error="Nombre y precio son obligatorios.")
     synonym_list = [s for s in (part.strip() for part in synonyms.split(",")) if s]
-    return _apply(
+    respuesta = _apply(
         request, admin, "servicio_editado", service_id,
         catalog.update_service(
             service_id, name, price_info, synonym_list, requirements, admin=admin
         ),
     )
+    choques = choques_con_revision(synonym_list)
+    if choques and isinstance(respuesta, RedirectResponse):
+        return RedirectResponse("/catalog?" + urlencode([("choque", c) for c in choques]), status_code=303)
+    return respuesta
 
 
 @router.post("/catalog/services/{service_id}/toggle")

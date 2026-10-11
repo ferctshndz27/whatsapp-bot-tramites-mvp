@@ -46,6 +46,20 @@
   </p>
 </div>
 
+{% if es_caso_analisis %}
+<div class="card">
+  <h3>¿Era de verdad un caso para análisis?</h3>
+  <p>Lo abrió el agente porque el cliente pidió que un asesor revisara su caso. Tu respuesta mide si la regla acierta; no cambia nada del folio.</p>
+  {% if veredicto %}<p><strong>Veredicto:</strong> <span class="badge asignada">{{ veredictos[veredicto] }}</span></p>{% endif %}
+  {# CSRF: como todos los POST del panel, lo mitiga la cookie de sesión SameSite=Lax (app/main.py); la regla de Django no aplica a Jinja/FastAPI. #}
+  <form method="post" action="/tickets/{{ ticket.id }}/veredicto"> {# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+    {% for valor, etiqueta in veredictos.items() %}
+    <button type="submit" name="valor" value="{{ valor }}" class="btn-sm" aria-pressed="{{ 'true' if veredicto == valor else 'false' }}">{{ etiqueta }}</button>
+    {% endfor %}
+  </form>
+</div>
+{% endif %}
+
 {# Cada sección es su propio panel. Regla al editar: los paneles que viven
    dentro del if de propiedad (más abajo) abren y cierran DENTRO de su rama —
    partir un div entre ramas rompe el HTML de los estados que no estás viendo. #}
