@@ -215,6 +215,18 @@ class Settings:
         # dejando los folios sin dueño, exactamente como antes de la fase.
         self.reparto_automatico = os.environ.get("REPARTO_AUTOMATICO", "0") == "1"
 
+        # Regla del folio y regla de la revisión (casos-analisis, diseño §5.5). APAGADAS por default,
+        # aquí y en el panel: cambian qué le contesta el bot a un cliente con folio abierto, y eso lo
+        # enciende un admin desde /agente (nodo «Asesor humano»), no un despliegue. Apagadas, el bot
+        # se comporta exactamente como antes de PR4/PR5 (rollback exacto).
+        self.contexto_folio_enabled = os.environ.get("CONTEXTO_FOLIO_ENABLED", "0") == "1"
+        self.revision_enabled = os.environ.get("REVISION_ENABLED", "0") == "1"
+        # Desde cuántas palabras un mensaje es «informativo» (nlu.es_informativo, vía i). 40 es
+        # decisión del operador (D12) sin distribución medida. Barandal 15-200: abajo de 15, un «ya
+        # te mandé mi acta, cuándo me la entregan» pregunta «¿es para tu folio?» y la regla
+        # secuestra la plática; arriba de 200, ni un caso de un párrafo entero cuenta por largo.
+        self.contexto_min_palabras = max(15, min(200, int(os.environ.get("CONTEXTO_MIN_PALABRAS", "40"))))
+
 
 settings = Settings()
 

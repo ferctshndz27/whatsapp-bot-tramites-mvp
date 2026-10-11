@@ -90,6 +90,21 @@ CONFIG_EDITABLE = {
         "bool",
         ayuda="Apagado, los folios nuevos nacen sin dueño y se toman a mano.",
     ),
+    "contexto_folio_enabled": Perilla(
+        "Preguntar a qué folio pertenece la información del cliente", "bool",
+        ayuda="Con un folio abierto, un mensaje informativo recibe «¿es para tu folio #N?» "
+              "antes de tratarse como pedido nuevo.",
+    ),
+    "revision_enabled": Perilla(
+        "Preguntar si un caso es para revisión de un asesor", "bool",
+        ayuda="Un cliente que describe un caso (no un trámite) recibe la opción de que lo "
+              "revise un asesor, en vez de la lista de trámites.",
+    ),
+    "contexto_min_palabras": Perilla(
+        "Mensaje informativo: mínimo de palabras", "entero", 15, 200, 5,
+        ayuda="Abajo de 15 casi cualquier frase pregunta por el folio y secuestra la plática; "
+              "arriba de 200 ni un párrafo entero cuenta por largo.",
+    ),
     "fuzzy_threshold": Perilla(
         "Umbral difuso", "entero", 70, 95, 1,
         ayuda="Abajo de 70 el difuso inventa coincidencias; arriba de 95 casi "
@@ -126,6 +141,20 @@ CONFIG_EDITABLE = {
               "de 120 deja de parecer un mensaje de WhatsApp.",
     ),
 }
+
+
+# Qué hace el bot con cada combinación de las dos perillas de casos-analisis (diseño §5.5). La
+# publica el Estudio en el panel del nodo «Asesor humano»: el admin lee la conducta antes de
+# encender, no después. Filas: [folio, revisión, conducta].
+MATRIZ_CASOS: tuple[tuple[str, str, str], ...] = (
+    ("OFF", "OFF", "La de hoy: rollback exacto."),
+    ("ON", "OFF", "Pregunta «¿es para tu folio?»; «Es algo nuevo» sigue como hoy (puede trocear)."),
+    ("OFF", "ON", "Solo clientes SIN folio reciben la opción de revisión; con folio, el fallo "
+                  "original sigue."),
+    ("ON", "ON", "Diseño completo."),
+    ("ON→OFF", "—", "Si había una pregunta en vuelo, el siguiente mensaje la descarta y se "
+                     "atiende desde cero; nada se reinterpreta."),
+)
 
 
 def aplicar_overrides(session: Session) -> None:

@@ -91,6 +91,11 @@ NO_SON_CREDENCIALES = {
     "CARGA_MAXIMA_ASESOR",
     "REPARTO_AUTOMATICO",
     "GEOIP_ENABLED",
+    # Perillas de la regla del folio y de la revisión (casos-analisis §5.5): interruptores y un
+    # umbral de conducta, editables desde /agente. No son secretos.
+    "CONTEXTO_FOLIO_ENABLED",
+    "REVISION_ENABLED",
+    "CONTEXTO_MIN_PALABRAS",
 }
 
 

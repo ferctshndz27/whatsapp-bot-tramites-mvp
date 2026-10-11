@@ -536,6 +536,25 @@ function panelNodo(n) {
   if (n.id === "ollama" && !n.fijo)
     h += grupoCampos(["ollama_model", "ollama_timeout"]);
   if (n.id === "fuzzy") h += grupoCampos(["fuzzy_threshold"]);
+  if (n.perillas) {
+    // Perillas de casos-analisis (regla del folio y de la revisión): las claves y la matriz de
+    // conducta las publica el servidor (agent_settings.MATRIZ_CASOS); aquí solo se pintan.
+    const bools = n.perillas.filter(k => c[k] && c[k].tipo === "bool");
+    const numeros = n.perillas.filter(k => c[k] && c[k].tipo !== "bool");
+    h += `<h3 class="mini-titulo">Folio y revisión</h3>` + bools.map(k => `
+      <div class="tool-fila"><div><strong>${esc(c[k].etiqueta)}</strong>
+        <span class="muted mini">${c[k].valor ? "encendida" : "apagada"}</span>${ayudaDe(c[k])}</div>
+        <button class="btn-mini" data-perilla="${esc(k)}">${c[k].valor ? "Apagar" : "Encender"}</button>
+      </div>`).join("") + (numeros.length ? grupoCampos(numeros) : "");
+    h += `<div class="table-wrap"><table class="mini"><caption class="muted mini">Qué hace el bot
+      con cada combinación</caption><thead><tr><th scope="col">Folio</th><th scope="col">Revisión</th>
+      <th scope="col">Conducta</th></tr></thead><tbody>` +
+      (ESTADO.matriz_casos || []).map(f => `<tr>${f.map(x => `<td>${esc(x)}</td>`).join("")}</tr>`).join("") +
+      `</tbody></table></div>`;
+    setTimeout(() => document.querySelectorAll("[data-perilla]").forEach(b => {
+      b.onclick = () => guardar(b.dataset.perilla, c[b.dataset.perilla].valor ? 0 : 1);
+    }), 0);
+  }
   if (n.id === "literal") {
     // Esta capa no tiene flags: la alimentan los DATOS del catálogo.
     h += `<p class="muted mini">No se configura con flags: la alimenta el <strong>catálogo</strong>

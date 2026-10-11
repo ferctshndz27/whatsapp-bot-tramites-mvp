@@ -288,7 +288,10 @@ def _estado(session: Session) -> dict:
          "mensajes": m.get("tools", 0), "entra_si": "el corpus no respondió"},
         {"id": "escalada", "nombre": "Asesor humano", "activo": True, "fijo": True,
          "detalle": "el último recurso de siempre", "mensajes": m.get("ninguna", 0),
-         "entra_si": "nada de lo anterior resolvió"},
+         "entra_si": "nada de lo anterior resolvió",
+         # Las dos reglas de casos-analisis terminan en un asesor: sus perillas viven aquí y no
+         # en un nodo propio, que cambiaría la cadena de flechas del lienzo.
+         "perillas": ["contexto_folio_enabled", "revision_enabled", "contexto_min_palabras"]},
         # No es una capa de la cascada: es lo que pasa DESPUÉS, cuando ya hay
         # folio. Se dibuja al final porque ahí ocurre, y su interruptor vive
         # aquí para que encenderlo sea una decisión visible de un admin y no un
@@ -304,7 +307,8 @@ def _estado(session: Session) -> dict:
     for nodo in nodos:
         nodo["avisos"] = avisos.get(nodo["id"], [])
     return {"nodos": nodos, "config": config, "parrafos": parrafos,
-            "herramientas": herramientas}
+            "herramientas": herramientas,
+            "matriz_casos": [list(fila) for fila in agent_settings.MATRIZ_CASOS]}
 
 
 @router.get("/agente")
