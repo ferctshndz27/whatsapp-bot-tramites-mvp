@@ -1,0 +1,1289 @@
+{
+ "semilla": {
+  "2": [],
+  "32 D": [],
+  "820030207031\r\ncfe": [],
+  "Acta de defunción": [],
+  "Acta de divorcio": [],
+  "Acta de matrimonio": [],
+  "Acta de nacimiento": [],
+  "Alfa#": [],
+  "Alta médica básica": [],
+  "Alta médica semiestable": [],
+  "Alta para retiro por desempleo (1 día)": [],
+  "Alta para retiro por desempleo (2 días)": [],
+  "Alta salario bajo": [],
+  "Amparo para liberar pensión en Mod. 40": [],
+  "Baja para cancelar retiro por desempleo": [],
+  "Buenas tardes, le comparto lo que pasó la semana pasada. Fui a la oficina del centro con mi hermana porque nos dijeron que ahí nos podían ayudar con los papeles de mi mamá. Llegamos temprano, hicimos fila casi dos horas y cuando por fin nos atendieron la señorita nos pidió un papel que no traíamos. Nos dijo que regresáramos otro día con todo completo y con copias. Mi mamá ya está grande y le cuesta salir, por eso quiero dejar todo listo desde aquí.": [],
+  "Buenas tardes, le escribo porque el trabajador presenta la siguiente situación con su registro y quisiera saber cómo seguir.": [],
+  "Buenos días, quiero sacar mi acta de nacimiento y también la descarga de mi CURP porque me las piden para entrar a mi empleo nuevo la próxima semana; si me pueden decir cuánto cuesta cada una y cuándo me las entregan, se los agradezco mucho.": [
+   "sb-acta-nacimiento",
+   "sb-curp"
+  ],
+  "Buró de crédito": [],
+  "Busqueda de nss": [],
+  "Búsqueda manual de semanas": [],
+  "Constancia 32D": [],
+  "Constancia con ID CIF y RFC": [],
+  "Constancia de antecedentes no penales (estatal)": [],
+  "Constancia de inexistencia de matrimonio": [],
+  "Constancia de no derechohabiente": [],
+  "Constancia de no deudor alimenticio": [],
+  "Constancia de no matrimonio": [],
+  "Constancia de situación fiscal Exprés": [],
+  "Constancia de situación fiscal Moral": [],
+  "Constancia de situación fiscal genérica": [],
+  "Constancia de situación fiscal original": [],
+  "Corrección de RFC": [],
+  "Creación de cuenta": [],
+  "Descarga de CURP": [],
+  "Descarga de Recibo CFE": [],
+  "Escribo por el C. <NOMBRE DEL TRABAJADOR>. El trabajador tiene dos registros: CURP anterior: AAAA000101HDFBBB01 asociada al NSS 12 34567890 1, el cual cuenta con 694 semanas cotizadas. CURP oficial vigente: AAAA000101HDFBBB09 asociada al NSS 98 76543210 0, el cual cuenta con 0 semanas cotizadas. El trabajador ya corrigió sus datos en el registro...\nPor lo anterior pedimos:\n1. La unificación de los dos Números de Seguridad Social, dejando como NSS único el más antiguo...\n2. Que dicho NSS quede vinculado a la CURP oficial y vigente...\n3. La cancelación definitiva en sistema del NSS ... con 0 semanas.": [
+   "sb-curp",
+   "con-semanas-cotizadas"
+  ],
+  "Estado de cuenta histórico": [],
+  "Estado de cuenta mensual": [],
+  "Estados de cuenta": [],
+  "Estados de cuenta afore": [],
+  "Estatus de pensión": [],
+  "Extracción de datos": [],
+  "FUR": [],
+  "Historial Infonavit": [],
+  "Historial de pagos de pensión": [],
+  "Hoja de retención": [],
+  "Le cuento que ayer fui a la oficina con mi hermana porque nos dijeron que ahí nos podían ayudar con los papeles de mi mamá, pero la señorita nos pidió otro papel que no traíamos y nos regresamos sin nada.": [],
+  "Le cuento que fui a la oficina con mi hermana porque nos dijeron que ahí nos podían ayudar con los papeles de mi mamá, pero la señorita nos pidió otro papel que no traíamos y nos regresamos sin nada.": [],
+  "Lo de la CURP ya lo tengo; también revisé semanas cotizadas": [
+   "sb-curp",
+   "con-semanas-cotizadas"
+  ],
+  "Modalidad 10": [],
+  "Modalidad 40": [],
+  "NSS en PDF": [],
+  "Pantalla de saldos": [],
+  "Precalificación Infonavit": [],
+  "Precalificación MejoraVit": [],
+  "Proyección de pensión": [],
+  "RFC moral": [],
+  "Recibo de pago de pensión": [],
+  "Recuperación de contraseña": [],
+  "Reporte de buro de credito": [],
+  "Reseteo total": [],
+  "Resolución de pensión": [],
+  "Resumen de movimientos infonavit": [],
+  "Se solicita apoyo para corregir un registro; ya hice el trámite ante RENAPO": [],
+  "Se solicita el apoyo para el C. <NOMBRE DEL TRABAJADOR>. El trabajador presenta la siguiente situación: CURP cancelada: AAAA000101HDFBBB01 asociada al NSS 12 34567890 1, el cual cuenta con 694 semanas cotizadas. CURP oficial vigente: AAAA000101HDFBBB09 asociada al NSS 98 76543210 0, el cual cuenta con 0 semanas cotizadas. El trabajador ya realizó la corrección ante RENAPO...\nPor lo anterior se solicita:\n1. La unificación de ambos Números de Seguridad Social, dejando como NSS único el más antiguo...\n2. Que dicho NSS quede vinculado a la CURP oficial y vigente...\n3. La cancelación definitiva en sistema del NSS ... con 0 semanas.": [
+   "sb-curp",
+   "con-semanas-cotizadas"
+  ],
+  "Semanas cotizadas": [],
+  "Sindo F1 (datos de clínica)": [],
+  "Sindo F7 (registros patronales)": [],
+  "Sindo alfanumérico": [],
+  "Sindo canase": [],
+  "Sindo completo": [],
+  "Sindo de semanas cotizadas": [],
+  "Sindo de vigencia de derechos": [],
+  "Sindo de último retiro": [],
+  "Sindo patronal": [],
+  "Tambien ocuparé una vinculación de nss y curp": [],
+  "Unificación de NSS": [],
+  "Ur": [],
+  "Vigencia de derechos": [
+   "sin-vigencia-derechos",
+   "con-vigencia-derechos"
+  ],
+  "Vinculación de NSS y CURP": [],
+  "Ya pagué, ¿cómo va mi folio? Hice la transferencia ayer por la tarde desde la aplicación del banco y me salió el comprobante, pero nadie me ha contestado y necesito tenerlo listo antes del viernes porque me lo piden en la oficina de mi esposo.": [],
+  "Ya quedó lo de CURP; también revisé semanas cotizadas": [
+   "sb-curp",
+   "con-semanas-cotizadas"
+  ],
+  "alta desempleo": [],
+  "barrido": [],
+  "carpeta completa imss": [],
+  "constancia de antecedentes penales estatal.": [],
+  "constancia de antecedentes penales federal": [],
+  "constancia de semanas cotizadas": [],
+  "constancia de vigencia de derechos": [],
+  "constancias SAT": [],
+  "contraseña": [],
+  "creación de cuenta infanavit": [],
+  "curp": [],
+  "curp pdf": [],
+  "datos de registro patronal": [],
+  "f1": [],
+  "f7": [],
+  "historico infonavit": [],
+  "hola quiero un acta de nacimiento y un rfc": [
+   "sb-acta-nacimiento",
+   "sat-csf-original"
+  ],
+  "hola, tengo una situación: necesito un acta de nacimiento urgente": [],
+  "informa de retención infonavit": [],
+  "la oficina rechazó mi expediente y necesito entender la causa": [],
+  "me apoyas para bajar mi curp?": [],
+  "me orientas para sacar mi licencia de conducir": [],
+  "me revisas mi acta de nacimiento por favor. En la oficina me dijeron que mi apellido aparece con una letra distinta a la de mis papeles de la escuela y no sé si así me la van a aceptar.": [],
+  "me revisas mi acta de nacimiento por favor. En la oficina me dijeron que mi segundo apellido aparece con una letra distinta a la de mis papeles de la escuela y no sé si así me la van a aceptar.": [],
+  "mi CURP es AAAA000101HDFBBB01": [],
+  "mi NSS es 12345678901": [],
+  "necesito 32 D y Precalificación MejoraVit": [
+   "sat-32d",
+   "inf-precalificacion-mejoravit"
+  ],
+  "necesito 820030207031\r\ncfe y Sindo alfanumérico": [
+   "sb-recibo-cfe",
+   "sin-alfanumerico"
+  ],
+  "necesito Acta de defunción y 820030207031\r\ncfe": [
+   "sb-acta-defuncion",
+   "sb-recibo-cfe"
+  ],
+  "necesito Acta de divorcio y Sindo de último retiro": [
+   "sb-acta-divorcio",
+   "sin-ultimo-retiro"
+  ],
+  "necesito Acta de matrimonio y recibo de luz": [
+   "sb-acta-matrimonio",
+   "sb-recibo-cfe"
+  ],
+  "necesito Acta de nacimiento y Descarga de Recibo CFE": [
+   "sb-acta-nacimiento",
+   "sb-recibo-cfe"
+  ],
+  "necesito Alfa# y Sindo de vigencia de derechos": [
+   "sin-alfanumerico",
+   "sin-vigencia-derechos"
+  ],
+  "necesito Alta médica básica y Baja para cancelar retiro por desempleo": [
+   "imss-alta-medica-basica",
+   "afo-baja-desempleo"
+  ],
+  "necesito Alta médica semiestable y Alta salario bajo": [
+   "imss-alta-medica-estable",
+   "afo-baja-desempleo"
+  ],
+  "necesito Alta para retiro por desempleo (1 día) y Recibo de pago de pensión": [
+   "afo-alta-desempleo-1dia",
+   "otr-recibo-pago-pension"
+  ],
+  "necesito Alta para retiro por desempleo (2 días) y Buró de crédito": [
+   "afo-alta-desempleo-2dias",
+   "otr-buro-credito"
+  ],
+  "necesito Alta salario bajo y Historial de pagos de pensión": [
+   "afo-baja-desempleo",
+   "otr-historial-pagos-pension"
+  ],
+  "necesito Amparo para liberar pensión en Mod. 40 y Alta para retiro por desempleo (1 día)": [
+   "pen-amparo-mod40",
+   "afo-alta-desempleo-1dia"
+  ],
+  "necesito Baja para cancelar retiro por desempleo y nomina de pensión.": [
+   "afo-baja-desempleo",
+   "otr-recibo-pago-pension"
+  ],
+  "necesito Buró de crédito y Acta de defunción": [
+   "sb-acta-defuncion",
+   "otr-buro-credito"
+  ],
+  "necesito Busqueda de nss y Constancia de no derechohabiente": [
+   "con-nss-pdf",
+   "con-no-derechohabiente"
+  ],
+  "necesito Búsqueda manual de semanas y alta desempleo": [
+   "pen-busqueda-manual-semanas",
+   "afo-alta-desempleo-2dias"
+  ],
+  "necesito Constancia 32D y Resumen de movimientos infonavit": [
+   "sat-32d",
+   "inf-edo-cuenta-mensual"
+  ],
+  "necesito Constancia con ID CIF y RFC y Estado de cuenta histórico": [
+   "sat-cif-rfc",
+   "inf-edo-cuenta-historico"
+  ],
+  "necesito Constancia de antecedentes no penales (estatal) y Proyección de pensión": [
+   "con-antecedentes-no-penales",
+   "pen-proyeccion"
+  ],
+  "necesito Constancia de inexistencia de matrimonio y Modalidad 10": [
+   "con-inexistencia-matrimonio",
+   "pen-modalidad-10"
+  ],
+  "necesito Constancia de no derechohabiente y Amparo para liberar pensión en Mod. 40": [
+   "con-no-derechohabiente",
+   "pen-amparo-mod40"
+  ],
+  "necesito Constancia de no deudor alimenticio y Búsqueda manual de semanas": [
+   "con-no-deudor-alimenticio",
+   "pen-busqueda-manual-semanas"
+  ],
+  "necesito Constancia de no matrimonio y Modalidad 40": [
+   "con-inexistencia-matrimonio",
+   "pen-modalidad-40"
+  ],
+  "necesito Constancia de situación fiscal Exprés y Constancia 32D": [
+   "sat-csf-expres",
+   "sat-32d"
+  ],
+  "necesito Constancia de situación fiscal Moral y rfc clon": [
+   "sat-csf-moral",
+   "sat-cif-rfc"
+  ],
+  "necesito Constancia de situación fiscal genérica y Hoja de retención": [
+   "sat-csf-generica",
+   "inf-hoja-retencion"
+  ],
+  "necesito Constancia de situación fiscal original y Constancia de situación fiscal genérica": [
+   "sat-csf-original",
+   "sat-csf-generica"
+  ],
+  "necesito Corrección de RFC y constancia de semanas cotizadas": [
+   "inf-correccion-rfc",
+   "con-semanas-cotizadas"
+  ],
+  "necesito Creación de cuenta y sisec": [
+   "inf-creacion-cuenta",
+   "con-semanas-cotizadas"
+  ],
+  "necesito Descarga de CURP y FUR": [
+   "sb-curp",
+   "sin-ultimo-retiro"
+  ],
+  "necesito Descarga de Recibo CFE y Sindo canase": [
+   "sb-recibo-cfe",
+   "sin-canase"
+  ],
+  "necesito Estado de cuenta histórico y Historial Infonavit": [
+   "inf-edo-cuenta-historico",
+   "inf-historial"
+  ],
+  "necesito Estado de cuenta mensual y barrido": [
+   "inf-edo-cuenta-mensual",
+   "inf-reseteo-total"
+  ],
+  "necesito Estados de cuenta afore y Acta de matrimonio": [
+   "sb-acta-matrimonio",
+   "afo-estados-cuenta"
+  ],
+  "necesito Estados de cuenta y Acta de nacimiento": [
+   "sb-acta-nacimiento",
+   "afo-estados-cuenta"
+  ],
+  "necesito Estatus de pensión y Unificación de NSS": [
+   "pen-estatus",
+   "imss-unificacion-nss"
+  ],
+  "necesito Extracción de datos y Vigencia de derechos": [
+   "sin-vigencia-derechos",
+   "inf-extraccion-datos",
+   "con-vigencia-derechos"
+  ],
+  "necesito FUR y Sindo patronal": [
+   "sin-ultimo-retiro",
+   "sin-patronal"
+  ],
+  "necesito Historial Infonavit y Creación de cuenta": [
+   "inf-historial",
+   "inf-creacion-cuenta"
+  ],
+  "necesito Historial de pagos de pensión y curp pdf": [
+   "sb-curp",
+   "otr-historial-pagos-pension"
+  ],
+  "necesito Hoja de retención y preca": [
+   "inf-hoja-retencion",
+   "inf-precalificacion-mejoravit"
+  ],
+  "necesito Modalidad 10 y Vinculación de NSS y CURP": [
+   "pen-modalidad-10",
+   "imss-vinculacion-nss-curp"
+  ],
+  "necesito Modalidad 40 y Alta para retiro por desempleo (2 días)": [
+   "pen-modalidad-40",
+   "afo-alta-desempleo-2dias"
+  ],
+  "necesito NSS en PDF y Constancia de no deudor alimenticio": [
+   "con-nss-pdf",
+   "con-no-deudor-alimenticio"
+  ],
+  "necesito Pantalla de saldos y NSS en PDF": [
+   "inf-pantalla-saldos",
+   "con-nss-pdf"
+  ],
+  "necesito Precalificación Infonavit y contraseña": [
+   "inf-precalificacion",
+   "inf-recuperacion-password"
+  ],
+  "necesito Precalificación MejoraVit y Recuperación de contraseña": [
+   "inf-precalificacion-mejoravit",
+   "inf-recuperacion-password"
+  ],
+  "necesito Proyección de pensión y Alta médica básica": [
+   "pen-proyeccion",
+   "imss-alta-medica-basica"
+  ],
+  "necesito RFC moral y rfc con idcif": [
+   "sat-csf-moral",
+   "sat-cif-rfc"
+  ],
+  "necesito Recibo de pago de pensión y Descarga de CURP": [
+   "sb-curp",
+   "otr-recibo-pago-pension"
+  ],
+  "necesito Recuperación de contraseña y pantalla de datos infonavit": [
+   "inf-recuperacion-password",
+   "inf-extraccion-datos"
+  ],
+  "necesito Reporte de buro de credito y Acta de divorcio": [
+   "sb-acta-divorcio",
+   "otr-buro-credito"
+  ],
+  "necesito Reseteo total y creación de cuenta infanavit": [
+   "inf-reseteo-total",
+   "inf-creacion-cuenta"
+  ],
+  "necesito Resolución de pensión y Alta médica semiestable": [
+   "pen-resolucion",
+   "imss-alta-medica-estable"
+  ],
+  "necesito Resumen de movimientos infonavit y reseteo sin contraseña": [
+   "inf-edo-cuenta-mensual",
+   "inf-reseteo-total"
+  ],
+  "necesito Semanas cotizadas y Busqueda de nss": [
+   "con-semanas-cotizadas",
+   "con-nss-pdf"
+  ],
+  "necesito Sindo F1 (datos de clínica) y Sindo completo": [
+   "sin-f1",
+   "sin-completo"
+  ],
+  "necesito Sindo F7 (registros patronales) y Sindo de semanas cotizadas": [
+   "sin-f7",
+   "sin-semanas-cotizadas"
+  ],
+  "necesito Sindo alfanumérico y f1": [
+   "sin-alfanumerico",
+   "sin-f1"
+  ],
+  "necesito Sindo canase y f7": [
+   "sin-canase",
+   "sin-f7"
+  ],
+  "necesito Sindo completo y Constancia de situación fiscal Exprés": [
+   "sin-completo",
+   "sat-csf-expres"
+  ],
+  "necesito Sindo de semanas cotizadas y Constancia de situación fiscal Moral": [
+   "sin-semanas-cotizadas",
+   "sat-csf-moral"
+  ],
+  "necesito Sindo de vigencia de derechos y Constancia de situación fiscal original": [
+   "sin-vigencia-derechos",
+   "sat-csf-original"
+  ],
+  "necesito Sindo de último retiro y Alfa#": [
+   "sin-ultimo-retiro",
+   "sin-alfanumerico"
+  ],
+  "necesito Sindo patronal y vigencia de derechos": [
+   "sin-patronal",
+   "sin-vigencia-derechos",
+   "con-vigencia-derechos"
+  ],
+  "necesito Unificación de NSS y Estados de cuenta": [
+   "imss-unificacion-nss",
+   "afo-estados-cuenta"
+  ],
+  "necesito Ur y datos de registro patronal": [
+   "sin-ultimo-retiro",
+   "sin-patronal"
+  ],
+  "necesito Vigencia de derechos y Constancia de inexistencia de matrimonio": [
+   "sin-vigencia-derechos",
+   "con-vigencia-derechos",
+   "con-inexistencia-matrimonio"
+  ],
+  "necesito Vinculación de NSS y CURP y Estados de cuenta afore": [
+   "imss-vinculacion-nss-curp",
+   "afo-estados-cuenta"
+  ],
+  "necesito alta desempleo y Reporte de buro de credito": [
+   "afo-alta-desempleo-2dias",
+   "otr-buro-credito"
+  ],
+  "necesito apoyo para descargar mi CURP": [],
+  "necesito barrido y Corrección de RFC": [
+   "inf-reseteo-total",
+   "inf-correccion-rfc"
+  ],
+  "necesito carpeta completa imss y rfc expres": [
+   "sin-completo",
+   "sat-csf-expres"
+  ],
+  "necesito constancia de antecedentes penales estatal. y Estatus de pensión": [
+   "con-antecedentes-no-penales",
+   "pen-estatus"
+  ],
+  "necesito constancia de antecedentes penales federal y Resolución de pensión": [
+   "con-antecedentes-no-penales",
+   "pen-resolucion"
+  ],
+  "necesito constancia de semanas cotizadas y constancia de antecedentes penales estatal.": [
+   "con-semanas-cotizadas",
+   "con-antecedentes-no-penales"
+  ],
+  "necesito constancia de vigencia de derechos y Constancia de no matrimonio": [
+   "con-vigencia-derechos",
+   "con-inexistencia-matrimonio"
+  ],
+  "necesito constancias SAT y Constancia con ID CIF y RFC": [
+   "sat-csf-original",
+   "sat-cif-rfc"
+  ],
+  "necesito contraseña y Semanas cotizadas": [
+   "inf-recuperacion-password",
+   "con-semanas-cotizadas"
+  ],
+  "necesito creación de cuenta infanavit y semanas detallas": [
+   "inf-creacion-cuenta",
+   "con-semanas-cotizadas"
+  ],
+  "necesito curp pdf y sindo de desempleo": [
+   "sb-curp",
+   "sin-ultimo-retiro"
+  ],
+  "necesito curp y Ur": [
+   "sb-curp",
+   "sin-ultimo-retiro"
+  ],
+  "necesito datos de registro patronal y sindo de semanas": [
+   "sin-patronal",
+   "sin-vigencia-derechos"
+  ],
+  "necesito f1 y carpeta completa imss": [
+   "sin-f1",
+   "sin-completo"
+  ],
+  "necesito f7 y sindo de salario promedio": [
+   "sin-f7",
+   "sin-semanas-cotizadas"
+  ],
+  "necesito historico infonavit y Reseteo total": [
+   "inf-edo-cuenta-historico",
+   "inf-reseteo-total"
+  ],
+  "necesito informa de retención infonavit y Precalificación Infonavit": [
+   "inf-hoja-retencion",
+   "inf-precalificacion"
+  ],
+  "necesito mi acta; el registro tiene duplicidad": [],
+  "necesito nomina de pensión. y curp": [
+   "sb-curp",
+   "otr-recibo-pago-pension"
+  ],
+  "necesito pantalla de datos infonavit y constancia de vigencia de derechos": [
+   "inf-extraccion-datos",
+   "con-vigencia-derechos"
+  ],
+  "necesito preca y reseteo con contraseña": [
+   "inf-precalificacion-mejoravit",
+   "inf-recuperacion-password"
+  ],
+  "necesito que revisen mi CURP cancelada": [],
+  "necesito recibo de luz y sindo de información.": [
+   "sb-recibo-cfe",
+   "sin-canase"
+  ],
+  "necesito reseteo con contraseña y Pantalla de saldos": [
+   "inf-recuperacion-password",
+   "inf-pantalla-saldos"
+  ],
+  "necesito reseteo sin contraseña y Extracción de datos": [
+   "inf-reseteo-total",
+   "inf-extraccion-datos"
+  ],
+  "necesito rfc clon y historico infonavit": [
+   "sat-cif-rfc",
+   "inf-edo-cuenta-historico"
+  ],
+  "necesito rfc con idcif y Estado de cuenta mensual": [
+   "sat-cif-rfc",
+   "inf-edo-cuenta-mensual"
+  ],
+  "necesito rfc expres y 32 D": [
+   "sat-csf-expres",
+   "sat-32d"
+  ],
+  "necesito rfc generico y informa de retención infonavit": [
+   "sat-csf-generica",
+   "inf-hoja-retencion"
+  ],
+  "necesito rfc y rfc generico": [
+   "sat-csf-original",
+   "sat-csf-generica"
+  ],
+  "necesito semanas detallas y constancia de antecedentes penales federal": [
+   "con-semanas-cotizadas",
+   "con-antecedentes-no-penales"
+  ],
+  "necesito sindo de desempleo y Sindo F7 (registros patronales)": [
+   "sin-ultimo-retiro",
+   "sin-f7"
+  ],
+  "necesito sindo de información. y Sindo F1 (datos de clínica)": [
+   "sin-canase",
+   "sin-f1"
+  ],
+  "necesito sindo de salario promedio y RFC moral": [
+   "sin-semanas-cotizadas",
+   "sat-csf-moral"
+  ],
+  "necesito sindo de semanas y constancias SAT": [
+   "sin-vigencia-derechos",
+   "sat-csf-original"
+  ],
+  "necesito sisec y Constancia de antecedentes no penales (estatal)": [
+   "con-semanas-cotizadas",
+   "con-antecedentes-no-penales"
+  ],
+  "necesito un duplicado de mi acta de nacimiento": [],
+  "necesito vigencia de derechos y rfc": [
+   "sin-vigencia-derechos",
+   "sat-csf-original",
+   "con-vigencia-derechos"
+  ],
+  "nomina de pensión.": [],
+  "nss y clave curp": [],
+  "omitir": [],
+  "pantalla de datos infonavit": [],
+  "preca": [],
+  "quiero 3 actas, AAAA000101HDFBBB01, AAAA000101HDFBBB02, AAAA000101HDFBBB03": [],
+  "quiero acta y curp": [],
+  "quisiera dos curp y dos actas, una para mí y otra para mi hermana": [],
+  "recibo de luz": [],
+  "reseteo con contraseña": [],
+  "reseteo sin contraseña": [],
+  "resolución de pensión, ya tengo todos mis documentos": [],
+  "rfc": [],
+  "rfc clon": [],
+  "rfc con idcif": [],
+  "rfc expres": [],
+  "rfc generico": [],
+  "semanas detallas": [],
+  "sindo de desempleo": [],
+  "sindo de información.": [],
+  "sindo de salario promedio": [],
+  "sindo de semanas": [],
+  "sisec": [],
+  "sí": [],
+  "sí, mi curp es AAAA000101HDFBBB01": [],
+  "tengo una situación con mi pensión, qué se puede hacer": [],
+  "vigencia de derechos": [
+   "sin-vigencia-derechos",
+   "con-vigencia-derechos"
+  ],
+  "ya corregí ante RENAPO, tengo dos números": [],
+  "👍": []
+ },
+ "vivo": {
+  "2": [],
+  "32 D": [],
+  "Acta de defunción": [],
+  "Acta de divorcio": [],
+  "Acta de matrimonio": [],
+  "Acta de nacimiento": [],
+  "Alfa#": [],
+  "Alta médica básica": [],
+  "Alta médica semiestable": [],
+  "Alta para retiro por desempleo (1 día)": [],
+  "Alta para retiro por desempleo (2 días)": [],
+  "Alta salario bajo": [],
+  "Baja para cancelar retiro por desempleo": [],
+  "Borrado de patron": [],
+  "Buenas tardes, le comparto lo que pasó la semana pasada. Fui a la oficina del centro con mi hermana porque nos dijeron que ahí nos podían ayudar con los papeles de mi mamá. Llegamos temprano, hicimos fila casi dos horas y cuando por fin nos atendieron la señorita nos pidió un papel que no traíamos. Nos dijo que regresáramos otro día con todo completo y con copias. Mi mamá ya está grande y le cuesta salir, por eso quiero dejar todo listo desde aquí.": [],
+  "Buenas tardes, le escribo porque el trabajador presenta la siguiente situación con su registro y quisiera saber cómo seguir.": [],
+  "Buenos días, quiero sacar mi acta de nacimiento y también la descarga de mi CURP porque me las piden para entrar a mi empleo nuevo la próxima semana; si me pueden decir cuánto cuesta cada una y cuándo me las entregan, se los agradezco mucho.": [
+   "sb-acta-nacimiento",
+   "sb-curp"
+  ],
+  "Buró de crédito": [],
+  "Busqueda de nss": [],
+  "Búsqueda manual de semanas": [],
+  "CFE": [],
+  "Cambio de régimen": [],
+  "Constancia 32D": [],
+  "Constancia con ID CIF y RFC": [],
+  "Constancia de antecedentes no penales (estatal)": [],
+  "Constancia de inexistencia de matrimonio": [],
+  "Constancia de no derechohabiente": [],
+  "Constancia de no deudor alimenticio": [],
+  "Constancia de no matrimonio": [],
+  "Constancia de situación fiscal Exprés": [],
+  "Constancia de situación fiscal Moral": [],
+  "Constancia de situación fiscal genérica": [],
+  "Constancia de situación fiscal original": [],
+  "Corrección de RFC": [],
+  "Creación de cuenta": [],
+  "Descarga de CURP": [],
+  "Descarga de Recibo CFE": [],
+  "Escribo por el C. <NOMBRE DEL TRABAJADOR>. El trabajador tiene dos registros: CURP anterior: AAAA000101HDFBBB01 asociada al NSS 12 34567890 1, el cual cuenta con 694 semanas cotizadas. CURP oficial vigente: AAAA000101HDFBBB09 asociada al NSS 98 76543210 0, el cual cuenta con 0 semanas cotizadas. El trabajador ya corrigió sus datos en el registro...\nPor lo anterior pedimos:\n1. La unificación de los dos Números de Seguridad Social, dejando como NSS único el más antiguo...\n2. Que dicho NSS quede vinculado a la CURP oficial y vigente...\n3. La cancelación definitiva en sistema del NSS ... con 0 semanas.": [
+   "sb-curp",
+   "con-semanas-cotizadas",
+   "con-nss-pdf"
+  ],
+  "Estado de cuenta histórico": [],
+  "Estado de cuenta mensual": [],
+  "Estados de cuenta": [],
+  "Estados de cuenta afore": [],
+  "Estatus de pensión": [],
+  "Extracción de datos": [],
+  "FUR": [],
+  "Historial Infonavit": [],
+  "Historial de pagos de pensión": [],
+  "Hoja de retención": [],
+  "Inyección de semanas": [],
+  "Le cuento que ayer fui a la oficina con mi hermana porque nos dijeron que ahí nos podían ayudar con los papeles de mi mamá, pero la señorita nos pidió otro papel que no traíamos y nos regresamos sin nada.": [],
+  "Le cuento que fui a la oficina con mi hermana porque nos dijeron que ahí nos podían ayudar con los papeles de mi mamá, pero la señorita nos pidió otro papel que no traíamos y nos regresamos sin nada.": [],
+  "Lo de la CURP ya lo tengo; también revisé semanas cotizadas": [
+   "sb-curp",
+   "con-semanas-cotizadas"
+  ],
+  "Modalidad 10": [],
+  "Modalidad 40": [],
+  "NSS en PDF": [],
+  "Pantalla de saldos": [],
+  "Patron retroactivo": [],
+  "Precalificación Infonavit": [],
+  "Precalificación MejoraVit": [],
+  "Prestamo a pensionados": [],
+  "Proyección de pensión": [],
+  "RFC moral": [],
+  "Recibo de pago de pensión": [],
+  "Recuperación de contraseña": [],
+  "Reporte de buro de credito": [],
+  "Reseteo total": [],
+  "Resolución de pensión": [],
+  "Resumen de movimientos infonavit": [],
+  "Se solicita apoyo para corregir un registro; ya hice el trámite ante RENAPO": [],
+  "Se solicita el apoyo para el C. <NOMBRE DEL TRABAJADOR>. El trabajador presenta la siguiente situación: CURP cancelada: AAAA000101HDFBBB01 asociada al NSS 12 34567890 1, el cual cuenta con 694 semanas cotizadas. CURP oficial vigente: AAAA000101HDFBBB09 asociada al NSS 98 76543210 0, el cual cuenta con 0 semanas cotizadas. El trabajador ya realizó la corrección ante RENAPO...\nPor lo anterior se solicita:\n1. La unificación de ambos Números de Seguridad Social, dejando como NSS único el más antiguo...\n2. Que dicho NSS quede vinculado a la CURP oficial y vigente...\n3. La cancelación definitiva en sistema del NSS ... con 0 semanas.": [
+   "sb-curp",
+   "con-semanas-cotizadas",
+   "con-nss-pdf"
+  ],
+  "Semanas cotizadas": [],
+  "Sindo F1 (datos de clínica)": [],
+  "Sindo F7 (registros patronales)": [],
+  "Sindo alfanumérico": [],
+  "Sindo canase": [],
+  "Sindo completo": [],
+  "Sindo de semanas cotizadas": [],
+  "Sindo de vigencia de derechos": [],
+  "Sindo de último retiro": [],
+  "Sindo patronal": [],
+  "Tambien ocuparé una vinculación de nss y curp": [],
+  "Unificación de NSS": [],
+  "Ur": [],
+  "Vigencia de derechos": [
+   "sin-vigencia-derechos",
+   "con-vigencia-derechos"
+  ],
+  "Vinculación de NSS y CURP": [],
+  "Ya pagué, ¿cómo va mi folio? Hice la transferencia ayer por la tarde desde la aplicación del banco y me salió el comprobante, pero nadie me ha contestado y necesito tenerlo listo antes del viernes porque me lo piden en la oficina de mi esposo.": [],
+  "Ya quedó lo de CURP; también revisé semanas cotizadas": [
+   "sb-curp",
+   "con-semanas-cotizadas"
+  ],
+  "acta": [],
+  "alta ayuda": [],
+  "alta desempleo": [],
+  "barrido": [],
+  "buro": [],
+  "buro de credito": [],
+  "carpeta completa imss": [],
+  "constancia de antecedentes penales estatal.": [],
+  "constancia de antecedentes penales federal": [],
+  "constancia de semanas cotizadas": [],
+  "constancia de vigencia de derechos": [],
+  "constancias SAT": [],
+  "contraseña": [],
+  "creación de cuenta infanavit": [],
+  "curp": [],
+  "curp pdf": [],
+  "datos de registro patronal": [],
+  "defunción": [],
+  "desempleo": [],
+  "divorcio": [],
+  "estatus": [],
+  "f1": [],
+  "f7": [],
+  "historial de nomina": [],
+  "historial de pago": [],
+  "historico infonavit": [],
+  "hola quiero un acta de nacimiento y un rfc": [
+   "sb-acta-nacimiento",
+   "sat-csf-original"
+  ],
+  "hola, tengo una situación: necesito un acta de nacimiento urgente": [],
+  "informa de retención infonavit": [],
+  "la oficina rechazó mi expediente y necesito entender la causa": [],
+  "matrimonio": [],
+  "me apoyas para bajar mi curp?": [],
+  "me orientas para sacar mi licencia de conducir": [],
+  "me revisas mi acta de nacimiento por favor. En la oficina me dijeron que mi apellido aparece con una letra distinta a la de mis papeles de la escuela y no sé si así me la van a aceptar.": [],
+  "me revisas mi acta de nacimiento por favor. En la oficina me dijeron que mi segundo apellido aparece con una letra distinta a la de mis papeles de la escuela y no sé si así me la van a aceptar.": [],
+  "mi CURP es AAAA000101HDFBBB01": [],
+  "mi NSS es 12345678901": [],
+  "nacimiento": [],
+  "necesito 32 D y Precalificación MejoraVit": [
+   "sat-32d",
+   "inf-precalificacion-mejoravit"
+  ],
+  "necesito Acta de defunción y Descarga de Recibo CFE": [
+   "sb-acta-defuncion",
+   "sb-recibo-cfe"
+  ],
+  "necesito Acta de divorcio y CFE": [
+   "sb-acta-divorcio",
+   "sb-recibo-cfe"
+  ],
+  "necesito Acta de matrimonio y curp": [
+   "sb-acta-matrimonio",
+   "sb-curp"
+  ],
+  "necesito Acta de nacimiento y Acta de divorcio": [
+   "sb-acta-nacimiento",
+   "sb-acta-divorcio"
+  ],
+  "necesito Alfa# y Sindo de vigencia de derechos": [
+   "sin-alfanumerico",
+   "sin-vigencia-derechos"
+  ],
+  "necesito Alta médica básica y alta ayuda": [
+   "imss-alta-medica-basica",
+   "afo-alta-desempleo-2dias"
+  ],
+  "necesito Alta médica semiestable y retiro": [
+   "imss-alta-medica-estable",
+   "afo-alta-desempleo-2dias"
+  ],
+  "necesito Alta para retiro por desempleo (1 día) y buro de credito": [
+   "afo-alta-desempleo-1dia",
+   "otr-buro-credito"
+  ],
+  "necesito Alta para retiro por desempleo (2 días) y Alta salario bajo": [
+   "afo-alta-desempleo-2dias",
+   "afo-baja-desempleo"
+  ],
+  "necesito Alta salario bajo y Recibo de pago de pensión": [
+   "afo-baja-desempleo",
+   "otr-recibo-pago-pension"
+  ],
+  "necesito Baja para cancelar retiro por desempleo y buro": [
+   "afo-baja-desempleo",
+   "otr-buro-credito"
+  ],
+  "necesito Borrado de patron y Alta para retiro por desempleo (2 días)": [
+   "borrado_de_patron",
+   "afo-alta-desempleo-2dias"
+  ],
+  "necesito Buró de crédito y historial de pago": [
+   "otr-buro-credito",
+   "otr-historial-pagos-pension"
+  ],
+  "necesito Busqueda de nss y Constancia de no deudor alimenticio": [
+   "con-nss-pdf",
+   "con-no-deudor-alimenticio"
+  ],
+  "necesito Búsqueda manual de semanas y Alta médica semiestable": [
+   "pen-busqueda-manual-semanas",
+   "imss-alta-medica-estable"
+  ],
+  "necesito CFE y Sindo alfanumérico": [
+   "sb-recibo-cfe",
+   "sin-alfanumerico"
+  ],
+  "necesito Cambio de régimen y Unificación de NSS": [
+   "cambio_de_regimen",
+   "imss-unificacion-nss"
+  ],
+  "necesito Constancia 32D y Resumen de movimientos infonavit": [
+   "sat-32d",
+   "inf-edo-cuenta-mensual"
+  ],
+  "necesito Constancia con ID CIF y RFC y Estado de cuenta histórico": [
+   "sat-cif-rfc",
+   "inf-edo-cuenta-historico"
+  ],
+  "necesito Constancia de antecedentes no penales (estatal) y Proyección de pensión": [
+   "con-antecedentes-no-penales",
+   "pen-proyeccion"
+  ],
+  "necesito Constancia de inexistencia de matrimonio y estatus": [
+   "con-inexistencia-matrimonio",
+   "pen-estatus"
+  ],
+  "necesito Constancia de no derechohabiente y Modalidad 40": [
+   "con-no-derechohabiente",
+   "pen-modalidad-40"
+  ],
+  "necesito Constancia de no deudor alimenticio y Modalidad 10": [
+   "con-no-deudor-alimenticio",
+   "pen-modalidad-10"
+  ],
+  "necesito Constancia de no matrimonio y status": [
+   "con-inexistencia-matrimonio",
+   "pen-estatus"
+  ],
+  "necesito Constancia de situación fiscal Exprés y Constancia 32D": [
+   "sat-csf-expres",
+   "sat-32d"
+  ],
+  "necesito Constancia de situación fiscal Moral y rfc clon": [
+   "sat-csf-moral",
+   "sat-cif-rfc"
+  ],
+  "necesito Constancia de situación fiscal genérica y Hoja de retención": [
+   "sat-csf-generica",
+   "inf-hoja-retencion"
+  ],
+  "necesito Constancia de situación fiscal original y Constancia de situación fiscal genérica": [
+   "sat-csf-original",
+   "sat-csf-generica"
+  ],
+  "necesito Corrección de RFC y constancia de semanas cotizadas": [
+   "inf-correccion-rfc",
+   "con-semanas-cotizadas"
+  ],
+  "necesito Creación de cuenta y sisec": [
+   "inf-creacion-cuenta",
+   "con-semanas-cotizadas"
+  ],
+  "necesito Descarga de CURP y FUR": [
+   "sb-curp",
+   "sin-ultimo-retiro"
+  ],
+  "necesito Descarga de Recibo CFE y Sindo canase": [
+   "sb-recibo-cfe",
+   "sin-canase"
+  ],
+  "necesito Estado de cuenta histórico y Historial Infonavit": [
+   "inf-edo-cuenta-historico",
+   "inf-historial"
+  ],
+  "necesito Estado de cuenta mensual y barrido": [
+   "inf-edo-cuenta-mensual",
+   "inf-reseteo-total"
+  ],
+  "necesito Estados de cuenta afore y Historial de pagos de pensión": [
+   "afo-estados-cuenta",
+   "otr-historial-pagos-pension"
+  ],
+  "necesito Estados de cuenta y nomina de pensión.": [
+   "afo-estados-cuenta",
+   "otr-recibo-pago-pension"
+  ],
+  "necesito Estatus de pensión y Inyección de semanas": [
+   "pen-estatus",
+   "inyeccion_de_semanas"
+  ],
+  "necesito Extracción de datos y Vigencia de derechos": [
+   "sin-vigencia-derechos",
+   "inf-extraccion-datos",
+   "con-vigencia-derechos"
+  ],
+  "necesito FUR y Sindo patronal": [
+   "sin-ultimo-retiro",
+   "sin-patronal"
+  ],
+  "necesito Historial Infonavit y Creación de cuenta": [
+   "inf-historial",
+   "inf-creacion-cuenta"
+  ],
+  "necesito Historial de pagos de pensión y matrimonio": [
+   "sb-acta-matrimonio",
+   "otr-historial-pagos-pension"
+  ],
+  "necesito Hoja de retención y preca": [
+   "inf-hoja-retencion",
+   "inf-precalificacion-mejoravit"
+  ],
+  "necesito Inyección de semanas y Vinculación de NSS y CURP": [
+   "inyeccion_de_semanas",
+   "imss-vinculacion-nss-curp"
+  ],
+  "necesito Modalidad 10 y Prestamo a pensionados": [
+   "pen-modalidad-10",
+   "preatamo_a_pensionados"
+  ],
+  "necesito Modalidad 40 y Alta médica básica": [
+   "pen-modalidad-40",
+   "imss-alta-medica-basica"
+  ],
+  "necesito NSS en PDF y Constancia de no matrimonio": [
+   "con-nss-pdf",
+   "con-inexistencia-matrimonio"
+  ],
+  "necesito Pantalla de saldos y NSS en PDF": [
+   "inf-pantalla-saldos",
+   "con-nss-pdf"
+  ],
+  "necesito Patron retroactivo y alta desempleo": [
+   "patron_retroactivo",
+   "afo-alta-desempleo-2dias"
+  ],
+  "necesito Precalificación Infonavit y contraseña": [
+   "inf-precalificacion",
+   "inf-recuperacion-password"
+  ],
+  "necesito Precalificación MejoraVit y Recuperación de contraseña": [
+   "inf-precalificacion-mejoravit",
+   "inf-recuperacion-password"
+  ],
+  "necesito Prestamo a pensionados y desempleo": [
+   "preatamo_a_pensionados",
+   "afo-alta-desempleo-2dias"
+  ],
+  "necesito Proyección de pensión y Búsqueda manual de semanas": [
+   "pen-proyeccion",
+   "pen-busqueda-manual-semanas"
+  ],
+  "necesito RFC moral y rfc con idcif": [
+   "sat-csf-moral",
+   "sat-cif-rfc"
+  ],
+  "necesito Recibo de pago de pensión y acta": [
+   "sb-acta-nacimiento",
+   "otr-recibo-pago-pension"
+  ],
+  "necesito Recuperación de contraseña y pantalla de datos infonavit": [
+   "inf-recuperacion-password",
+   "inf-extraccion-datos"
+  ],
+  "necesito Reporte de buro de credito y historial de nomina": [
+   "otr-buro-credito",
+   "otr-historial-pagos-pension"
+  ],
+  "necesito Reseteo total y creación de cuenta infanavit": [
+   "inf-reseteo-total",
+   "inf-creacion-cuenta"
+  ],
+  "necesito Resolución de pensión y Cambio de régimen": [
+   "pen-resolucion",
+   "cambio_de_regimen"
+  ],
+  "necesito Resumen de movimientos infonavit y reseteo sin contraseña": [
+   "inf-edo-cuenta-mensual",
+   "inf-reseteo-total"
+  ],
+  "necesito Semanas cotizadas y Busqueda de nss": [
+   "con-semanas-cotizadas",
+   "con-nss-pdf"
+  ],
+  "necesito Sindo F1 (datos de clínica) y Sindo completo": [
+   "sin-f1",
+   "sin-completo"
+  ],
+  "necesito Sindo F7 (registros patronales) y Sindo de semanas cotizadas": [
+   "sin-f7",
+   "sin-semanas-cotizadas"
+  ],
+  "necesito Sindo alfanumérico y f1": [
+   "sin-alfanumerico",
+   "sin-f1"
+  ],
+  "necesito Sindo canase y f7": [
+   "sin-canase",
+   "sin-f7"
+  ],
+  "necesito Sindo completo y Constancia de situación fiscal Exprés": [
+   "sin-completo",
+   "sat-csf-expres"
+  ],
+  "necesito Sindo de semanas cotizadas y Constancia de situación fiscal Moral": [
+   "sin-semanas-cotizadas",
+   "sat-csf-moral"
+  ],
+  "necesito Sindo de vigencia de derechos y Constancia de situación fiscal original": [
+   "sin-vigencia-derechos",
+   "sat-csf-original"
+  ],
+  "necesito Sindo de último retiro y Alfa#": [
+   "sin-ultimo-retiro",
+   "sin-alfanumerico"
+  ],
+  "necesito Sindo patronal y vigencia de derechos": [
+   "sin-patronal",
+   "sin-vigencia-derechos",
+   "con-vigencia-derechos"
+  ],
+  "necesito Unificación de NSS y Alta para retiro por desempleo (1 día)": [
+   "imss-unificacion-nss",
+   "afo-alta-desempleo-1dia"
+  ],
+  "necesito Ur y datos de registro patronal": [
+   "sin-ultimo-retiro",
+   "sin-patronal"
+  ],
+  "necesito Vigencia de derechos y constancia de antecedentes penales estatal.": [
+   "sin-vigencia-derechos",
+   "con-vigencia-derechos",
+   "con-antecedentes-no-penales"
+  ],
+  "necesito Vinculación de NSS y CURP y Baja para cancelar retiro por desempleo": [
+   "imss-vinculacion-nss-curp",
+   "afo-baja-desempleo"
+  ],
+  "necesito acta y Descarga de CURP": [
+   "sb-acta-nacimiento",
+   "sb-curp"
+  ],
+  "necesito alta ayuda y Buró de crédito": [
+   "afo-alta-desempleo-2dias",
+   "otr-buro-credito"
+  ],
+  "necesito alta desempleo y Estados de cuenta": [
+   "afo-alta-desempleo-2dias",
+   "afo-estados-cuenta"
+  ],
+  "necesito apoyo para descargar mi CURP": [],
+  "necesito barrido y Corrección de RFC": [
+   "inf-reseteo-total",
+   "inf-correccion-rfc"
+  ],
+  "necesito buro de credito y Acta de nacimiento": [
+   "sb-acta-nacimiento",
+   "otr-buro-credito"
+  ],
+  "necesito buro y nacimiento": [
+   "sb-acta-nacimiento",
+   "otr-buro-credito"
+  ],
+  "necesito carpeta completa imss y rfc expres": [
+   "sin-completo",
+   "sat-csf-expres"
+  ],
+  "necesito constancia de antecedentes penales estatal. y Estatus de pensión": [
+   "con-antecedentes-no-penales",
+   "pen-estatus"
+  ],
+  "necesito constancia de antecedentes penales federal y Resolución de pensión": [
+   "con-antecedentes-no-penales",
+   "pen-resolucion"
+  ],
+  "necesito constancia de semanas cotizadas y constancia de antecedentes penales federal": [
+   "con-semanas-cotizadas",
+   "con-antecedentes-no-penales"
+  ],
+  "necesito constancia de vigencia de derechos y Constancia de inexistencia de matrimonio": [
+   "con-vigencia-derechos",
+   "con-inexistencia-matrimonio"
+  ],
+  "necesito constancias SAT y Constancia con ID CIF y RFC": [
+   "sat-csf-original",
+   "sat-cif-rfc"
+  ],
+  "necesito contraseña y Semanas cotizadas": [
+   "inf-recuperacion-password",
+   "con-semanas-cotizadas"
+  ],
+  "necesito creación de cuenta infanavit y semanas detallas": [
+   "inf-creacion-cuenta",
+   "con-semanas-cotizadas"
+  ],
+  "necesito curp pdf y sindo de desempleo": [
+   "sb-curp",
+   "sin-ultimo-retiro"
+  ],
+  "necesito curp y Ur": [
+   "sb-curp",
+   "sin-ultimo-retiro"
+  ],
+  "necesito datos de registro patronal y sindo de semanas": [
+   "sin-patronal",
+   "sin-vigencia-derechos"
+  ],
+  "necesito defunción y recibo de luz cfe": [
+   "sb-acta-defuncion",
+   "sb-recibo-cfe"
+  ],
+  "necesito desempleo y Estados de cuenta afore": [
+   "afo-alta-desempleo-2dias",
+   "afo-estados-cuenta"
+  ],
+  "necesito divorcio y Sindo de último retiro": [
+   "sb-acta-divorcio",
+   "sin-ultimo-retiro"
+  ],
+  "necesito estatus y Borrado de patron": [
+   "pen-estatus",
+   "borrado_de_patron"
+  ],
+  "necesito f1 y carpeta completa imss": [
+   "sin-f1",
+   "sin-completo"
+  ],
+  "necesito f7 y sindo de salario promedio": [
+   "sin-f7",
+   "sin-semanas-cotizadas"
+  ],
+  "necesito historial de nomina y defunción": [
+   "sb-acta-defuncion",
+   "otr-historial-pagos-pension"
+  ],
+  "necesito historial de pago y Acta de defunción": [
+   "sb-acta-defuncion",
+   "otr-historial-pagos-pension"
+  ],
+  "necesito historico infonavit y Reseteo total": [
+   "inf-edo-cuenta-historico",
+   "inf-reseteo-total"
+  ],
+  "necesito informa de retención infonavit y Precalificación Infonavit": [
+   "inf-hoja-retencion",
+   "inf-precalificacion"
+  ],
+  "necesito matrimonio y curp pdf": [
+   "sb-acta-matrimonio",
+   "sb-curp"
+  ],
+  "necesito mi acta; el registro tiene duplicidad": [],
+  "necesito nacimiento y divorcio": [
+   "sb-acta-nacimiento",
+   "sb-acta-divorcio"
+  ],
+  "necesito nomina de pensión. y Acta de matrimonio": [
+   "sb-acta-matrimonio",
+   "otr-recibo-pago-pension"
+  ],
+  "necesito nss y Constancia de no derechohabiente": [
+   "con-nss-pdf",
+   "con-no-derechohabiente"
+  ],
+  "necesito pantalla de datos infonavit y constancia de vigencia de derechos": [
+   "inf-extraccion-datos",
+   "con-vigencia-derechos"
+  ],
+  "necesito preca y reseteo con contraseña": [
+   "inf-precalificacion-mejoravit",
+   "inf-recuperacion-password"
+  ],
+  "necesito que revisen mi CURP cancelada": [],
+  "necesito recibo de luz cfe y sindo de información.": [
+   "sb-recibo-cfe",
+   "sin-canase"
+  ],
+  "necesito reseteo con contraseña y Pantalla de saldos": [
+   "inf-recuperacion-password",
+   "inf-pantalla-saldos"
+  ],
+  "necesito reseteo sin contraseña y Extracción de datos": [
+   "inf-reseteo-total",
+   "inf-extraccion-datos"
+  ],
+  "necesito retiro y Reporte de buro de credito": [
+   "afo-alta-desempleo-2dias",
+   "otr-buro-credito"
+  ],
+  "necesito rfc clon y historico infonavit": [
+   "sat-cif-rfc",
+   "inf-edo-cuenta-historico"
+  ],
+  "necesito rfc con idcif y Estado de cuenta mensual": [
+   "sat-cif-rfc",
+   "inf-edo-cuenta-mensual"
+  ],
+  "necesito rfc expres y 32 D": [
+   "sat-csf-expres",
+   "sat-32d"
+  ],
+  "necesito rfc generico y informa de retención infonavit": [
+   "sat-csf-generica",
+   "inf-hoja-retencion"
+  ],
+  "necesito rfc y rfc generico": [
+   "sat-csf-original",
+   "sat-csf-generica"
+  ],
+  "necesito semanas detallas y Constancia de antecedentes no penales (estatal)": [
+   "con-semanas-cotizadas",
+   "con-antecedentes-no-penales"
+  ],
+  "necesito sindo de desempleo y Sindo F7 (registros patronales)": [
+   "sin-ultimo-retiro",
+   "sin-f7"
+  ],
+  "necesito sindo de información. y Sindo F1 (datos de clínica)": [
+   "sin-canase",
+   "sin-f1"
+  ],
+  "necesito sindo de salario promedio y RFC moral": [
+   "sin-semanas-cotizadas",
+   "sat-csf-moral"
+  ],
+  "necesito sindo de semanas y constancias SAT": [
+   "sin-vigencia-derechos",
+   "sat-csf-original"
+  ],
+  "necesito sisec y nss": [
+   "con-semanas-cotizadas",
+   "con-nss-pdf"
+  ],
+  "necesito status y Patron retroactivo": [
+   "pen-estatus",
+   "patron_retroactivo"
+  ],
+  "necesito un duplicado de mi acta de nacimiento": [],
+  "necesito vigencia de derechos y rfc": [
+   "sin-vigencia-derechos",
+   "sat-csf-original",
+   "con-vigencia-derechos"
+  ],
+  "nomina de pensión.": [],
+  "nss": [],
+  "nss y clave curp": [
+   "sb-curp",
+   "con-nss-pdf"
+  ],
+  "omitir": [],
+  "pantalla de datos infonavit": [],
+  "preca": [],
+  "quiero 3 actas, AAAA000101HDFBBB01, AAAA000101HDFBBB02, AAAA000101HDFBBB03": [],
+  "quiero acta y curp": [
+   "sb-acta-nacimiento",
+   "sb-curp"
+  ],
+  "quisiera dos curp y dos actas, una para mí y otra para mi hermana": [],
+  "recibo de luz cfe": [],
+  "reseteo con contraseña": [],
+  "reseteo sin contraseña": [],
+  "resolución de pensión, ya tengo todos mis documentos": [],
+  "retiro": [],
+  "rfc": [],
+  "rfc clon": [],
+  "rfc con idcif": [],
+  "rfc expres": [],
+  "rfc generico": [],
+  "semanas detallas": [],
+  "sindo de desempleo": [],
+  "sindo de información.": [],
+  "sindo de salario promedio": [],
+  "sindo de semanas": [],
+  "sisec": [],
+  "status": [],
+  "sí": [],
+  "sí, mi curp es AAAA000101HDFBBB01": [],
+  "tengo una situación con mi pensión, qué se puede hacer": [],
+  "vigencia de derechos": [
+   "sin-vigencia-derechos",
+   "con-vigencia-derechos"
+  ],
+  "ya corregí ante RENAPO, tengo dos números": [],
+  "👍": []
+ }
+}

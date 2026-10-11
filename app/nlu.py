@@ -858,6 +858,20 @@ def deduce_all(text: str) -> list[Service]:
     normalized = _norm(text)
     if len(normalized) < 3:
         return []
+    found = servicios_nombrados(text)
+    return found[:MULTI_MAX_SERVICES] if len(found) >= 2 else []
+
+
+def servicios_nombrados(text: str) -> list[Service]:
+    """Todos los servicios que el texto nombra con su nombre o un sinónimo, en el orden del catálogo,
+    con la regla de la mención más larga (PR9) y SIN el filtro `≥ 2` ni el tope de `deduce_all`.
+
+    Es el contador que distingue 0, 1 y n (diseño §5.2): `deduce_all` devuelve `[]` tanto para 0
+    como para 1, así que una compuerta «0 o ≥ 2» montada sobre él nunca cierra. Solo capa literal:
+    gratis, determinista, sin red."""
+    normalized = _norm(text)
+    if len(normalized) < 3:
+        return []
     sueltos = {s.id for s, _, _ in _menciones_sueltas(normalized)}
     found: list[Service] = []
     seen: set[str] = set()
@@ -865,7 +879,76 @@ def deduce_all(text: str) -> list[Service]:
         if service.id in sueltos and service.id not in seen:
             seen.add(service.id)
             found.append(service)
-    return found[:MULTI_MAX_SERVICES] if len(found) >= 2 else []
+    return found
+
+
+# ---- Regla de la revisión (diseño §5.2; D5, D9) ----
+# Frases con las que el cliente pide que un asesor revise su caso en vez de un trámite del
+# catálogo. Dos familias (D5): cómo se expresa y de qué trata el caso. Normalizadas (sin acentos,
+# minúsculas) y buscadas por palabra completa. Fuera, a propósito, lo que también es un pedido
+# normal ("apoyo para", "me apoyas", "orientacion", "dos curp", "duplicado"): los jueces de la v3.1
+# mostraron que mandaban a revisión pedidos de diez pesos. "resolucion" sola choca con «Resolución
+# de pensión», por eso solo va como "con una resolucion". Una lista en código y no aprendida:
+# cambiarla es un PR revisado (nada se aprende solo).
+FRASES_REVISION: tuple[str, ...] = (
+    # cómo se expresa el cliente
+    "situacion", "una situacion", "que se puede hacer", "que puedo hacer", "me revisas",
+    "me puedes revisar", "se solicita el apoyo", "con una resolucion", "me orientas",
+    "necesito que revisen",
+    # contenido del caso
+    "curp cancelada", "curp duplicada", "nss cancelado", "duplicidad", "ambas curp", "ambos nss",
+    "dos nss", "ambos numeros de seguridad social", "controversia", "improcedente", "no coinciden",
+    "ante renapo", "homonimia",
+)
+
+
+def pide_revision(text: str, min_palabras: int = 40) -> bool:
+    """¿El cliente pide que un asesor revise su caso, más que un trámite concreto?
+
+    (a) trae alguna de `FRASES_REVISION` y NO nombra exactamente un servicio, o es largo; o
+    (b) D9: nombra 2+ servicios en un texto largo. «Largo» es `min_palabras` o más, contadas con
+    `_norm(text).split()`. La compuerta de (a) evita el falso positivo clásico: «necesito que
+    revisen mi acta de nacimiento» nombra UN trámite y es corto: es ese trámite, no un caso.
+
+    Las frases que el catálogo vivo tenga como nombre o sinónimo se ignoran (capa 2 de la
+    colisión): si en /catalog «controversia» se vuelve sinónimo de un trámite, deja de mandar a
+    revisión en la siguiente lectura. `min_palabras` llega como parámetro: la perilla
+    `contexto_min_palabras` la pasa el llamador (PR4/PR5), esta función no lee `settings`."""
+    normalized = _norm(text)
+    if len(normalized) < 3:
+        return False
+    vivos = catalog.terminos_vivos()
+    con_frase = any(f not in vivos and _contains_term(f, normalized) for f in FRASES_REVISION)
+    n = len(servicios_nombrados(text))
+    largo = len(normalized.split()) >= min_palabras
+    return (con_frase and (n != 1 or largo)) or (n >= 2 and largo)
+
+
+def _es_respuesta_corta(normalized: str) -> bool:
+    """Lo que el flujo espera como respuesta: sí/no, menú, un número, omitir o solo emojis."""
+    # Las palabras viven en conversation (que importa este módulo): se leen al llamar, no al cargar.
+    from app.conversation import MENU_KEYWORDS, NO_WORDS, OMIT_WORDS, YES_WORDS
+
+    cortas = {_norm(w) for w in (*YES_WORDS, *NO_WORDS, *MENU_KEYWORDS, *OMIT_WORDS)}
+    return normalized in cortas or normalized.isdigit() or not any(c.isalnum() for c in normalized)
+
+
+def es_informativo(text: str, min_palabras: int = 40) -> bool:
+    """¿El mensaje trae información (quizá de un folio abierto) en vez de una respuesta al flujo?
+
+    Falso si es respuesta corta (`_es_respuesta_corta`). Si no, verdadero por cualquiera de tres
+    vías (diseño §5.1): (i) `min_palabras` o más, contadas con `_norm(text).split()` —el mismo
+    tokenizador que la consulta de distribución—; (ii) `pide_revision`; (iii) D17: nombra 2+
+    servicios. Una clave sola («mi CURP es …», un servicio y corto) no es señal. `min_palabras`
+    llega del llamador (`settings.contexto_min_palabras`); esta función no lee `settings`."""
+    normalized = _norm(text)
+    if _es_respuesta_corta(normalized):
+        return False
+    return (
+        len(normalized.split()) >= min_palabras
+        or pide_revision(text, min_palabras)
+        or len(servicios_nombrados(text)) >= 2
+    )
 
 
 def _menciones_sueltas(normalized: str) -> list[tuple[Service, int, int]]:

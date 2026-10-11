@@ -265,3 +265,43 @@ def test_enmascarar_no_afecta_a_detectar():
     """`detectar()` sigue leyendo la clave: enmascarar es para lo que SALE, no
     para lo que el folio necesita guardar."""
     assert codigos.detectar(f"curp {CURP_VALIDA}") == {"CURP": [CURP_VALIDA]}
+
+
+# ---------------------------------------------------------------------------
+# NSS con separadores (tarea 16 de casos-analisis): «12 34 56 7890 1» es como lo escribe la gente y
+# como viene impreso en la constancia del IMSS. Con el patrón de 11 dígitos pegados se detectaba
+# nada y se enmascaraba como [TEL]: el asesor no lo veía como NSS y el requisito se repreguntaba.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "nss",
+    ["12 34 56 7890 1", "12-34-56-7890-1", "1234 5678 901", "123-4567-8901", "12345678901"],
+)
+def test_nss_con_espacios_o_guiones_se_detecta_sin_separadores(nss):
+    assert codigos.detectar(f"mi nss es {nss} gracias")["NSS"] == ["12345678901"]
+
+
+@pytest.mark.parametrize("nss", ["12 34 56 7890 1", "12-34-56-7890-1", "12345678901"])
+def test_nss_con_separadores_se_enmascara_como_nss(nss):
+    assert codigos.enmascarar(f"nss {nss}.") == "nss [NSS]."
+
+
+@pytest.mark.parametrize(
+    "telefono",
+    ["55 1234 5678", "55-1234-5678", "5512345678", "+52 55 1234 5678", "+52 1 55 1234 5678", "+525512345678"],
+)
+def test_un_telefono_sigue_siendo_telefono(telefono):
+    # El «+» de la lada queda fuera de la máscara desde antes de este cambio («tel +[TEL]»).
+    assert codigos.enmascarar(f"tel {telefono}") == ("tel +[TEL]" if telefono.startswith("+") else "tel [TEL]")
+    assert "NSS" not in codigos.detectar(f"tel {telefono}")
+
+
+def test_doce_digitos_con_separadores_no_son_un_nss():
+    """El NSS es de 11: no se toma un tramo de 11 dentro de un número más largo."""
+    assert "NSS" not in codigos.detectar("folio 12 34 56 7890 12")
+    assert "NSS" not in codigos.detectar("folio 1 12 34 56 7890 1")
+
+
+def test_dos_separadores_seguidos_no_unen_numeros_sueltos():
+    assert "NSS" not in codigos.detectar("tengo 12345  678901 pesos")
