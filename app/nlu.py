@@ -858,6 +858,20 @@ def deduce_all(text: str) -> list[Service]:
     normalized = _norm(text)
     if len(normalized) < 3:
         return []
+    found = servicios_nombrados(text)
+    return found[:MULTI_MAX_SERVICES] if len(found) >= 2 else []
+
+
+def servicios_nombrados(text: str) -> list[Service]:
+    """Todos los servicios que el texto nombra con su nombre o un sinónimo, en el orden del catálogo,
+    con la regla de la mención más larga (PR9) y SIN el filtro `≥ 2` ni el tope de `deduce_all`.
+
+    Es el contador que distingue 0, 1 y n (diseño §5.2): `deduce_all` devuelve `[]` tanto para 0
+    como para 1, así que una compuerta «0 o ≥ 2» montada sobre él nunca cierra. Solo capa literal:
+    gratis, determinista, sin red."""
+    normalized = _norm(text)
+    if len(normalized) < 3:
+        return []
     sueltos = {s.id for s, _, _ in _menciones_sueltas(normalized)}
     found: list[Service] = []
     seen: set[str] = set()
@@ -865,7 +879,7 @@ def deduce_all(text: str) -> list[Service]:
         if service.id in sueltos and service.id not in seen:
             seen.add(service.id)
             found.append(service)
-    return found[:MULTI_MAX_SERVICES] if len(found) >= 2 else []
+    return found
 
 
 def _menciones_sueltas(normalized: str) -> list[tuple[Service, int, int]]:
