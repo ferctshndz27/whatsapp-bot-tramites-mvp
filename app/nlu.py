@@ -924,6 +924,33 @@ def pide_revision(text: str, min_palabras: int = 40) -> bool:
     return (con_frase and (n != 1 or largo)) or (n >= 2 and largo)
 
 
+def _es_respuesta_corta(normalized: str) -> bool:
+    """Lo que el flujo espera como respuesta: sí/no, menú, un número, omitir o solo emojis."""
+    # Las palabras viven en conversation (que importa este módulo): se leen al llamar, no al cargar.
+    from app.conversation import MENU_KEYWORDS, NO_WORDS, OMIT_WORDS, YES_WORDS
+
+    cortas = {_norm(w) for w in (*YES_WORDS, *NO_WORDS, *MENU_KEYWORDS, *OMIT_WORDS)}
+    return normalized in cortas or normalized.isdigit() or not any(c.isalnum() for c in normalized)
+
+
+def es_informativo(text: str, min_palabras: int = 40) -> bool:
+    """¿El mensaje trae información (quizá de un folio abierto) en vez de una respuesta al flujo?
+
+    Falso si es respuesta corta (`_es_respuesta_corta`). Si no, verdadero por cualquiera de tres
+    vías (diseño §5.1): (i) `min_palabras` o más, contadas con `_norm(text).split()` —el mismo
+    tokenizador que la consulta de distribución—; (ii) `pide_revision`; (iii) D17: nombra 2+
+    servicios. Una clave sola («mi CURP es …», un servicio y corto) no es señal. `min_palabras`
+    llega del llamador (`settings.contexto_min_palabras`); esta función no lee `settings`."""
+    normalized = _norm(text)
+    if _es_respuesta_corta(normalized):
+        return False
+    return (
+        len(normalized.split()) >= min_palabras
+        or pide_revision(text, min_palabras)
+        or len(servicios_nombrados(text)) >= 2
+    )
+
+
 def _menciones_sueltas(normalized: str) -> list[tuple[Service, int, int]]:
     """Cada mención de un nombre o sinónimo en la frase, con su tramo, salvo las que caen dentro de
     una mención MÁS LARGA de otro servicio (la regla de PR9). Dos menciones del mismo tramo y largo
