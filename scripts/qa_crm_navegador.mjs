@@ -1177,6 +1177,11 @@ function crearContexto({ cdp, base, recolector, dialogos, env, db }) {
     if (!toast.includes(destinoNombre)) ctx.avisar(`el toast dice ${JSON.stringify(toast)} y no menciona «${destinoNombre}»`);
   };
   ctx.login = async (usuario) => {
+    // Primero se descarga la página anterior: si las cookies se borran con ella viva, su sondeo
+    // o un fetch en vuelo (p. ej. /crm/api/etapas) sale ya sin sesión, recibe 403 y el criterio
+    // SIGUIENTE se lo cobra como error de consola. Un usuario real que cambia de cuenta sale de
+    // la página; esto lo imita.
+    await navegar(cdp, "about:blank");
     await cdp.send("Network.clearBrowserCookies");
     await navegar(cdp, base + "/login");
     const cargado = cdp.esperarEvento("Page.loadEventFired", 20000);
