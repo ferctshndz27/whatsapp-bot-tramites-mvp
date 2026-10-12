@@ -1040,6 +1040,47 @@ def _por_ligar(session: Session, phone: str, contexto: dict) -> list[Message]:
     return _mensajes_a_ligar(session, phone, desde, hasta)
 
 
+def _naive_utc(momento: datetime) -> datetime:
+    """SQLite devuelve datetimes naive y utcnow() es aware: se comparan ambos como naive-UTC."""
+    if momento.tzinfo is not None:
+        return momento.astimezone(timezone.utc).replace(tzinfo=None)
+    return momento
+
+
+def _archivos_previos_al_caso(session: Session, phone: str, desde_id: int | None) -> list[Message]:
+    """La racha de archivos que el cliente mandó justo ANTES del mensaje que abrió la pregunta del
+    caso (`desde_id`), para ligarla al folio cuando el caso se abre (operador, 2026-10-12: que los
+    archivos lleguen a la ficha). `_por_ligar` solo mira de `desde_id` en adelante, y el gestor que
+    manda las fotos del trabajador y DESPUÉS cuenta el caso las dejaba sin folio.
+
+    Se retrocede desde ese mensaje entre los entrantes visibles del teléfono y se corta en el primero
+    que NO sea un archivo sin folio —un texto del cliente es otra conversación; un archivo con folio
+    ya es de otra solicitud— o que esté a más de `VENTANA_ARCHIVOS_PREVIOS` del mensaje del caso. Se
+    queda con los `MAX_ARCHIVOS_PREVIOS` más cercanos. Sin preguntar: ligar de
+    más cuesta una burbuja mal etiquetada en el chat; no ligar, que la foto no salga en ningún folio.
+
+    Solo lee, y se llama ANTES de la primera escritura del turno (igual que `_por_ligar`)."""
+    ancla = session.get(Message, desde_id) if desde_id is not None else None
+    if ancla is None:
+        return []
+    mas_viejo_permitido = _naive_utc(ancla.created_at) - VENTANA_ARCHIVOS_PREVIOS
+    anteriores = session.exec(
+        select(Message)
+        .where(Message.phone == phone)
+        .where(Message.direction == Direction.IN)
+        .where(Message.habilitado == True)  # noqa: E712
+        .where(Message.id < ancla.id)
+        .order_by(Message.id.desc())  # type: ignore[union-attr]
+        .limit(MAX_ARCHIVOS_PREVIOS)
+    ).all()
+    racha: list[Message] = []
+    for m in anteriores:
+        if m.media_ref is None or m.ticket_id is not None or _naive_utc(m.created_at) < mas_viejo_permitido:
+            break
+        racha.append(m)
+    return racha
+
+
 def _anexar_y_volver(session: Session, conv: Conversation, contexto: dict, ticket: Ticket) -> list[str]:
     _anexar_a_folio(session, ticket, contexto, _por_ligar(session, conv.phone, contexto))
     replies = [_con_horario(FOLIO_ANEXADO.format(folio=ticket.id, servicio=_nombre_folio(ticket)))]
@@ -1101,6 +1142,11 @@ CASO_SERVICE_ID = "analisis"
 CASO_NOMBRE = "Caso para análisis"
 CASO_NOTA = "Caso para análisis. Mensaje del cliente:\n"
 CASO_NOTA_ARCHIVOS = "Caso para análisis. Archivos del cliente."
+# Los archivos que el cliente manda ANTES de contar su caso se ligan al abrirlo (operador,
+# 2026-10-12): la racha inmediata anterior al mensaje que lo disparó, de los últimos 30 minutos y de
+# a lo más 25 archivos —los más cercanos—. Se liga sin preguntar: ver `_archivos_previos_al_caso`.
+VENTANA_ARCHIVOS_PREVIOS = timedelta(minutes=30)
+MAX_ARCHIVOS_PREVIOS = 25
 # Revisión + 7 servicios + «Otro trámite» = 9 filas (≤ 10 de Meta).
 MAX_SERVICIOS_EN_CASO = 7
 # Dónde corre: la tabla de §5.2. `pidiendo_requisitos` no, a propósito: ahí el cliente tiene un
@@ -1246,7 +1292,11 @@ def _abrir_caso(session: Session, client: Client, conv: Conversation, contexto: 
     un caso no es un trámite que el cliente multiplica por catálogo, sino una revisión que él
     confirmó. La carrera de dos webhooks simultáneos es la misma clase que la del alta normal y
     queda fuera, como el candado (§11)."""
-    mensajes = _por_ligar(session, conv.phone, contexto)  # antes de escribir nada
+    # Los de antes del texto del caso (la racha de archivos) y los de desde él: ids disjuntos, así
+    # que ninguno se liga dos veces. Antes de escribir nada, como `_por_ligar`.
+    mensajes = _archivos_previos_al_caso(session, conv.phone, contexto.get("desde_id")) + _por_ligar(
+        session, conv.phone, contexto,
+    )
     texto = contexto.get("texto") or ""
     asesor, motivo = asignacion.elegir(session, client.phone)
     ticket = Ticket(
