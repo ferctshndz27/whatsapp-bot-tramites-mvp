@@ -26,6 +26,7 @@ from app.conversation import (
     CASO_RECIBIDO,
     FOLIO_LO_SUMO,
     FOLIO_LO_SUMO_ARCHIVO,
+    MAX_FOLIOS_ABIERTOS,
     MAX_NOTE_TEXT_CASO,
     handle_incoming,
     presentation,
@@ -149,7 +150,7 @@ def test_elegir_revision_abre_un_caso_sin_producto_con_todo_el_texto(s):
     assert [m.body for m in _ligados(s, caso.id)] == [SITUACION]
     acciones = [a.action for a in s.exec(select(TicketActivity).where(TicketActivity.ticket_id == caso.id))]
     assert f"info-cliente:{len(SITUACION)}c" in acciones
-    assert replies[0].startswith(CASO_RECIBIDO)
+    assert replies[0] == CASO_RECIBIDO.format(folio=caso.id)
     assert _estado(s)[0] == "escalado"
     eventos = s.exec(select(NluEvent).where(NluEvent.capa == "analisis")).all()
     assert len(eventos) == 1 and eventos[0].text == "" and "analisis" in CAPAS_EXTRA
@@ -220,7 +221,7 @@ def test_con_un_caso_abierto_es_algo_nuevo_y_revision_abre_otro_caso(s):
 
     casos = sorted(_casos(s), key=lambda t: t.id)
     assert len(casos) == 2, "no abrió el folio de la solicitud nueva"
-    assert replies[0].startswith(CASO_RECIBIDO)
+    assert replies[0] == CASO_RECIBIDO.format(folio=casos[1].id)
     anterior, nuevo = casos
     assert anterior.id == caso.id
     assert "tengo una situación" not in (anterior.notes or ""), "pegó la solicitud al caso anterior"
@@ -244,9 +245,9 @@ def test_el_cliente_que_manda_otra_solicitud_recibe_su_propio_folio_y_el_primero
     handle_incoming(s, PHONE, "nuevo")
     replies = handle_incoming(s, PHONE, "1")
 
-    assert replies[0].startswith(CASO_RECIBIDO), "no confirmó el folio nuevo"
     casos = sorted(_casos(s), key=lambda t: t.id)
     assert len(casos) == 2 and casos[0].id == primero.id, "no nació un segundo folio"
+    assert replies[0] == CASO_RECIBIDO.format(folio=casos[1].id), "no confirmó el folio nuevo"
     segundo = casos[1]
     assert primero.notes == notas_antes, "la solicitud nueva se pegó a las notas del caso anterior"
     assert CASO_LARGO[:60] in segundo.notes and DOS_LARGO[:60] not in segundo.notes
@@ -423,3 +424,65 @@ def test_un_pedido_corto_de_un_servicio_sigue_el_camino_de_hoy(s):
     _conv(s)
     handle_incoming(s, PHONE, "necesito que revisen mi acta de nacimiento")
     assert _estado(s)[0] == "confirmar"
+
+
+# --- el cliente conoce el folio de su caso y los casos no tienen tope ---------------------------
+
+
+def _sembrar_casos(s, cuantos: int) -> list[Ticket]:
+    casos = []
+    for _ in range(cuantos):
+        t = Ticket(phone=PHONE, category="(análisis)", service_id="analisis", service_name="Caso para análisis",
+                   price_info="N/A", status=TicketStatus.NUEVO, escalado=True)
+        s.add(t)
+        casos.append(t)
+    s.commit()
+    return casos
+
+
+def test_la_confirmacion_del_caso_le_dice_su_folio(s):
+    """Decisión del operador (2026-10-12): el cliente debe saber a qué folio pertenece su caso. Un
+    gestor manda por el mismo chat los casos de varios trabajadores; sin el número no puede
+    preguntar por uno ni el asesor saber de cuál le hablan. Si se pone roja, la confirmación vuelve
+    a ser «Gracias, recibí tu caso» a secas y el cliente no tiene cómo citar su folio."""
+    _conv(s)
+    handle_incoming(s, PHONE, CASO_LARGO)
+
+    replies = handle_incoming(s, PHONE, "1")
+
+    (caso,) = _casos(s)
+    assert replies == [
+        f"Gracias, recibí tu caso. Tu folio es el #{caso.id}. 🙏 Un asesor lo revisará y te contactará."
+    ]
+
+
+def test_cada_caso_confirma_su_propio_folio_y_no_el_del_anterior(s):
+    """Con dos casos del mismo cliente, la segunda confirmación trae el folio NUEVO. Si se pone
+    roja, el cliente cree que su segunda solicitud es el folio de la primera."""
+    _conv(s)
+    handle_incoming(s, PHONE, CASO_LARGO)
+    primera = handle_incoming(s, PHONE, "1")
+    handle_incoming(s, PHONE, CASO_LARGO + " y más datos")
+    handle_incoming(s, PHONE, "nuevo")
+    segunda = handle_incoming(s, PHONE, "1")
+
+    uno, dos = sorted(_casos(s), key=lambda t: t.id)
+    assert f"#{uno.id}." in primera[0] and f"#{dos.id}." in segunda[0]
+    assert f"#{uno.id}." not in segunda[0], "la segunda confirmación dijo el folio de la primera"
+
+
+def test_un_cliente_con_mas_casos_abiertos_que_el_cupo_de_tramites_abre_otro(s):
+    """Decisión del operador (2026-10-12): sin tope de tickets por cliente. `_abrir_caso` no consulta
+    `MAX_FOLIOS_ABIERTOS`; esta prueba lo fija para que nadie lo agregue «por seguridad». Si se pone
+    roja, el gestor con más de cinco casos ya no puede abrir el siguiente."""
+    _sembrar_casos(s, MAX_FOLIOS_ABIERTOS + 1)
+    _conv(s)
+    handle_incoming(s, PHONE, CASO_LARGO)
+    assert _estado(s)[0] == "aclarando_folio"
+    handle_incoming(s, PHONE, "nuevo")
+
+    replies = handle_incoming(s, PHONE, "1")
+
+    casos = sorted(_casos(s), key=lambda t: t.id)
+    assert len(casos) == MAX_FOLIOS_ABIERTOS + 2, "el tope frenó el caso"
+    assert replies[0] == CASO_RECIBIDO.format(folio=casos[-1].id)

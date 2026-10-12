@@ -22,6 +22,7 @@ from app.catalog import catalog
 from app.config import settings
 from app.conversation import (
     CONFIRM_BUTTONS,
+    FOLIO_ARCHIVO,
     FOLIO_BOTONES,
     FOLIO_LO_SUMO,
     FOLIO_LO_SUMO_ARCHIVO,
@@ -129,6 +130,24 @@ def test_con_un_folio_la_pregunta_lleva_botones_que_caben(s):
     assert salida[-1]["buttons"] == FOLIO_BOTONES
     assert len(FOLIO_BOTONES) <= MAX_BUTTONS
     assert all(len(titulo) <= BUTTON_TITLE_MAX for _, titulo in FOLIO_BOTONES)
+
+
+def test_con_un_folio_la_pregunta_del_archivo_tambien_lleva_botones(s):
+    """Hallazgo W3 de la batería (2026-10-12): la pregunta del archivo salía SIN botones porque
+    `presentation` solo reconocía el comienzo de la pregunta del texto, y esta empieza con el acuse
+    «Recibí tu archivo 📎.». El cliente que manda una foto tenía que ESCRIBIR «sí» (con varios folios
+    sí tocaba una lista). Si se pone roja, la foto de quien tiene un solo folio queda sin ligar
+    mientras el cliente no adivine qué contestar."""
+    folio = _folio(s)
+    _conv(s)
+
+    replies = handle_incoming(s, PHONE, "", is_media=True, adjunto=PDF)
+    salida = presentation(s, PHONE, replies)
+
+    assert isinstance(salida[-1], dict), f"la pregunta del archivo salió como texto plano, sin botones: {salida[-1]!r}"
+    assert salida[-1]["text"].startswith(FOLIO_ARCHIVO), salida[-1]["text"]
+    assert f"folio #{folio.id}" in salida[-1]["text"]
+    assert salida[-1]["buttons"] == FOLIO_BOTONES
 
 
 def test_con_varios_folios_el_agente_pregunta_a_cual_y_anexa_al_elegido(s):
