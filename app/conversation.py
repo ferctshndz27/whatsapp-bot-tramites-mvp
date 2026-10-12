@@ -199,6 +199,26 @@ def _etiqueta_estado(ticket: Ticket) -> str:
         return STATUS_NUEVO_ASIGNADO
     return STATUS_LABELS[ticket.status]
 STATUS_LIST_LIMIT = 5
+
+# ---- Estatus por folio (operador, 2026-10-12) ----
+# Quien pregunta por su caso recibe el estatus DE ESE FOLIO. Si nombra uno («#74», «folio 74»,
+# «caso 74») se contesta ese; si no nombra ninguno y tiene varios abiertos, se le pregunta cuál.
+# Sin estado en la FSM: la pregunta es una lista cuyas filas llevan el folio como id («#74») y el
+# número suelto se entiende solo si lo último que dijo el bot fue esa pregunta. Detrás de
+# `contexto_folio_enabled`: apagada, «mi caso» y «#74» se atienden como antes.
+ESTADOS_ESTATUS_LIBRE = frozenset({"inicio", "menu_categoria", "menu_servicio", "escalado"})
+MAX_PALABRAS_ESTATUS = 12  # más largo ya es información, no una pregunta por el estatus
+ESTATUS_FOLIO = "Folio #{folio} ({servicio}): {estado}."
+FOLIO_NO_ENCONTRADO = (
+    "No encuentro el folio #{folio} entre tus solicitudes. Escribe *estatus* para ver las que tienes."
+)
+ESTATUS_PREGUNTA_INICIO = "¿De cuál folio quieres saber?"
+ESTATUS_PREGUNTA = ESTATUS_PREGUNTA_INICIO + " Responde con el número de folio, por ejemplo #{folio}:"
+ESTATUS_TODOS_PIE = "O escribe *todos* para ver el estado de todos."
+ESTATUS_FILA_TODOS = "📋 Todos mis folios"
+ESTATUS_ID_TODOS = "todos"
+MAX_FOLIOS_EN_PREGUNTA = 9  # + «Todos» = las 10 filas de Meta
+
 # Selección múltiple pura en un menú: "1 y 2", "1,3", "2 4", "1y2".
 _MULTI_PICK_RE = re.compile(r"\d+(?:(?:\s*(?:[,;+&]|y|e)\s*|\s+)\d+)+")
 
@@ -231,7 +251,7 @@ MAX_FOLIOS_ABIERTOS = 5
 FOLIO_REPETIDO = "Ya tienes el folio #{folio} de '{servicio}' abierto; tu asesor lo está atendiendo."
 FOLIOS_TOPE = (
     "Tienes {n} solicitudes abiertas, que es el máximo a la vez. Cuando tu asesor "
-    "cierre alguna podrás abrir más. Escribe *estado* para ver cómo van."
+    "cierre alguna podrás abrir más. Escribe *estatus* para ver cómo van."
 )
 
 # ---- Captura de requisitos (estado "pidiendo_requisitos") ----
@@ -396,6 +416,10 @@ def handle_incoming(
         # bot no puede hablarle al cliente encima de un asesor que lo atiende
         # solo porque el folio más nuevo es de otro.
         replies = []
+    elif (respuesta := _contesta_la_pregunta_de_estatus(session, conv, text)) is not None:
+        # «74» o «todos» contestando «¿de cuál folio quieres saber?»: solo si esa fue la última
+        # cosa que le dijo el bot (ver la función). Va después del silencio por agente apagado.
+        replies = [respuesta]
     elif conv.state == "escalado":
         # Su handler sale del dict de la FSM, pero se invoca AQUÍ y no desde
         # _dispatch: el cliente que espera a un asesor no pasa por el preludio
@@ -551,6 +575,108 @@ def _status_reply(session: Session, phone: str) -> str:
     return f"Estatus de tus solicitudes:\n{lines}"
 
 
+# El seguimiento de «su caso» (se suma a `_STATUS_INTENT_RE`, que no cambia). Se busca sobre el texto
+# normalizado. «estado» a secas NO entra a propósito: «Estado de cuenta» es un servicio del catálogo.
+_CASO_INTENT_RE = re.compile(
+    r"\bmi caso\b|\bel caso\b|\bmi folio\b|\bel folio\b|\bcaso para analisis\b|\bcaso\s*#?\s*\d|#\s*\d"
+    r"|\bya (?:lo |la |me |nos )?(?:vio|vieron|reviso|revisaron|checo|checaron|atendio|atendieron"
+    r"|contesto|contestaron|respondio|respondieron|resolvio|resolvieron)\b"
+    r"|\bnovedad(?:es)?\b|\bnoticias\b"
+)
+# Pregunta por UN caso (singular): la que se contesta preguntando cuál. «estatus», «mis solicitudes»,
+# «mis casos» piden todos y siguen recibiendo la lista.
+_UN_CASO_RE = re.compile(r"\b(?:mi|el) (?:caso|folio)\b|\bcaso para analisis\b|\bya (?:lo|la|me|nos)\b")
+_FOLIO_NOMBRADO_RE = re.compile(
+    r"#\s*(\d{1,9})\b|\b(?:folio|caso|ticket)\s*(?:numero|num|no)?\.?\s*#?\s*(\d{1,9})\b"
+)
+_RESPUESTA_ESTATUS_RE = re.compile(r"^(?:#|folio |caso )?\s*(\d{1,9})$|^(todos|todas)$")
+
+
+def _quiere_estatus(session: Session, conv: Conversation, text: str) -> bool:
+    """La intención de estatus de siempre (`_asks_status`, en cualquier estado) o, con la perilla del
+    folio encendida, el seguimiento de «su caso» de quien tiene folios abiertos. Solo en los estados
+    que no esperan otra respuesta (D16) y solo si el mensaje es corto: uno largo es información, y la
+    regla del folio le pregunta a dónde va. Sin folios abiertos «quiero que revisen mi caso» es
+    pedir un caso, no preguntar por uno."""
+    if _asks_status(text):
+        return True
+    if not settings.contexto_folio_enabled or conv.state not in ESTADOS_ESTATUS_LIBRE:
+        return False
+    n = nlu._norm(text)
+    if len(n.split()) > MAX_PALABRAS_ESTATUS or _CASO_INTENT_RE.search(n) is None:
+        return False
+    return bool(_folios_abiertos(session, conv.phone))
+
+
+def _folio_nombrado(text: str) -> int | None:
+    m = _FOLIO_NOMBRADO_RE.search(nlu._norm(text))
+    return int(next(g for g in m.groups() if g)) if m else None
+
+
+def _estatus_de_folio(session: Session, phone: str, numero: int) -> str:
+    """El estatus de UN folio del cliente. Uno ajeno, borrado o inexistente recibe la MISMA respuesta:
+    distinguirlos confirmaría a quien teclea números qué folios existen."""
+    ticket = session.get(Ticket, numero)
+    if ticket is None or ticket.phone != phone or not ticket.habilitado:
+        return FOLIO_NO_ENCONTRADO.format(folio=numero)
+    return ESTATUS_FOLIO.format(
+        folio=ticket.id, servicio=_nombre_para_el_cliente(ticket), estado=_etiqueta_estado(ticket),
+    )
+
+
+def _pregunta_estatus(folios: list[Ticket]) -> str:
+    folios = folios[:MAX_FOLIOS_EN_PREGUNTA]
+    lineas = [f"#{t.id} · {_nombre_para_el_cliente(t)}" for t in folios]
+    return "\n".join([ESTATUS_PREGUNTA.format(folio=folios[0].id), *lineas, ESTATUS_TODOS_PIE])
+
+
+def _filas_estatus(session: Session, phone: str) -> list[tuple[str, str]]:
+    """Filas de la lista nativa de la pregunta «¿de cuál folio?». El id de cada fila es el folio
+    («#74»): el toque llega como si el cliente lo hubiera tecleado."""
+    folios = _folios_abiertos(session, phone)[:MAX_FOLIOS_EN_PREGUNTA]
+    if len(folios) < 2:
+        return []
+    filas = [(f"#{t.id}", f"#{t.id} · {_nombre_para_el_cliente(t)}") for t in folios]
+    filas.append((ESTATUS_ID_TODOS, ESTATUS_FILA_TODOS))
+    return filas
+
+
+def _responder_estatus(session: Session, conv: Conversation, text: str) -> str:
+    """«¿Cómo va mi caso?»: el estatus del folio que nombra el cliente; si pregunta por UN caso sin
+    nombrar ninguno y tiene varios abiertos, cuál; en lo demás, la lista de siempre."""
+    if settings.contexto_folio_enabled:
+        numero = _folio_nombrado(text)
+        if numero is not None:
+            return _estatus_de_folio(session, conv.phone, numero)
+        if conv.state in ESTADOS_ESTATUS_LIBRE and _UN_CASO_RE.search(nlu._norm(text)):
+            abiertos = _folios_abiertos(session, conv.phone)
+            if len(abiertos) >= 2:
+                return _pregunta_estatus(abiertos)
+    return _status_reply(session, conv.phone)
+
+
+def _contesta_la_pregunta_de_estatus(session: Session, conv: Conversation, text: str) -> str | None:
+    """El número (o «todos») con que el cliente contesta «¿de cuál folio?». Solo vale si esa fue lo
+    último que le dijo el bot: un número suelto sin esa pregunta no es un folio. Sin estado en la
+    FSM, así que no hay nada que caduque ni que le robe una respuesta a otra pregunta."""
+    if not settings.contexto_folio_enabled:
+        return None
+    m = _RESPUESTA_ESTATUS_RE.match(nlu._norm(text).strip("*_. "))
+    if m is None:
+        return None
+    ultimo = session.exec(
+        select(Message.body)
+        .where(Message.phone == conv.phone)
+        .where(Message.direction == Direction.OUT)
+        .order_by(Message.id.desc())  # type: ignore[union-attr]
+    ).first()
+    if not ultimo or not ultimo.startswith(ESTATUS_PREGUNTA_INICIO):
+        return None
+    if m.group(2):
+        return _status_reply(session, conv.phone)
+    return _estatus_de_folio(session, conv.phone, int(m.group(1)))
+
+
 def _dispatch(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
     if normalized in MENU_KEYWORDS:
         _set_state(session, conv, "menu_categoria")
@@ -572,8 +698,8 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
         return [catalog.format_category_menu()]
 
     # "¿Cómo va mi trámite?" — funciona desde cualquier estado, sin tocarlo.
-    if not capturando and _asks_status(text):
-        return [_status_reply(session, client.phone)]
+    if not capturando and _quiere_estatus(session, conv, text):
+        return [_responder_estatus(session, conv, text)]
 
     # Saludo o despedida: trato social, no un trámite. Al saludo se responde con
     # el saludo y el menú principal de categorías (D7, 2026-10-08: un cliente que
@@ -609,8 +735,8 @@ def _handle_escalado(session: Session, client: Client, conv: Conversation, text:
     if normalized in MENU_KEYWORDS:
         _set_state(session, conv, "menu_categoria")
         return ["Claro, continuemos aquí. " + catalog.format_category_menu()]
-    if _asks_status(text):
-        return [_status_reply(session, client.phone)]
+    if _quiere_estatus(session, conv, text):
+        return [_responder_estatus(session, conv, text)]
     # Aunque esté esperando a un asesor, un pedido concreto de trámite
     # se atiende (deducción, multi-servicio o mini-menú de parecidos):
     # el "espera" enlatado es solo para mensajes sin petición clara.
@@ -724,7 +850,7 @@ def _regla_del_folio(
     deducción de trámites."""
     if not settings.contexto_folio_enabled or conv.state not in ESTADOS_REGLA_FOLIO:
         return None
-    if normalized in MENU_KEYWORDS or _asks_status(text) or _social_kind(text) == "saludo":
+    if normalized in MENU_KEYWORDS or _quiere_estatus(session, conv, text) or _social_kind(text) == "saludo":
         return None
     if not nlu.es_informativo(text, settings.contexto_min_palabras):
         return None
@@ -1031,7 +1157,7 @@ def _regla_de_la_revision(
     perilla apagada, el fallo original sigue: es la fila OFF/ON de la matriz)."""
     if not settings.revision_enabled or conv.state not in ESTADOS_REGLA_REVISION:
         return None
-    if normalized in MENU_KEYWORDS or _asks_status(text) or _social_kind(text) == "saludo":
+    if normalized in MENU_KEYWORDS or _quiere_estatus(session, conv, text) or _social_kind(text) == "saludo":
         return None
     if not nlu.pide_revision(text, settings.contexto_min_palabras):
         return None
@@ -1911,6 +2037,13 @@ def presentation(session: Session, phone: str, replies: list[str]) -> list:
         return out
     if conv.state == "aclarando_folio" and MENU_MARKER in last:
         rows = _filas_folio(session, conv)
+        if rows:
+            out[-1] = {"text": last, "list": rows, "button": LIST_BUTTON_LABEL}
+        return out
+    if last.startswith(ESTATUS_PREGUNTA_INICIO):
+        # «¿De cuál folio quieres saber?»: la lista lleva el folio como id («#74»). Va antes del
+        # menú genérico: su texto también dice «Responde con el número».
+        rows = _filas_estatus(session, phone)
         if rows:
             out[-1] = {"text": last, "list": rows, "button": LIST_BUTTON_LABEL}
         return out

@@ -102,7 +102,7 @@ def test_cerrado_por_el_asesor_el_mismo_tramite_vuelve_a_abrir_folio(session):
 def test_con_el_tope_de_abiertos_no_se_abre_uno_mas_y_se_le_dice(session):
     """El tope por cliente, sembrado por debajo de la conversación: cinco
     folios abiertos de otros servicios, y el sexto no entra ni pasa por el
-    reparto. La respuesta lo dice y ofrece *estado*."""
+    reparto. La respuesta lo dice y ofrece *estatus*."""
     _sin_requisitos(DIVORCIO)
     for i in range(MAX_FOLIOS_ABIERTOS):
         session.add(Ticket(phone=PHONE, category="c", service_id=f"otro-{i}", service_name=f"Otro {i}",
@@ -112,7 +112,7 @@ def test_con_el_tope_de_abiertos_no_se_abre_uno_mas_y_se_le_dice(session):
     respuesta = _pedir(session, "Necesito un acta de divorcio")
 
     assert len(_folios(session, abiertos_solo=True)) == MAX_FOLIOS_ABIERTOS, "se abrió el folio de más"
-    assert "máximo" in respuesta[0] and "*estado*" in respuesta[0], respuesta
+    assert "máximo" in respuesta[0] and "*estatus*" in respuesta[0], respuesta
     assert "Registré" not in respuesta[0]
 
 
@@ -175,7 +175,7 @@ def test_los_tramites_normales_siguen_topando_aunque_haya_casos(session):
 
     respuesta = _pedir(session, "Necesito un acta de divorcio")
 
-    assert "máximo" in respuesta[0] and "*estado*" in respuesta[0], respuesta
+    assert "máximo" in respuesta[0] and "*estatus*" in respuesta[0], respuesta
     assert f"Tienes {MAX_FOLIOS_ABIERTOS} solicitudes" in respuesta[0], "el aviso cuenta los casos"
     assert not [t for t in _folios(session) if t.service_id == DIVORCIO], "se abrió el trámite de más"
 
