@@ -112,6 +112,35 @@
 </div>
 {% endif %}
 
+{% if archivos %}
+<div class="card">
+  <h2>Archivos del cliente</h2>
+  {% if archivos_total > archivos|length %}
+  <p class="u-c-text-muted u-fs-0_9rem">Se muestran los {{ archivos|length }} más recientes de {{ archivos_total }}. Los demás están en el chat.</p>
+  {% endif %}
+  {% if not puede_abrir_archivos %}
+  <p class="u-c-text-muted u-fs-0_9rem">Para abrirlos hay que atender esta solicitud (tomarla o ser de tu cartera).</p>
+  {% endif %}
+  <ul class="u-list-none u-p-0 u-m-0-0-0_75rem u-d-flex u-dir-column u-gap-0_5rem">
+    {% for a in archivos %}
+    <li class="u-bg-slate-50 u-r-6px u-p-0_6rem-0_9rem u-d-flex u-gap-0_6rem u-items-baseline u-wrap-wrap">
+      <span class="badge tomado">{{ a.tipo }}</span>
+      {% if a.vencido %}
+      <strong class="u-wb-break-word">{{ a.nombre }}</strong>
+      <span class="badge nuevo">Vencido</span>
+      <span class="u-c-text-muted">— Meta ya no lo conserva; pídeselo de nuevo al cliente</span>
+      {% elif puede_abrir_archivos %}
+      <a class="u-wb-break-word" href="/crm/api/adjunto/{{ a.id }}" target="_blank" rel="noopener"><strong>{{ a.nombre }}</strong></a>
+      {% else %}
+      <strong class="u-wb-break-word">{{ a.nombre }}</strong>
+      {% endif %}
+      <span class="u-c-text-muted u-fs-0_9rem">{{ a.tamano }} · {{ a.fecha | local('%d/%m/%Y %H:%M') }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <div class="card">
   <h2>Etiquetas</h2>
   <div class="u-d-flex u-wrap-wrap u-gap-0_4rem u-items-center">

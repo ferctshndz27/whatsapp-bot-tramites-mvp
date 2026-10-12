@@ -562,6 +562,13 @@ def _conversacion_visible(session, phone: str, user: str):
     return cliente, agg
 
 
+def puede_ver_conversacion(session, phone: str, user: str) -> bool:
+    """¿Este usuario puede abrir el chat de ese cliente y, con él, sus archivos? La ficha del folio
+    (dashboard) lo pregunta aquí para no ofrecer un enlace que el visor va a contestar con 404.
+    Es la regla de `_conversacion_visible`, no una copia: si cambia, cambian las dos."""
+    return _conversacion_visible(session, phone, user)[0] is not None
+
+
 def _tablero(session, vista, user: str, q: str = "", cerradas: bool = False) -> dict:
     # is_admin ANTES de cargar el tablero: abre su propia sesión, y la primera carga siembra.
     solo_mios = not is_admin(user)
