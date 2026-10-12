@@ -6,9 +6,9 @@ revisión nace UN folio «Caso para análisis» sin producto, con todo su texto,
 fue sumando quedan ligados. Antes ese texto se troceaba en «¿Confirmas estos 3 trámites?».
 
 Si una de estas pruebas se pone roja, el bot le hace a un cliente real una de estas cosas: le
-abre trámites que no pidió, le abre dos casos, le asigna el caso a quien atiende un producto que
-el caso no es, pierde la mitad de lo que escribió, le liga un «ok» suelto, o cambia de conducta
-con la perilla apagada.
+abre trámites que no pidió, le abre dos casos por una sola solicitud o le pega una solicitud nueva
+al caso de la anterior, le asigna el caso a quien atiende un producto que el caso no es, pierde
+la mitad de lo que escribió, le liga un «ok» suelto, o cambia de conducta con la perilla apagada.
 """
 
 import json
@@ -200,7 +200,12 @@ def test_un_caso_de_1500_caracteres_llega_entero(s):
     assert largo in _casos(s)[0].notes
 
 
-def test_con_un_caso_abierto_lo_nuevo_se_anexa_a_ese_caso_y_no_abre_otro(s):
+def test_con_un_caso_abierto_es_algo_nuevo_y_revision_abre_otro_caso(s):
+    """Defecto de producción (operador, 2026-10-12, caso #74): el cliente con un caso abierto
+    manda otra solicitud, contesta «Es algo nuevo» y elige «Revisión»; el bot le pegaba la
+    solicitud al caso anterior en vez de abrirle su folio. Esta prueba afirmaba lo contrario
+    («se anexa a ese caso y no abre otro», diseño §5.3); cambió porque cambiarla ES la tarea, por
+    decisión del operador, no para que pase."""
     caso = _folio(s, "sb-curp")
     caso.service_id, caso.service_name, caso.escalado = "analisis", "Caso para análisis", True
     s.add(caso)
@@ -213,9 +218,80 @@ def test_con_un_caso_abierto_lo_nuevo_se_anexa_a_ese_caso_y_no_abre_otro(s):
 
     replies = handle_incoming(s, PHONE, "revision")
 
-    assert len(_casos(s)) == 1, "abrió un segundo caso"
-    assert f"caso #{caso.id}" in replies[0]
-    assert "tengo una situación" in s.get(Ticket, caso.id).notes
+    casos = sorted(_casos(s), key=lambda t: t.id)
+    assert len(casos) == 2, "no abrió el folio de la solicitud nueva"
+    assert replies[0].startswith(CASO_RECIBIDO)
+    anterior, nuevo = casos
+    assert anterior.id == caso.id
+    assert "tengo una situación" not in (anterior.notes or ""), "pegó la solicitud al caso anterior"
+    assert "tengo una situación" in nuevo.notes
+
+
+def test_el_cliente_que_manda_otra_solicitud_recibe_su_propio_folio_y_el_primero_queda_intacto(s):
+    """El flujo del operador de punta a punta, sin sembrar nada: solicitud → caso → segunda
+    solicitud → «¿es para tu folio #N?» → «Es algo nuevo» → «Revisión». Si se pone roja, el
+    cliente que ya confirmó que lo suyo es nuevo ve su solicitud pegada al folio de la anterior:
+    el asesor del primero la lee como parte de otra cosa y la segunda nunca tiene folio propio."""
+    _conv(s)
+    handle_incoming(s, PHONE, DOS_LARGO)
+    handle_incoming(s, PHONE, "1")
+    primero = _casos(s)[0]
+    notas_antes = primero.notes
+    ligados_antes = sorted(m.id for m in _ligados(s, primero.id))
+
+    pregunta = handle_incoming(s, PHONE, CASO_LARGO)
+    assert f"folio #{primero.id}" in pregunta[0], "no preguntó si era del folio abierto"
+    handle_incoming(s, PHONE, "nuevo")
+    replies = handle_incoming(s, PHONE, "1")
+
+    assert replies[0].startswith(CASO_RECIBIDO), "no confirmó el folio nuevo"
+    casos = sorted(_casos(s), key=lambda t: t.id)
+    assert len(casos) == 2 and casos[0].id == primero.id, "no nació un segundo folio"
+    segundo = casos[1]
+    assert primero.notes == notas_antes, "la solicitud nueva se pegó a las notas del caso anterior"
+    assert CASO_LARGO[:60] in segundo.notes and DOS_LARGO[:60] not in segundo.notes
+    assert sorted(m.id for m in _ligados(s, primero.id)) == ligados_antes, "el primero ganó mensajes"
+    assert [m.body for m in _ligados(s, segundo.id)] == [CASO_LARGO], "el segundo no quedó con lo suyo"
+    for caso in casos:
+        acciones = [a.action for a in s.exec(select(TicketActivity).where(TicketActivity.ticket_id == caso.id))]
+        assert sum(a.startswith("info-cliente") for a in acciones) == 1, f"folio #{caso.id}: {acciones}"
+    assert _estado(s)[0] == "escalado"
+
+
+def test_solo_archivos_y_es_algo_nuevo_con_un_caso_abierto_abre_otro_caso_con_el_archivo(s):
+    """Lo mismo cuando la solicitud nueva es solo un archivo: antes se pegaba al caso anterior."""
+    caso = _folio(s, "sb-curp")
+    caso.service_id, caso.service_name, caso.escalado = "analisis", "Caso para análisis", True
+    s.add(caso)
+    s.commit()
+    _conv(s)
+    handle_incoming(s, PHONE, "", is_media=True, adjunto=PDF)
+    assert handle_incoming(s, PHONE, "nuevo") == [CASO_PREGUNTA_BOTONES]
+
+    handle_incoming(s, PHONE, "revision")
+
+    casos = sorted(_casos(s), key=lambda t: t.id)
+    assert len(casos) == 2, "no abrió el folio del archivo nuevo"
+    assert casos[1].notes == CASO_NOTA_ARCHIVOS
+    assert [m.media_ref for m in _ligados(s, casos[1].id)] == ["media-1"]
+    assert not _ligados(s, casos[0].id), "el archivo se pegó al caso anterior"
+
+
+def test_si_es_del_mismo_folio_el_caso_sigue_siendo_uno_y_se_le_anexa(s):
+    """El otro lado de la misma pregunta (D3): «Sí, de ese folio» SÍ junta. Si se pone roja, la
+    corrección de arriba se pasó de largo y el cliente que sigue hablando de lo mismo recibe un
+    folio por cada mensaje."""
+    _conv(s)
+    handle_incoming(s, PHONE, DOS_LARGO)
+    handle_incoming(s, PHONE, "1")
+    primero = _casos(s)[0]
+
+    handle_incoming(s, PHONE, CASO_LARGO)
+    replies = handle_incoming(s, PHONE, "si")
+
+    assert len(_casos(s)) == 1, "abrió otro caso aunque el cliente dijo que era del mismo folio"
+    assert f"folio #{primero.id}" in replies[0]
+    assert CASO_LARGO[:60] in primero.notes
 
 
 # --- mientras está pendiente ------------------------------------------------------------------------

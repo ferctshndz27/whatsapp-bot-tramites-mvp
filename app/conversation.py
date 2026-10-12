@@ -984,7 +984,6 @@ CASO_BOTONES = [("revision", "🔎 Revisión"), ("tramite", "📋 Un trámite")]
 CASO_FILA_REVISION = "🔎 Revisión de un asesor"
 CASO_FILA_OTRO = "📋 Otro trámite"
 CASO_RECIBIDO = "Gracias, recibí tu caso. 🙏 Un asesor lo revisará y te contactará."
-CASO_ANEXADO = "Lo agregué a tu caso #{folio}. Un asesor lo revisará."
 CASO_OTRO_TRAMITE = "Claro. "
 # Por igualdad con el texto normalizado, como las respuestas del folio.
 REVISION_WORDS = frozenset({"revision", "revision de un asesor", "revisar"})
@@ -1102,21 +1101,21 @@ def _handle_aclarando_caso(
 
 
 def _abrir_caso(session: Session, client: Client, conv: Conversation, contexto: dict) -> list[str]:
-    """Abre el caso para análisis (§5.3), o anexa al que ya está abierto: un caso por teléfono.
+    """Abre el caso para análisis (§5.3): cada «Revisión» confirmada es un folio nuevo.
+
+    No anexa a un caso que ya esté abierto (el diseño §5.3 lo hacía, «un caso por teléfono»;
+    el operador lo corrigió el 2026-10-12, caso #74): aquí solo se llega por «Es algo nuevo»
+    —con folios abiertos la regla de la revisión no dispara— o sea, después de que el cliente
+    dijo que NO era del folio abierto. Juntarlo era darle el sí a lo que acababa de negar. Lo que
+    sí es del mismo folio se anexa antes, en la pregunta del folio (`_anexar_y_volver`).
 
     Sin producto (D2): `asignacion.elegir` SIN `service_ids`, como la escalada; el asesor puede
     salir `None` y el folio queda en el pool de la oficina. Sin consultar `MAX_FOLIOS_ABIERTOS`:
-    un caso no es un trámite que el cliente multiplica. La carrera de dos webhooks simultáneos es
-    la misma clase que la del alta normal y queda fuera, como el candado (§11)."""
+    un caso no es un trámite que el cliente multiplica por catálogo, sino una revisión que él
+    confirmó. La carrera de dos webhooks simultáneos es la misma clase que la del alta normal y
+    queda fuera, como el candado (§11)."""
     mensajes = _por_ligar(session, conv.phone, contexto)  # antes de escribir nada
     texto = contexto.get("texto") or ""
-    existente = next(
-        (t for t in _folios_abiertos(session, conv.phone) if t.service_id == CASO_SERVICE_ID), None
-    )
-    if existente is not None:
-        _anexar_a_folio(session, existente, contexto, mensajes, capa=CASO_SERVICE_ID)
-        _set_state(session, conv, "escalado")
-        return [_con_horario(CASO_ANEXADO.format(folio=existente.id))]
     asesor, motivo = asignacion.elegir(session, client.phone)
     ticket = Ticket(
         phone=client.phone,
