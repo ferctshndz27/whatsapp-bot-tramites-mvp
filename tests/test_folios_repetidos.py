@@ -140,3 +140,57 @@ def test_el_alta_multiple_recorta_al_cupo_y_avisa_de_lo_que_no_cupo(session, mon
     monkeypatch.setattr(conversation, "MAX_FOLIOS_ABIERTOS", 2)
     nuevos, avisos = conversation._filtrar_folios_nuevos(session, PHONE, [divorcio, nacimiento])
     assert [s.id for s in nuevos] == [DIVORCIO, NACIMIENTO] and avisos == [], avisos
+
+
+def _sembrar_casos(session, cuantos: int) -> None:
+    for _ in range(cuantos):
+        session.add(Ticket(phone=PHONE, category="(análisis)", service_id="analisis", service_name="Caso para análisis",
+                           price_info="N/A", status=TicketStatus.NUEVO, escalado=True, assigned_to="ana"))
+    session.commit()
+
+
+def test_los_casos_para_analisis_no_consumen_el_cupo_de_los_tramites(session):
+    """Decisión del operador (2026-10-12): sin tope de tickets por cliente. Un gestor con más casos
+    abiertos que el cupo no se puede quedar sin poder pedir un trámite. Si se pone roja, el cliente
+    con seis casos oye «Tienes 6 solicitudes abiertas, que es el máximo a la vez» al pedir un acta."""
+    _sin_requisitos(DIVORCIO)
+    _sembrar_casos(session, MAX_FOLIOS_ABIERTOS + 1)
+
+    respuesta = _pedir(session, "Necesito un acta de divorcio")
+
+    assert "máximo" not in respuesta[0], respuesta
+    assert [t.service_id for t in _folios(session) if t.service_id != "analisis"] == [DIVORCIO], "no se abrió"
+
+
+def test_los_tramites_normales_siguen_topando_aunque_haya_casos(session):
+    """El control del otro lado: lo que sale del cupo son los casos, no el tope. Con el cupo de
+    trámites lleno y tres casos encima, el siguiente trámite no entra, y el aviso cuenta los
+    trámites (5), no el total (8). Si se pone roja, o se quitó el tope de los trámites (el operador
+    solo pidió quitarlo a los casos) o los casos volvieron a contar."""
+    _sin_requisitos(DIVORCIO)
+    for i in range(MAX_FOLIOS_ABIERTOS):
+        session.add(Ticket(phone=PHONE, category="c", service_id=f"otro-{i}", service_name=f"Otro {i}",
+                           price_info="$1", status=TicketStatus.TOMADO, assigned_to="ana"))
+    _sembrar_casos(session, 3)
+
+    respuesta = _pedir(session, "Necesito un acta de divorcio")
+
+    assert "máximo" in respuesta[0] and "*estado*" in respuesta[0], respuesta
+    assert f"Tienes {MAX_FOLIOS_ABIERTOS} solicitudes" in respuesta[0], "el aviso cuenta los casos"
+    assert not [t for t in _folios(session) if t.service_id == DIVORCIO], "se abrió el trámite de más"
+
+
+def test_con_el_cupo_a_medias_los_casos_no_lo_ocupan(session):
+    """Cuatro trámites y seis casos: cabe uno más (el quinto trámite); el sexto ya no. Si se pone
+    roja, el cupo se calcula sobre el total y el cliente se queda sin su quinto trámite."""
+    _sin_requisitos(DIVORCIO, NACIMIENTO)
+    for i in range(MAX_FOLIOS_ABIERTOS - 1):
+        session.add(Ticket(phone=PHONE, category="c", service_id=f"otro-{i}", service_name=f"Otro {i}",
+                           price_info="$1", status=TicketStatus.TOMADO, assigned_to="ana"))
+    _sembrar_casos(session, 6)
+
+    primero = _pedir(session, "Necesito un acta de divorcio")
+    segundo = _pedir(session, "Necesito un acta de nacimiento")
+
+    assert "máximo" not in primero[0], primero
+    assert "máximo" in segundo[0], segundo

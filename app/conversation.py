@@ -215,7 +215,9 @@ RATE_LIMIT_MAX_MESSAGES = 20
 # lo frena porque son mensajes legítimos en cantidad legítima.
 # Dos reglas, antes de `session.add(ticket)`: un servicio que ya tiene folio
 # abierto para ese teléfono no abre otro («ya tienes el folio #N»), y un cliente
-# con MAX_FOLIOS_ABIERTOS abiertos no abre más hasta que su asesor cierre alguno.
+# con MAX_FOLIOS_ABIERTOS trámites abiertos no abre más hasta que su asesor cierre alguno.
+# Los casos para análisis NO cuentan para ese cupo ni tienen tope propio (operador, 2026-10-12:
+# un gestor manda por el mismo chat los casos de varios trabajadores).
 # El bot no cierra folios —eso es del asesor—, solo deja de multiplicarlos.
 # El tope se cuenta y se aplica en la misma función pero no en una transacción
 # serializable: dos confirmaciones del mismo teléfono que lleguen a la vez
@@ -510,10 +512,14 @@ def _filtrar_folios_nuevos(session: Session, phone: str, services: list) -> tupl
             avisos.append(FOLIO_REPETIDO.format(folio=repetido.id, servicio=service.name))
         else:
             nuevos.append(service)
-    cupo = max(MAX_FOLIOS_ABIERTOS - len(abiertos), 0)
+    # Los casos para análisis no cuentan para el cupo (operador, 2026-10-12: sin tope de tickets por
+    # cliente): un gestor con muchos casos abiertos sigue pudiendo pedir un trámite. El tope de los
+    # trámites normales sigue igual.
+    ocupan_cupo = sum(1 for t in abiertos if t.service_id != CASO_SERVICE_ID)
+    cupo = max(MAX_FOLIOS_ABIERTOS - ocupan_cupo, 0)
     if len(nuevos) > cupo:
         nuevos = nuevos[:cupo]
-        avisos.append(FOLIOS_TOPE.format(n=len(abiertos) + len(nuevos)))
+        avisos.append(FOLIOS_TOPE.format(n=ocupan_cupo + len(nuevos)))
     return nuevos, avisos
 
 
@@ -983,7 +989,7 @@ CASO_PREGUNTA_BOTONES = "¿Quieres que un asesor revise tu caso, o buscas un tr�
 CASO_BOTONES = [("revision", "🔎 Revisión"), ("tramite", "📋 Un trámite")]
 CASO_FILA_REVISION = "🔎 Revisión de un asesor"
 CASO_FILA_OTRO = "📋 Otro trámite"
-CASO_RECIBIDO = "Gracias, recibí tu caso. 🙏 Un asesor lo revisará y te contactará."
+CASO_RECIBIDO = "Gracias, recibí tu caso. Tu folio es el #{folio}. 🙏 Un asesor lo revisará y te contactará."
 CASO_OTRO_TRAMITE = "Claro. "
 # Por igualdad con el texto normalizado, como las respuestas del folio.
 REVISION_WORDS = frozenset({"revision", "revision de un asesor", "revisar"})
@@ -1137,7 +1143,7 @@ def _abrir_caso(session: Session, client: Client, conv: Conversation, contexto: 
     asignacion.bitacora(session, ticket, motivo)  # no escribe nada si `asesor` es None
     _anexar_a_folio(session, ticket, contexto, mensajes, capa=CASO_SERVICE_ID, en_notas=False)
     _set_state(session, conv, "escalado")
-    return [_con_horario(CASO_RECIBIDO)]
+    return [_con_horario(CASO_RECIBIDO.format(folio=ticket.id))]
 
 
 def _greeting_for(client: Client) -> str:
@@ -1890,8 +1896,9 @@ def presentation(session: Session, phone: str, replies: list[str]) -> list:
     if conv.state == "confirmar":
         out[-1] = {"text": last, "buttons": list(CONFIRM_BUTTONS)}
         return out
-    if conv.state == "aclarando_folio" and last.startswith(FOLIO_PREGUNTA_UNO.split("{")[0]):
+    if conv.state == "aclarando_folio" and FOLIO_PREGUNTA_UNO.split("{")[0] in last:
         # Solo la pregunta lleva botones: «Lo sumo 👍» y los re-prompts de «Otro folio» son texto.
+        # `in` y no `startswith`: la del archivo va precedida del acuse «Recibí tu archivo 📎.».
         out[-1] = {"text": last, "buttons": list(FOLIO_BOTONES)}
         return out
     if conv.state == "aclarando_caso" and last == CASO_PREGUNTA_BOTONES:
