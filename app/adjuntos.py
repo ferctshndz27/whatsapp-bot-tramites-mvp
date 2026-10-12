@@ -34,6 +34,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
+from sqlalchemy import func
 from sqlmodel import select
 
 from app import messaging
@@ -184,6 +185,54 @@ def vencido(m: Message, ahora: datetime | None = None) -> bool:
     if vence.tzinfo is None:  # SQLite devuelve naive; utcnow() es aware
         ahora = ahora.replace(tzinfo=None)
     return vence <= ahora
+
+
+# La ficha del folio (/tickets/{id}) lista los archivos que el bot ligó a ese folio. Acotada como
+# el resto del panel: un folio sin tope de casos puede juntar muchos.
+MAX_ARCHIVOS_FICHA = 50
+_TIPOS_LEGIBLES = {
+    "application/pdf": "PDF",
+    "image/jpeg": "Foto",
+    "image/png": "Imagen",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "Word",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "Excel",
+}
+
+
+def tamano_legible(n: int | None) -> str:
+    if not n:
+        return "—"
+    if n < 1024 * 1024:
+        return f"{round(n / 1024)} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
+def del_folio(session, ticket, limite: int = MAX_ARCHIVOS_FICHA) -> tuple[list[dict], int]:
+    """(los `limite` archivos más recientes ligados a `ticket`, cuántos hay en total), ya como los
+    pinta la ficha. Solo mensajes DEL MISMO teléfono que el folio: el `ticket_id` de una fila ajena
+    (un dato dañado) no la mete en la ficha de otro cliente. Solo la referencia: el archivo lo trae
+    el visor del CRM, con su propio permiso."""
+    condiciones = (
+        Message.ticket_id == ticket.id,
+        Message.phone == ticket.phone,
+        Message.media_ref.is_not(None),  # type: ignore[union-attr]
+        Message.habilitado == True,  # noqa: E712
+    )
+    total = session.exec(select(func.count()).select_from(Message).where(*condiciones)).one()
+    filas = session.exec(
+        select(Message).where(*condiciones).order_by(Message.id.desc()).limit(limite)  # type: ignore[union-attr]
+    ).all()
+    return [
+        {
+            "id": m.id,
+            "nombre": m.media_nombre or "Archivo",
+            "tipo": _TIPOS_LEGIBLES.get(m.media_mime or "", "Archivo"),
+            "tamano": tamano_legible(m.media_bytes),
+            "fecha": m.created_at,
+            "vencido": vencido(m),
+        }
+        for m in filas
+    ], total
 
 
 def traer(m: Message) -> tuple[bytes, str] | str:

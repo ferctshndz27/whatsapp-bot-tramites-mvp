@@ -12,7 +12,7 @@ from app.templating import templates
 from sqlalchemy import or_, update
 from sqlmodel import select
 
-from app import archive, authlog, codigos, messaging, ventana
+from app import adjuntos, archive, authlog, codigos, messaging, ventana
 from app.utils import mask_phone, ruta_interna
 from app.audit import log_admin
 from app.auth import alcance, is_admin
@@ -20,6 +20,7 @@ from app.config import settings
 from app.credenciales import credencial
 from app import asignacion
 from app.clients import alias_por_telefono, folio_de
+from app.crm import puede_ver_conversacion
 from app.db import get_session
 from app.dinero import formato_monto, parse_monto
 from app.models import (
@@ -769,6 +770,11 @@ def ticket_detail(
         ).all()
         alias_cliente = alias_por_telefono(session, [ticket.phone]).get(ticket.phone)
         veredicto = _veredicto_actual(session, ticket) if ticket.service_id == "analisis" else None
+        # Los archivos que el bot ligó a ESTE folio (operador, 2026-10-12: que el asesor los vea en
+        # la ficha). El enlace solo se ofrece a quien el visor del CRM deja abrirlos (misma regla,
+        # `puede_ver_conversacion`): un enlace que va a contestar «No existe» es peor que ninguno.
+        archivos, archivos_total = adjuntos.del_folio(session, ticket)
+        puede_abrir_archivos = bool(archivos) and puede_ver_conversacion(session, ticket.phone, user)
         # Para el datalist del formulario «+ etiqueta».
         todas_las_etiquetas = [
             l.nombre
@@ -801,6 +807,10 @@ def ticket_detail(
             "requisitos": requisitos,
             "etiquetas": etiquetas,
             "todas_las_etiquetas": todas_las_etiquetas,
+            # Los archivos del cliente ligados a ESTE folio (ver `adjuntos.del_folio`).
+            "archivos": archivos,
+            "archivos_total": archivos_total,
+            "puede_abrir_archivos": puede_abrir_archivos,
             # Cuántas claves mandó el cliente y cuánto suman al precio del
             # catálogo. Es un ESTIMADO para que el asesor no cuente a mano; el
             # monto que se cobra lo sigue tecleando él.
