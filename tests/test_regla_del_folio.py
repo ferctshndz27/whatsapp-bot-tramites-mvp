@@ -485,3 +485,62 @@ def test_la_lista_de_folios_solo_existe_en_aclarando_folio(s):
     _conv(s)
     assert _menu_rows(s.get(Conversation, PHONE)) == [] or s.get(Conversation, PHONE).state != "aclarando_folio"
     assert CONFIRM_BUTTONS != FOLIO_BOTONES
+
+
+# --- la ficha del remitente (diseño §5.4: la extracción va después de la regla) ----------------
+#
+# `_extract_client_data` copia a la ficha CURP, RFC y correo (TIPOS_EN_FICHA; el NSS no entra). Si
+# corriera sobre un texto que la regla toma para anexarlo al folio, o durante la espera de la
+# respuesta, la ficha del remitente guardaría claves que quizá son de un tercero (la CURP de la
+# mamá). Estas dos pruebas vigilan esas dos puertas; la de arriba, `...de_un_tercero_anexadas...`,
+# vigila la tercera (el camino normal).
+
+CURP_AJENA = "GOMA800101HDFRRN09"
+
+
+def _curps_en_la_ficha(s) -> list[str]:
+    s.expire_all()
+    notas = s.exec(select(ClientNote).where(ClientNote.phone == PHONE)).all()
+    return [n.body for n in notas if CURP_AJENA in n.body]
+
+
+def test_control_con_la_regla_apagada_una_curp_suelta_si_llega_a_la_ficha(s, monkeypatch):
+    """Control de las dos pruebas de abajo: con la perilla apagada el bot hace lo de hoy y la
+    CURP tecleada SÍ queda en la ficha. Sin este control, «no está en la ficha» podría ser cierto
+    solo porque la CURP del texto no se detecta, y las dos pruebas no medirían nada."""
+    monkeypatch.setattr(settings, "contexto_folio_enabled", False)
+    _folio(s)
+    _conv(s)
+
+    handle_incoming(s, PHONE, "mi curp es " + CURP_AJENA)
+
+    assert _curps_en_la_ficha(s), "con la regla apagada la extracción de hoy debe seguir funcionando"
+
+
+def test_durante_la_espera_una_clave_no_se_copia_a_la_ficha_del_remitente(s):
+    """Mutación 15: extraer también en aclarando_*. Mientras el bot espera el «sí» del folio, lo que
+    se teclea puede ser de otra persona; si entrara a la ficha, el remitente quedaría con datos que
+    no son suyos. La clave es una CURP porque el NSS no entra a la ficha y no mediría nada."""
+    _folio(s)
+    _conv(s)
+    handle_incoming(s, PHONE, CASO)
+    assert _estado(s)[0] == "aclarando_folio"
+
+    handle_incoming(s, PHONE, "la curp de mi mamá es " + CURP_AJENA)  # corta, durante la espera
+
+    assert _estado(s)[0] == "aclarando_folio", "la pregunta del folio sigue en pie"
+    assert _curps_en_la_ficha(s) == [], "la clave tecleada durante la espera llegó a la ficha"
+
+
+def test_en_escalado_la_clave_de_un_tercero_anexada_no_va_a_la_ficha_del_remitente(s):
+    """Mutación 17: la rama de escalado toma el mensaje con la regla del folio pero deja la
+    extracción encendida. Es el camino del cliente que ya espera a un asesor y manda la información
+    de otra persona: antes de la regla se anexaba al folio y, además, se copiaba a su ficha."""
+    _folio(s, escalado=True)
+    _conv(s, "escalado")
+
+    handle_incoming(s, PHONE, CASO + " la CURP de mi mamá es " + CURP_AJENA)
+    assert _estado(s)[0] == "aclarando_folio", "la regla del folio tomó el mensaje"
+    handle_incoming(s, PHONE, "si")
+
+    assert _curps_en_la_ficha(s) == [], "la clave anexada al folio llegó a la ficha del remitente"
