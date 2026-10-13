@@ -1420,7 +1420,8 @@ def _pendientes_por_aclarar(text: str, services: list) -> list:
     # pedido es lo que el 2026-09-11 convirtió "alta medica" en dos folios.
     if resto.strip() == nlu._norm(text).strip():
         return []
-    return [s for s in nlu.suggestions(resto) if s.id not in resueltos]
+    # «situación» o «qué se puede hacer» cuentan un caso, no piden otro trámite.
+    return [s for s in nlu.suggestions(nlu.sin_frases_de_caso(resto)) if s.id not in resueltos]
 
 
 def _confirmar_o_aclarar(
