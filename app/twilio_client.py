@@ -24,6 +24,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 from urllib.parse import quote
 
@@ -227,15 +228,31 @@ def send_text(to_phone: str, body: str) -> str | None:
     return _post_message(to_phone, {"Body": body[:BODY_MAX]})
 
 
-def _numerar(body: str, opciones: list[tuple[str, str]]) -> str:
-    """Arma el texto degradado de una lista o de unos botones.
+_LISTA_YA_NUMERADA = re.compile(r"^\s*1[.)]\s", re.MULTILINE)
 
-    El id de cada opción ES lo que el cliente habría tecleado ("1", "si"), así
-    que mostrarlo como prefijo mantiene intacta la máquina de estados: el
-    cliente responde con ese mismo valor y `handle_incoming` no distingue si
-    vino de un toque o de un tecleo.
+
+def _numerar(body: str, opciones: list[tuple[str, str]]) -> str:
+    """Arma el texto degradado de unos botones.
+
+    Cada opción sale numerada por su posición («1) …», «2) …») y NO con su id interno: el cliente
+    ve «1) 🔎 Revisión», no «revision) 🔎 Revisión» (operador, 2026-10-12). La máquina de estados
+    entiende el número, igual que la palabra, en cada pregunta con botones.
+
+    Regla general (operador, 2026-10-12): el cliente nunca ve el id interno («revision)», «si)»).
+    - Ids que ya son dígitos (la encuesta: «1», «2»): salen tal cual.
+    - Un cuerpo que ya trae su lista numerada («¿Confirmas estos 2 trámites? 1. … 2. …»): ahí los
+      dígitos eligen servicios y el cuerpo ya dice «responde sí o no»; los botones salen como
+      viñetas, sin segundo «1)». Es la misma razón por la que `send_list` no re-numera.
+    - Cualquier otro: numeradas por posición, «1) …», «2) …». El bot entiende el número y el nombre.
     """
-    lineas = [f"{opcion_id}) {titulo}" for opcion_id, titulo in opciones[:MAX_OPCIONES]]
+    ids_son_digitos = all(opcion_id.isdigit() for opcion_id, _ in opciones)
+    visibles = opciones[:MAX_OPCIONES]
+    if ids_son_digitos:
+        lineas = [f"{opcion_id}) {titulo}" for opcion_id, titulo in visibles]
+    elif _LISTA_YA_NUMERADA.search(body):
+        lineas = [f"• {titulo}" for _, titulo in visibles]
+    else:
+        lineas = [f"{n}) {titulo}" for n, (_, titulo) in enumerate(visibles, start=1)]
     return "\n".join([body, "", *lineas])[:BODY_MAX]
 
 
