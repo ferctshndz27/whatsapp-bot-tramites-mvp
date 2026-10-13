@@ -60,7 +60,7 @@ def test_confirmation_becomes_buttons(monkeypatch, session):
 
     last = outbound[-1]
     assert isinstance(last, dict)
-    assert [b[0] for b in last["buttons"]] == ["si", "no"]
+    assert [b[0] for b in last["buttons"]] == ["si", "no", "cancelar"]
     assert "onfirmas" in last["text"]  # el texto original queda como cuerpo
 
 

@@ -244,7 +244,7 @@ def _sid_de_plantilla(ids: tuple[str, ...]) -> str | None:
         return credencial("TWILIO_CONTENT_SID_CASO", office_id=OFICINA_TLAXCALA_ID) or None
     if ids == ("si", "nuevo"):
         return credencial("TWILIO_CONTENT_SID_FOLIO", office_id=OFICINA_TLAXCALA_ID) or None
-    if ids == ("si", "no"):
+    if ids == ("si", "no", "cancelar"):
         return credencial("TWILIO_CONTENT_SID_CONFIRMAR", office_id=OFICINA_TLAXCALA_ID) or None
     return None
 

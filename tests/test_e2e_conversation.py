@@ -302,7 +302,7 @@ def test_jornada_completa_por_menu_crea_ticket_con_datos_del_catalogo(wa):
     assert "esponde con el número" in wa.sent[0]["text"]
     assert [r[0] for r in wa.sent[0]["rows"]] == [str(i) for i in range(1, 10)]  # 9 categorías
     assert [r[0] for r in wa.sent[1]["rows"]] == [str(i) for i in range(1, 10)]  # 9 categorías
-    assert [b[0] for b in wa.sent[3]["buttons"]] == ["si", "no"]
+    assert [b[0] for b in wa.sent[3]["buttons"]] == ["si", "no", "cancelar"]
     assert "folio #1" in wa.texts[4]
     assert all(s["to"] == PHONE for s in wa.sent)
 
@@ -334,7 +334,7 @@ def test_pedido_directo_en_el_primer_mensaje_no_lista_servicios(wa):
     _send_text("necesito mi acta de nacimiento")
 
     assert wa.kinds == ["buttons"]  # ni una sola lista
-    assert [b[0] for b in wa.sent[0]["buttons"]] == ["si", "no"]
+    assert [b[0] for b in wa.sent[0]["buttons"]] == ["si", "no", "cancelar"]
     assert "Acta de nacimiento" in wa.texts[0]
     assert "1." not in wa.texts[0]  # sin listado
 
