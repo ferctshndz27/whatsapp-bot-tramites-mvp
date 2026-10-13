@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
-from app import adjuntos, agent_tools, asignacion, codigos, horario, nlu, rag
+from app import adjuntos, agent_tools, asignacion, codigos, formato_caso, horario, nlu, rag
+from app.formato_caso import FORMATO_MENSAJE, FORMATO_VACIO
 from app.catalog import (
     PAGE_SIZE,
     catalog,
@@ -433,6 +434,14 @@ def handle_incoming(
         # apagó el agente en su folio, igual que con un mensaje de texto.
         if any(not t.agent_active for t in _folios_abiertos(session, phone)):
             replies = []
+        elif adjuntos.soportado(adjunto) and text.strip() and (
+            regla := _regla_del_formato(
+                session, client, conv, text, text.strip().lower(), entrante.id, con_comando=False,
+            )
+        ) is not None:
+            # El formato de caso en el pie de la foto: el archivo es parte del caso (`desde_id` es
+            # el propio mensaje con el archivo, y `_por_ligar` lo incluye).
+            replies, extraer = regla, False
         elif adjuntos.soportado(adjunto) and conv.state in ESTADOS_ACLARANDO:
             # Pregunta pendiente: el archivo ya quedó en el chat; se liga al resolver.
             _set_state(session, conv, conv.state, _get_context(conv))
@@ -477,6 +486,8 @@ def handle_incoming(
         # `_regla_del_folio` deja pasar (diseño §5.4, parche 1).
         regla = _regla_del_folio(session, conv, text, normalized, entrante.id)
         if regla is None:
+            regla = _regla_del_formato(session, client, conv, text, normalized, entrante.id)
+        if regla is None:
             regla = _regla_de_la_revision(session, conv, text, normalized, entrante.id)
         if regla is not None:
             replies, extraer = regla, False
@@ -504,6 +515,8 @@ def handle_incoming(
         elif pide_humano:
             replies = _escalate(session, client, conv, text)
         elif (regla := _regla_del_folio(session, conv, text, normalized, entrante.id)) is not None:
+            replies, extraer = regla, False
+        elif (regla := _regla_del_formato(session, client, conv, text, normalized, entrante.id)) is not None:
             replies, extraer = regla, False
         elif (regla := _regla_de_la_revision(session, conv, text, normalized, entrante.id)) is not None:
             replies, extraer = regla, False
@@ -1266,11 +1279,69 @@ def _regla_de_la_revision(
     })
 
 
+def _regla_del_formato(
+    session: Session, client: Client, conv: Conversation, text: str, normalized: str, desde_id: int,
+    con_comando: bool = True,
+) -> list[str] | None:
+    """El formato de caso («qué pasó / servicio / ¿requiere investigar? / datos»), o None para seguir
+    por el camino de hoy. Mismos estados y misma condición que la regla de la revisión: sin folios
+    abiertos (con folio pregunta la regla del folio) y con `revision_enabled`. El comando `formato`
+    (o `ayuda`) manda el formato en blanco.
+
+    El cliente ya contestó lo que la regla de la revisión pregunta, así que:
+    - investigar «Sí» abre el caso directo; las notas llevan historia, servicio y datos;
+    - «No» sigue el camino de un trámite con el servicio y los datos (la historia ya quedó en el chat);
+    - en blanco o «no sé» hace la pregunta de siempre.
+    `desde_id` es el mensaje del formato: los archivos de ANTES se ligan por la racha previa, los de
+    ese mensaje (pie de foto) y los de DESPUÉS por `_por_ligar`. La historia no decide servicios."""
+    if conv.state not in ESTADOS_REGLA_REVISION:
+        return None
+    if con_comando and normalized in formato_caso.COMANDOS:
+        return [FORMATO_MENSAJE]
+    if not settings.revision_enabled:
+        return None
+    formato = formato_caso.leer(text)
+    if formato is None or _folios_abiertos(session, conv.phone):
+        return None
+    if formato.vacio:
+        return [FORMATO_VACIO]
+    contexto = {
+        "texto": formato.texto()[:MAX_NOTE_TEXT_CASO],
+        "desde_id": desde_id,
+        "estado_previo": conv.state,
+        "contexto_previo": _get_context(conv),
+        "updated_previo": conv.updated_at.isoformat(),
+    }
+    if formato.investigar is None:
+        # Las opciones salen solo del campo «servicio»: «CURP» en los datos o un trámite nombrado
+        # en la historia no son lo que el cliente pidió.
+        nombrados = nlu.servicios_nombrados(formato.servicio) if formato.servicio else []
+        return _preguntar_caso(session, conv, {**contexto, "servicios": [s.id for s in nombrados][:MAX_SERVICIOS_EN_CASO]})
+    if formato.investigar:
+        return _abrir_caso(session, client, conv, contexto)
+    if formato.servicio is None:
+        if formato.datos:
+            _extract_client_data(session, conv.phone, formato.datos)
+        _set_state(session, conv, "menu_categoria")
+        return [CASO_OTRO_TRAMITE + catalog.format_category_menu()]
+    # Los códigos se detectan por su forma: las palabras «CURP», «NSS», «RFC» del campo de datos
+    # sobran y se leerían como un segundo trámite («Descarga de CURP»).
+    datos = re.sub(r"(?i)\b(curp|nss|rfc|idcif)\b", " ", formato.datos or "")
+    tramite = " ".join(filter(None, [formato.servicio, datos.strip()]))
+    replies = _dispatch(session, client, conv, tramite, tramite.strip().lower())
+    if conv.state == "confirmar":
+        # Lo que el cliente mande mientras confirma (sus archivos) se liga al folio que nazca.
+        _set_state(session, conv, "confirmar", {**_get_context(conv), "desde_id": desde_id})
+    return replies
+
+
 def _preguntar_caso(session: Session, conv: Conversation, contexto: dict) -> list[str]:
     """Pasa a `aclarando_caso`. `contexto` trae texto, `desde_id` y el estado previo; si viene de
     `aclarando_folio` («Es algo nuevo») los hereda tal cual."""
     texto = contexto.get("texto") or ""
-    servicios = [s.id for s in nlu.servicios_nombrados(texto)][:MAX_SERVICIOS_EN_CASO] if texto else []
+    servicios = contexto.get("servicios")
+    if servicios is None:
+        servicios = [s.id for s in nlu.servicios_nombrados(texto)][:MAX_SERVICIOS_EN_CASO] if texto else []
     nuevo = {
         "texto": texto,
         "servicios": servicios,
