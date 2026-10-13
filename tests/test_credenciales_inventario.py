@@ -226,6 +226,15 @@ COMPARTIDAS_SEGUN_LA_SPEC = {
     "TWILIO_CONTENT_SID_FEEDBACK",
 }
 
+# Plantillas twilio/quick-reply de las preguntas con botones (botones nativos de Twilio). Son POSTERIORES
+# a la spec, por eso van aparte y no en la lista de arriba: la spec no se reescribe. Igual que
+# TWILIO_CONTENT_SID_FEEDBACK, el ContentSid pertenece a la cuenta de Twilio, así que son compartidas.
+PLANTILLAS_DE_BOTONES_POSTERIORES_A_LA_SPEC = {
+    "TWILIO_CONTENT_SID_CASO",
+    "TWILIO_CONTENT_SID_FOLIO",
+    "TWILIO_CONTENT_SID_CONFIRMAR",
+}
+
 # §7 paso 5: las que SÍ son por oficina, con el `es_secreto` que el documento
 # fija para cada una (las compartidas no lo declara, así que no se afirma).
 POR_OFICINA_SEGUN_LA_SPEC = {
@@ -250,15 +259,16 @@ def test_el_reparto_compartida_es_el_que_enumera_la_spec():
     una sola cuenta. Revertirlo es legítimo — y son DOS líneas en el MISMO
     commit, la de `config.CREDENCIALES` y la de aquí. Mover solo una, no.
     """
-    assert len(CREDENCIALES) == 10, "§7: seis compartidas + cuatro por oficina"
-    assert COMPARTIDAS_SEGUN_LA_SPEC | set(POR_OFICINA_SEGUN_LA_SPEC) == set(
+    esperadas_compartidas = COMPARTIDAS_SEGUN_LA_SPEC | PLANTILLAS_DE_BOTONES_POSTERIORES_A_LA_SPEC
+    assert len(CREDENCIALES) == 13, "§7: seis compartidas + cuatro por oficina + tres plantillas de botones"
+    assert esperadas_compartidas | set(POR_OFICINA_SEGUN_LA_SPEC) == set(
         CREDENCIALES
     ), "el inventario y la enumeración de §7 dejaron de hablar de las mismas llaves"
 
     compartidas = {clave for clave, meta in CREDENCIALES.items() if meta.compartida}
-    assert compartidas == COMPARTIDAS_SEGUN_LA_SPEC, (
-        f"§7 paso 4 enumera {sorted(COMPARTIDAS_SEGUN_LA_SPEC)} como compartidas; "
-        f"config.CREDENCIALES dice {sorted(compartidas)}"
+    assert compartidas == esperadas_compartidas, (
+        f"§7 paso 4 y las plantillas de botones enumeran {sorted(esperadas_compartidas)} como "
+        f"compartidas; config.CREDENCIALES dice {sorted(compartidas)}"
     )
 
     for clave, es_secreto in POR_OFICINA_SEGUN_LA_SPEC.items():
@@ -598,6 +608,10 @@ PUNTOS_CON_OFICINA_INLINE = {
     # auditoría que dice cuánto falta.
     ("system.py", "WHATSAPP_PHONE_NUMBER_ID"),
     ("system.py", "WHATSAPP_TOKEN"),
+    # Las tres plantillas de botones nativos: mismo office_id fijo que el resto de twilio_client.py.
+    ("twilio_client.py", "TWILIO_CONTENT_SID_CASO"),
+    ("twilio_client.py", "TWILIO_CONTENT_SID_CONFIRMAR"),
+    ("twilio_client.py", "TWILIO_CONTENT_SID_FOLIO"),
     ("twilio_client.py", "TWILIO_ACCOUNT_SID"),
     ("twilio_client.py", "TWILIO_AUTH_TOKEN"),
     ("twilio_client.py", "TWILIO_WHATSAPP_FROM"),

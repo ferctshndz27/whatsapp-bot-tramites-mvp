@@ -230,6 +230,46 @@ def send_text(to_phone: str, body: str) -> str | None:
 
 _LISTA_YA_NUMERADA = re.compile(r"^\s*1[.)]\s", re.MULTILINE)
 
+def _sid_de_plantilla(ids: tuple[str, ...]) -> str | None:
+    """ContentSid de la pregunta cuyos botones tienen estos ids, o None (la encuesta, o sin credencial).
+
+    Los ids son los de conversation.CASO_BOTONES, FOLIO_BOTONES y CONFIRM_BUTTONS; no se importan de
+    allá porque este módulo no conoce la máquina de estados. Si un id cambia allá, la prueba
+    `test_cada_conjunto_de_botones_del_bot_tiene_su_credencial` truena aquí. Las claves van LITERALES
+    porque la auditoría de credenciales (test_credenciales_inventario) lo exige. La encuesta no entra:
+    su plantilla llega explícita desde el panel.
+    """
+    # ponytail: office_id fijo a Tlaxcala, igual que el resto de este módulo (PR 4).
+    if ids == ("revision", "tramite"):
+        return credencial("TWILIO_CONTENT_SID_CASO", office_id=OFICINA_TLAXCALA_ID) or None
+    if ids == ("si", "nuevo"):
+        return credencial("TWILIO_CONTENT_SID_FOLIO", office_id=OFICINA_TLAXCALA_ID) or None
+    if ids == ("si", "no"):
+        return credencial("TWILIO_CONTENT_SID_CONFIRMAR", office_id=OFICINA_TLAXCALA_ID) or None
+    return None
+
+
+def definicion_plantilla(nombre: str, botones: list[tuple[str, str]]) -> dict:
+    """JSON de la Content API (`POST https://content.twilio.com/v1/Content`) para una pregunta.
+
+    Sale de los botones del código para que la plantilla que se sube a Twilio nunca se desvíe de
+    lo que el bot espera: el `id` de cada botón vuelve en `ButtonPayload` y es lo que entiende la
+    máquina de estados; el título es el que ve el cliente. El cuerpo es solo `{{1}}`, así el texto
+    de la pregunta sigue saliendo de este código. Lleva también `twilio/text` de respaldo.
+    """
+    return {
+        "friendly_name": f"tramites_{nombre}",
+        "language": "es_MX",
+        "variables": {"1": "Pregunta de ejemplo"},
+        "types": {
+            "twilio/quick-reply": {
+                "body": "{{1}}",
+                "actions": [{"id": opcion_id, "title": titulo} for opcion_id, titulo in botones],
+            },
+            "twilio/text": {"body": "{{1}}"},
+        },
+    }
+
 
 def _numerar(body: str, opciones: list[tuple[str, str]]) -> str:
     """Arma el texto degradado de unos botones.
@@ -282,7 +322,14 @@ def send_buttons(
 
     Si el envío con plantilla falla (SID equivocado, plantilla borrada) se cae
     al texto numerado: vale más una encuesta fea que un cliente sin encuesta.
+
+    Sin `content_sid` explícito, la plantilla se busca por los IDS de los botones
+    (`PLANTILLAS_POR_BOTONES`): así las preguntas del caso, del folio y de la
+    confirmación salen con botones sin que quien las arma sepa nada de Twilio. Si
+    esa credencial no está configurada, sale el texto numerado como siempre.
     """
+    if content_sid is None:
+        content_sid = _sid_de_plantilla(tuple(opcion_id for opcion_id, _ in buttons))
     if content_sid:
         sid = _post_message(
             to_phone,
