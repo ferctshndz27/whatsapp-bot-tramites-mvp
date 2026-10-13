@@ -912,9 +912,10 @@ def _handle_aclarando_folio(
 
     eleccion: Ticket | str | None = None
     if len(folios) == 1:
-        if n in {nlu._norm(w) for w in YES_WORDS}:
+        # «1) Sí, de ese folio / 2) Es algo nuevo» en Twilio: el dígito vale lo que el botón.
+        if n == "1" or n in {nlu._norm(w) for w in YES_WORDS}:
             eleccion = folios[0]
-        elif n in {nlu._norm(w) for w in NO_WORDS} or n in NUEVO_WORDS:
+        elif n == "2" or n in {nlu._norm(w) for w in NO_WORDS} or n in NUEVO_WORDS:
             eleccion = "nuevo"
     else:
         indice = _parse_int(n)
@@ -1253,9 +1254,9 @@ def _handle_aclarando_caso(
         else:
             # El cliente escribe el nombre en vez del número (C, operador 2026-10-10).
             eleccion = next((s for s in servicios if nlu._norm(s.name) == n), None)
-    elif n in REVISION_WORDS:
+    elif n == "1" or n in REVISION_WORDS:
         eleccion = "revision"
-    elif n in OTRO_TRAMITE_WORDS:
+    elif n == "2" or n in OTRO_TRAMITE_WORDS:
         eleccion = "otro"
 
     if eleccion == "revision":
@@ -1608,6 +1609,11 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
         [context["pending_service_id"]] if context.get("pending_service_id") else []
     )
     services = [s for s in (catalog.service_by_id(i) for i in ids) if s is not None]
+
+    # Twilio numera Sí/No como «1) Sí / 2) No» cuando hay UN servicio. Con varios, los dígitos
+    # ya eligen servicios de la lista (B1) y no se tocan.
+    if len(services) == 1 and normalized in {"1", "2"}:
+        normalized = "si" if normalized == "1" else "no"
 
     if normalized in YES_WORDS and services:
         # Un servicio con folio abierto no abre otro, y hay un tope de abiertos
