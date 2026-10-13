@@ -158,6 +158,14 @@ class Settings:
         # sale como texto con las opciones numeradas, que se sigue pudiendo
         # contestar tecleando.
         self.twilio_content_sid_feedback = os.environ.get("TWILIO_CONTENT_SID_FEEDBACK", "")
+        # Plantillas twilio/quick-reply de las preguntas con botones (ContentSid, "HX..."):
+        # el caso (Revisión / Un trámite), el folio (Sí, de ese folio / Es algo nuevo) y la
+        # confirmación (Sí / No). Cada una es independiente: la que falte sale como texto
+        # numerado ("1) … 2) …"), que se sigue contestando tecleando. Se crean con
+        # scripts/crear_plantillas_twilio.py a partir de los textos del código.
+        self.twilio_content_sid_caso = os.environ.get("TWILIO_CONTENT_SID_CASO", "")
+        self.twilio_content_sid_folio = os.environ.get("TWILIO_CONTENT_SID_FOLIO", "")
+        self.twilio_content_sid_confirmar = os.environ.get("TWILIO_CONTENT_SID_CONFIRMAR", "")
         # URL pública del servicio, SIN diagonal final. La leen DOS consumidores
         # y por eso vive una sola vez, aquí: Twilio firma la URL COMPLETA que
         # llamó —detrás del proxy request.url reporta el host interno y http://,
@@ -261,6 +269,9 @@ CREDENCIALES: dict[str, Credencial] = {
     "TWILIO_AUTH_TOKEN":           Credencial("twilio", "twilio_auth_token",           True,  True),
     "TWILIO_WHATSAPP_FROM":        Credencial("twilio", "twilio_whatsapp_from",        False, False),
     "TWILIO_CONTENT_SID_FEEDBACK": Credencial("twilio", "twilio_content_sid_feedback", False, True),
+    "TWILIO_CONTENT_SID_CASO":     Credencial("twilio", "twilio_content_sid_caso",     False, True),
+    "TWILIO_CONTENT_SID_FOLIO":    Credencial("twilio", "twilio_content_sid_folio",    False, True),
+    "TWILIO_CONTENT_SID_CONFIRMAR": Credencial("twilio", "twilio_content_sid_confirmar", False, True),
     "STRIPE_SECRET_KEY":           Credencial("stripe", "stripe_secret_key",           True,  False),
     "STRIPE_WEBHOOK_SECRET":       Credencial("stripe", "stripe_webhook_secret",       True,  False),
 }
