@@ -902,6 +902,18 @@ FRASES_REVISION: tuple[str, ...] = (
 )
 
 
+def sin_frases_de_caso(normalized: str) -> str:
+    """El texto normalizado sin las `FRASES_REVISION`: con ellas el cliente CUENTA un caso, no
+    nombra un trámite («tengo una situación con mi curp» no pide además las constancias de
+    «situación fiscal»). Las frases que el catálogo vivo use como nombre o sinónimo se respetan,
+    con la misma regla de colisión de `pide_revision`."""
+    vivos = catalog.terminos_vivos()
+    for frase in sorted(FRASES_REVISION, key=len, reverse=True):
+        if frase not in vivos:
+            normalized = re.sub(rf"(?<![a-z0-9]){re.escape(frase)}(?![a-z0-9])", " ", normalized)
+    return normalized
+
+
 def pide_revision(text: str, min_palabras: int = 40) -> bool:
     """¿El cliente pide que un asesor revise su caso, más que un trámite concreto?
 
