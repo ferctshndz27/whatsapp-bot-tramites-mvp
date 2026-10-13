@@ -63,6 +63,53 @@ YES_WORDS = {"si", "sí", "s", "yes", "confirmo"}
 NO_WORDS = {"no", "n"}
 MENU_KEYWORDS = {"menu", "menú", "inicio", "reiniciar"}
 
+# «Cancelar» y «ninguno más» (operador, 2026-10-13): el agente puede detectar un trámite de más o
+# no entender, y el cliente puede arrepentirse. Cancelar no abre nada; «ninguno» sigue con lo anotado.
+_CANCELAR_RE = re.compile(r"\b(cancel\w*|me arrepenti\w*|arrepentid[oa])\b")
+_CANCELAR_SOLO = frozenset({"cancelar", "cancela", "cancelalo", "cancelar todo"})
+_NINGUNO_RE = re.compile(
+    r"(ninguno|ninguna)( de (estos|esos|ellos|los dos))?( mas)?"
+    r"|nada mas|solo (eso|ese|esos|lo anotado|lo que dije)"
+    r"|(ya )?no (necesito|requiero|quiero|ocupo) (nada )?(mas|otro|otra)( tramites?)?"
+)
+
+
+def _quiere_cancelar(text: str) -> bool:
+    """«cancelar», «cancela», «me arrepentí»… en un mensaje corto que no nombra un trámite del
+    catálogo (hay servicios que se llaman «Cancelación de …»: pedirlos no es cancelar)."""
+    norm = nlu._norm(text)
+    if norm in _CANCELAR_SOLO:  # el botón/opción «Cancelar»: gana aunque un sinónimo del catálogo lo use
+        return True
+    return (
+        len(norm.split()) <= 4
+        and bool(_CANCELAR_RE.search(norm))
+        and not nlu._exact_matches(text)[0]
+    )
+
+
+def _no_quiere_mas(text: str) -> bool:
+    """«ninguno», «no necesito más», «nada más»: el agente detectó de más, sigo con lo anotado."""
+    return bool(_NINGUNO_RE.fullmatch(nlu._norm(text).strip()))
+
+
+def _cancelar(session: Session, conv: Conversation) -> list[str]:
+    """Cierra la solicitud en curso sin abrir folio. Lo anotado y los códigos se sueltan."""
+    _set_state(session, conv, "menu_categoria")
+    return [
+        "Listo, cancelé la solicitud y no abrí ningún folio 👍 "
+        "Cuando quieras, cuéntame qué necesitas o escribe *menu*."
+    ]
+
+
+def _lista_con_salidas(opciones: list, hay_anotados: bool) -> str:
+    """La lista numerada de «varios parecidos», con dos salidas al final: seguir sin ninguna de
+    ellas (falso positivo del agente) y cancelar. Los números de las opciones reales no se mueven."""
+    n = len(opciones)
+    lineas = [f"{i}. {s.name}" for i, s in enumerate(opciones, 1)]
+    lineas.append(f"{n + 1}. " + ("Ninguno más, sigo con lo anotado" if hay_anotados else "Ninguno de estos"))
+    lineas.append(f"{n + 2}. Cancelar")
+    return "\n".join(lineas)
+
 # ---- Trato social: saludos y despedidas ----
 # Fuente única: de estos conjuntos salen tanto la respuesta del agente como el
 # filtro de la bitácora nluevent. Un "hola buen día" no es un trámite: no debe
@@ -1445,7 +1492,7 @@ def _confirmar_o_aclarar(
         claros = [s for s in services if s.id not in {e.id for e in empate}]
         if not claros:
             _set_state(session, conv, "eligiendo_sugerencia", {"suggestion_ids": [s.id for s in empate]})
-            opciones = "\n".join(f"{i}. {s.name}" for i, s in enumerate(empate, 1))
+            opciones = _lista_con_salidas(empate, hay_anotados=False)
             carita = "" if prefijo else " 😊"  # el saludo del prefijo ya trae la suya
             return [
                 f"{prefijo}Tenemos varios trámites parecidos{carita} ¿Cuál necesitas? "
@@ -1473,7 +1520,7 @@ def _preguntar_cual(
     if detectados:
         context["codigos"] = detectados
     _set_state(session, conv, "eligiendo_sugerencia", context)
-    lines = "\n".join(f"{i}. {s.name}" for i, s in enumerate(pendientes, 1))
+    lines = _lista_con_salidas(pendientes, hay_anotados=True)
     ya = ", ".join(f"'{s.name}'" for s in resueltos)
     return [
         f"{prefijo}Voy anotando {ya} ✅\n\n"
@@ -1611,10 +1658,13 @@ def _handle_confirmar(session: Session, client: Client, conv: Conversation, text
     )
     services = [s for s in (catalog.service_by_id(i) for i in ids) if s is not None]
 
-    # Twilio numera Sí/No como «1) Sí / 2) No» cuando hay UN servicio. Con varios, los dígitos
+    # Twilio numera Sí/No/Cancelar como «1) 2) 3)» cuando hay UN servicio. Con varios, los dígitos
     # ya eligen servicios de la lista (B1) y no se tocan.
-    if len(services) == 1 and normalized in {"1", "2"}:
-        normalized = "si" if normalized == "1" else "no"
+    if len(services) == 1 and normalized in {"1", "2", "3"}:
+        normalized = {"1": "si", "2": "no", "3": "cancelar"}[normalized]
+
+    if normalized == "cancelar" or _quiere_cancelar(text):
+        return _cancelar(session, conv)
 
     if normalized in YES_WORDS and services:
         # Un servicio con folio abierto no abre otro, y hay un tope de abiertos
@@ -2031,7 +2081,7 @@ def _record_feedback(session: Session, phone: str, ticket_id: int, rating: str) 
 
 MENU_MARKER = "esponde con el número"  # cubre "Responde/responde con el número"
 LIST_BUTTON_LABEL = "Ver opciones"
-CONFIRM_BUTTONS = [("si", "✅ Sí, confirmar"), ("no", "❌ No")]
+CONFIRM_BUTTONS = [("si", "✅ Sí, confirmar"), ("no", "❌ No"), ("cancelar", "🚫 Cancelar")]
 
 
 def _menu_rows(conv: Conversation) -> list[tuple[str, str]]:
@@ -2332,6 +2382,15 @@ def _handle_sugerencia(session: Session, client: Client, conv: Conversation, tex
     )
     detectados = context.get("codigos")
     idx = _parse_int(normalized)
+    if _quiere_cancelar(text) or (options and idx == len(options) + 2):
+        return _cancelar(session, conv)
+    if options and (_no_quiere_mas(text) or idx == len(options) + 1):
+        if resueltos:
+            return _confirmar(
+                session, conv, resueltos, text, "Va, solo con lo anotado 👍\n\n", detectados=detectados
+            )
+        _set_state(session, conv, "menu_categoria")
+        return ["Sin problema. " + catalog.format_category_menu()]
     picks = [idx] if idx is not None else _parse_indices(normalized)
     if not picks and options:
         # El nombre vale igual que el número (operador, 2026-10-10, «C»): «acta de matrimonio» o
@@ -2355,7 +2414,7 @@ def _handle_sugerencia(session: Session, client: Client, conv: Conversation, tex
         anotados = ", ".join(f"'{s.name}'" for s in resueltos)
         if options and not context.get("reintento"):
             _set_state(session, conv, "eligiendo_sugerencia", {**context, "reintento": True})
-            lines = "\n".join(f"{i}. {s.name}" for i, s in enumerate(options, 1))
+            lines = _lista_con_salidas(options, hay_anotados=True)
             return [
                 f"No identifiqué cuál de estos necesitas 🙏 Ya tengo anotado {anotados}.\n\n"
                 f"Responde con el número o el nombre:\n{lines}"
@@ -2461,7 +2520,8 @@ def _confirm_multi_message(services) -> str:
     lines = "\n".join(f"{i}. {s.name} ({s.price_info})" for i, s in enumerate(services, 1))
     return (
         f"¿Confirmas estos {len(services)} trámites?\n{lines}\n"
-        "Responde sí o no, o el número de los que sí quieres (por ejemplo: 1, o 1 y 2)."
+        "Responde sí o no, o el número de los que sí quieres (por ejemplo: 1, o 1 y 2). "
+        "Para no abrir nada escribe *cancelar*."
     )
 
 

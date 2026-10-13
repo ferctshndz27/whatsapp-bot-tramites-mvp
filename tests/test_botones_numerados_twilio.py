@@ -171,8 +171,9 @@ def test_un_numero_fuera_de_las_opciones_no_elige_nada(s):
     _, estado = _responde(s, A, "3")
     assert estado == "aclarando_caso"
 
+    # Confirmar tiene tres botones desde 2026-10-13 (el 3 es «Cancelar»): la tercera opción ya existe.
     _confirmar_uno(s, B)
-    _, estado = _responde(s, B, "3")
+    _, estado = _responde(s, B, "4")
     assert estado == "confirmar"
 
 

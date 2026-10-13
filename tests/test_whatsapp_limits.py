@@ -431,7 +431,7 @@ def test_ids_de_ver_mas_y_volver_vuelven_a_entrar_en_la_maquina_de_estados(
 # ---- Botones y capa de presentación ----
 
 
-def test_estado_confirmar_emite_exactamente_dos_botones_que_la_maquina_acepta(db_session):
+def test_estado_confirmar_emite_exactamente_tres_botones_que_la_maquina_acepta(db_session):
     # REGLA: la confirmación es donde nace un ticket. Deben ser 2 botones con
     # títulos <= 20, y sus ids TIENEN que ser palabras que _handle_confirmar
     # reconozca: si no, tocar el botón cuenta como intento fallido y al segundo
@@ -441,19 +441,21 @@ def test_estado_confirmar_emite_exactamente_dos_botones_que_la_maquina_acepta(db
     out = presentation(db_session, PHONE, ["¿Confirmas este trámite?"])
 
     assert isinstance(out[-1], dict)
-    assert [b[0] for b in out[-1]["buttons"]] == ["si", "no"]
-    assert len(out[-1]["buttons"]) == 2 <= MAX_BUTTONS
+    assert [b[0] for b in out[-1]["buttons"]] == ["si", "no", "cancelar"]
+    assert len(out[-1]["buttons"]) == 3 <= MAX_BUTTONS
 
     buttons = _buttons_payload(PHONE, out[-1]["text"], out[-1]["buttons"])[
         "interactive"
     ]["action"]["buttons"]
-    assert [b["reply"]["id"] for b in buttons] == ["si", "no"]  # ninguno se descarta
+    assert [b["reply"]["id"] for b in buttons] == ["si", "no", "cancelar"]  # ninguno se descarta
     # len() cuenta code points y Meta cuenta caracteres: hoy coinciden porque
     # los emoji usados son de un solo code point (un emoji ZWJ los separaría).
     assert all(len(b["reply"]["title"]) <= BUTTON_TITLE_MAX for b in buttons)
 
     assert CONFIRM_BUTTONS[0][0] in conversation.YES_WORDS
     assert CONFIRM_BUTTONS[1][0] in conversation.NO_WORDS
+    # «cancelar» lo reconoce _handle_confirmar: tocar el botón no cuenta como intento fallido.
+    assert conversation._quiere_cancelar(CONFIRM_BUTTONS[2][0])
 
 
 def test_presentation_solo_transforma_la_ultima_respuesta_y_no_muta_la_lista(db_session):
