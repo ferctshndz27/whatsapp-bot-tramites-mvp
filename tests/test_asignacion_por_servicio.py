@@ -119,6 +119,23 @@ def test_el_titular_de_la_cartera_gana_aunque_otro_lo_atendio_despues(base):
     assert _decide(base, "visa") == {"visa": ("ana", "cartera")}
 
 
+def test_dos_titulares_de_la_misma_cartera_se_reparten_el_mensaje_por_carga(base):
+    """Sin la mejora del paso 7, el titular que gana el primer servicio se queda también el
+    segundo aunque ya tenga más carga que el otro titular DENTRO de este mismo mensaje — beto
+    gana por orden alfabético y la regla de cartera nunca lo nota (no consulta en_mensaje).
+    Con la mejora, carla debe ganar el segundo: es la única explicación posible, porque beto
+    sigue siendo alfabéticamente anterior y seguiría ganando si el empate no se rompiera por
+    carga."""
+    _usuarios(base, "beto", "carla")
+    _atiende(base, "beto", "s1", "s2")
+    _atiende(base, "carla", "s1", "s2")
+    _cartera(base, "beto", "carla")
+    assert _decide(base, "s1", "s2") == {
+        "s1": ("beto", "cartera"),
+        "s2": ("carla", "cartera"),
+    }
+
+
 def test_si_el_titular_no_atiende_el_servicio_va_a_quien_si(base):
     """La cartera nunca pasa por encima de la cobertura: mandarle un trámite a quien no lo
     lleva es un pase de mano que el cliente sufre después."""
