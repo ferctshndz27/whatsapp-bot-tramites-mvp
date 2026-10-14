@@ -309,8 +309,15 @@ def elegir_por_servicio(
             _por_producto(session, elegibles, [sid]), [sid], en_mensaje=en_mensaje, **contexto
         )
         decisiones[sid] = d
-        if d.asesor is not None and d.asesor not in en_mensaje:
-            en_mensaje.append(d.asesor)
+        if d.asesor is not None:
+            if d.asesor not in en_mensaje:
+                en_mensaje.append(d.asesor)
+            # Solo se actualiza `carga`: dentro de este loop el folio todavía no existe (lo
+            # escribe quien llama, después del commit), así que no hay un Ticket.id real que
+            # anotar en `ultimo`. Sin esto, dos titulares de la misma cartera —o dos candidatos
+            # de reparto— se repartirían siempre al mismo dentro de un mensaje con varios
+            # servicios, porque la regla de cartera no consulta `en_mensaje`.
+            contexto["carga"][d.asesor] = contexto["carga"].get(d.asesor, 0) + 1
     return decisiones
 
 
