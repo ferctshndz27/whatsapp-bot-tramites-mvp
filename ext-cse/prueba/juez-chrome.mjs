@@ -33,6 +33,8 @@ const REPO = path.dirname(EXT);
 const PYTHON = process.env.QA_PYTHON || path.join(REPO, ".venv", "bin", "python");
 const CHROME = process.env.CHROME_BIN || "/usr/bin/google-chrome";
 const CLAVE = "juez-ext-cse-123";
+// Ana Lucía Ramírez en scripts/qa_crm_seed.py, con su folio tomado por colab1: entra en su alcance.
+const ANA = "525500000011";
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const fallas = [];
@@ -335,6 +337,26 @@ async function main() {
     marco = await marcoDelCrm(cdp, crm, "/crm");
     const tablero = marco && (await hasta(async () => evaluar(cdp, marco, "Boolean(document.querySelector('#crm'))")));
     criterio("con sesión, el panel abre directo en /crm", Boolean(tablero));
+
+    // E3. «Ir al cliente»: el número como lo pega un asesor de WhatsApp Web abre su conversación en
+    // el panel. El envío es otra navegación del marco, iniciada por el CRM: la regla también la deja.
+    const enviado = marco && (await evaluar(cdp, marco, `(() => {
+      const campo = document.querySelector("#crm-ir-cliente-tel");
+      const boton = document.querySelector("#crm-ir-cliente button[type=submit]");
+      if (!campo || !boton) return false;
+      campo.value = "+52 1 55 0000 0011";
+      boton.click();
+      return true;
+    })()`));
+    const conChat = enviado && (await marcoDelCrm(cdp, crm, "/crm?chat="));
+    const chat = conChat && (await hasta(async () => evaluar(cdp, conChat, `(() => {
+      const nombre = document.querySelector("#crm-chat-name")?.textContent.trim();
+      const abierto = document.querySelector("#crm")?.classList.contains("chat-abierto");
+      return abierto && nombre ? { nombre, url: location.pathname + location.search } : undefined;
+    })()`).catch(() => undefined)));
+    criterio("«Ir al cliente» abre en el panel la conversación del número pegado",
+      chat?.nombre === "Ana Lucía Ramírez" && chat?.url === `/crm?chat=${ANA}`,
+      enviado ? JSON.stringify(chat ?? null) : "el CRM del panel no tiene el campo «Ir al cliente»");
 
     // 5. Primer arranque: si el panel se abre antes de que onInstalled ponga la regla, se la pide al
     // fondo antes de crear el marco. La regla se borra desde la página del panel, que tiene la API.

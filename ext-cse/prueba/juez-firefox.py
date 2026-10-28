@@ -41,6 +41,8 @@ PYTHON = os.environ.get("QA_PYTHON") or str(REPO / ".venv" / "bin" / "python")
 GECKODRIVER = os.environ.get("GECKODRIVER") or shutil.which("geckodriver") or "/snap/bin/geckodriver"
 ID = json.loads((EXT / "manifiesto" / "firefox.json").read_text(encoding="utf-8"))["browser_specific_settings"]["gecko"]["id"]
 CLAVE = "juez-ext-cse-123"
+# Ana Lucía Ramírez en scripts/qa_crm_seed.py, con su folio tomado por colab1: entra en su alcance.
+ANA = "525500000011"
 # Sin credenciales ni servicios de fuera: el bot de prueba no debe hablar con nadie.
 VACIAS = (
     "ANTHROPIC_API_KEY", "CREDENTIALS_KEY", "DASHBOARD_PASSWORD", "DASHBOARD_USERNAME", "EMBEDDINGS_TOKEN",
@@ -150,6 +152,14 @@ return { abierto: SidebarController.isOpen, actual: SidebarController.currentID,
 """
 # Cerrar y volver a abrir el panel: Firefox lo carga de nuevo desde default_panel (panel.html).
 REABRIR = "SidebarController.hide(); SidebarController.show(arguments[0]); return true;"
+# Navegar el panel como lo hace un formulario de la página que muestra (con su principal).
+NAVEGAR_PANEL = """
+const [url] = arguments;
+const b = document.getElementById("sidebar").contentDocument.getElementById("webext-panels-browser");
+const uri = Services.io.newURI(url);
+b.loadURI(uri, { triggeringPrincipal: Services.scriptSecurityManager.createContentPrincipal(uri, {}) });
+return true;
+"""
 # Lo que hace about:addons al quitar o dar el permiso de un sitio.
 PERMISO = """
 const [accion, id, origen, listo] = arguments;
@@ -269,6 +279,14 @@ def main() -> int:
         ff.js(REABRIR, clave)
         p = panel_en("/crm")
         criterio("con sesión, el panel abre directo en /crm", bool(p), json.dumps(p or panel()))
+
+        # E3. En Firefox el panel ES la página del CRM: su campo «Ir al cliente» es el mismo que en
+        # la web (lo prueban el juez del CRM y el de Chrome). Desde aquí no se escribe en el panel,
+        # así que se navega a lo que manda ese formulario: un GET con el número tal como se pegó. Al
+        # abrir el chat, crm.js deja en la URL el número canónico que le dio el servidor.
+        ff.js(NAVEGAR_PANEL, f"{crm}/crm?chat=%2B52+1+55+0000+0011")
+        p = panel_en(f"/crm?chat={ANA}")
+        criterio("«Ir al cliente»: el número pegado abre su conversación en el panel", bool(p), json.dumps(p or panel()))
 
         # 3. Sin red.
         ff.js("Services.io.offline = true; return true;")

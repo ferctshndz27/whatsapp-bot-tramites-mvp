@@ -157,7 +157,8 @@
   pointer-events: none;
 }
 
-.crm #crm-search {
+.crm #crm-search,
+.crm #crm-ir-cliente-tel {
   width: 100%;
   max-width: none;
   height: 36px;
@@ -170,9 +171,21 @@
   font-size: 14px;
   font-family: inherit;
 }
-.crm #crm-search::placeholder { color: rgba(255, 255, 255, .72); }
+.crm #crm-search::placeholder,
+.crm #crm-ir-cliente-tel::placeholder { color: rgba(255, 255, 255, .72); }
 .crm #crm-search::-webkit-search-cancel-button { filter: invert(1); cursor: pointer; }
-.crm #crm-search:focus { outline: 2px solid #fff; outline-offset: 2px; box-shadow: none; }
+.crm #crm-search:focus,
+.crm #crm-ir-cliente-tel:focus { outline: 2px solid #fff; outline-offset: 2px; box-shadow: none; }
+
+/* «Ir al cliente»: el campo con el aspecto de la búsqueda (sin lupa) y su botón «Ir». */
+.crm .ir-cliente {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 280px;
+  min-width: 0;
+}
+.crm #crm-ir-cliente-tel { min-width: 0; padding-left: 14px; }
 
 .crm .toolbar-actions {
   display: flex;
@@ -1345,6 +1358,11 @@
     order: 3;
     flex-basis: 100%;
     max-width: none;
+  }
+
+  .crm .ir-cliente {
+    order: 4;
+    flex-basis: 100%;
   }
 
   .crm #crm-btn-toggle-tray { display: inline-flex; }

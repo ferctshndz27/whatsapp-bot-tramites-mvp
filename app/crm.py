@@ -757,9 +757,12 @@ def crm_page(request: Request, chat: str = "", respuestas: str = ""):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    # `chat` abre esa conversación al cargar. Solo dígitos: el JS lo mete en una URL de la
-    # API y el alcance lo comprueba el endpoint del chat, no esta página.
-    telefono = chat if re.fullmatch(r"\d{8,15}", chat or "") else None
+    # `chat` abre esa conversación al cargar. Llega de los enlaces «Abrir chat» (ya canónico) y del
+    # campo «Ir al cliente» de la barra (tal como lo pegó el asesor: «+52 1 55…», diez dígitos,
+    # con guiones). normalize_phone lo lleva al formato en que el webhook y _normalize_phones
+    # guardan al cliente, así que a un canónico no lo cambia. Sale solo con dígitos: el JS lo
+    # mete en una URL de la API, y el alcance lo comprueba el endpoint del chat, no esta página.
+    telefono = normalize_phone(chat) or None
     # `respuestas=1` abre «Mis respuestas» al cargar: es a donde reenvía la ruta vieja /replies.
     with get_session() as session:
         datos = _datos_bootstrap(session, user, telefono, abrir_respuestas=respuestas == "1")

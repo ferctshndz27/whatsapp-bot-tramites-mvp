@@ -584,6 +584,18 @@ const enPagina = {
     return { ok: true };
   },
 
+  /* «Ir al cliente» (E3 de ext-cse): escribe el número como lo pegaría un asesor y pulsa «Ir». */
+  irAlCliente: (numero) => {
+    const form = document.querySelector("#crm-ir-cliente");
+    const campo = document.querySelector("#crm-ir-cliente-tel");
+    const boton = form?.querySelector("button[type=submit]");
+    if (!form || !campo || !boton) return { error: "no está el campo «Ir al cliente» en la barra" };
+    if (!campo.getClientRects().length || !boton.getClientRects().length) return { error: "el campo «Ir al cliente» no se ve" };
+    campo.value = numero;
+    boton.click();
+    return { ok: true };
+  },
+
   /* Apaga TODOS los setInterval de la página: es lo que vuelve determinista al criterio 7c.
      Sin sondeo de 8/20 s, lo único que puede refrescar el hilo es el stream de avisos. */
   matarSondeos: () => {
@@ -1421,6 +1433,22 @@ async function criterioRutaVieja(ctx) {
   if (s.url !== `/crm?chat=${ANA}`) throw new Error(`la URL final es ${s.url}`);
   if (s.nombre !== "Ana Lucía Ramírez") throw new Error(`abrió ${JSON.stringify(s.nombre)}`);
   return `/inbox/${ANA} (con volver y folio) aterriza en /crm?chat=${ANA} con el chat abierto y sin arrastrar parámetros`;
+}
+
+async function criterioIrAlCliente(ctx) {
+  // El número de Ana como lo copia un asesor de WhatsApp Web: con «+», espacios y el 1 de los móviles.
+  await ctx.abrirCrm();
+  const cargado = ctx.cdp.esperarEvento("Page.loadEventFired", 20000);
+  const r = await ctx.cdp.evaluate(enPagina.irAlCliente, "+52 1 55 0000 0011");
+  if (r.error) throw new Error(r.error);
+  await cargado;
+  const s = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return e.abierto && e.burbujas.length > 0 ? e : null;
+  }, { timeout: 8000, label: "que «Ir al cliente» abra el chat" });
+  if (s.nombre !== "Ana Lucía Ramírez") throw new Error(`abrió ${JSON.stringify(s.nombre)}`);
+  if (s.url !== `/crm?chat=${ANA}`) throw new Error(`la URL quedó en ${s.url}`);
+  return `«Ir al cliente» con «+52 1 55 0000 0011» abre el chat de Ana y deja /crm?chat=${ANA}`;
 }
 
 async function criterioBusqueda(ctx) {
@@ -3214,6 +3242,7 @@ async function main() {
     await criterio(ctx, "14. Alta de contacto desde una columna", criterioAltaContacto);
     await criterio(ctx, "15. /crm?chat= abre el chat al cargar", criterioChatInicial);
     await criterio(ctx, "15b. La ruta vieja /inbox/{phone} aterriza en el CRM", criterioRutaVieja);
+    await criterio(ctx, "15c. «Ir al cliente» abre el chat con el número como lo peguen", criterioIrAlCliente);
     await criterio(ctx, "16. Ocultar/mostrar bandeja", criterioToggleTray);
     await criterio(ctx, "17. Colaborador: alcance y sin controles de admin", criterioColaborador);
     await criterio(ctx, "17b. Tablero personal: lo que colab1 hace con sus etapas no toca el de jefa1", criterioTableroPersonal);

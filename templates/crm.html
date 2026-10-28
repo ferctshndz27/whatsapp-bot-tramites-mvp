@@ -21,6 +21,15 @@
       <span class="search-icon" aria-hidden="true">🔍</span>
       <input id="crm-search" type="search" placeholder="Buscar contacto o teléfono" autocomplete="off" spellcheck="false">
     </div>
+    {# «Ir al cliente»: el número que el asesor pega o teclea (el que ve en WhatsApp Web, junto al
+       panel lateral de ext-cse) abre su conversación. Un GET a /crm?chat= sin JS propio: el servidor
+       lo lleva al formato canónico (crm_page) y el chat lo abre como un enlace «Abrir chat». #}
+    <form id="crm-ir-cliente" class="ir-cliente" action="/crm" method="get" role="search" aria-label="Ir al cliente">
+      <label for="crm-ir-cliente-tel" class="sr-only">Ir al cliente: su número de WhatsApp</label>
+      <input id="crm-ir-cliente-tel" name="chat" type="tel" inputmode="tel" placeholder="Ir al cliente: su número"
+             autocomplete="off" maxlength="40" required>
+      <button class="btn btn-ghost" type="submit">Ir</button>
+    </form>
     <div class="toolbar-actions">
       <button id="crm-btn-toggle-tray" class="btn btn-ghost" type="button" aria-controls="crm-tray" aria-expanded="true">Ocultar bandeja</button>
       {# Para todos: las respuestas guardadas son de cada quien. Llega sin chat abierto, que es

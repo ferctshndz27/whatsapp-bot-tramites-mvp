@@ -368,6 +368,32 @@ def test_los_datos_de_arranque_dicen_quien_es_y_que_puede():
     assert '"chat_inicial": null' in html
 
 
+def test_ir_al_cliente_abre_su_chat_con_el_numero_como_lo_peguen():
+    """El campo «Ir al cliente» de la barra (E3 de la extensión del panel lateral) manda lo
+    tecleado tal cual en ?chat=, y el servidor lo lleva al formato canónico: el mismo en que el
+    webhook y la migración de teléfonos guardan al cliente."""
+    import json
+    import re
+
+    sesion = _sesion("colab1")
+
+    def chat_inicial(valor):
+        html = sesion.get("/crm", params={"chat": valor}).text
+        return json.loads(re.search(r'id="crm-datos">(.*?)</script>', html, re.S).group(1))["chat_inicial"]
+
+    # El número de Ana como lo pega un asesor: de WhatsApp Web, con el 1 de los móviles, solo
+    # los diez dígitos nacionales o con paréntesis y guion.
+    for como_llega in ("+52 1 55 0000 0011", "+52 55 0000 0011", "5215500000011", "55 0000 0011", "(55) 0000-0011", ANA):
+        assert chat_inicial(como_llega) == ANA, como_llega
+    for basura in ("", "ana", "12345", "<script>", "1" * 16):
+        assert chat_inicial(basura) is None, basura
+    # El campo vive en la barra y es un GET a /crm con el número en `chat`: sin JS propio.
+    html = sesion.get("/crm").text
+    form = re.search(r'<form[^>]*id="crm-ir-cliente"[^>]*>.*?</form>', html, re.S).group(0)
+    assert 'action="/crm"' in form and 'method="get"' in form and 'name="chat"' in form
+    assert "Ir al cliente" in form
+
+
 # ---------------------------------------------------------------------------
 # Tablero: alcance, forma y conteos
 # ---------------------------------------------------------------------------

@@ -48,6 +48,15 @@ el marco, le pide al fondo que asegure la regla: en el primer arranque el panel 
 `onInstalled` la ponga, y un marco que sale antes que la regla queda bloqueado. Si le quitan el permiso con
 el CRM ya abierto, el panel vuelve a empezar, porque sin permiso la regla deja de aplicar.
 
+### Ir al cliente
+
+El campo «Ir al cliente» no es de la extensión: está en la barra del propio `/crm`, así que se ve igual en
+el panel de Chrome, en el de Firefox (donde el panel es la página del CRM) y en el CRM web. Se pega o se
+teclea el número del cliente tal como se ve en WhatsApp Web (`+52 1 55 1234 5678`, diez dígitos, con
+guiones o paréntesis) y «Ir» abre su conversación. Es un GET a `/crm?chat=`: el servidor lleva el número
+al formato canónico con `normalize_phone` (`app/crm.py`, `crm_page`). La extensión no lee WhatsApp Web ni
+guarda números.
+
 ## Probar
 
     .venv/bin/python -m pytest tests/test_ext_cse_manifiesto.py -q   # manifiestos, regla y construir.py
@@ -57,7 +66,8 @@ el CRM ya abierto, el panel vuelve a empezar, porque sin permiso la regla deja d
 
 Los dos jueces levantan el bot con una base temporal sembrada (`scripts/qa_crm_seed.py`), instalan la
 extensión en un perfil temporal y recorren el panel: el CRM en mantenimiento (503) y luego caído, el CRM
-que vuelve (login y, tras entrar, `/crm`), sin red y sin permiso de sitio. El de Chrome comprueba además
+que vuelve (login y, tras entrar, `/crm`), «Ir al cliente» con un número pegado, sin red y sin permiso de
+sitio. El de Chrome comprueba además
 la regla del marco (solo deja enmarcar a la extensión, y aguanta dos instalaciones a la vez) y que Chrome
 no reporte errores ni advertencias. El de Firefox abre el panel lateral de verdad y lo lee desde el
 contexto «chrome» de Marionette: necesita `geckodriver` (el de snap trae uno); con el Firefox de snap, la
