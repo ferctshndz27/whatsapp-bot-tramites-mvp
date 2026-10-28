@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Arma la extensión ext-cse para Chrome y para Firefox, cada una en ext-cse/dist/<navegador>/.
+"""Arma la extensión ext-cse para Chrome y para Firefox: cada una en ext-cse/dist/<navegador>/ y,
+junto a esa carpeta, su paquete sin firmar ext-cse/dist/ext-cse-<navegador>-<versión>.zip (E5).
 
     python3 ext-cse/construir.py --crm https://bot.esaumillan.cloud
 
@@ -10,19 +11,26 @@ el CRM dentro del panel: quita X-Frame-Options y pone la CSP del bot —leída d
 copiada— sin frame-ancestors; fondo-chrome.js se la devuelve con el id de la extensión al
 instalarse, que antes no existe.
 
+El paquete trae exactamente lo de la carpeta, con manifest.json en la raíz, y sale igual byte por
+byte cada vez que se arma el mismo código: su SHA-256, que se imprime, dice si lo que alguien
+instaló es lo que se revisó. Firmar y publicar quedan fuera (ext-cse/README.md, «Empaquetar»).
+
 Primero arma todo en memoria y solo después escribe: un origen inválido, o una CSP que ya no está
 donde se espera, no deja un paquete a medias. Solo usa la biblioteca estándar: la extensión no tiene
-dependencias de npm ni empaquetador.
+dependencias de npm ni empaquetador (web-ext build da el mismo contenido: ext-cse/README.md).
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
+import io
 import json
 import re
 import shutil
 import sys
+import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -148,6 +156,30 @@ def paquete(navegador: str, origen: str) -> dict[str, bytes]:
     return archivos
 
 
+# Fecha de cada entrada del zip: la mínima que admite el formato, la misma siempre. Con la hora real
+# cada armado daría otro zip y el SHA-256 ya no diría nada.
+FECHA_FIJA = (1980, 1, 1, 0, 0, 0)
+
+
+def nombre_del_paquete(navegador: str, archivos: dict[str, bytes]) -> str:
+    """ext-cse-<navegador>-<versión>.zip, con la versión del manifiesto: dos versiones no se confunden."""
+    return f"ext-cse-{navegador}-{json.loads(archivos['manifest.json'])['version']}.zip"
+
+
+def a_zip(archivos: dict[str, bytes]) -> bytes:
+    """El paquete: los archivos en la raíz del zip, que es donde Chrome, Firefox y sus tiendas buscan
+    manifest.json. Sin comprimir (pesa unos KB) y con metadatos fijos, para que el mismo código dé el
+    mismo zip en cualquier máquina: la compresión depende de la versión de zlib de cada una."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as paquete_zip:
+        for nombre in sorted(archivos):
+            entrada = zipfile.ZipInfo(nombre, date_time=FECHA_FIJA)
+            entrada.create_system = 3  # Unix, lo arme quien lo arme
+            entrada.external_attr = 0o100644 << 16  # archivo normal, rw-r--r--
+            paquete_zip.writestr(entrada, archivos[nombre])
+    return buffer.getvalue()
+
+
 def _es_borrable(destino: Path) -> bool:
     """Solo se borra una construcción anterior (para que no viaje un archivo viejo) o nada."""
     return not destino.exists() or (destino / "manifest.json").is_file() or not any(destino.iterdir())
@@ -163,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         origen = origen_del_crm(args.crm)
         paquetes = {n: paquete(n, origen) for n in navegadores}
+        zips = {n: (nombre_del_paquete(n, archivos), a_zip(archivos)) for n, archivos in paquetes.items()}
         ajenas = [args.salida / n for n in navegadores if not _es_borrable(args.salida / n)]
         if ajenas:
             raise ValueError(f"no borro {ajenas[0]}: no parece una construcción de ext-cse (no tiene manifest.json)")
@@ -176,7 +209,13 @@ def main(argv: list[str] | None = None) -> int:
         destino.mkdir(parents=True)
         for nombre, contenido in archivos.items():
             (destino / nombre).write_bytes(contenido)
+        # El zip de una versión anterior no se queda junto al nuevo: alguien lo instalaría por error.
+        for viejo in args.salida.glob(f"ext-cse-{navegador}-*.zip"):
+            viejo.unlink()
+        nombre_zip, contenido_zip = zips[navegador]
+        (args.salida / nombre_zip).write_bytes(contenido_zip)
         print(f"{navegador}: {destino}")
+        print(f"{navegador}: {args.salida / nombre_zip} · sha256 {hashlib.sha256(contenido_zip).hexdigest()}")
     return 0
 
 

@@ -9,7 +9,8 @@ El plan de desarrollo vive en `02-DOCS/wiki/ftd/ext-cse.md` (local, no versionad
 
     python3 ext-cse/construir.py --crm https://bot.esaumillan.cloud
 
-Deja `ext-cse/dist/chrome/` y `ext-cse/dist/firefox/` (no se versionan). `--crm` es el único sitio que la
+Deja `ext-cse/dist/chrome/` y `ext-cse/dist/firefox/`, y junto a ellas sus paquetes (ver «Empaquetar»); nada
+de `dist/` se versiona. `--crm` es el único sitio que la
 extensión puede tocar: va a `homepage_url` (el origen exacto, del que el código saca sus direcciones) y a
 `host_permissions`; el código no conoce otro dominio. En Firefox el permiso va sin puerto, porque Firefox no
 admite puertos en los patrones y con puerto no coincidiría con nada. Debe ser https; http solo se acepta
@@ -31,6 +32,26 @@ Permisos:
 - Firefox: ninguno. Firefox no deja enmarcar el CRM ni con regla (spike S1), así que el panel lateral, tras
   sus comprobaciones, navega a la página del CRM misma. Declara que no transmite datos, lo que exige
   Firefox 140.
+
+## Empaquetar
+
+El mismo `construir.py` deja junto a cada carpeta su paquete, `ext-cse/dist/ext-cse-<navegador>-<versión>.zip`
+(la versión es la del manifiesto), e imprime su SHA-256. El zip trae exactamente lo de la carpeta, con
+`manifest.json` en la raíz, y el mismo código da el mismo zip byte por byte: el SHA-256 dice si lo que alguien
+tiene instalado es lo que se revisó. Al armar se borra el zip de otra versión, para que no se instale por error.
+
+El de Firefox trae los mismos archivos, con los mismos bytes, que `web-ext build -s ext-cse/dist/firefox`
+(comparados al cerrar E5; solo cambian la compresión y las fechas), así que no hace falta npm para armarlo.
+`web-ext lint` lo revisa igual que a la carpeta.
+
+Los paquetes no se firman ni se publican. Lo que eso significa al instalar:
+
+- Chrome no instala un zip fuera de su tienda: se descomprime en una carpeta que se quede ahí y se carga con
+  «Cargar descomprimida» (abajo). Chrome la lee de esa carpeta cada vez que arranca.
+- Firefox, en su versión normal, solo la instala como complemento temporal: se va al cerrar Firefox y hay que
+  volver a cargarla. Para que se quede hace falta que Mozilla la firme (AMO, aunque sea sin listarla en la
+  tienda) o usar Firefox ESR, Developer Edition o Nightly con `xpinstall.signatures.required` en `false`
+  ([ayuda de Mozilla](https://support.mozilla.org/kb/add-on-signing-in-firefox)).
 
 ## El panel
 
@@ -69,13 +90,14 @@ segundos esperar. Si el diálogo del agente cambia, la ayuda también.
 
 ## Probar
 
-    .venv/bin/python -m pytest tests/test_ext_cse_manifiesto.py -q   # manifiestos, regla y construir.py
+    .venv/bin/python -m pytest tests/test_ext_cse_manifiesto.py -q   # manifiestos, regla, construir.py y zips
     node ext-cse/prueba/juez-chrome.mjs                               # Chrome real, sin cabeza
     python3 ext-cse/prueba/juez-firefox.py                            # Firefox real, sin cabeza
     python3 ext-cse/construir.py --crm https://bot.esaumillan.cloud && npx web-ext lint -s ext-cse/dist/firefox
 
-Los dos jueces levantan el bot con una base temporal sembrada (`scripts/qa_crm_seed.py`), instalan la
-extensión en un perfil temporal y recorren el panel: el CRM en mantenimiento (503) y luego caído, el CRM
+Los dos jueces levantan el bot con una base temporal sembrada (`scripts/qa_crm_seed.py`), instalan el zip de
+la extensión (no la carpeta, que borran antes) en un perfil temporal y recorren el panel: el CRM en
+mantenimiento (503) y luego caído, el CRM
 que vuelve (login y, tras entrar, `/crm`), «Ir al cliente» con un número pegado, la ayuda «¿Folio manual?»
 (modal, cabe en un ancho de panel y Escape la cierra), sin red y sin permiso de
 sitio. El de Chrome comprueba además
@@ -85,6 +107,8 @@ contexto «chrome» de Marionette: necesita `geckodriver` (el de snap trae uno);
 extensión se arma dentro de `ext-cse/dist/`, porque snap no lee carpetas ocultas de HOME ni el `/tmp` del
 sistema.
 
-Para probarla a mano: Chrome → `chrome://extensions` → modo desarrollador → «Cargar descomprimida» →
-`ext-cse/dist/chrome`. Firefox → `about:debugging` → «Este Firefox» → «Cargar complemento temporal» →
+Para instalarla a mano: Chrome → descomprimir `ext-cse/dist/ext-cse-chrome-<versión>.zip` en una carpeta que se
+quede → `chrome://extensions` → modo desarrollador → «Cargar descomprimida» → esa carpeta. Firefox →
+`about:debugging` → «Este Firefox» → «Cargar complemento temporal…» → `ext-cse/dist/ext-cse-firefox-<versión>.zip`.
+Para probar un cambio sin pasar por el zip sirven también las carpetas `ext-cse/dist/chrome` y
 `ext-cse/dist/firefox/manifest.json`.

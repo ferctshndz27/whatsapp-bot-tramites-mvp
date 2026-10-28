@@ -4,14 +4,19 @@ La extensión vive junto al CRM con la sesión del colaborador abierta: un permi
 más o un script remoto convierten un panel lateral en una puerta a todos los clientes que ese
 colaborador ve. Lo que el navegador le enseña a quien la instala tiene que ser todo lo que puede
 hacer. `ext-cse/construir.py` arma los dos paquetes; estas pruebas lo corren como el operador, en una
-carpeta temporal, y revisan lo que saldría.
+carpeta temporal, y revisan lo que saldría. Desde E5 también el zip que se entrega: que traiga la misma
+carpeta, con el manifiesto en la raíz, y que el mismo código dé siempre el mismo zip. Que se instala
+en Chrome y Firefox reales lo juzgan ext-cse/prueba/, que instalan el zip y no la carpeta.
 """
 
+import hashlib
 import importlib.util
 import json
 import re
 import subprocess
 import sys
+import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -267,6 +272,60 @@ def test_en_firefox_el_permiso_de_sitio_no_lleva_puerto(tmp_path):
     assert _manifiesto(tmp_path, "firefox")["host_permissions"] == ["http://127.0.0.1/*"]
 
 
+# --- El zip que se entrega (E5) ---------------------------------------------------------------
+
+
+def _zip(dist, navegador):
+    zips = sorted(dist.glob(f"ext-cse-{navegador}-*.zip"))
+    assert len(zips) == 1, f"debe quedar un solo zip de {navegador}: {[z.name for z in zips]}"
+    return zips[0]
+
+
+@pytest.mark.parametrize("navegador", NAVEGADORES)
+def test_el_zip_trae_lo_mismo_que_la_carpeta_byte_por_byte(dist, navegador):
+    """Todo lo de arriba se revisa en la carpeta, pero lo que se instala es el zip: si difirieran, el
+    colaborador instalaría algo que ninguna prueba vio."""
+    with zipfile.ZipFile(_zip(dist, navegador)) as z:
+        assert z.testzip() is None, "el zip está dañado"
+        en_zip = {nombre: z.read(nombre) for nombre in z.namelist()}
+    en_carpeta = {p.name: p.read_bytes() for p in (dist / navegador).iterdir()}
+    assert sorted(en_zip) == sorted(en_carpeta), "el zip no trae los mismos archivos que la carpeta"
+    for nombre, contenido in en_carpeta.items():
+        assert en_zip[nombre] == contenido, f"{nombre} cambió dentro del zip"
+
+
+@pytest.mark.parametrize("navegador", NAVEGADORES)
+def test_el_manifiesto_va_en_la_raiz_del_zip(dist, navegador):
+    """Chrome, Firefox y sus tiendas buscan manifest.json en la raíz: un zip hecho desde fuera de la
+    carpeta (chrome/manifest.json) lo rechazan por no tener manifiesto."""
+    with zipfile.ZipFile(_zip(dist, navegador)) as z:
+        nombres = z.namelist()
+    assert "manifest.json" in nombres
+    assert not [n for n in nombres if "/" in n or "\\" in n], f"entradas dentro de una carpeta: {nombres}"
+
+
+@pytest.mark.parametrize("navegador", NAVEGADORES)
+def test_el_zip_lleva_la_version_del_manifiesto(dist, navegador):
+    """Con la versión en el nombre, el zip que alguien tiene instalado se distingue del nuevo."""
+    version = _manifiesto(dist, navegador)["version"]
+    assert _zip(dist, navegador).name == f"ext-cse-{navegador}-{version}.zip"
+
+
+def test_armar_dos_veces_da_el_mismo_zip(tmp_path):
+    """El SHA-256 que imprime construir.py dice si lo instalado es lo revisado solo si el mismo código
+    da el mismo zip. Con la hora del armado en sus entradas cambiaría cada vez; la espera pasa los
+    2 s de resolución de la fecha de un zip, para que esa hora no pueda coincidir."""
+    a, b = tmp_path / "a", tmp_path / "b"
+    assert _construir("--crm", CRM, salida=a).returncode == 0
+    time.sleep(2.1)
+    r = _construir("--crm", CRM, salida=b)
+    assert r.returncode == 0, r.stderr
+    for navegador in NAVEGADORES:
+        contenido = _zip(b, navegador).read_bytes()
+        assert _zip(a, navegador).read_bytes() == contenido, f"el zip de {navegador} cambió sin cambiar el código"
+        assert hashlib.sha256(contenido).hexdigest() in r.stdout, f"no imprime el SHA-256 del zip de {navegador}"
+
+
 # --- Reconstruir ------------------------------------------------------------------------------
 
 
@@ -278,6 +337,20 @@ def test_reconstruir_no_deja_archivos_viejos(tmp_path):
     assert not viejo.exists(), "un script viejo viajaría en el paquete sin que nadie lo revise"
 
 
+def test_reconstruir_no_deja_zips_de_otra_version(tmp_path):
+    """Tras subir la versión, el zip anterior junto al nuevo se instalaría por error. Un zip que no es
+    de la extensión, en cambio, no se toca."""
+    assert _construir("--crm", CRM, salida=tmp_path).returncode == 0
+    viejo = tmp_path / "ext-cse-chrome-0.0.1.zip"
+    viejo.write_bytes(b"zip de una version anterior")
+    ajeno = tmp_path / "otra-cosa.zip"
+    ajeno.write_bytes(b"no es de la extension")
+    assert _construir("--crm", CRM, salida=tmp_path).returncode == 0
+    assert not viejo.exists(), "quedó el zip de una versión anterior"
+    assert ajeno.exists(), "borró un zip que no era suyo"
+    assert len(list(tmp_path.glob("ext-cse-chrome-*.zip"))) == 1
+
+
 def test_no_borra_una_carpeta_que_no_es_una_construccion(tmp_path):
     ajena = tmp_path / "chrome"
     ajena.mkdir()
@@ -287,3 +360,4 @@ def test_no_borra_una_carpeta_que_no_es_una_construccion(tmp_path):
     assert "no borro" in r.stderr, f"falló por otra cosa: {r.stderr}"
     assert (ajena / "importante.txt").exists(), "borró una carpeta que no era suya"
     assert not (tmp_path / "firefox").exists(), "con un navegador fallido no se arma el otro"
+    assert not list(tmp_path.glob("*.zip")), "con un navegador fallido no se escribe ningún zip"

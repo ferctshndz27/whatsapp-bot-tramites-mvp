@@ -4,7 +4,8 @@
 //   node ext-cse/prueba/juez-chrome.mjs
 //
 // Levanta el bot con una base temporal sembrada (scripts/qa_crm_seed.py, la del juez del CRM), arma
-// la extensión con construir.py contra ese bot, la instala por CDP y comprueba:
+// la extensión con construir.py contra ese bot, instala su zip (descomprimido, como a mano) por CDP y
+// comprueba:
 //   1. Chrome la acepta sin errores ni advertencias del manifiesto.
 //   2. El fondo instaló la regla con el id de la extensión (iniciador y frame-ancestors).
 //   3. Sin el CRM (en mantenimiento, luego caído), el panel lo dice, no abre el marco, el botón
@@ -229,6 +230,15 @@ async function main() {
     const salida = path.join(dir, "dist");
     const armado = spawnSync(PYTHON, [path.join(EXT, "construir.py"), "--crm", crm, "--navegador", "chrome", "--salida", salida], { encoding: "utf8" });
     if (armado.status !== 0) throw new Error(`construir.py falló:\n${armado.stderr}`);
+    // Se instala el zip que se entrega (E5), no la carpeta. Chrome no instala un zip fuera de su
+    // tienda: se descomprime, como lo hará quien lo instale a mano, y se borra la carpeta armada para
+    // que no tape lo que al zip le falte.
+    const zips = fs.readdirSync(salida).filter((n) => /^ext-cse-chrome-.+\.zip$/.test(n));
+    if (zips.length !== 1) throw new Error(`construir.py dejó ${zips.length} zips de Chrome: ${zips.join(", ")}`);
+    const instalada = path.join(dir, "instalada");
+    const extraido = spawnSync(PYTHON, ["-m", "zipfile", "-e", path.join(salida, zips[0]), instalada], { encoding: "utf8" });
+    if (extraido.status !== 0) throw new Error(`no se pudo descomprimir ${zips[0]}:\n${extraido.stderr}`);
+    fs.rmSync(path.join(salida, "chrome"), { recursive: true, force: true });
 
     // El CRM «en mantenimiento»: hasta que se levanta el bot, su puerto contesta 503 y cuenta las
     // consultas a /health, para ver que el panel lo dice y que el botón Reintentar vuelve a preguntar.
@@ -266,8 +276,8 @@ async function main() {
     await hasta(async () => evaluar(cdp, ajustes, "typeof chrome.developerPrivate === 'object'"));
     await evaluar(cdp, ajustes, "chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true })");
 
-    const { id } = await cdp.enviar("Extensions.loadUnpacked", { path: path.join(salida, "chrome") });
-    criterio("Chrome instala la extensión", Boolean(id), id);
+    const { id } = await cdp.enviar("Extensions.loadUnpacked", { path: instalada });
+    criterio(`Chrome instala el zip ${zips[0]}`, Boolean(id), id);
     const urlPanel = `chrome-extension://${id}/panel.html`;
 
     // 2. La regla, leída en el fondo ANTES de abrir el panel: así se ve que la puso onInstalled y no

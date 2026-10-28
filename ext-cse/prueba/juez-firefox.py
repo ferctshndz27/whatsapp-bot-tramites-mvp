@@ -4,7 +4,8 @@
     python3 ext-cse/prueba/juez-firefox.py
 
 Levanta el bot con una base temporal sembrada (scripts/qa_crm_seed.py), arma la extensión con
-construir.py contra ese bot, la instala como temporal por geckodriver (Marionette) y abre su panel
+construir.py contra ese bot, instala su zip (el que se entrega, no la carpeta) como temporal por
+geckodriver (Marionette) y abre su panel
 lateral de verdad. Desde el contexto «chrome» de Firefox lee la URL y el título del panel (panel.js
 pone en el título el aviso que muestra) y comprueba:
   1. Sin el CRM (en mantenimiento, luego caído), el panel lo dice y cambia el aviso solo; el código
@@ -32,6 +33,7 @@ import sys
 import tempfile
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
@@ -225,6 +227,13 @@ def main() -> int:
                                 capture_output=True, text=True)
         if armado.returncode:
             raise RuntimeError(f"construir.py falló:\n{armado.stderr}")
+        # Se instala el zip que se entrega (E5), no la carpeta, y la carpeta se borra para que no
+        # tape lo que al zip le falte. Firefox lo instala tal cual, como about:debugging.
+        zips = sorted(salida.glob("ext-cse-firefox-*.zip"))
+        if len(zips) != 1:
+            raise RuntimeError(f"construir.py dejó {len(zips)} zips de Firefox: {[z.name for z in zips]}")
+        paquete = zips[0]
+        shutil.rmtree(salida / "firefox")
 
         mantenimiento = http.server.ThreadingHTTPServer(("127.0.0.1", puerto), Mantenimiento)
         threading.Thread(target=mantenimiento.serve_forever, daemon=True).start()
@@ -243,10 +252,11 @@ def main() -> int:
         capacidades = ff.abrir({"browserName": "firefox", "moz:firefoxOptions": opciones})
         print(f"Firefox {capacidades.get('browserVersion')} · bot en {crm}", flush=True)
 
-        instalado = ff("POST", "/moz/addon/install", {"path": str(salida / "firefox"), "temporary": True})
-        criterio("Firefox instala la extensión", instalado == ID, str(instalado))
+        instalado = ff("POST", "/moz/addon/install", {"path": str(paquete), "temporary": True})
+        criterio(f"Firefox instala el zip {paquete.name}", instalado == ID, str(instalado))
         # El permiso de sitio tal como lo declara el paquete (en Firefox, sin puerto).
-        sitio = json.loads((salida / "firefox" / "manifest.json").read_text(encoding="utf-8"))["host_permissions"][0]
+        with zipfile.ZipFile(paquete) as z:
+            sitio = json.loads(z.read("manifest.json"))["host_permissions"][0]
         ff.contexto("chrome")
         raiz = "moz-extension://" + ff.js("return WebExtensionPolicy.getByID(arguments[0]).mozExtensionHostname", ID) + "/"
         clave = hasta(lambda: ff.js("return [...SidebarController.sidebars.keys()].find((k) => k.endsWith('-sidebar-action'))"))
