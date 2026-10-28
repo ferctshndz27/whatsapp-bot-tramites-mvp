@@ -34,6 +34,7 @@ from app.models import (
     Direction,
     Message,
     Plantilla,
+    PROVIDER_META,
     PROVIDER_TWILIO,
     Ticket,
     TicketActivity,
@@ -376,3 +377,137 @@ def test_el_puerto_no_desecha_el_content_sid(s, monkeypatch):
     wamid = messaging.send_template(CLIENTE, "invitacion_folio_v1", "CTabc123", ["Ana"])
     assert wamid == "SM.tpl"
     assert enviados == [("invitacion_folio_v1", "CTabc123", ["Ana"])]
+
+
+# --- El canal: la invitación sale por A aunque el cliente nunca le haya escrito ----------------
+#
+# Lo encontró el juez de extremo a extremo de C1. El cliente del folio manual le habló al número
+# PERSONAL del colaborador: no tiene conversación con el bot, y el puerto, sin conversación, caía
+# en Meta. Las pruebas de arriba no lo veían porque parchan `messaging.send_template` o le siembran
+# al cliente una conversación de Twilio. Aquí el diálogo entra por la cuenta de Twilio (el número
+# A) y los adaptadores reales quedan detrás del puerto.
+
+
+@pytest.fixture
+def por_twilio(monkeypatch):
+    """Todo lo que Ana le dice al agente entra por la cuenta de Twilio, que es el número A."""
+    import functools
+
+    import tests.test_alta_manual_dialogo as dialogo_tests
+
+    monkeypatch.setattr(
+        dialogo_tests, "handle_incoming",
+        functools.partial(conversation.handle_incoming, provider=PROVIDER_TWILIO),
+    )
+
+
+def _alta_por_a(s, consiente="sí"):
+    """Ana completa el alta con el agente; `consiente` es su respuesta a «¿aceptó que lo contactemos?»."""
+    from tests.test_alta_manual_dialogo import _dice, _hasta_resumen
+
+    _hasta_resumen(s)
+    _dice(s, "sí")
+    assert _dice(s, consiente)[0].startswith("Listo ✅ Creé el folio #")
+    s.expire_all()
+    (t,) = s.exec(select(Ticket)).all()
+    return t
+
+
+def test_el_folio_manual_guarda_el_canal_por_el_que_hablo_el_colaborador(s, por_twilio):
+    """Si el folio nace con el canal por omisión (Meta) aunque todo pasó por A, el cliente queda
+    ligado a una cuenta con la que nunca habló nadie: el reporte por canal lo cuenta mal y el
+    puerto no tiene de dónde sacar el número A."""
+    t = _alta_por_a(s)
+    assert s.get(Conversation, COLAB).provider == PROVIDER_TWILIO  # la premisa: Ana habló por A
+    assert t.provider == PROVIDER_TWILIO, "el folio manual no recuerda por qué cuenta llegó"
+
+
+def test_sin_conversacion_el_cliente_se_atiende_por_el_canal_de_su_folio(s, por_twilio):
+    """El cliente del folio manual no tiene conversación con el bot. Si el puerto lo manda a Meta,
+    lo que se le escriba —la invitación, una respuesta desde el CRM— sale por la otra cuenta o no
+    sale."""
+    _alta_por_a(s)
+    assert s.get(Conversation, CLIENTE) is None  # la premisa: nunca le ha escrito a A
+    assert messaging.canal_de(CLIENTE) == PROVIDER_TWILIO
+
+
+def test_la_conversacion_del_cliente_manda_sobre_el_canal_de_su_folio(s, por_twilio):
+    """«Se contesta por donde entró»: si el cliente ya escribió por la otra cuenta, la ventana
+    abierta es la de ese número, y el canal de su folio no debe cambiarla."""
+    _alta_por_a(s)
+    s.add(Conversation(phone=CLIENTE, provider=PROVIDER_META))
+    s.commit()
+    assert messaging.canal_de(CLIENTE) == PROVIDER_META
+
+
+def test_la_invitacion_de_un_cliente_nuevo_sale_por_a_con_la_plantilla_de_twilio(s, por_twilio, monkeypatch):
+    """El caso para el que existe B8: un cliente que nunca le escribió a A, con consentimiento y
+    plantilla aprobada. Si sale por Meta, llega desde otro número —contra el consentimiento
+    registrado, que es «ser contactado desde A»— o no llega: la plantilla vive en Twilio y el
+    barrido se rinde tras tres intentos."""
+    _plantilla(s)
+    _alta_por_a(s, consiente="sí")
+    twilio, meta = [], []
+    monkeypatch.setattr(
+        twilio_client, "send_template", lambda p, n, c, v: twilio.append((p, c, list(v))) or "SM.inv"
+    )
+    monkeypatch.setattr(whatsapp_client, "send_template", lambda p, n, c, v: meta.append(p) or "wamid.inv")
+
+    assert barrido.invitar_una_vez() == 1
+    assert meta == [], "la invitación salió por la cuenta de Meta, no por A"
+    ((phone, sid, variables),) = twilio
+    assert (phone, sid) == (CLIENTE, "CTabc123")
+    assert variables[1] == CREADOR
+
+
+# --- La ventana: el material que reenvió el colaborador no la abre --------------------------------
+#
+# Al crear el folio, el diálogo muda al chat del cliente lo que Ana reenvió: le pone el teléfono del
+# cliente y sigue siendo ENTRANTE. Pero ese mensaje se lo mandó a A el colaborador, no el cliente:
+# la ventana de 24 h de A sigue cerrada. Si se cuenta, la invitación toma el camino de texto plano
+# —que no pide consentimiento y que el proveedor rechaza fuera de ventana— y el CRM ofrece escribir
+# texto libre que nunca llega.
+
+
+def _todo_lo_que_sale(monkeypatch):
+    """Cada intento de envío, por cualquiera de las dos cuentas, de texto o de plantilla."""
+    salidas = []
+    for modulo, cuenta in ((twilio_client, "twilio"), (whatsapp_client, "meta")):
+        monkeypatch.setattr(modulo, "send_text", lambda p, b, c=cuenta: salidas.append((c, "texto", p)) or "id.txt")
+        monkeypatch.setattr(
+            modulo, "send_template", lambda p, n, sid, v, c=cuenta: salidas.append((c, "plantilla", p)) or "id.tpl"
+        )
+    return salidas
+
+
+def test_el_material_que_reenvio_ana_no_abre_la_ventana_de_a(s, por_twilio):
+    from app import ventana
+
+    _alta_por_a(s)
+    s.expire_all()
+    mudados = s.exec(select(Message).where(Message.phone == CLIENTE)).all()
+    assert mudados and all(m.direction == Direction.IN for m in mudados)  # la premisa: está en su chat
+    assert invitacion.ventana_abierta(s, CLIENTE) is False, "la ficha y la invitación ven una ventana falsa"
+    assert ventana.abierta_para(s, CLIENTE) is False, "el CRM dejaría escribirle texto libre"
+
+
+def test_el_cliente_que_escribe_a_a_si_abre_la_ventana_despues_del_material(s, por_twilio):
+    """La otra cara: en cuanto el cliente le escribe a A, la ventana es real y la invitación va en
+    texto plano. Sin esta prueba, «no contar entrantes en el chat del cliente» pasaría por arreglo."""
+    from app import ventana
+
+    _alta_por_a(s)
+    _entrante_a(s)  # el cliente mismo le escribe a A
+    assert invitacion.ventana_abierta(s, CLIENTE) is True
+    assert ventana.abierta_para(s, CLIENTE) is True
+
+
+def test_si_el_cliente_dijo_que_no_no_sale_nada_aunque_haya_material(s, por_twilio, monkeypatch):
+    """«Sin opt-in NADA sale.» El material mudado no puede servir de permiso: la ventana es del
+    cliente, no del colaborador que reenvió sus mensajes."""
+    _plantilla(s)
+    _alta_por_a(s, consiente="no")
+    salidas = _todo_lo_que_sale(monkeypatch)
+
+    assert barrido.invitar_una_vez() == 0
+    assert salidas == [], f"se le intentó escribir a quien no consintió: {salidas}"

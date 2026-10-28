@@ -262,7 +262,9 @@ def _agregar(session, clientes: list[Client], viewer: str | None = None) -> dict
             func.max(Message.id).label("ult_id"),
             corte_saliente.label("corte"),
             func.max(
-                case((Message.direction == Direction.IN, Message.created_at))
+                # Solo lo que mandó el propio cliente: el material que reenvió un colaborador no
+                # abre la ventana ni cuenta como «visto» (`ventana.ABRE_VENTANA`, ext-cse).
+                case((ventana.ABRE_VENTANA, Message.created_at))
             ).label("last_in"),
         )
         .where(Message.habilitado == True)  # noqa: E712

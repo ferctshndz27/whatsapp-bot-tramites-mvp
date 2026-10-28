@@ -21,7 +21,7 @@ from sqlmodel import Session, SQLModel, create_engine
 import app.db as db
 from app import messaging, twilio_client, whatsapp_client
 from app.config import settings
-from app.models import PROVIDER_META, PROVIDER_TWILIO, Conversation
+from app.models import PROVIDER_META, PROVIDER_TWILIO, Conversation, Ticket
 
 PHONE = "525500000000"
 
@@ -99,6 +99,18 @@ def test_el_canal_es_el_del_ultimo_entrante(sesion):
     # REGLA: es LA regla del módulo. Conversation.provider guarda por dónde
     # llegó el último mensaje y eso decide por dónde sale la respuesta.
     sesion.add(Conversation(phone=PHONE, provider=PROVIDER_TWILIO))
+    sesion.commit()
+
+    assert messaging.canal_de(PHONE) == PROVIDER_TWILIO
+
+
+def test_sin_conversacion_manda_el_canal_del_folio_mas_reciente(sesion):
+    # REGLA: el cliente de un folio manual (ext-cse) nunca le ha escrito a A, así que no tiene
+    # conversación; su folio nació por la cuenta del colaborador que lo dio de alta, y por ahí se
+    # le escribe. Si tiene varios folios, manda el último. Sin conversación ni folio, Meta (arriba).
+    for provider in (PROVIDER_META, PROVIDER_TWILIO):
+        sesion.add(Ticket(phone=PHONE, provider=provider, category="Actas", service_id="acta",
+                          service_name="Acta de nacimiento", price_info="$150"))
     sesion.commit()
 
     assert messaging.canal_de(PHONE) == PROVIDER_TWILIO

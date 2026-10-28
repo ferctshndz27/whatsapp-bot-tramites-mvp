@@ -292,12 +292,16 @@ def _crear_folio(session, conv, ctx) -> list[str]:
     try:
         ticket = crear_folio_manual(
             session, ctx["colaborador"], ctx["cliente"], ctx.get("nombre"), ctx["servicio"],
-            ctx["asignado"], mensajes=mensajes,
+            ctx["asignado"], mensajes=mensajes, provider=conv.provider,
         )
     except FolioManualError as exc:
         return _rechazo(session, conv, ctx, exc)
-    for m in mensajes:  # mudanza al chat del cliente (ORM: el espejo MSSQL escucha el update)
+    # Mudanza al chat del cliente (ORM: el espejo MSSQL escucha el update). `sent_by` dice quién se
+    # lo mandó a A: son palabras del cliente, pero las reenvió el colaborador, así que no abren la
+    # ventana del cliente (`ventana.ABRE_VENTANA`) ni el colaborador puede ocultarlas en la bandeja.
+    for m in mensajes:
         m.phone = ticket.phone
+        m.sent_by = ctx["colaborador"]
         session.add(m)
     session.commit()
     _set_state(session, conv, "inicio")

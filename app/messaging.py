@@ -14,15 +14,18 @@ rama en `_adaptador()`, y ni el webhook, ni la bandeja, ni cobranza se enteran.
 Los dos adaptadores ya están cableados. Sin las credenciales de Twilio en el
 entorno el canal queda inerte: `twilio_client.enabled()` es False, su webhook
 rechaza toda firma, y como nadie puede crear una Conversation con
-provider='twilio', `canal_de()` resuelve siempre a Meta. Lo comprueba
+provider='twilio' —ni, por lo tanto, un folio: el del bot y el manual heredan
+el canal de una conversación—, `canal_de()` resuelve siempre a Meta. Lo comprueba
 `tests/test_messaging_port.py::test_sin_credenciales_de_twilio_nadie_sale_por_ese_canal`.
 """
 
 import logging
 
+from sqlmodel import col, select
+
 from app import twilio_client, whatsapp_client
 from app.db import get_session
-from app.models import PROVIDER_META, PROVIDER_TWILIO, Conversation
+from app.models import PROVIDER_META, PROVIDER_TWILIO, Conversation, Ticket
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +33,21 @@ logger = logging.getLogger(__name__)
 def canal_de(phone: str) -> str:
     """Canal por el que hay que contestarle a `phone`.
 
-    Es el del ÚLTIMO mensaje entrante (Conversation.provider). Un cliente sin
-    conversación —por ejemplo uno dado de alta a mano desde el panel— cae en
-    Meta, que es la cuenta que existía primero.
+    Es el del ÚLTIMO mensaje entrante (Conversation.provider). Sin conversación,
+    el del folio más reciente: el cliente de un folio manual (ext-cse) nunca le
+    ha escrito al bot, pero su folio nació por la cuenta del colaborador que lo
+    dio de alta, y por esa cuenta se le invita. Sin conversación ni folio —por
+    ejemplo un cliente dado de alta a mano desde el panel— cae en Meta, que es
+    la cuenta que existía primero.
     """
     with get_session() as session:
         conversacion = session.get(Conversation, phone)
-        return conversacion.provider if conversacion else PROVIDER_META
+        if conversacion is not None:
+            return conversacion.provider
+        folio = session.exec(
+            select(Ticket.provider).where(Ticket.phone == phone).order_by(col(Ticket.id).desc())
+        ).first()
+        return folio or PROVIDER_META
 
 
 def _adaptador(provider: str):

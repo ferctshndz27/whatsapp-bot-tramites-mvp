@@ -576,6 +576,24 @@ def test_no_leidos_sin_ningun_saliente_y_sin_contar_los_mensajes_ocultos():
     assert dora["ventana"]["abierta"] is True
 
 
+def test_el_material_que_reenvio_un_colaborador_no_abre_la_ventana_ni_cuenta_como_visto():
+    """El alta manual (ext-cse, B6) muda al chat del cliente lo que el colaborador le reenvió a A:
+    entrantes con el teléfono del cliente y el colaborador en `sent_by`. El cliente nunca le
+    escribió a A, así que su ventana sigue en «nunca» y no hay «visto»; si se contaran, el CRM
+    ofrecería escribirle texto libre que el proveedor rechaza. Sí cuenta como no leído: es material
+    nuevo para quien atiende el folio."""
+    eva = "525500000014"
+    with Session(db.engine) as s:
+        s.add(Client(phone=eva, name="Eva Torres", office_id=1))
+        s.add(Message(phone=eva, direction=Direction.IN, body="Necesito mi acta", sent_by="colab1",
+                      created_at=utcnow() - timedelta(minutes=3)))
+        s.commit()
+    c = _contacto(_tablero("jefe1"), eva)
+    assert c["ventana"] == {"abierta": False, "texto": "cerrada", "urgente": False, "nunca": True}
+    assert c["last_seen"] is None
+    assert c["unread"] == 1 and c["last_message"]["body"] == "Necesito mi acta"
+
+
 def test_la_busqueda_ignora_acentos_y_formato_del_telefono():
     assert [c["phone"] for c in _tablero("jefe1", q="ramirez")["contactos"]] == [ANA]
     assert [c["phone"] for c in _tablero("jefe1", q="NUÑEZ")["contactos"]] == [BETO]

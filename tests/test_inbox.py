@@ -165,6 +165,20 @@ def test_items_flag_waiting_and_expired_window(session):
     assert items["222"]["bot_paused"] is False
 
 
+def test_el_material_que_reenvio_un_colaborador_no_abre_la_ventana(session):
+    """El alta manual (ext-cse) muda al chat del cliente lo que el colaborador le reenvió a A: es
+    entrante, pero lo mandó el colaborador (`sent_by`), no el cliente. La ventana de A sigue cerrada."""
+    reenviado = _msg("333", Direction.IN, "material que reenvió ana", hours_ago=0.1)
+    reenviado.sent_by = "ana"
+    session.add(reenviado)
+    session.commit()
+
+    from app.auth import Alcance
+    items = {i["phone"]: i for i in build_conversation_items(session, Alcance(office_id=1, ve_todas=True))}
+
+    assert items["333"]["window_open"] is False
+
+
 def test_send_logs_message_and_pauses_bot(monkeypatch, session):
     monkeypatch.setattr(db, "engine", session.get_bind())
     monkeypatch.setattr(whatsapp_client, "send_text", lambda phone, body: "wamid.SENT1")
@@ -439,6 +453,23 @@ def test_advisor_cannot_delete_client_message(monkeypatch, session):
 
     session.refresh(client_msg)
     assert client_msg.habilitado is True
+
+
+def test_un_colaborador_no_puede_ocultar_el_material_que_reenvio(monkeypatch, session):
+    """El material que Ana reenvió a A (ext-cse) lleva su nombre en `sent_by`, pero son palabras del
+    cliente: ocultarlas borraría la evidencia de la conversación real. Solo se oculta un SALIENTE
+    propio (el control positivo es `test_advisor_can_soft_delete_own_sent_message`)."""
+    monkeypatch.setattr(db, "engine", session.get_bind())
+    _atendido_por(session, "888")
+    reenviado = _msg("888", Direction.IN, "palabras del cliente que reenvió ana", hours_ago=1)
+    reenviado.sent_by = "ana"
+    session.add(reenviado)
+    session.commit()
+
+    inbox_delete_message(_request("ana"), "888", reenviado.id)
+
+    session.refresh(reenviado)
+    assert reenviado.habilitado is True
 
 
 # «Un mensaje ocultado no se muestra» vive ahora en el chat del CRM:

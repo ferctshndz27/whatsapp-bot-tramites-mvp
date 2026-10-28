@@ -21,7 +21,7 @@ from datetime import timedelta
 
 from sqlmodel import Session, select
 
-from app import messaging
+from app import messaging, ventana
 from app.conversation import _log_message
 from app.models import Client, Direction, Message, Plantilla, Ticket, TicketActivity, utcnow
 
@@ -38,13 +38,14 @@ def consentido(client: Client | None) -> bool:
 
 
 def ventana_abierta(session: Session, phone: str, horas: int | float = 24) -> bool:
-    """Un entrante de ESTE número en el lapso abre la ventana de 24 h."""
+    """Un mensaje del propio cliente a ESTE número en el lapso abre la ventana de 24 h. El material
+    que el colaborador reenvió y el diálogo mudó a su chat no cuenta (`ventana.ABRE_VENTANA`)."""
     limite = utcnow() - timedelta(hours=horas)
     return bool(
         session.exec(
             select(Message.id)
             .where(Message.phone == phone)
-            .where(Message.direction == Direction.IN)  # type: ignore[arg-type]
+            .where(ventana.ABRE_VENTANA)
             .where(Message.created_at >= limite)
             .limit(1)
         ).first()

@@ -35,7 +35,7 @@ from app.conversation import (
     _folios_abiertos,
     _ligar_mensajes,
 )
-from app.models import Client, Message, Ticket, TicketActivity, TicketStatus, User, utcnow
+from app.models import PROVIDER_META, Client, Message, Ticket, TicketActivity, TicketStatus, User, utcnow
 from app.utils import mask_phone, normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -72,12 +72,15 @@ def crear_folio_manual(
     asignado_a: str,
     mensajes: Sequence[Message] = (),
     notas: str = "",
+    provider: str = PROVIDER_META,
 ) -> Ticket:
     """Crea el folio (y el cliente, si es nuevo) y lo devuelve ya con `id`.
 
     Si `asignado_a` es el propio creador el folio nace TOMADO (él lo atiende);
     si es otro, nace NUEVO con dueño, como un folio auto-asignado. Siempre con
-    el agente IA apagado y `origen='manual'`.
+    el agente IA apagado y `origen='manual'`. `provider` es la cuenta por la que
+    el colaborador habló con el agente: el cliente no tiene conversación, así que
+    el folio es lo único que dice por dónde invitarlo (`messaging.canal_de`).
     """
     # --- Validación: nada se escribe hasta que todo cuadra ------------------
     autor = _usuario_habilitado(session, creador)
@@ -141,6 +144,7 @@ def crear_folio_manual(
         agent_active=False,
         origen=ORIGEN_MANUAL,
         office_id=oficina,
+        provider=provider,
         requirements_json=requisitos_iniciales(service.requirements),
         notes=f"[alta manual, {autor.username}, {sello}] {notas.strip()}" if notas.strip() else None,
     )

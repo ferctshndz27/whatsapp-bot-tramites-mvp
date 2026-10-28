@@ -133,7 +133,7 @@ def build_conversation_items(session, vista) -> list[dict]:
                 "last_at": m.created_at,
                 "ago": _time_ago(m.created_at),
             }
-        if m.phone not in last_in and m.direction == Direction.IN:
+        if m.phone not in last_in and ventana.abre_ventana(m):
             last_in[m.phone] = m.created_at
 
     result = []
@@ -436,8 +436,13 @@ def inbox_delete_message(request: Request, phone: str, message_id: int):
         message = session.get(Message, message_id)
         # Solo se puede ocultar un mensaje que el propio asesor envió desde el
         # panel — nunca las palabras del cliente, que son evidencia de la
-        # conversación real y deben permanecer intactas.
-        if message is not None and message.phone == phone and message.sent_by == user:
+        # conversación real y deben permanecer intactas. Tampoco las que un
+        # colaborador le reenvió a A (ext-cse): son entrantes con SU nombre en
+        # `sent_by`, por eso no basta con comparar el autor.
+        if (
+            message is not None and message.phone == phone
+            and message.direction == Direction.OUT and message.sent_by == user
+        ):
             message.habilitado = False
             session.add(message)
             session.commit()
