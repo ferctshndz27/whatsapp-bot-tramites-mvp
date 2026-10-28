@@ -83,6 +83,13 @@ ACTION_LABELS = {
     "soltado": "soltó la solicitud",
     "cerrado": "cerró la solicitud ✅",
     "nota": "agregó una nota",
+    # Alta manual (ext-cse): sin estas claves /activity mostraría el slug crudo.
+    "alta-manual": "dio de alta el folio a mano",
+    "aviso-alta": "avisó por WhatsApp a quien quedó con el folio",
+    "aviso-alta-fallo": "no pudo avisar por WhatsApp a quien quedó con el folio",
+    "aviso-alta-sin-celular": "no avisó a quien quedó con el folio: no tiene celular registrado",
+    "aviso-cliente": "envió la invitación al cliente desde el número A",
+    "aviso-cliente-fallo": "no pudo enviar la invitación al cliente desde el número A",
     "agente:pausado": "apagó el agente IA",
     "agente:pausado-auto": "apagó el agente IA (al responder por bandeja)",
     "agente:reanudado": "reanudó el agente IA",

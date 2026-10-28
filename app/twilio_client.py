@@ -306,6 +306,33 @@ def send_list(to_phone: str, body: str, button: str, rows: list[tuple[str, str]]
     return send_text(to_phone, body)
 
 
+def send_template(
+    to_phone: str,
+    template_name: str | None,
+    content_sid: str | None = None,
+    variables: list[str] | None = None,
+) -> str | None:
+    """Plantilla de la Content API fuera de ventana (invitación desde A, ext-cse).
+
+    Twilio exige el `content_sid` (el `template_name` de Meta se acepta e
+    ignora, la misma regla de `send_buttons`); las variables van como
+    `ContentVariables` {{1}}… en el orden del texto aprobado. Devuelve el
+    MessageSid o None.
+    """
+    if not content_sid:
+        return None
+    variables = variables or []
+    return _post_message(
+        to_phone,
+        {
+            "ContentSid": content_sid,
+            "ContentVariables": json.dumps(
+                {str(i + 1): v for i, v in enumerate(variables)}, ensure_ascii=False
+            ),
+        },
+    )
+
+
 def send_buttons(
     to_phone: str, body: str, buttons: list[tuple[str, str]], content_sid: str | None = None
 ) -> str | None:

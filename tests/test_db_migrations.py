@@ -216,7 +216,7 @@ _COLUMNAS_QUE_AGREGA_LA_MIGRACION = {
     ),
     "teammessage": ("habilitado", "office_id", "room_id"),
     "user": ("is_admin", "habilitado", "estado", "phone", "office_id"),
-    "ticket": ("agent_active", "habilitado", "requirements_json", "provider", "office_id"),
+    "ticket": ("agent_active", "habilitado", "requirements_json", "provider", "office_id", "origen"),
     "client": ("habilitado", "office_id"),
     "conversation": ("habilitado", "provider", "office_id"),
     "invitation": ("habilitado",),
@@ -1184,3 +1184,19 @@ def test_el_alter_rellena_con_1_las_filas_de_las_quince_tablas(bd_sin_office_id)
                 if r[1] == "office_id"
             ]
             assert ddl == [("INTEGER", 1, "1")], f"{tabla} recibió otro DDL: {ddl}"
+
+
+def test_los_folios_viejos_quedan_con_origen_nulo_tras_migrar(bd_de_lanzamiento):
+    """NULL = «lo abrió el bot / no se sabía». Un DEFAULT inventaría que los
+    folios previos se dieron de alta a mano o por el bot sin que nadie lo
+    registrara; y la columna debe aceptar el valor 'manual' de los nuevos."""
+    with bd_de_lanzamiento.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO ticket (phone, category, service_id, service_name, price_info,"
+            " status, escalado, created_at, updated_at) VALUES ('525500000001','c','s','n','$1',"
+            "'nuevo',0,'2026-01-01','2026-01-01')"))
+    db.init_db()
+    with bd_de_lanzamiento.begin() as conn:
+        assert conn.execute(text("SELECT origen FROM ticket")).scalar() is None
+        conn.execute(text("UPDATE ticket SET origen = 'manual'"))
+        assert conn.execute(text("SELECT origen FROM ticket")).scalar() == "manual"

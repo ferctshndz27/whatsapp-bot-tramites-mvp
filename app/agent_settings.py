@@ -100,6 +100,18 @@ CONFIG_EDITABLE = {
         ayuda="Un cliente que describe un caso (no un trámite) recibe la opción de que lo "
               "revise un asesor, en vez de la lista de trámites.",
     ),
+    "alta_manual_enabled": Perilla(
+        "Alta manual de folios por colaboradores", "bool",
+        ayuda="Un colaborador habilitado que escribe al agente desde su celular (con el teléfono "
+              "de su usuario) deja de ser tratado como cliente: el agente junta lo que reenvía "
+              "para abrir un folio manual.",
+    ),
+    "alta_manual_espera_s": Perilla(
+        "Alta manual: espera antes de preguntar el número", "entero", 10, 120, 5, unidad=" s",
+        ayuda="Segundos de silencio del colaborador antes de que el agente le pregunte por el "
+              "número del cliente. Abajo de 10 interrumpe una ráfaga de reenvíos; arriba de 120 "
+              "parece que no lo vio.",
+    ),
     "contexto_min_palabras": Perilla(
         "Mensaje informativo: mínimo de palabras", "entero", 15, 200, 5,
         ayuda="Abajo de 15 casi cualquier frase pregunta por el folio y secuestra la plática; "

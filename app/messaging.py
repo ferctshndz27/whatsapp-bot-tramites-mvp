@@ -71,6 +71,20 @@ def send_list(
     return _resolver(phone, provider).send_list(phone, body, button, rows)
 
 
+def send_template(
+    phone: str,
+    template_name: str | None,
+    content_sid: str | None,
+    variables: list[str],
+    provider: str | None = None,
+) -> str | None:
+    """Plantilla aprobada, por el canal de `phone`: `template_name` es de Meta,
+    `content_sid` de Twilio; cada adaptador usa la suya y se ignora la otra (la
+    misma regla de `send_buttons`). Sin la credencial del proveedor en turno,
+    el adaptador devuelve None y el llamador degrada (v3 §7)."""
+    return _resolver(phone, provider).send_template(phone, template_name, content_sid, list(variables))
+
+
 def send_buttons(
     phone: str,
     body: str,

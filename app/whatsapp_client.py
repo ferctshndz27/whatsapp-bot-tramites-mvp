@@ -121,6 +121,41 @@ def send_text(to_phone: str, body: str) -> str | None:
     )
 
 
+def send_template(
+    to_phone: str,
+    template_name: str | None,
+    content_sid: str | None = None,
+    variables: list[str] | None = None,
+) -> str | None:
+    """Plantilla aprobada fuera de ventana (invitación desde A, ext-cse).
+
+    Meta envía por el `name` de la plantilla; el `content_sid` de Twilio se
+    acepta e ignora para que los dos adaptadores tengan la misma firma (la
+    misma regla de `send_buttons`). Las variables llenan el body {{1}}… en el
+    orden del texto aprobado. Devuelve el wamid o None.
+    """
+    if not template_name:
+        return None
+    plantilla: dict = {"name": template_name, "language": {"code": "es"}}
+    variables = variables or []
+    if variables:
+        plantilla["components"] = [
+            {
+                "type": "body",
+                "parameters": [{"type": "text", "text": v} for v in variables],
+            }
+        ]
+    return _send(
+        to_phone,
+        {
+            "messaging_product": "whatsapp",
+            "to": to_phone,
+            "type": "template",
+            "template": plantilla,
+        },
+    )
+
+
 def _list_payload(to_phone: str, body: str, button: str, rows: list[tuple[str, str]]) -> dict:
     """Mensaje de lista nativa: el cliente toca una opción en vez de teclear
     el número. El id de cada fila ES el texto que habría tecleado ("1", "2"),

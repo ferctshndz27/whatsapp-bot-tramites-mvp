@@ -229,6 +229,20 @@ class Settings:
         # se comporta exactamente como antes de PR4/PR5 (rollback exacto).
         self.contexto_folio_enabled = os.environ.get("CONTEXTO_FOLIO_ENABLED", "0") == "1"
         self.revision_enabled = os.environ.get("REVISION_ENABLED", "0") == "1"
+        # Alta manual (ext-cse): un colaborador habilitado que le escribe al agente desde su celular
+        # deja de ser tratado como cliente y pasa a juntar el lote de un folio manual. APAGADA: un
+        # colaborador que prueba el bot como cliente quedaría secuestrado por el flujo, así que
+        # la enciende un admin desde /agente, no un despliegue.
+        self.alta_manual_enabled = os.environ.get("ALTA_MANUAL_ENABLED", "0") == "1"
+        # Segundos de silencio del colaborador antes de que el agente le pregunte por el número del
+        # cliente (B5). 30 es decisión del operador, sin distribución medida. Barandal 10-120 (las
+        # mismas cotas que el panel): abajo de 10 el agente interrumpe una ráfaga de reenvíos;
+        # arriba de 120 el colaborador cree que no lo vio. Un valor que no es número cae a 30.
+        try:
+            espera = int(os.environ.get("ALTA_MANUAL_ESPERA_S", "30"))
+        except ValueError:
+            espera = 30
+        self.alta_manual_espera_s = max(10, min(120, espera))
         # Desde cuántas palabras un mensaje es «informativo» (nlu.es_informativo, vía i). 40 es
         # decisión del operador (D12) sin distribución medida. Barandal 15-200: abajo de 15, un «ya
         # te mandé mi acta, cuándo me la entregan» pregunta «¿es para tu folio?» y la regla

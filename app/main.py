@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import secrets
@@ -15,6 +16,7 @@ from app import (
     activity,
     agent_settings,
     agente_studio,
+    alta_manual_barrido,
     archive,
     authlog,
     catalog_admin,
@@ -79,7 +81,10 @@ async def lifespan(_app: FastAPI):
     # Lo único que sí vive aquí y no en on_startup(): el bus de avisos del CRM necesita el event
     # loop, y este envoltorio es lo primero que corre dentro de él (app/eventos.py).
     eventos.capturar_loop()
+    # Barrido del alta manual (ext-cse B5): sin mensaje entrante nada dispara la pregunta del número.
+    barrido = asyncio.create_task(alta_manual_barrido.bucle())
     yield
+    barrido.cancel()
     eventos.soltar_loop()
 
 
