@@ -111,16 +111,28 @@ def _json(ruta: Path) -> dict:
     return json.loads(ruta.read_text(encoding="utf-8"))
 
 
+def patron_del_sitio(navegador: str, origen: str) -> str:
+    """El patrón del permiso de sitio. Firefox no admite puertos en los patrones (MDN, «Match
+    patterns»): con puerto no coincide con nada y la consulta del panel a /health cae en CORS. Ahí
+    va sin puerto, que vale para cualquiera de ese host; el origen exacto viaja en homepage_url."""
+    if navegador == "firefox":
+        partes = urlsplit(origen)
+        return f"{partes.scheme}://{partes.hostname}/*"
+    return f"{origen}/*"
+
+
 def manifiesto(navegador: str, origen: str) -> dict:
     comun = _json(AQUI / "manifiesto" / "comun.json")
     capa = _json(AQUI / "manifiesto" / f"{navegador}.json")
-    # Sin fusión profunda: una clave vive en un solo archivo, y el host solo lo pone --crm.
+    # Sin fusión profunda: una clave vive en un solo archivo, y el CRM solo lo pone --crm.
     repetidas = sorted(comun.keys() & capa.keys())
     if repetidas:
         raise ValueError(f"manifiesto/{navegador}.json repite claves de comun.json: {repetidas}")
-    if "host_permissions" in comun or "host_permissions" in capa:
-        raise ValueError("host_permissions no se escribe a mano: lo pone --crm")
-    return {**comun, **capa, "host_permissions": [f"{origen}/*"]}
+    for clave in ("host_permissions", "homepage_url"):
+        if clave in comun or clave in capa:
+            raise ValueError(f"{clave} no se escribe a mano: lo pone --crm")
+    # homepage_url es el origen exacto del CRM, del que crm.js saca sus direcciones.
+    return {**comun, **capa, "homepage_url": f"{origen}/", "host_permissions": [patron_del_sitio(navegador, origen)]}
 
 
 def paquete(navegador: str, origen: str) -> dict[str, bytes]:

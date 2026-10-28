@@ -74,8 +74,8 @@ def test_chrome_pide_solo_el_panel_lateral_y_la_regla_de_cabeceras(dist):
 
 
 def test_firefox_no_pide_ningun_permiso(dist):
-    """En Firefox el panel ES la página del CRM (`sidebarAction.setPanel`, spike S1): no hay marco
-    ni cabeceras que tocar, así que tampoco regla."""
+    """En Firefox el panel navega a la página del CRM misma (spike S1): no hay marco ni cabeceras
+    que tocar, así que tampoco regla."""
     assert _manifiesto(dist, "firefox").get("permissions", []) == []
 
 
@@ -245,6 +245,26 @@ def test_acepta_el_crm_de_produccion_y_uno_local_para_probar(tmp_path, crm, host
     r = _construir("--crm", crm, "--navegador", "chrome", salida=tmp_path)
     assert r.returncode == 0, r.stderr
     assert _manifiesto(tmp_path, "chrome")["host_permissions"] == [host]
+
+
+@pytest.mark.parametrize("navegador", NAVEGADORES)
+@pytest.mark.parametrize("crm", [CRM, "http://127.0.0.1:8765"])
+def test_el_codigo_toma_el_origen_exacto_de_homepage_url(tmp_path, navegador, crm):
+    """ext-cse E2: crm.js arma /crm y /health con homepage_url. Es el origen exacto, con puerto,
+    aunque el permiso de sitio de Firefox no lo lleve."""
+    r = _construir("--crm", crm, "--navegador", navegador, salida=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert _manifiesto(tmp_path, navegador)["homepage_url"] == f"{crm}/"
+
+
+def test_en_firefox_el_permiso_de_sitio_no_lleva_puerto(tmp_path):
+    """ext-cse E2: Firefox no admite puertos en los patrones (MDN, «Match patterns»). Con
+    «http://127.0.0.1:8765/*» el permiso no coincide con nada y la consulta del panel a /health cae
+    en CORS (comprobado en Firefox 158). Sin puerto vale para cualquiera de ese host. Chrome sí
+    respeta el puerto: lo comprueba la prueba anterior."""
+    r = _construir("--crm", "http://127.0.0.1:8765", "--navegador", "firefox", salida=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert _manifiesto(tmp_path, "firefox")["host_permissions"] == ["http://127.0.0.1/*"]
 
 
 # --- Reconstruir ------------------------------------------------------------------------------

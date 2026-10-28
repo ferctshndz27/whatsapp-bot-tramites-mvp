@@ -7,8 +7,13 @@
 // la extensión con construir.py contra ese bot, la instala por CDP y comprueba:
 //   1. Chrome la acepta sin errores ni advertencias del manifiesto.
 //   2. El fondo instaló la regla con el id de la extensión (iniciador y frame-ancestors).
-//   3. El panel muestra el CRM en su marco: /login sin sesión; tras entrar, /crm.
-//   4. Fuera del panel el CRM sigue sin poder enmarcarse: ni otro sitio ni el propio CRM.
+//   3. Sin el CRM (en mantenimiento, luego caído), el panel lo dice, no abre el marco, el botón
+//      Reintentar vuelve a preguntar y el aviso cambia solo (E2).
+//   4. Al volver el CRM, el panel lo abre solo en su marco: /login sin sesión; tras entrar, /crm.
+//   5. Si falta la regla (primer arranque), el panel la pide al fondo antes de crear el marco (E2).
+//   6. Sin red, el panel lo dice y abre el CRM en cuanto vuelve (E2).
+//   7. Sin permiso de sitio, el panel lo pide (no culpa al CRM) y abre el CRM al recibirlo (E2).
+//   8. Fuera del panel el CRM sigue sin poder enmarcarse: ni otro sitio ni el propio CRM.
 // Termina en 1 si algo falla. Sin cabeza no hay panel lateral: panel.html se abre en una pestaña,
 // que para el marco es lo mismo (mismo origen chrome-extension://, mismo iniciador).
 //
@@ -86,15 +91,24 @@ async function evaluar(cdp, sesion, expression) {
   return r.result.value;
 }
 
-async function pestana(cdp, url) {
+const RED = { latency: 0, downloadThroughput: -1, uploadThroughput: -1 };
+
+// Pestaña nueva en `url`. Con sinRed, Chrome la deja fuera de línea ANTES de navegar: la página
+// arranca con navigator.onLine en false y recibe «online» cuando se le devuelve la red.
+async function pestana(cdp, url, { sinRed = false } = {}) {
   const { targetId } = await cdp.enviar("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await cdp.enviar("Target.attachToTarget", { targetId, flatten: true });
+  if (sinRed) {
+    await cdp.enviar("Network.enable", {}, sessionId);
+    await cdp.enviar("Network.emulateNetworkConditions", { offline: true, ...RED }, sessionId);
+  }
   await cdp.enviar("Page.enable", {}, sessionId);
   await cdp.enviar("Page.navigate", { url }, sessionId);
   sesiones.set(sessionId, targetId);
   return sessionId;
 }
 const sesiones = new Map(); // sesión → pestaña, para cerrarla
+const cerrar = (cdp, sesion) => cdp.enviar("Target.closeTarget", { targetId: sesiones.get(sesion) });
 
 // El fondo (service worker) de la extensión: ahí vive la regla y el comportamiento del ícono.
 async function fondoDe(cdp, id) {
@@ -107,10 +121,44 @@ async function fondoDe(cdp, id) {
   return sessionId;
 }
 
+// Lo que el panel le muestra al colaborador mientras no puede abrir el CRM.
+const leerAviso = (cdp, sesion) =>
+  evaluar(cdp, sesion, `(() => {
+    const visible = (selector) => Boolean(document.querySelector(selector) && !document.querySelector(selector).hidden);
+    return {
+      titulo: document.querySelector("#titulo")?.textContent ?? null,
+      detalle: document.querySelector("#detalle")?.textContent ?? null,
+      reintentar: visible("#reintentar"),
+      permiso: visible("#dar-permiso"),
+      marco: Boolean(document.querySelector("iframe")),
+    };
+  })()`);
+
+// Clic de verdad (con gesto de usuario, como el de una persona) en el centro de un elemento.
+async function clicReal(cdp, sesion, selector) {
+  const { x, y } = await evaluar(cdp, sesion, `(() => {
+    const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })()`);
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await cdp.enviar("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, sesion);
+  }
+}
+
+// El acceso a sitios que la persona puede quitarle a la extensión desde chrome://extensions o el
+// menú de extensiones. Se cambia desde esa página, que tiene la API.
+const accesoASitios = (cdp, ajustes, id, hostAccess) =>
+  evaluar(cdp, ajustes, `chrome.developerPrivate.updateExtensionConfiguration(${JSON.stringify({ extensionId: id, hostAccess })})`);
+const avisoQue = (cdp, sesion, titulo, timeout = 10000) =>
+  hasta(async () => {
+    const aviso = await leerAviso(cdp, sesion);
+    return aviso.titulo === titulo ? aviso : undefined;
+  }, { timeout });
+
 // El marco hacia el CRM es de otro sitio que su padre, así que Chrome lo aísla en su propio
 // objetivo de CDP («iframe»): si aparece y carga, la regla dejó pasarlo. El objetivo existe desde
 // que empieza la navegación, así que se espera a que el documento de esa ruta termine de cargar.
-async function marcoDelCrm(cdp, crm, ruta) {
+async function marcoDelCrm(cdp, crm, ruta, timeout = 15000) {
   return hasta(async () => {
     const { targetInfos } = await cdp.enviar("Target.getTargets");
     const objetivo = targetInfos.find((t) => t.type === "iframe" && t.url.startsWith(crm + ruta));
@@ -121,7 +169,7 @@ async function marcoDelCrm(cdp, crm, ruta) {
     if (listo) return sessionId;
     await cdp.enviar("Target.detachFromTarget", { sessionId }).catch(() => {});
     return undefined;
-  });
+  }, { timeout });
 }
 
 // URL de cada marco hijo del MISMO sitio que su pestaña, por su atributo name. Si Chrome bloquea
@@ -169,7 +217,7 @@ async function main() {
     SESSION_SECRET: "juez-ext-cse-no-usar", GEOIP_ENABLED: "0", ALTA_MANUAL_ENABLED: "0", RAG_ENABLED: "0",
     CRM_QA_REPO: REPO, CRM_QA_CLAVE: CLAVE, PYTHONUNBUFFERED: "1",
   };
-  let uvicorn, chrome, otro, cdp;
+  let uvicorn, chrome, otro, mantenimiento, cdp;
   try {
     const siembra = spawnSync(PYTHON, [path.join(REPO, "scripts", "qa_crm_seed.py")], { cwd: REPO, env, encoding: "utf8" });
     if (siembra.status !== 0) throw new Error(`la siembra falló:\n${siembra.stdout}${siembra.stderr}`);
@@ -180,14 +228,15 @@ async function main() {
     const armado = spawnSync(PYTHON, [path.join(EXT, "construir.py"), "--crm", crm, "--navegador", "chrome", "--salida", salida], { encoding: "utf8" });
     if (armado.status !== 0) throw new Error(`construir.py falló:\n${armado.stderr}`);
 
-    uvicorn = spawn(PYTHON, ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(puerto), "--log-level", "warning"],
-      { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
-    const bitacora = [];
-    uvicorn.stdout.on("data", (d) => bitacora.push(String(d)));
-    uvicorn.stderr.on("data", (d) => bitacora.push(String(d)));
-    if (!(await hasta(async () => (await fetch(`${crm}/login`)).ok, { timeout: 40000 }))) {
-      throw new Error(`el bot no atendió /login:\n${bitacora.join("")}`);
-    }
+    // El CRM «en mantenimiento»: hasta que se levanta el bot, su puerto contesta 503 y cuenta las
+    // consultas a /health, para ver que el panel lo dice y que el botón Reintentar vuelve a preguntar.
+    let consultas = 0;
+    mantenimiento = http.createServer((req, res) => {
+      if (req.url.startsWith("/health")) consultas += 1;
+      res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+      res.end("en mantenimiento");
+    });
+    await new Promise((ok) => mantenimiento.listen(puerto, "127.0.0.1", ok));
 
     // «Otro sitio» que intenta enmarcar el CRM: otro host (localhost no es 127.0.0.1) y sin CSP.
     // Enmarca también una página de un tercer sitio, que sí carga: prueba que el juez ve los
@@ -217,9 +266,10 @@ async function main() {
 
     const { id } = await cdp.enviar("Extensions.loadUnpacked", { path: path.join(salida, "chrome") });
     criterio("Chrome instala la extensión", Boolean(id), id);
+    const urlPanel = `chrome-extension://${id}/panel.html`;
 
-    // 2. La regla, leída en el fondo ANTES de abrir el panel: un panel abierto antes de que la regla
-    // exista deja su marco bloqueado, y esa carrera del primer arranque no es lo que se juzga aquí.
+    // 2. La regla, leída en el fondo ANTES de abrir el panel: así se ve que la puso onInstalled y no
+    // el panel (que la pide igual: eso se juzga en el punto 5).
     const fondo = await fondoDe(cdp, id);
     const reglas = await hasta(async () => {
       const r = await evaluar(cdp, fondo, "chrome.declarativeNetRequest.getDynamicRules()");
@@ -235,11 +285,38 @@ async function main() {
     const comportamiento = await evaluar(cdp, fondo, "chrome.sidePanel.getPanelBehavior()");
     criterio("el ícono abre el panel lateral", comportamiento?.openPanelOnActionClick === true);
 
-    // 3. El panel muestra el CRM: primero /login, y tras entrar, /crm con la sesión.
-    const panel = await pestana(cdp, `chrome-extension://${id}/panel.html`);
+    // 3. Sin el CRM: el panel lo dice con el código que recibió y no abre el marco; el botón vuelve
+    // a preguntar, y cuando el puerto deja de contestar el aviso cambia sin que nadie toque nada.
+    const panel = await pestana(cdp, urlPanel);
+    let aviso = await avisoQue(cdp, panel, "El CRM no está disponible");
+    criterio("con el CRM en mantenimiento, el panel lo dice con su código y no abre el marco",
+      Boolean(aviso?.detalle.includes("503") && aviso.reintentar && !aviso.marco), JSON.stringify(aviso ?? (await leerAviso(cdp, panel))));
+    // Tres clics seguidos: el reintento automático (cada 5 s) suma a lo más una consulta.
+    const antes = consultas;
+    for (let i = 0; i < 3; i++) {
+      await evaluar(cdp, panel, `document.querySelector("#reintentar").click()`);
+      await esperar(400);
+    }
+    criterio("el botón Reintentar vuelve a consultar al CRM", consultas - antes >= 3, `${consultas - antes} consultas tras 3 clics`);
+    mantenimiento.closeAllConnections();
+    await new Promise((ok) => mantenimiento.close(ok));
+    aviso = await avisoQue(cdp, panel, "No se pudo conectar con el CRM", 12000);
+    criterio("si el CRM deja de contestar, el panel cambia el aviso solo",
+      Boolean(aviso?.detalle.includes(`127.0.0.1:${puerto}`) && aviso.reintentar && !aviso.marco), JSON.stringify(aviso ?? (await leerAviso(cdp, panel))));
+
+    uvicorn = spawn(PYTHON, ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(puerto), "--log-level", "warning"],
+      { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+    const bitacora = [];
+    uvicorn.stdout.on("data", (d) => bitacora.push(String(d)));
+    uvicorn.stderr.on("data", (d) => bitacora.push(String(d)));
+    if (!(await hasta(async () => (await fetch(`${crm}/login`)).ok, { timeout: 40000 }))) {
+      throw new Error(`el bot no atendió /login:\n${bitacora.join("")}`);
+    }
+
+    // 4. El mismo panel abre el CRM solo en cuanto vuelve: primero /login, y tras entrar, /crm.
     let marco = await marcoDelCrm(cdp, crm, "/login");
     const login = marco && (await hasta(async () => evaluar(cdp, marco, "Boolean(document.querySelector('#password'))")));
-    criterio("sin sesión, el marco del panel muestra el login del CRM", Boolean(login));
+    criterio("al volver el CRM, el panel lo abre solo: sin sesión, el login", Boolean(login));
     if (login) {
       await evaluar(cdp, marco, `(() => {
         document.querySelector("#username").value = "colab1";
@@ -254,14 +331,74 @@ async function main() {
     } else {
       criterio("el login dentro del marco entra al CRM", false, "no hubo login que llenar");
     }
-    await cdp.enviar("Page.navigate", { url: `chrome-extension://${id}/panel.html` }, panel);
+    await cdp.enviar("Page.navigate", { url: urlPanel }, panel);
     marco = await marcoDelCrm(cdp, crm, "/crm");
     const tablero = marco && (await hasta(async () => evaluar(cdp, marco, "Boolean(document.querySelector('#crm'))")));
     criterio("con sesión, el panel abre directo en /crm", Boolean(tablero));
 
-    // 4. Fuera del panel, nada cambia: el CRM no se deja enmarcar. Primero se cierra el panel, cuyo
-    // marco al CRM se confundiría con uno que se coló.
-    await cdp.enviar("Target.closeTarget", { targetId: sesiones.get(panel) });
+    // 5. Primer arranque: si el panel se abre antes de que onInstalled ponga la regla, se la pide al
+    // fondo antes de crear el marco. La regla se borra desde la página del panel, que tiene la API.
+    await evaluar(cdp, panel, "chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [1] })");
+    const quedan = await evaluar(cdp, panel, "chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length)");
+    await cerrar(cdp, panel);
+    const repuesto = await pestana(cdp, urlPanel);
+    marco = await marcoDelCrm(cdp, crm, "/crm");
+    const despues = await evaluar(cdp, repuesto, "chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length)");
+    criterio("si falta la regla, el panel la pide al fondo y el marco carga", quedan === 0 && Boolean(marco) && despues === 1,
+      `reglas antes del panel: ${quedan}; después: ${despues}; marco: ${marco ? "cargó" : "no cargó"}`);
+    // En el primer arranque la piden a la vez onInstalled y el panel: no deben chocar por id repetido.
+    await evaluar(cdp, repuesto, "chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [1] })");
+    const simultaneos = await evaluar(cdp, repuesto,
+      `Promise.all([1, 2, 3].map(() => chrome.runtime.sendMessage({ tipo: "asegurar-regla" })))`);
+    const tras = await evaluar(cdp, repuesto, "chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length)");
+    criterio("dos pedidos de la regla a la vez no chocan", simultaneos.every((r) => r?.ok) && tras === 1,
+      JSON.stringify({ simultaneos, reglas: tras }));
+    await cerrar(cdp, repuesto);
+
+    // 6. Sin red: el panel lo dice y no abre el marco; al volver la red abre el CRM solo.
+    const sinRed = await pestana(cdp, urlPanel, { sinRed: true });
+    aviso = await avisoQue(cdp, sinRed, "Sin conexión a internet");
+    criterio("sin red, el panel lo dice y no abre el marco", Boolean(aviso?.reintentar && !aviso.marco),
+      JSON.stringify(aviso ?? (await leerAviso(cdp, sinRed))));
+    await cdp.enviar("Network.emulateNetworkConditions", { offline: false, ...RED }, sinRed);
+    marco = await marcoDelCrm(cdp, crm, "/crm");
+    criterio("al volver la red, el panel abre el CRM solo", Boolean(marco));
+    await cerrar(cdp, sinRed);
+
+    // 7. Sin permiso de sitio la regla no aplica y /health no contesta: el panel no culpa al CRM,
+    // pide el permiso, y vuelve a empezar si se lo quitan con el CRM ya abierto.
+    await accesoASitios(cdp, ajustes, id, "ON_CLICK");
+    const sinPermiso = await pestana(cdp, urlPanel);
+    aviso = await avisoQue(cdp, sinPermiso, "Falta el permiso para conectarse con el CRM");
+    criterio("sin permiso de sitio, el panel lo pide en vez de culpar al CRM",
+      Boolean(aviso?.permiso && !aviso.reintentar && !aviso.marco && aviso.detalle.includes(`127.0.0.1:${puerto}`)),
+      JSON.stringify(aviso ?? (await leerAviso(cdp, sinPermiso))));
+    // Sin cabeza, el aviso del navegador no se ve ni se puede aceptar: se comprueba que el botón lo
+    // pide (espía sobre la API) y luego se da el permiso como desde el menú de extensiones.
+    await evaluar(cdp, sinPermiso, `(() => {
+      const original = chrome.permissions.request.bind(chrome.permissions);
+      globalThis.pedidos = [];
+      chrome.permissions.request = (p) => (pedidos.push(p), original(p));
+    })()`);
+    await clicReal(cdp, sinPermiso, "#dar-permiso");
+    const pedidos = await hasta(async () => {
+      const p = await evaluar(cdp, sinPermiso, "globalThis.pedidos");
+      return p?.length ? p : undefined;
+    }, { timeout: 3000 });
+    criterio("el botón Dar permiso le pide al navegador el permiso del CRM",
+      JSON.stringify(pedidos) === JSON.stringify([{ origins: [`${crm}/*`] }]), JSON.stringify(pedidos));
+    await accesoASitios(cdp, ajustes, id, "ON_ALL_SITES");
+    marco = await marcoDelCrm(cdp, crm, "/crm");
+    criterio("al dar el permiso, el panel abre el CRM solo", Boolean(marco));
+    await accesoASitios(cdp, ajustes, id, "ON_CLICK");
+    aviso = await avisoQue(cdp, sinPermiso, "Falta el permiso para conectarse con el CRM");
+    criterio("si quitan el permiso con el CRM abierto, el panel lo cierra y lo explica",
+      Boolean(aviso?.permiso && !aviso.marco), JSON.stringify(aviso ?? (await leerAviso(cdp, sinPermiso))));
+    await accesoASitios(cdp, ajustes, id, "ON_ALL_SITES");
+    await cerrar(cdp, sinPermiso);
+
+    // 8. Fuera del panel, nada cambia: el CRM no se deja enmarcar. Los paneles ya están cerrados:
+    // su marco al CRM se confundiría con uno que se coló.
     await pestana(cdp, `http://localhost:${puertoOtro}/`);
     const aislados = await hasta(async () => {
       const marcos = await marcosAislados(cdp);
@@ -285,6 +422,8 @@ async function main() {
     if (cdp) await cdp.enviar("Browser.close").catch(() => {});
     cdp?.cerrar();
     otro?.close();
+    mantenimiento?.closeAllConnections();
+    mantenimiento?.close();
     uvicorn?.kill();
     if (chrome && chrome.exitCode === null) await new Promise((r) => { chrome.once("exit", r); setTimeout(r, 5000); });
     for (let i = 0; i < 10; i++) {

@@ -6,11 +6,45 @@ body {
 
 body {
   font: 14px/1.4 system-ui, sans-serif;
+  color: #1d1f23;
+  background: #fff;
 }
 
 #aviso {
   margin: 1rem;
-  color: #555;
+}
+
+#titulo {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+#detalle {
+  margin: 0 0 1rem;
+  /* El gris que el CRM ya usa para texto que hay que leer (5.85:1 sobre blanco). */
+  color: #5f6572;
+}
+
+button {
+  min-height: 44px;
+  padding: 0 1.25rem;
+  font: inherit;
+  font-weight: 600;
+  color: #1d1f23;
+  background: #dcf24c;
+  border: 1px solid #1d1f23;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+button:focus-visible {
+  outline: 3px solid #1d1f23;
+  outline-offset: 2px;
 }
 
 iframe {

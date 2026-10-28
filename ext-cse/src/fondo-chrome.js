@@ -22,10 +22,11 @@ async function instalarRegla() {
   csp.value += `; frame-ancestors chrome-extension://${yo}`;
 
   // Quedan exactamente las reglas del paquete: se quitan todas las anteriores, también las de una
-  // versión vieja.
+  // versión vieja, y el id de esta aunque no esté, para que dos instalaciones a la vez (onInstalled
+  // y el panel en el primer arranque) no choquen por id repetido.
   const anteriores = await chrome.declarativeNetRequest.getDynamicRules();
   await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: anteriores.map((r) => r.id),
+    removeRuleIds: [...new Set([regla.id, ...anteriores.map((r) => r.id)])],
     addRules: [regla],
   });
 }
@@ -36,3 +37,14 @@ function alArrancar() {
 
 chrome.runtime.onInstalled.addListener(alArrancar);
 chrome.runtime.onStartup.addListener(alArrancar);
+
+// El panel la pide antes de crear el marco: en el primer arranque puede abrirse antes de que
+// onInstalled termine, y un marco que sale antes que la regla queda bloqueado (chrome-error://).
+chrome.runtime.onMessage.addListener((mensaje, _remitente, responder) => {
+  if (mensaje?.tipo !== "asegurar-regla") return false;
+  instalarRegla().then(
+    () => responder({ ok: true }),
+    (error) => responder({ ok: false, error: String(error) }),
+  );
+  return true; // la respuesta llega después, cuando la regla ya está
+});

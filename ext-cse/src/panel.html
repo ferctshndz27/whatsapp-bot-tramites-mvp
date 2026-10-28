@@ -2,11 +2,18 @@
 <html lang="es-MX">
 <head>
   <meta charset="utf-8">
-  <title>Trámites — CRM</title>
+  <title>Abriendo el CRM… — Trámites</title>
   <link rel="stylesheet" href="panel.css">
   <script type="module" src="panel.js"></script>
 </head>
 <body>
-  <p id="aviso">Abriendo el CRM…</p>
+  <main id="aviso">
+    <div role="status">
+      <h1 id="titulo">Abriendo el CRM…</h1>
+      <p id="detalle"></p>
+    </div>
+    <button id="reintentar" type="button" hidden>Reintentar</button>
+    <button id="dar-permiso" type="button" hidden>Dar permiso</button>
+  </main>
 </body>
 </html>
