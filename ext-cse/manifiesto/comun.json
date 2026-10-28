@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Trámites — CRM",
+  "version": "0.1.0",
+  "description": "Abre el CRM de Trámites en el panel lateral del navegador, junto a WhatsApp Web. No lee ni modifica WhatsApp Web.",
+  "action": {
+    "default_title": "Abrir el CRM"
+  }
+}
