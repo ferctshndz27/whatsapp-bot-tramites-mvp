@@ -1378,6 +1378,15 @@
     flex-basis: 100%;
   }
 
+  /* Las acciones ocupan su fila y, si no caben, sus botones bajan a otra en vez de empujar la
+     página a lo ancho. Con el `flex: 0 0 auto` de arriba medían lo que su contenido, así que su
+     `flex-wrap` nunca actuaba: los cuatro botones (aquí se suma «Ocultar bandeja») cabían con la
+     fuente de Ubuntu y se salían 17 px con DejaVu Sans, la de la imagen de CI. */
+  .crm .toolbar-actions {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
   .crm #crm-btn-toggle-tray { display: inline-flex; }
 
   .crm .crm-layout {
