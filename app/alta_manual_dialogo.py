@@ -225,7 +225,7 @@ def _paso_asignado(session, conv, ctx, text) -> list[str]:
         return _lista_asignados(session, conv, ctx, pagina)
     _avanzar(session, conv, ALTA_RESUMEN, ctx, asignado=elegido)
     servicio = catalog.service_by_id(ctx["servicio"])
-    quien = "tú" if elegido == ctx["colaborador"] else elegido
+    quien = "ti" if elegido == ctx["colaborador"] else elegido
     nuevo = "" if ctx.get("nombre") and session.get(Client, ctx["cliente"]) else " (cliente nuevo)"
     return [
         f"Resumen:\n• Cliente: {ctx['nombre']} · {ctx['cliente']}{nuevo}\n"
@@ -305,7 +305,7 @@ def _crear_folio(session, conv, ctx) -> list[str]:
         session.add(m)
     session.commit()
     _set_state(session, conv, "inicio")
-    quien = "tú" if ticket.assigned_to == ctx["colaborador"] else ticket.assigned_to
+    quien = "ti" if ticket.assigned_to == ctx["colaborador"] else ticket.assigned_to
     return [f"Listo ✅ Creé el folio #{ticket.id} ({ticket.service_name}) de {ticket.client_name}, asignado a {quien}."]
 
 

@@ -100,12 +100,14 @@ def test_el_camino_feliz_crea_el_folio_y_muda_el_material(s):
     _dice(s, _nombre_servicio())
     assert _estado(s) == ALTA_ASIGNADO
     resumen = _dice(s, "1")[0]
-    assert "Juan Pérez" in resumen and _nombre_servicio() in resumen and "tú" in resumen
+    # Tras la preposición va «ti» («asignado a ti»), no «tú».
+    assert "Juan Pérez" in resumen and _nombre_servicio() in resumen and "• Asignado a: ti\n" in resumen, resumen
     assert _estado(s) == ALTA_RESUMEN
     # B8: el «sí» del resumen primero pide el consentimiento para invitar desde A.
     assert "contactemos desde ese número" in _dice(s, "sí")[0]
     assert _estado(s) == conversation.ALTA_CONSENT
-    assert _dice(s, "sí")[0].startswith("Listo ✅ Creé el folio #")
+    listo = _dice(s, "sí")[0]
+    assert listo.startswith("Listo ✅ Creé el folio #") and listo.endswith(", asignado a ti."), listo
     (t,) = _folios(s)
     assert (t.phone, t.service_id, t.assigned_to, t.origen) == (CLIENTE, SERVICIO, "ana", "manual")
     assert t.status == TicketStatus.TOMADO and t.agent_active is False
