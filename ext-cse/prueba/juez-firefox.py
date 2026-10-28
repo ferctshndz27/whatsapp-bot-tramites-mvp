@@ -167,6 +167,24 @@ const { ExtensionPermissions } = ChromeUtils.importESModule("resource://gre/modu
 const extension = WebExtensionPolicy.getByID(id).extension;
 ExtensionPermissions[accion](id, { permissions: [], origins: [origen] }, extension).then(() => listo(true), (e) => listo(String(e)));
 """
+# En el contexto «content»: el estado de la ayuda «¿Folio manual?» (E4) en la página del CRM.
+ESTADO_AYUDA = """
+const d = document.querySelector("#crm-dlg-ayuda-folio");
+const r = d && d.open ? d.getBoundingClientRect() : null;
+const ancho = document.documentElement.clientWidth;
+return { abierto: !!d && d.open, modal: !!d && d.open && d.matches(":modal"),
+         pasos: d ? d.querySelectorAll("ol.ayuda-pasos > li").length : 0, ancho,
+         cabe: !r || (r.left >= 0 && r.right <= ancho),
+         scrollX: document.documentElement.scrollWidth > ancho,
+         foco: document.activeElement ? document.activeElement.id : null };
+"""
+# Foco + clic en el botón de la barra, como quien lo activa con el teclado; null si no se ve.
+ABRIR_AYUDA = """
+const b = document.querySelector("#crm-btn-ayuda-folio");
+if (!b || !b.getClientRects().length) return null;
+b.focus(); b.click();
+""" + ESTADO_AYUDA
+ESCAPE = "\ue00c"  # tecla Escape en las acciones de WebDriver
 # Errores que juntó la consola del navegador del código de la extensión: excepciones y console.error.
 ERRORES = """
 const [raiz] = arguments;
@@ -287,6 +305,34 @@ def main() -> int:
         ff.js(NAVEGAR_PANEL, f"{crm}/crm?chat=%2B52+1+55+0000+0011")
         p = panel_en(f"/crm?chat={ANA}")
         criterio("«Ir al cliente»: el número pegado abre su conversación en el panel", bool(p), json.dumps(p or panel()))
+
+        # E4. La ayuda «¿Folio manual?» es parte de la página del CRM que el panel muestra, y el panel
+        # no se toca desde aquí: se prueba esa misma página en una pestaña tan angosta como Firefox la
+        # deja (no baja de 500 px; los 360–400 px de un panel los cubren el juez del CRM y el de Chrome),
+        # con el panel cerrado para que no le quite ancho. Firefox debe abrirla como modal, sin scroll
+        # horizontal, y cerrarla con una tecla Escape real. El paso 3 vuelve a abrir el panel.
+        ff.js("SidebarController.hide(); return true;")
+        ff.contexto("content")
+        rect = ff("GET", "/window/rect")
+        ayuda = tras_escape = None
+        try:
+            ff("POST", "/window/rect", {"width": 420, "height": 900})
+            ff("POST", "/url", {"url": f"{crm}/crm"})
+            ayuda = hasta(lambda: ff.js(ABRIR_AYUDA))
+            if ayuda and ayuda["abierto"]:
+                tecla = [{"type": "keyDown", "value": ESCAPE}, {"type": "keyUp", "value": ESCAPE}]
+                ff("POST", "/actions", {"actions": [{"type": "key", "id": "teclado", "actions": tecla}]})
+                tras_escape = hasta(lambda: (e := ff.js(ESTADO_AYUDA)) and not e["abierto"] and e, timeout=5)
+                ff("DELETE", "/actions")
+        finally:
+            ff("POST", "/window/rect", {"width": rect["width"], "height": rect["height"]})
+            ff.contexto("chrome")
+        criterio("«¿Folio manual?» abre la ayuda del CRM en Firefox: modal, 6 pasos y cabe en la ventana más angosta",
+                 bool(ayuda and ayuda["abierto"] and ayuda["modal"] and ayuda["pasos"] == 6 and ayuda["cabe"]
+                      and not ayuda["scrollX"] and ayuda["ancho"] <= 520 and ayuda["foco"] == "crm-ayuda-folio-cerrar"),
+                 json.dumps(ayuda))
+        criterio("Escape cierra la ayuda y el foco vuelve al botón",
+                 bool(tras_escape and tras_escape["foco"] == "crm-btn-ayuda-folio"), json.dumps(tras_escape))
 
         # 3. Sin red.
         ff.js("Services.io.offline = true; return true;")

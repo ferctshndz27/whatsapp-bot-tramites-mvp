@@ -1249,14 +1249,27 @@
 }
 .crm .qr-gestionar:hover { background: var(--wa-soft); border-color: var(--wa-teal-2); }
 
-/* Sin tope de alto propio: el <dialog> modal ya se limita a la ventana y scrollea solo. */
-.crm .dlg-respuestas { width: min(92vw, 560px); }
+/* Sin tope de alto propio: el <dialog> modal ya se limita a la ventana y scrollea solo.
+   La ayuda «Folio manual» (E4 de ext-cse) usa la misma caja. */
+.crm .dlg-respuestas,
+.crm .dlg-ayuda { width: min(92vw, 560px); }
 
-.crm .dlg-respuestas .dlg-cuerpo {
+.crm .dlg-respuestas .dlg-cuerpo,
+.crm .dlg-ayuda .dlg-cuerpo {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 20px;
+}
+
+/* Los pasos de la ayuda: numerados por el <ol>, con aire entre uno y otro. */
+.crm .ayuda-pasos {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 /* .crm dialog form le da 20 px de relleno al único form del diálogo de etapas;

@@ -68,6 +68,7 @@ from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
 from app.authlog import sesion_vigente
 from app.clients import MAX_NOMBRE, _cliente_visible, folio_vigente, folios_escribibles
+from app.config import settings
 from app.db import get_session
 from app.inbox import QUICK_REPLIES
 from app.models import (
@@ -748,6 +749,25 @@ def _datos_bootstrap(session, user: str, telefono: str | None, abrir_respuestas:
     }
 
 
+def _ayuda_folio_manual(session, user: str) -> dict:
+    """Lo que la ayuda «Folio manual» de la barra (E4 de ext-cse) necesita para decir la verdad.
+
+    La ayuda explica el alta manual: el colaborador reenvía al agente desde SU celular y el agente
+    le pregunta lo demás (`app/alta_manual_dialogo.py`). Dos cosas la volverían falsa si no se
+    miraran: la perilla apagada, porque entonces el agente lo atiende como a un cliente, y un
+    usuario sin celular válido, porque el agente lo reconoce comparando ese número normalizado
+    (`conversation._colaborador_del_alta`). Va aparte de `datos` a propósito: el celular es para
+    la plantilla y no tiene por qué viajar en el JSON que lee crm.js."""
+    fila = session.exec(select(User).where(User.username == user)).first()
+    celular = (fila.phone or "").strip() if fila else ""
+    return {
+        "encendida": settings.alta_manual_enabled,
+        "espera_s": settings.alta_manual_espera_s,
+        # Tal como lo tecleó al registrarse, que es como lo reconoce; vacío si no sirve.
+        "celular": celular if normalize_phone(celular) else "",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Página
 # ---------------------------------------------------------------------------
@@ -766,8 +786,9 @@ def crm_page(request: Request, chat: str = "", respuestas: str = ""):
     # `respuestas=1` abre «Mis respuestas» al cargar: es a donde reenvía la ruta vieja /replies.
     with get_session() as session:
         datos = _datos_bootstrap(session, user, telefono, abrir_respuestas=respuestas == "1")
+        ayuda_folio = _ayuda_folio_manual(session, user)
     return templates.TemplateResponse(
-        request, "crm.html", {"request": request, "user": user, "datos": datos}
+        request, "crm.html", {"request": request, "user": user, "datos": datos, "ayuda_folio": ayuda_folio}
     )
 
 

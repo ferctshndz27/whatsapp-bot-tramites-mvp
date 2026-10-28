@@ -394,6 +394,85 @@ def test_ir_al_cliente_abre_su_chat_con_el_numero_como_lo_peguen():
     assert "Ir al cliente" in form
 
 
+def _ayuda_folio(html: str) -> str:
+    """El <dialog> de la ayuda «Folio manual», con los espacios y saltos de línea colapsados."""
+    import re
+
+    dlg = re.search(r'<dialog id="crm-dlg-ayuda-folio".*?</dialog>', html, re.S)
+    assert dlg, "/crm ya no trae el diálogo de la ayuda «Folio manual»"
+    return " ".join(dlg.group(0).split())
+
+
+def _celular(username: str, phone: str | None) -> None:
+    with Session(db.engine) as s:
+        u = s.exec(select(User).where(User.username == username)).one()
+        u.phone = phone
+        s.add(u)
+        s.commit()
+
+
+def test_la_ayuda_del_folio_manual_dice_los_pasos_del_agente_en_orden(monkeypatch):
+    """La ayuda «Folio manual» de la barra (E4 de la extensión del panel lateral) cuenta el alta
+    manual como la hace el agente (app/alta_manual_barrido.py y app/alta_manual_dialogo.py):
+    reenviar desde el celular del usuario, esperar la pregunta, número, nombre si es nuevo,
+    trámite y asignado, resumen con la invitación, y el folio con el material en su chat. Si la
+    ayuda se desordena o pierde un paso, el colaborador sigue instrucciones que el agente no da."""
+    import re
+
+    monkeypatch.setattr(settings, "alta_manual_enabled", True)
+    monkeypatch.setattr(settings, "alta_manual_espera_s", 45)
+    _celular("colab1", "+52 1 33 1234 5678")
+    html = _sesion("colab1").get("/crm").text
+    barra = re.search(r'<header class="crm-toolbar">.*?</header>', html, re.S)
+    assert barra, "/crm ya no trae la barra"
+    assert 'id="crm-btn-ayuda-folio"' in barra.group(0), "el botón de la ayuda ya no está en la barra"
+    assert 'aria-controls="crm-dlg-ayuda-folio"' in barra.group(0)
+    texto = _ayuda_folio(html)
+    pasos = re.findall(r"<li>(.*?)</li>", texto)
+    debe_decir = (
+        "Desde el celular registrado en tu usuario (+52 1 33 1234 5678), reenvíale al WhatsApp del agente",
+        "espera unos 45 segundos: el agente te va a preguntar el número de WhatsApp del cliente",
+        "Confirma el número con «Sí» o responde «Corregir» para escribirlo de nuevo. Si el cliente es nuevo, el agente te pide su nombre.",
+        "Elige el trámite de la lista (o escribe su nombre) y a quién se lo asignas",
+        "Revisa el resumen y responde «Sí» («No» te deja cambiar el trámite). Si el cliente todavía no acepta mensajes del agente",
+        "lo que reenviaste queda en el chat del cliente, aquí en el CRM",
+    )
+    assert len(pasos) == len(debe_decir), pasos
+    for paso, frase in zip(pasos, debe_decir):
+        assert frase in paso, (frase, paso)
+    assert "escribe «cancelar» en cualquier momento" in texto
+    # Encendida y con celular, ningún aviso; sí la advertencia de que todo lo que mande cuenta.
+    assert "crm-ayuda-folio-apagada" not in texto and "crm-ayuda-folio-sin-celular" not in texto
+    assert "el agente toma todo lo que le mandes desde ese celular" in texto
+
+
+def test_la_ayuda_del_folio_manual_avisa_si_esta_apagada_o_falta_el_celular(monkeypatch):
+    """Con la perilla apagada el agente atiende al colaborador como a un cliente, y sin un celular
+    válido en su usuario no lo reconoce (conversation._colaborador_del_alta): en los dos casos la
+    ayuda lo dice, en vez de prometer un folio que no va a nacer. El aviso nombra la perilla con
+    la etiqueta que muestra el Estudio, para que el admin la encuentre."""
+    from app.agent_settings import CONFIG_EDITABLE
+
+    monkeypatch.setattr(settings, "alta_manual_enabled", False)
+    texto = _ayuda_folio(_sesion("colab1").get("/crm").text)
+    assert 'id="crm-ayuda-folio-apagada"' in texto, "apagada, la ayuda no avisa"
+    assert f"«{CONFIG_EDITABLE['alta_manual_enabled'].etiqueta}»" in texto
+    # colab1 nació sin celular (como todo usuario que da de alta un admin en /users).
+    assert 'id="crm-ayuda-folio-sin-celular"' in texto and "Desde tu celular," in texto
+    assert "el agente toma todo lo que le mandes" not in texto
+
+    # Un celular que no se puede normalizar cuenta como ninguno: el agente tampoco lo reconocería.
+    monkeypatch.setattr(settings, "alta_manual_enabled", True)
+    _celular("colab1", "12345")
+    texto = _ayuda_folio(_sesion("colab1").get("/crm").text)
+    assert "crm-ayuda-folio-apagada" not in texto, "encendida, la ayuda sigue diciendo que está apagada"
+    assert 'id="crm-ayuda-folio-sin-celular"' in texto and "12345" not in texto
+
+    _celular("colab1", "33 1234 5678")
+    texto = _ayuda_folio(_sesion("colab1").get("/crm").text)
+    assert "crm-ayuda-folio-sin-celular" not in texto and "(33 1234 5678)" in texto
+
+
 # ---------------------------------------------------------------------------
 # Tablero: alcance, forma y conteos
 # ---------------------------------------------------------------------------

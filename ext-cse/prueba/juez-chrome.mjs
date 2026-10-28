@@ -358,6 +358,49 @@ async function main() {
       chat?.nombre === "Ana Lucía Ramírez" && chat?.url === `/crm?chat=${ANA}`,
       enviado ? JSON.stringify(chat ?? null) : "el CRM del panel no tiene el campo «Ir al cliente»");
 
+    // E4. La ayuda «¿Folio manual?» también vive en la barra del CRM: dentro del marco abre como
+    // modal y, al ancho de un panel lateral (360 px), cabe sin scroll horizontal; Escape (tecla real,
+    // que Chrome entrega al marco con el foco) la cierra sin cerrar el chat de atrás.
+    const ESTADO_AYUDA = `(() => {
+      const d = document.querySelector("#crm-dlg-ayuda-folio");
+      const r = d?.open ? d.getBoundingClientRect() : null;
+      return {
+        abierto: d?.open === true, modal: !!d?.open && d.matches(":modal"),
+        pasos: d ? d.querySelectorAll("ol.ayuda-pasos > li").length : 0,
+        cabe: !r || (r.left >= 0 && r.right <= document.documentElement.clientWidth),
+        scrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        foco: document.activeElement?.id || null,
+        chat: document.querySelector("#crm")?.classList.contains("chat-abierto") ?? false,
+      };
+    })()`;
+    await cdp.enviar("Emulation.setDeviceMetricsOverride", { width: 360, height: 800, deviceScaleFactor: 1, mobile: false }, panel);
+    let ayuda = null;
+    let trasEscape = null;
+    try {
+      ayuda = conChat && (await hasta(async () => evaluar(cdp, conChat, `(() => {
+        const b = document.querySelector("#crm-btn-ayuda-folio");
+        if (!b || !b.getClientRects().length) return undefined;
+        if (!document.querySelector("#crm-dlg-ayuda-folio")?.open) { b.focus(); b.click(); }
+        return ${ESTADO_AYUDA};
+      })()`).catch(() => undefined), { timeout: 8000 }));
+      if (ayuda?.abierto) {
+        for (const type of ["rawKeyDown", "keyUp"]) {
+          await cdp.enviar("Input.dispatchKeyEvent", { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 }, panel);
+        }
+        trasEscape = await hasta(async () => {
+          const e = await evaluar(cdp, conChat, ESTADO_AYUDA);
+          return e.abierto ? undefined : e;
+        }, { timeout: 5000 });
+      }
+    } finally {
+      await cdp.enviar("Emulation.clearDeviceMetricsOverride", {}, panel);
+    }
+    criterio("«¿Folio manual?» abre la ayuda en el panel: modal, 6 pasos y cabe a 360 px",
+      Boolean(ayuda?.abierto && ayuda.modal && ayuda.pasos === 6 && ayuda.cabe && !ayuda.scrollX && ayuda.foco === "crm-ayuda-folio-cerrar"),
+      JSON.stringify(ayuda ?? "el CRM del panel no tiene el botón «¿Folio manual?»"));
+    criterio("Escape cierra la ayuda del panel sin cerrar el chat y el foco vuelve al botón",
+      Boolean(trasEscape && trasEscape.chat && trasEscape.foco === "crm-btn-ayuda-folio"), JSON.stringify(trasEscape));
+
     // 5. Primer arranque: si el panel se abre antes de que onInstalled ponga la regla, se la pide al
     // fondo antes de crear el marco. La regla se borra desde la página del panel, que tiene la API.
     await evaluar(cdp, panel, "chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [1] })");

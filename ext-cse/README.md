@@ -57,6 +57,16 @@ guiones o paréntesis) y «Ir» abre su conversación. Es un GET a `/crm?chat=`:
 al formato canónico con `normalize_phone` (`app/crm.py`, `crm_page`). La extensión no lee WhatsApp Web ni
 guarda números.
 
+### ¿Folio manual?
+
+El botón «¿Folio manual?» de la misma barra abre una ayuda con los pasos para abrirle un folio a un cliente
+que se atendió desde el celular: reenviarle al agente su material desde el celular registrado en el
+usuario, esperar la pregunta del número y seguir el diálogo del agente hasta el folio
+(`app/alta_manual_barrido.py` y `app/alta_manual_dialogo.py`). La pinta el servidor con el estado real
+(`app/crm.py`, `_ayuda_folio_manual`): avisa si la perilla «Alta manual de folios por colaboradores» del
+Estudio está apagada o si el usuario no tiene un celular que el agente pueda reconocer, y dice cuántos
+segundos esperar. Si el diálogo del agente cambia, la ayuda también.
+
 ## Probar
 
     .venv/bin/python -m pytest tests/test_ext_cse_manifiesto.py -q   # manifiestos, regla y construir.py
@@ -66,7 +76,8 @@ guarda números.
 
 Los dos jueces levantan el bot con una base temporal sembrada (`scripts/qa_crm_seed.py`), instalan la
 extensión en un perfil temporal y recorren el panel: el CRM en mantenimiento (503) y luego caído, el CRM
-que vuelve (login y, tras entrar, `/crm`), «Ir al cliente» con un número pegado, sin red y sin permiso de
+que vuelve (login y, tras entrar, `/crm`), «Ir al cliente» con un número pegado, la ayuda «¿Folio manual?»
+(modal, cabe en un ancho de panel y Escape la cierra), sin red y sin permiso de
 sitio. El de Chrome comprueba además
 la regla del marco (solo deja enmarcar a la extensión, y aguanta dos instalaciones a la vez) y que Chrome
 no reporte errores ni advertencias. El de Firefox abre el panel lateral de verdad y lo lee desde el
