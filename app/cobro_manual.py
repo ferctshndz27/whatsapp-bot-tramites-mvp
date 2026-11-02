@@ -81,9 +81,12 @@ def _current_user(request: Request) -> str | None:
 def _busqueda(vista, user: str, termino: str):
     """Misma regla que el buscador de /clients (nombre, alias, teléfono parcial o canónico):
     si aquí se buscara distinto, el asesor concluiría que no existe y lo daría de alta dos veces."""
-    patron = f"%{termino}%"
+    # `%` y `_` del término son texto, no comodines: «%%» listaría todo el alcance.
+    escapado = termino.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    patron = f"%{escapado}%"
     canonico = normalize_phone(termino)
-    condiciones = [Client.name.ilike(patron), Client.alias.ilike(patron), Client.phone.like(patron)]
+    condiciones = [Client.name.ilike(patron, escape="\\"), Client.alias.ilike(patron, escape="\\"),
+                   Client.phone.like(patron, escape="\\")]
     if canonico:
         condiciones.append(Client.phone == canonico)
     return (
