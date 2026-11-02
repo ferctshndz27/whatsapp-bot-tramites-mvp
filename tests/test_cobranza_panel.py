@@ -289,7 +289,8 @@ def test_47_el_listado_pagina_y_los_totales_son_de_toda_la_cartera(entorno):
     segunda = cliente.get("/cobros?pagina=2")
     assert segunda.status_code == 200
     # 107 en total: 100 en la primera página y 7 en la segunda.
-    assert primera.text.count("<td>") > segunda.text.count("<td>")
+    # Una celda «#» por fila (las celdas llevan data-label desde que el panel las pinta como tarjetas).
+    assert primera.text.count('data-label="#"') > segunda.text.count('data-label="#"')
     assert "CURP 0" in segunda.text      # el más viejo cae al final
     assert "CURP 0" not in primera.text
 

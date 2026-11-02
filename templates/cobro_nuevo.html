@@ -2,7 +2,8 @@
 {% block title %}Nuevo cobro{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ static('css/cobro-nuevo.css') }}">{% endblock %}
 {% block content %}
-<h1>Nuevo cobro</h1>
+{% set en_marco = (estado_peticion.embebido | default(false)) if estado_peticion else false %}
+{% if not en_marco %}<h1>Nuevo cobro</h1>{% endif %}
 
 {% if modo == 'prueba' %}
 <div class="banner-warn" role="status">Stripe está en <strong>modo prueba</strong>: las ligas no cobran dinero real.</div>

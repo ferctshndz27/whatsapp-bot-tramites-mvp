@@ -1,7 +1,14 @@
 # ext-cse
 
-Extensión de Chrome y Firefox (WebExtension MV3) que muestra el CRM del bot en un panel lateral junto a
-WhatsApp Web. No inyecta nada en la página de WhatsApp ni lee sus mensajes.
+Extensión de Chrome y Firefox (WebExtension MV3) que muestra el CRM del bot junto a WhatsApp Web.
+
+- Chrome: el ícono pone el CRM a la derecha de la página de la pestaña, con 1/3 del ancho de la ventana;
+  la página se encoge a los 2/3 restantes. Chrome no deja fijar el ancho del panel lateral, por eso se
+  inyecta un marco (`alternarPanelEnPagina`, en `src/fondo-chrome.js`). Un segundo clic en el ícono, o la ×
+  de su cabecera, lo quita. En páginas donde no se puede inyectar (`chrome://`, la tienda) abre el panel
+  lateral de siempre. Solo cambia el ancho de la página: no lee su contenido ni sus mensajes.
+- Firefox: panel lateral (el ancho lo fija quien lo arrastra; Firefox no ofrece otra cosa sin permisos
+  de sitio).
 
 El plan de desarrollo vive en `02-DOCS/wiki/ftd/ext-cse.md` (local, no versionado).
 
@@ -20,12 +27,14 @@ para `localhost`/`127.0.0.1`, para probar contra un bot local.
 |---|---|
 | `manifiesto/` | `comun.json` y una capa por navegador. Una clave vive en un solo archivo; el CRM no se escribe a mano. |
 | `src/` | El código que viaja. Ningún archivo nombra una URL. |
-| `prueba/` | Los jueces de Chrome y Firefox reales. |
+| `prueba/` | Los jueces de Chrome y Firefox reales. `probar-panel.mjs` comprueba el 1/3 de ancho en una página con CSP estricta. |
 | `spikes/` | Pruebas descartables de la fase 1 (S1). Locales: no se versionan ni viajan en el paquete. |
 
 Permisos:
 
-- Chrome: `sidePanel` y `declarativeNetRequest`. El bot prohíbe que lo enmarquen (`X-Frame-Options` y
+- Chrome: `activeTab` y `scripting` (poner el panel en la pestaña donde se hizo clic, solo en ese momento:
+  no hay acceso a otros sitios), `sidePanel` (respaldo) y `declarativeNetRequest`. `panel.html` es
+  `web_accessible_resources` con `use_dynamic_url`, único modo de enmarcarlo en una página. El bot prohíbe que lo enmarquen (`X-Frame-Options` y
   `frame-ancestors 'none'`); la regla de `regla-marco.json` lo permite solo en el marco del panel: quita
   X-Frame-Options y pone la CSP del bot —leída de `app/main.py` al armar— con `frame-ancestors` limitado
   al id de la extensión. Fuera del panel el CRM sigue sin poder enmarcarse.

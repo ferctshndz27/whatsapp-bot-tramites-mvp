@@ -69,7 +69,7 @@
 {% endif %}
 
 {% if cobros %}
-<div class="table-wrap">
+<div class="table-wrap tabla-tarjetas">
   <table>
     <thead>
       <tr>
@@ -80,17 +80,17 @@
     <tbody>
       {% for c in cobros %}
       <tr {% if c.ticket_id %}data-href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}"{% endif %}>
-        <td>{{ c.id }}</td>
-        <td>{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
-        <td>{{ c.client_name or c.phone }}</td>
-        <td>{{ c.concepto }}</td>
-        <td>
+        <td data-label="#">{{ c.id }}</td>
+        <td data-label="Folio">{% if c.ticket_id %}<a href="/tickets/{{ c.ticket_id }}?volver={{ volver_actual }}">#{{ c.ticket_id }}</a>{% else %}—{% endif %}</td>
+        <td data-label="Cliente">{{ c.client_name or c.phone }}</td>
+        <td data-label="Concepto">{{ c.concepto }}</td>
+        <td data-label="Monto">
           {{ formato_monto(c.monto_centavos, c.moneda) }}
           {% if c.monto_pagado_centavos and c.monto_pagado_centavos != c.monto_centavos %}
           <br><small class="u-c-red-ink">cobrado {{ formato_monto(c.monto_pagado_centavos, c.moneda_pagada or c.moneda) }}</small>
           {% endif %}
         </td>
-        <td>
+        <td data-label="Estado">
           {% if c.estado == 'pagado' %}<span class="badge cerrado">✓ Pagado</span>
           {% elif c.estado == 'pendiente' %}<span class="badge tomado">⏳ Pendiente</span>
           {% elif c.estado == 'cancelacion_solicitada' %}<span class="badge nuevo">⚠ Cancelación sin confirmar</span>
@@ -103,11 +103,11 @@
           {% if c.discrepancia %}<br><small class="u-c-red-ink">⚠ discrepancia</small>{% endif %}
           {% if c.disputado %}<br><small class="u-c-red-ink">⚠ en disputa</small>{% endif %}
         </td>
-        <td>
+        <td data-label="Método">
           {{ c.metodo_usado or (c.metodos_ofrecidos|replace(',', ', ')) }}
           {% if c.msi_meses_usado %}<br><small>{{ c.msi_meses_usado }} MSI</small>{% endif %}
         </td>
-        <td>
+        <td data-label="Neto">
           {% if c.neto_centavos is not none %}{{ formato_monto(c.neto_centavos, c.moneda_liquidacion or c.moneda) }}
           {% elif c.estado == 'pagado' %}<small class="u-c-text-muted">por conciliar</small>
           {% else %}—{% endif %}
@@ -122,7 +122,7 @@
            porque «cuántos días lleva» no es el mismo hecho en los ocho estados
            de RANGO. La regla completa vive en cobranza.antiguedad(); aquí solo
            se pinta, para que /cobros y /my/cobros no puedan divergir. #}
-        <td><small>
+        <td data-label="Creado"><small>
           {{ c.created_at|local }}<br>por {{ c.creado_por }}<br>
           {% set a = antiguedad(c) %}
           {% if a.vivo %}

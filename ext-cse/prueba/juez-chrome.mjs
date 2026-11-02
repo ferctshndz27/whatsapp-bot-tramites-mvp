@@ -344,9 +344,15 @@ async function main() {
       criterio("el login dentro del marco entra al CRM", false, "no hubo login que llenar");
     }
     await cdp.enviar("Page.navigate", { url: urlPanel }, panel);
+    // Al entrar, el panel abre solo «Mi día» (no se queda en blanco) y el botón queda marcado como la página actual.
+    marco = await marcoDelCrm(cdp, crm, "/my");
+    const inicial = await evaluar(cdp, panel, `document.querySelector("#barra button[aria-current=page]")?.dataset.id`);
+    criterio("con sesión, el panel abre solo «Mi día» (/my) y no queda en blanco", Boolean(marco) && inicial === "dia", `marco: ${marco ? "sí" : "no"}; botón activo: ${inicial}`);
+    // El recorrido de «WhatsApp» (E3, E4) parte de elegir ese módulo.
+    await evaluar(cdp, panel, `document.querySelector('#barra button[data-id="whatsapp"]').click()`);
     marco = await marcoDelCrm(cdp, crm, "/crm");
     const tablero = marco && (await hasta(async () => evaluar(cdp, marco, "Boolean(document.querySelector('#crm'))")));
-    criterio("con sesión, el panel abre directo en /crm", Boolean(tablero));
+    criterio("al elegir «WhatsApp», el panel abre /crm", Boolean(tablero));
 
     // E3. «Ir al cliente»: el número como lo pega un asesor de WhatsApp Web abre su conversación en
     // el panel. El envío es otra navegación del marco, iniciada por el CRM: la regla también la deja.
@@ -417,7 +423,7 @@ async function main() {
     const quedan = await evaluar(cdp, panel, "chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length)");
     await cerrar(cdp, panel);
     const repuesto = await pestana(cdp, urlPanel);
-    marco = await marcoDelCrm(cdp, crm, "/crm");
+    marco = await marcoDelCrm(cdp, crm, "/my");
     const despues = await evaluar(cdp, repuesto, "chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length)");
     criterio("si falta la regla, el panel la pide al fondo y el marco carga", quedan === 0 && Boolean(marco) && despues === 1,
       `reglas antes del panel: ${quedan}; después: ${despues}; marco: ${marco ? "cargó" : "no cargó"}`);
@@ -436,7 +442,7 @@ async function main() {
     criterio("sin red, el panel lo dice y no abre el marco", Boolean(aviso?.reintentar && !aviso.marco),
       JSON.stringify(aviso ?? (await leerAviso(cdp, sinRed))));
     await cdp.enviar("Network.emulateNetworkConditions", { offline: false, ...RED }, sinRed);
-    marco = await marcoDelCrm(cdp, crm, "/crm");
+    marco = await marcoDelCrm(cdp, crm, "/my");
     criterio("al volver la red, el panel abre el CRM solo", Boolean(marco));
     await cerrar(cdp, sinRed);
 
@@ -463,10 +469,14 @@ async function main() {
     criterio("el botón Dar permiso le pide al navegador el permiso del CRM",
       JSON.stringify(pedidos) === JSON.stringify([{ origins: [`${crm}/*`] }]), JSON.stringify(pedidos));
     await accesoASitios(cdp, ajustes, id, "ON_ALL_SITES");
-    marco = await marcoDelCrm(cdp, crm, "/crm");
+    marco = await marcoDelCrm(cdp, crm, "/my");
     criterio("al dar el permiso, el panel abre el CRM solo", Boolean(marco));
     await accesoASitios(cdp, ajustes, id, "ON_CLICK");
-    aviso = await avisoQue(cdp, sinPermiso, "Falta el permiso para conectarse con el CRM");
+    // El texto del aviso queda en el DOM (oculto) mientras el CRM está abierto: se espera a que el panel se recargue.
+    aviso = await hasta(async () => {
+      const a = await leerAviso(cdp, sinPermiso).catch(() => undefined);
+      return a?.titulo === "Falta el permiso para conectarse con el CRM" && a.permiso && !a.marco ? a : undefined;
+    }, { timeout: 10000 });
     criterio("si quitan el permiso con el CRM abierto, el panel lo cierra y lo explica",
       Boolean(aviso?.permiso && !aviso.marco), JSON.stringify(aviso ?? (await leerAviso(cdp, sinPermiso))));
     await accesoASitios(cdp, ajustes, id, "ON_ALL_SITES");

@@ -12,6 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from sqlmodel import Session
 
 import app.db as db
+from app.utils import es_embebido
 from app import (
     activity,
     agent_settings,
@@ -199,6 +200,8 @@ async def _nav_context(request, call_next):
     # admin en base.html). Best-effort: si falla, el nav no muestra badge y el
     # request sigue normal. Corre DENTRO de SessionMiddleware (usa la sesión).
     request.state.pending_proposals = 0
+    # Panel lateral de la extensión: base.html omite el menú y la barra superior (app/utils.py).
+    request.state.embebido = es_embebido(request)
     # Los estáticos no renderizan base.html, así que su badge no lo lee nadie:
     # una navegación del panel pide la página y luego su CSS y su JS, y sin esta
     # línea cada uno de esos pedía también el COUNT. La comparación de prefijo

@@ -4,8 +4,11 @@
 {% from "partials/alias.html" import alias_tag %}
 {# URL actual (búsqueda q incluida) para que el regreso desde la ficha la
    restaure. #}
+{# En el panel de la extensión (ext-vistas V9) no va el título (la barra ya dice el módulo) ni la explicación larga del
+   alta: ocupaban la mitad del marco y el directorio quedaba fuera de vista. #}
+{% set en_marco = (estado_peticion.embebido | default(false)) if estado_peticion else false %}
 {% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
-<h1>Clientes</h1>
+{% if not en_marco %}<h1>Clientes</h1>{% endif %}
 
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
 {% if alta == 'alta' %}
@@ -18,7 +21,7 @@
 
 <div class="card">
   <h2>Registrar cliente</h2>
-  <p class="sub">Si el número ya existe, se actualiza el nombre — no se reinicia su conversación ni se pierde su historial. El nombre y el alias también se editan en la ficha del cliente.</p>
+  {% if not en_marco %}<p class="sub">Si el número ya existe, se actualiza el nombre — no se reinicia su conversación ni se pierde su historial. El nombre y el alias también se editan en la ficha del cliente.</p>{% endif %}
   <form method="post" action="/clients">
     {# La ayuda del teléfono va dentro del label: así ambas columnas miden lo
        mismo y los campos quedan alineados (antes el <small> colgaba del input

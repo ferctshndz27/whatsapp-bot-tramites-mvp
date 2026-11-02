@@ -1,0 +1,180 @@
+/* Vista embebida: la pide el panel lateral de la extensión (ext-cse) dentro de un marco.
+   base.html omite el menú y la barra superior; aquí solo se ajusta el hueco que dejaban para que
+   la vista quepa en ~320–480 px. Los colores salen de tokens.css. */
+.embebido .layout { display: block; min-height: 0; }
+.embebido .main { padding: 0.75rem; }
+
+/* WhatsApp (/crm) con un chat abierto: en un panel angosto el buscador y los botones de arriba se comían
+   la pantalla y el cuadro para escribir quedaba fuera de vista. El chat toma el alto del marco, el hilo
+   hace su propio scroll y el compositor se queda abajo. «Tablero» sigue en la fila de pestañas. */
+.embebido .crm.chat-abierto {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 1.5rem);
+}
+.embebido .crm.chat-abierto > h1,
+.embebido .crm.chat-abierto .crm-toolbar { display: none; }
+.embebido .crm.chat-abierto .crm-layout { flex: 1 1 auto; min-height: 0; }
+.embebido .crm.chat-abierto #crm-chat { height: auto; min-height: 0; }
+
+/* Mi cartera / Cobros en el panel: en ~340 px la tabla de 9 columnas dejaba Monto y Estado fuera de vista
+   (se llegaba con scroll lateral). Cada cobro pasa a ser una tarjeta: lo que se cobra y su estado arriba, el
+   resto debajo con su rótulo (`data-label`, puesto en templates/_cobros_tabla.html). La tabla normal no cambia. */
+.embebido .tabla-tarjetas { overflow-x: visible; }
+.embebido .tabla-tarjetas table,
+.embebido .tabla-tarjetas tbody,
+.embebido .tabla-tarjetas tr,
+.embebido .tabla-tarjetas td { display: block; width: 100%; box-sizing: border-box; }
+.embebido .tabla-tarjetas thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.embebido .tabla-tarjetas tr {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  border: 1px solid var(--border, #e3e5ea);
+  border-radius: 12px;
+}
+.embebido .tabla-tarjetas td {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 0.3rem 0;
+  border: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.embebido .tabla-tarjetas td::before {
+  content: attr(data-label);
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #5f6572;
+  text-align: left;
+}
+
+/* WhatsApp (/crm) en el panel: la franja de arriba (título, dos buscadores, cuatro botones) ocupaba ~290 px de
+   un marco de ~700 y empujaba el tablero fuera de vista. Se reordena SOLO aquí (la web normal no cambia y
+   los ids que usa crm.js siguen igual; crm-layout no se toca):
+   1. Sin título: la barra de la extensión ya dice en qué módulo estás.
+   2. Primero lo que se hace más: buscar. «Ir al cliente» queda debajo, con el mismo ancho, ya sin competir.
+   3. Las acciones pasan a fichas pequeñas en una fila que baja de línea solo si no caben; «Nueva etapa»,
+      la única que crea algo, queda primera y resaltada. */
+.embebido .crm:not(.chat-abierto) > h1 { display: none; }
+.embebido .crm .crm-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-height: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+.embebido .crm .search-wrap,
+.embebido .crm .ir-cliente { max-width: none; flex: none; order: 0; }
+.embebido .crm .ir-cliente { grid-template-columns: minmax(0, 1fr) auto; display: grid; }
+.embebido .crm #crm-search,
+.embebido .crm #crm-ir-cliente-tel { height: 32px; min-height: 32px; font-size: 13px; }
+.embebido .crm .toolbar-actions {
+  order: 0;
+  margin: 0;
+  gap: 6px;
+  justify-content: flex-start;
+}
+.embebido .crm .toolbar-actions .btn { min-height: 30px; padding: 4px 10px; font-size: 12px; border-radius: 15px; }
+.embebido .crm #crm-btn-new-column { order: -1; }
+.embebido .crm .tabs-bar { margin-top: 6px; padding: 2px 8px; border-radius: 12px 12px 0 0; }
+/* La barra de scroll de las pestañas sumaba ~10 px de alto; se desliza con el dedo o la rueda. */
+.embebido .crm .tabs-list { scrollbar-width: none; padding: 2px; }
+
+/* WhatsApp (/crm) en el panel: la bandeja de chats (#crm-tray) va oculta. Repetía lo que ya muestran las
+   tarjetas del tablero, y apilada sobre él empujaba las etapas ~340 px hacia abajo. Sin bandeja, su botón
+   «Ocultar bandeja» no hace nada y también se va. Los chats se abren desde las tarjetas. */
+.embebido .crm #crm-tray,
+.embebido .crm #crm-btn-toggle-tray { display: none !important; }
+
+/* Sin bandeja el tablero ocupa todo: la rejilla de crm-layout reserva por omisión una primera columna
+   para ella (--wa-tray-w), y con marcos de más de 900 px el tablero quedaba en esa columna angosta con un
+   hueco vacío a la derecha. */
+.embebido .crm .crm-layout { grid-template-columns: minmax(0, 1fr); }
+
+/* crm-layout ocupa todo el alto del marco (también en el tablero, no solo con un chat abierto): la
+   franja de arriba mide lo que mide y el resto es de crm-layout. Si el contenido no cabe, hace scroll
+   el tablero por dentro, no la página. */
+.embebido .crm {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 1.5rem);
+}
+.embebido .crm .crm-layout { flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.embebido .crm #crm-board { overflow-y: auto; }
+
+/* Pestañas de etapa (#crm-tabs-list) en el panel: rejilla de 4 por fila. Las que sobran bajan a otra fila
+   y se ven todas, sin scroll de lado. En cada una el nombre puede ocupar dos líneas (no se corta) y el
+   contador va debajo, para que quepan cuatro en ~340 px. «Todos» y «Folios cerrados» son pestañas como las demás. */
+.embebido .crm .tabs-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  overflow: visible;
+}
+.embebido .crm .tabs-list .tab {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "punto nombre" "cuenta cuenta";
+  align-items: center;
+  justify-items: center;
+  gap: 2px 4px;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 6px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.embebido .crm .tabs-list .tab-dot { grid-area: punto; width: 8px; height: 8px; }
+.embebido .crm .tabs-list .tab-name { grid-area: nombre; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; justify-self: start; }
+.embebido .crm .tabs-list .tab-count { grid-area: cuenta; min-width: 0; padding: 0 6px; font-size: 11px; }
+
+/* Filtros en fichas (.pills) dentro del panel: con diez filtros, las fichas de siempre ocupaban ~250 px y
+   las solicitudes quedaban abajo. Más chicas y juntas, siguen bajando de línea (sin scroll de lado). */
+.embebido .pills { gap: 4px; margin-bottom: 0.5rem; }
+.embebido .pills a { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+
+/* Actividad (/activity) en el panel: la gráfica de líneas se dibuja en 620 px o más y .line-wrap pide 320 de piso,
+   así que a ~340 px sacaba la página de lado (253 px). Encogerla dejaba el texto del eje en ~5 px, ilegible; mejor
+   que el recuadro de la gráfica scrollee por dentro y el resto de la página no se mueva. Los números de cada
+   gráfica siguen también como texto (lista o <details>), así que nada depende de arrastrarla. */
+.embebido .chart-flex { gap: 1rem; }
+.embebido .line-wrap { min-width: 0; max-width: 100%; overflow-x: auto; }
+.embebido .line-wrap svg { width: auto; min-width: 480px; max-width: none; }
+.embebido .donut-wrap { min-width: 0; }
+
+/* Una palabra larga sin espacios (una ruta como app/rate_card.json) no debe sacar la página de lado: en el panel
+   se parte donde haga falta. */
+.embebido .main { overflow-wrap: anywhere; }
+
+/* Un texto solo-lector (.sr-only, position:absolute) dentro de una tabla con scroll propio se salía del recuadro
+   —su contenedor posicionado era la página— y empujaba el scroll lateral de todo el marco. Con position:relative
+   el recuadro es su contenedor y lo recorta. */
+.embebido .table-wrap { position: relative; }
+
+/* Tarjetas con celdas largas o editables (Guía de trámites, Catálogo). `celda-larga`: el texto va debajo del rótulo
+   y alineado a la izquierda, no a la derecha como los datos cortos. Una celda sin `data-label` (la fila de
+   requisitos del catálogo) no pinta rótulo vacío. */
+.embebido .tabla-tarjetas td:not([data-label])::before { display: none; }
+.embebido .tabla-tarjetas td.celda-larga { display: block; text-align: left; }
+.embebido .tabla-tarjetas td.celda-larga::before { display: block; margin-bottom: 0.15rem; }
+
+/* Catálogo (/catalog) en el panel (R8: la cuadrícula editable de seis columnas no cabe en ~340 px). Cada servicio
+   pasa a ser una tarjeta con sus campos uno bajo otro, cada uno con su rótulo; los inputs siguen asociados a su
+   formulario por el atributo `form`, así que guardar, ocultar y «Lo atiendo» funcionan igual (POST 303 que vuelve
+   embebido) y catalog.js sigue marcando «sin guardar». */
+.embebido .catalog-grid td { flex-direction: column; align-items: stretch; text-align: left; gap: 0.2rem; }
+.embebido .catalog-grid .col-price,
+.embebido .catalog-grid .col-asesores,
+.embebido .catalog-grid .col-state,
+.embebido .catalog-grid .col-actions { width: 100%; text-align: left; white-space: normal; }
+.embebido .catalog-grid .col-actions { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.embebido .catalog-grid .col-actions::before { flex-basis: 100%; }
+.embebido .catalog-grid .req-row { margin-top: -0.5rem; }
+.embebido .cat-head { flex-direction: column; align-items: stretch; }
+.embebido .cat-head form { margin-left: 0; flex-wrap: wrap; }
+.embebido .cat-head input { max-width: none; flex: 1 1 140px; min-width: 0; }

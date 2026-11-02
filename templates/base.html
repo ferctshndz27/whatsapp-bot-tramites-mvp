@@ -1,3 +1,8 @@
+{# Embebido = dentro del panel lateral de la extensión (app/utils.py::es_embebido): sin menú ni
+     barra superior, que ahí los pone la barra de módulos de la extensión. #}
+{# Algunas pruebas renderizan con una petición de mentira sin `state`: de ahí el default(none). #}
+{% set estado_peticion = request.state | default(none) %}
+{% set embebido = (estado_peticion.embebido | default(false)) if estado_peticion else false %}
 <!doctype html>
 <html lang="es">
 <head>
@@ -7,14 +12,16 @@
   <link rel="stylesheet" href="{{ static('css/tokens.css') }}">
   <link rel="stylesheet" href="{{ static('css/layout.css') }}">
   <link rel="stylesheet" href="{{ static('css/components.css') }}">
+  {% if embebido %}<link rel="stylesheet" href="{{ static('css/embed.css') }}">{% endif %}
   {% block head %}{% endblock %}
   {# Al final: las utilidades sustituyen a los estilos que vivían en línea y
      conservan su precedencia con !important (ver el encabezado de utilidades.css). #}
   <link rel="stylesheet" href="{{ static('css/utilidades.css') }}">
 </head>
-<body>
+<body{% if embebido %} class="embebido"{% endif %}>
   {% if user %}
   <div class="layout">
+    {% if not embebido %}
     <aside class="sidebar">
       <div class="brand"><span class="star" aria-hidden="true">✳️</span> Trámites</div>
       <nav aria-label="Principal">
@@ -63,7 +70,9 @@
         {% endif %}
       </nav>
     </aside>
+    {% endif %}
     <main class="main">
+      {% if not embebido %}
       <div class="topbar">
         <div>
           <div class="hello">Bienvenido, {{ user }} 🎉</div>
@@ -74,6 +83,7 @@
           <a class="chip-out" href="/logout">Salir</a>
         </div>
       </div>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>

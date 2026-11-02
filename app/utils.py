@@ -77,6 +77,19 @@ def ruta_interna(ruta: str) -> str:
     return ruta
 
 
+def es_embebido(request) -> bool:
+    """¿Esta página se está pidiendo para el panel lateral de la extensión (ext-cse)?
+
+    Dos señales, las dos decididas aquí y no por JS:
+    - `Sec-Fetch-Dest: iframe`, que el navegador pone solo en las navegaciones de un marco. Es la que
+      aguanta: sigue viva en cada enlace, formulario y redirect 303 dentro del marco, sin tener que
+      arrastrar nada por la URL, y una página no puede falsificarla.
+    - `?embed=1`, para abrir la vista embebida en una pestaña y revisarla.
+    Solo cambia la presentación (sin menú ni barra superior): la autorización sigue en cada ruta.
+    """
+    return request.headers.get("sec-fetch-dest") == "iframe" or request.query_params.get("embed") == "1"
+
+
 # Inyección de fórmulas en CSV: un texto que empieza con = + - @ (o con un
 # tabulador / retorno de carro, que Excel también interpreta como inicio de
 # celda activa) se EJECUTA al abrir el archivo en Excel o Sheets. Una comilla

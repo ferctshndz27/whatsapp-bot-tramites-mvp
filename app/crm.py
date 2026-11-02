@@ -808,6 +808,30 @@ def crm_tablero(request: Request, q: str = "", cerradas: bool = False):
         return JSONResponse(_tablero(session, vista, user, q.strip(), cerradas))
 
 
+@router.get("/crm/api/pendientes")
+def crm_pendientes(request: Request):
+    """Cuántos mensajes esperan respuesta, para el contador del botón «WhatsApp» de ext-cse.
+
+    No es otra regla: suma el `unread` de las MISMAS conversaciones que el tablero le enseña a
+    esta persona (`_tablero`: su oficina, su folio o su cartera, sin las de folios cerrados), así
+    que el número del botón y el de las tarjetas no pueden discrepar. Solo lectura y `no-store`:
+    un conteo en caché avisaría de mensajes que ya se contestaron.
+    # ponytail: arma el tablero entero para sumar; si el panel de la extensión pesa en el
+    # servidor, el camino es un agregado SQL de `_agregar` sin cargar las tarjetas.
+    """
+    user = _current_user(request)
+    if not user:
+        return _sin_sesion()
+    vista = alcance(user)
+    with get_session() as session:
+        contactos = _tablero(session, vista, user)["contactos"]
+    sin_contestar = [c["unread"] for c in contactos if c["unread"] > 0]
+    return JSONResponse(
+        {"mensajes": sum(sin_contestar), "chats": len(sin_contestar)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/crm/api/etapas")
 def crm_etapas(request: Request):
     user = _current_user(request)

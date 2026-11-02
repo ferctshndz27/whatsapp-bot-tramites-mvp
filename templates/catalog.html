@@ -50,7 +50,7 @@
     </form>
   </div>
 
-  <div class="table-wrap">
+  <div class="table-wrap tabla-tarjetas">
     <table class="catalog-grid">
       <thead>
         <tr>
@@ -65,19 +65,19 @@
       <tbody>
         {% for svc in cat.services %}
         <tr class="svc-row {{ 'svc-off' if not svc.habilitado }}" data-form="f-{{ svc.id }}">
-          <td>
+          <td data-label="Servicio">
             <input type="text" form="f-{{ svc.id }}" name="name" value="{{ svc.name }}" required
               aria-label="Nombre de {{ svc.name }}">
           </td>
-          <td class="col-price">
+          <td class="col-price" data-label="Precio">
             <input type="text" form="f-{{ svc.id }}" name="price_info" value="{{ svc.price_info }}" required
               aria-label="Precio de {{ svc.name }}">
           </td>
-          <td>
+          <td data-label="Sinónimos">
             <input type="text" form="f-{{ svc.id }}" name="synonyms" value="{{ svc.synonyms }}"
               placeholder="separados, por, comas" aria-label="Sinónimos de {{ svc.name }}">
           </td>
-          <td class="col-asesores">
+          <td class="col-asesores" data-label="Lo atienden">
             {% set yo = user in svc.asesores %}
             {% if svc.asesores %}
             <ul class="asesores" aria-label="Quién atiende {{ svc.name }}">
@@ -95,14 +95,14 @@
               </button>
             </form>
           </td>
-          <td class="col-state">
+          <td class="col-state" data-label="Estado">
             {% if svc.habilitado %}
             <span class="badge cerrado">visible</span>
             {% else %}
             <span class="badge caducada">oculto</span>
             {% endif %}
           </td>
-          <td class="col-actions">
+          <td class="col-actions" data-label="Acciones">
             <button type="submit" form="f-{{ svc.id }}" class="btn-sm">Guardar</button>
             <span class="dirty-tag" data-for="f-{{ svc.id }}" hidden>● sin guardar</span>
             <form class="u-d-inline" method="post" action="/catalog/services/{{ svc.id }}/toggle">
@@ -152,7 +152,7 @@
 <div class="card">
   <h2>Historial de cambios</h2>
   {% if changes %}
-  <div class="table-wrap">
+  <div class="table-wrap tabla-tarjetas">
     <table>
       <thead>
         <tr><th>Fecha</th><th>Quién</th><th>Elemento</th><th>Campo</th><th>Cambio</th></tr>
@@ -160,11 +160,11 @@
       <tbody>
         {% for c in changes %}
         <tr>
-          <td>{{ c.created_at | local('%d/%m/%Y %H:%M') }}</td>
-          <td>{{ c.admin }}</td>
-          <td>{{ c.kind }} · {{ c.target }}</td>
-          <td>{{ c.field }}</td>
-          <td>
+          <td data-label="Fecha">{{ c.created_at | local('%d/%m/%Y %H:%M') }}</td>
+          <td data-label="Quién">{{ c.admin }}</td>
+          <td data-label="Elemento">{{ c.kind }} · {{ c.target }}</td>
+          <td data-label="Campo">{{ c.field }}</td>
+          <td data-label="Cambio">
             {% if c.field == 'creación' %}
             <span class="hist-new">{{ c.new }}</span>
             {% else %}

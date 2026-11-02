@@ -329,6 +329,7 @@ def test_la_api_contesta_403_json_a_un_anonimo():
     anonimo = TestClient(app, base_url="https://testserver")
     for metodo, ruta in (
         ("GET", "/crm/api/tablero"),
+        ("GET", "/crm/api/pendientes"),
         ("GET", f"/crm/api/chat/{ANA}"),
         ("GET", f"/crm/api/panel/{ANA}"),
         ("POST", "/crm/api/etapas"),
@@ -1595,3 +1596,72 @@ def test_al_apagarse_el_proceso_el_stream_se_cierra_solo():
     assert _stream_de_avisos(_sesion("jefe1"), eventos.cerrar_suscriptores,
                              esperar_cierre=True) == []
     assert eventos.conectados() == 0
+
+
+# ---------------------------------------------------------------------------
+# Pendientes: el contador del botón «WhatsApp» en la barra de la extensión (ext-cse)
+# ---------------------------------------------------------------------------
+# REGLA DE NEGOCIO: el número es lo que el asesor aún no contesta —los entrantes posteriores al último
+# saliente— de las conversaciones que ve en su tablero, ni una más ni una menos. Si contara de otra
+# oficina, de un folio cerrado o de un chat que ya se contestó, el aviso mandaría a mirar algo que no
+# está. Solo lectura, sin caché, y sin sesión no dice nada.
+
+def _pendientes(username: str) -> dict:
+    r = _sesion(username).get("/crm/api/pendientes")
+    assert r.status_code == 200, r.text
+    assert r.headers["cache-control"] == "no-store", "un conteo viejo en caché mostraría un aviso falso"
+    return r.json()
+
+
+def test_pendientes_cuenta_los_entrantes_sin_contestar_y_los_chats():
+    # Ana: 1 saliente y 2 entrantes después. Beto no ha escrito.
+    assert _pendientes("jefe1") == {"mensajes": 2, "chats": 1}
+    assert _pendientes("colab1") == {"mensajes": 2, "chats": 1}   # el folio de Ana es suyo
+
+
+def test_pendientes_respeta_la_oficina_y_el_folio_de_cada_quien():
+    assert _pendientes("jefa1") == {"mensajes": 2, "chats": 1}    # admin global ve todo
+    assert _pendientes("jefe2") == {"mensajes": 0, "chats": 0}    # Puebla no ve a Ana
+    assert _pendientes("colab2") == {"mensajes": 0, "chats": 0}
+
+
+def test_pendientes_un_colaborador_sin_folio_de_ese_chat_no_lo_cuenta():
+    with Session(db.engine) as s:
+        folio = s.exec(select(Ticket).where(Ticket.phone == ANA)).one()
+        folio.assigned_to = "jefe1"
+        s.add(folio)
+        s.commit()
+    assert _pendientes("colab1") == {"mensajes": 0, "chats": 0}
+    assert _pendientes("jefe1") == {"mensajes": 2, "chats": 1}
+
+
+def test_pendientes_baja_a_cero_cuando_se_contesta():
+    with Session(db.engine) as s:
+        s.add(Message(phone=ANA, direction=Direction.OUT, body="Tarda 3 días", sent_by="colab1"))
+        s.commit()
+    assert _pendientes("colab1") == {"mensajes": 0, "chats": 0}
+
+
+def test_pendientes_sube_cuando_llega_otro_mensaje():
+    with Session(db.engine) as s:
+        s.add(Message(phone=ANA, direction=Direction.IN, body="¿Hola?"))
+        s.commit()
+    assert _pendientes("colab1") == {"mensajes": 3, "chats": 1}
+
+
+def test_pendientes_no_cuenta_una_conversacion_con_todos_sus_folios_cerrados():
+    with Session(db.engine) as s:
+        folio = s.exec(select(Ticket).where(Ticket.phone == ANA)).one()
+        folio.status = TicketStatus.CERRADO
+        s.add(folio)
+        s.commit()
+    assert _pendientes("jefe1") == {"mensajes": 0, "chats": 0}
+
+
+@pytest.mark.parametrize("usuario", ["jefa1", "jefe1", "jefe2", "colab1", "colab2"])
+def test_pendientes_es_la_suma_de_lo_que_dice_su_tablero(usuario):
+    t = _tablero(usuario)
+    unread = [c["unread"] for c in t["contactos"]]
+    assert _pendientes(usuario) == {
+        "mensajes": sum(unread), "chats": sum(1 for n in unread if n > 0),
+    }

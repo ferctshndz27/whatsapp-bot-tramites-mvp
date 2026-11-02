@@ -6,7 +6,7 @@ import time
 
 import bcrypt
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 from app.templating import templates
 from sqlalchemy import or_, update
@@ -15,7 +15,7 @@ from sqlmodel import select
 from app import adjuntos, archive, authlog, codigos, messaging, ventana
 from app.utils import mask_phone, ruta_interna
 from app.audit import log_admin
-from app.auth import alcance, is_admin
+from app.auth import alcance, is_admin, is_admin_global
 from app.config import settings
 from app.credenciales import credencial
 from app import asignacion
@@ -245,6 +245,39 @@ def login_submit(request: Request, username: str = Form(""), password: str = For
     return templates.TemplateResponse(
         request, "login.html", {"request": request, "error": "Usuario o contraseña incorrectos"}
     )
+
+
+# Módulos de la barra de la extensión (ext-cse/src/barra.js, mismos `id`), por quién los puede abrir.
+# Es la misma regla que el menú de templates/base.html (is_admin → administración; is_admin_global →
+# oficinas, agente, estudio y sistema); tests/test_sesion.py compara las dos para que no se separen.
+MODULOS_DE_TODOS = ("dia", "cartera", "nuevocobro", "solicitudes", "whatsapp", "clientes", "equipo", "actividad", "guia", "catalogo")
+MODULOS_DE_ADMIN = ("invitaciones", "usuarios", "cobros", "accesos")
+MODULOS_DE_ADMIN_GLOBAL = ("oficinas", "agente", "estudio", "sistema")
+
+
+def modulos_de(usuario: str) -> list[str]:
+    """Ids de los módulos que `usuario` puede abrir. Es cortesía de la barra, no la guardia: cada ruta
+    conserva la suya (is_admin / is_admin_global)."""
+    modulos = list(MODULOS_DE_TODOS)
+    if is_admin(usuario):
+        modulos += MODULOS_DE_ADMIN
+        if is_admin_global(usuario):
+            modulos += MODULOS_DE_ADMIN_GLOBAL
+    return modulos
+
+
+@router.get("/sesion")
+def sesion(request: Request):
+    """¿Hay sesión? El panel de la extensión lo pregunta antes de pintar su barra de módulos.
+
+    Solo de lectura; dice el usuario y los módulos que puede abrir a quien ya está dentro: sin sesión contesta 401 con JSON
+    (un redirect a /login haría que el fetch del panel «tuviera éxito» con el HTML del acceso).
+    No se guarda en caché: un «sí» viejo dejaría la barra puesta sobre una sesión vencida.
+    """
+    usuario = _current_user(request)
+    if not usuario:
+        return JSONResponse({"error": "sin sesión"}, status_code=401, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"usuario": usuario, "modulos": modulos_de(usuario)}, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/logout")

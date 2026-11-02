@@ -41,8 +41,8 @@ NAVEGADORES = ("chrome", "firefox")
 # Lo que viaja en cada paquete, y nada más (tests/test_ext_cse_manifiesto.py sigue la cadena de
 # referencias y falla si algo falta o sobra).
 ARCHIVOS = {
-    "chrome": ("fondo-chrome.js", "panel.html", "panel.css", "panel.js", "crm.js"),
-    "firefox": ("fondo-firefox.js", "panel.html", "panel.css", "panel.js", "crm.js"),
+    "chrome": ("fondo-chrome.js", "panel.html", "panel.css", "panel.js", "crm.js", "barra.js", "iconos.js"),
+    "firefox": ("fondo-firefox.js", "panel.html", "panel.css", "panel.js", "crm.js", "barra.js", "iconos.js"),
 }
 
 # http solo en local, para probar contra un bot en la máquina: en cualquier otro sitio la cookie de

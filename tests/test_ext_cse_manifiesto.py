@@ -70,12 +70,17 @@ def construir():
 # --- Permisos ---------------------------------------------------------------------------------
 
 
-def test_chrome_pide_solo_el_panel_lateral_y_la_regla_de_cabeceras(dist):
-    """Ni `storage` (nada lo usa, y el teléfono de un cliente no se guarda en el navegador) ni
-    `tabs`, `scripting` o `webRequest`, que leerían o tocarían otras páginas, WhatsApp Web incluido."""
-    assert sorted(_manifiesto(dist, "chrome")["permissions"]) == ["declarativeNetRequest", "sidePanel"], (
-        "un permiso de más amplía lo que la extensión puede hacer con la sesión del CRM"
-    )
+def test_chrome_pide_solo_lo_que_necesita_para_poner_el_panel_en_la_pestana(dist):
+    """El ícono pone el CRM en la página de la pestaña (1/3 del ancho). Lo hace con `activeTab` +
+    `scripting`: el acceso vale solo para la pestaña donde se hizo clic y solo en ese momento. Siguen
+    fuera `storage` (el teléfono de un cliente no se guarda en el navegador), `tabs` y `webRequest`, que
+    leerían otras páginas, WhatsApp Web incluido."""
+    assert sorted(_manifiesto(dist, "chrome")["permissions"]) == [
+        "activeTab",
+        "declarativeNetRequest",
+        "scripting",
+        "sidePanel",
+    ], "un permiso de más amplía lo que la extensión puede hacer con la sesión del CRM"
 
 
 def test_firefox_no_pide_ningun_permiso(dist):
@@ -92,12 +97,21 @@ def test_el_unico_sitio_que_toca_es_el_crm(dist, navegador):
         "optional_permissions",
         "optional_host_permissions",
         "content_scripts",
-        "web_accessible_resources",
         "externally_connectable",
     ):
         assert clave not in m, f"{clave} abriría la extensión a otros sitios, WhatsApp Web incluido"
     texto = (dist / navegador / "manifest.json").read_text(encoding="utf-8")
     assert "<all_urls>" not in texto and "*://" not in texto
+
+
+def test_chrome_solo_deja_enmarcar_el_panel_y_con_url_que_cambia(dist):
+    """Para ponerlo en una página, panel.html tiene que poder enmarcarse desde ella. Es lo único que
+    se expone, y con `use_dynamic_url` su dirección cambia en cada sesión: una página no puede
+    sondear si la extensión está instalada ni enmarcar el panel por su cuenta."""
+    assert _manifiesto(dist, "chrome")["web_accessible_resources"] == [
+        {"resources": ["panel.html"], "matches": ["http://*/*", "https://*/*"], "use_dynamic_url": True}
+    ]
+    assert "web_accessible_resources" not in _manifiesto(dist, "firefox")
 
 
 @pytest.mark.parametrize("navegador", NAVEGADORES)
