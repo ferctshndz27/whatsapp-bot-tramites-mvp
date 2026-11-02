@@ -133,36 +133,9 @@ def generar_cobro(
     try:
         monto_centavos = parse_monto(monto)
     except ValueError:
-        return _volver(ticket_id, volver=volver,err="monto")
+        return _volver(ticket_id, volver=volver, err="monto")
 
     metodos = [m for m in metodo if m in METODOS_VALIDOS] or ["card"]
-    if monto_centavos < MONTO_MIN_CENTAVOS:
-        return _volver(ticket_id, volver=volver,err="monto-minimo")
-    if monto_centavos > settings.cobro_monto_maximo_centavos:
-        return _volver(ticket_id, volver=volver,err="monto-maximo")
-    if "oxxo" in metodos and monto_centavos > OXXO_MAX_CENTAVOS:
-        # Se rechaza ANTES de llamar a Stripe: el voucher no se emitiría.
-        return _volver(ticket_id, volver=volver,err="monto-oxxo")
-
-    # ponytail: office_id fijo a Tlaxcala. En el PR 5 la oficina sale del
-    # ticket, no de una constante.
-    # SIN `session=` a propósito: la sesión de :116 ya cerró y la siguiente
-    # abre en :176 — este bloque corre fuera de toda transacción, que es lo que
-    # el docstring del módulo exige para que la red a Stripe no sostenga un
-    # candado de escritura.
-    # ponytail: cuando existan filas (PR 5) esta lectura puede levantar
-    # CredencialIlegible; entonces se atrapa y se pinta `ilegible` en vez de
-    # reventar la vista. Hoy es inalcanzable: con 0 filas siempre hereda.
-    if not credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID):
-        # El no-op silencioso es del cliente HTTP; aquí sí se avisa: un cobro
-        # fantasma es peor que un error visible.
-        return _volver(ticket_id, volver=volver,err="sin-stripe")
-    if not settings.public_base_url:
-        # Stripe rechaza una success_url relativa con 400: sin la URL pública
-        # el 100% de los cobros fallaría con un «se puede reintentar» que no
-        # dice por qué. Se corta ANTES de escribir nada.
-        return _volver(ticket_id, volver=volver,err="sin-url-publica")
-
     msi_plazos = msi if msi in MSI_PLAZOS_VALIDOS else None
     # Lo que el bot le COTIZÓ al cliente es la línea base del override, no el
     # catálogo vivo: el cliente leyó ese número en WhatsApp.
@@ -174,6 +147,73 @@ def generar_cobro(
     if cotizado is not None:
         origen_monto = "cotizado" if cotizado == monto_centavos else "override"
 
+    resultado, cobro_id = emitir_cobro(
+        user=user, phone=phone, client_name=client_name,
+        concepto=(concepto.strip() or f"{service_name} (folio #{ticket_id})")[:300],
+        monto_centavos=monto_centavos, metodos=metodos, msi_plazos=msi_plazos,
+        token_form=token_form, ticket_id=ticket_id, service_id=service_id,
+        cotizado=cotizado, origen_monto=origen_monto,
+    )
+    if resultado == "duplicado":
+        # F5 o doble clic: el cobro ya existe. No es un error.
+        return _volver(ticket_id, volver=volver, ok="cobro")
+    if resultado != "ok":
+        # Rechazo: el cobro se queda en borrador y es reintentable.
+        # Indeterminado: lo resuelve el barrido de huérfanos con la MISMA
+        # clave — jamás se crea otro aquí.
+        return _volver(ticket_id, volver=volver, err=resultado)
+
+    enviado = _enviar_link(cobro_id, user)
+    return _volver(ticket_id, volver=volver, ok="cobro" if enviado else None,
+                   err=None if enviado else "ventana")
+
+
+def validar_emision(monto_centavos: int, metodos: list[str]) -> str | None:
+    """El código de error que impide emitir, o None si se puede ir a Stripe.
+
+    Todo se corta ANTES de escribir nada: un cobro fantasma es peor que un
+    error visible. Lo comparten el cobro de un folio y el cobro manual."""
+    if monto_centavos < MONTO_MIN_CENTAVOS:
+        return "monto-minimo"
+    if monto_centavos > settings.cobro_monto_maximo_centavos:
+        return "monto-maximo"
+    if "oxxo" in metodos and monto_centavos > OXXO_MAX_CENTAVOS:
+        # Se rechaza ANTES de llamar a Stripe: el voucher no se emitiría.
+        return "monto-oxxo"
+    # ponytail: office_id fijo a Tlaxcala. En el PR 5 la oficina sale del
+    # ticket, no de una constante.
+    if not credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID):
+        # El no-op silencioso es del cliente HTTP; aquí sí se avisa.
+        return "sin-stripe"
+    if not settings.public_base_url:
+        # Stripe rechaza una success_url relativa con 400: sin la URL pública
+        # el 100% de los cobros fallaría con un «se puede reintentar» que no
+        # dice por qué.
+        return "sin-url-publica"
+    return None
+
+
+def emitir_cobro(
+    *, user: str, phone: str, client_name: str | None, concepto: str,
+    monto_centavos: int, metodos: list[str], msi_plazos: str | None,
+    token_form: str, ticket_id: int | None = None, service_id: str | None = None,
+    cotizado: int | None = None, origen_monto: str = "manual", origen: str = "panel",
+) -> tuple[str, int | None]:
+    """Crea el cobro y le pide la liga a Stripe. Devuelve (resultado, cobro_id).
+
+    resultado: "ok" · "duplicado" (mismo token_form: F5 o doble clic) ·
+    "cobro-vivo" (el candado teléfono+servicio ya está puesto) · "interno" ·
+    "stripe" (rechazó o quedó indeterminado). Valida con `validar_emision`; si
+    algo falla devuelve su código sin tocar la base.
+
+    Sin sesión adentro a propósito: este bloque corre fuera de toda
+    transacción, que es lo que el docstring del módulo exige para que la red a
+    Stripe no sostenga un candado de escritura.
+    """
+    error = validar_emision(monto_centavos, metodos)
+    if error:
+        return error, None
+
     # ---- TRANSACCIÓN 1: corta y SIN red adentro. La clave de idempotencia
     # queda en disco antes de que exista una sola llamada a Stripe.
     try:
@@ -181,7 +221,7 @@ def generar_cobro(
             cobro = cobranza.crear_cobro(
                 session,
                 phone=phone,
-                concepto=(concepto.strip() or f"{service_name} (folio #{ticket_id})")[:300],
+                concepto=concepto,
                 monto_centavos=monto_centavos,
                 creado_por=user,
                 llave_generacion=f"form:{token_form}",
@@ -193,6 +233,7 @@ def generar_cobro(
                 monto_origen=origen_monto,
                 metodos_ofrecidos=",".join(metodos),
                 msi_meses_ofrecidos=msi_plazos,
+                origen=origen,
             )
             session.flush()
             intento = cobranza.nuevo_intento(session, cobro, creado_por=user)
@@ -211,22 +252,19 @@ def generar_cobro(
     except IntegrityError as exc:
         # OJO: SQLite reporta la COLUMNA ("UNIQUE constraint failed:
         # cobro.llave_generacion"), no el nombre del índice, así que buscar
-        # "ux_cobro_generacion" nunca acierta. Se miran los dos por si algún
-        # día el mensaje cambia de forma.
+        # "ux_cobro_generacion" nunca acierta.
         detalle = str(exc.orig) if exc.orig else str(exc)
         if "llave_generacion" in detalle:
-            # F5 o doble clic: el cobro ya existe. No es un error.
-            return _volver(ticket_id, volver=volver,ok="cobro")
+            return "duplicado", None
         if "llave_cobro_vivo" in detalle:
-            return _volver(ticket_id, volver=volver,err="cobro-vivo")
-        logger.exception("No se pudo crear el cobro del folio #%s", ticket_id)
-        return _volver(ticket_id, volver=volver,err="interno")
+            return "cobro-vivo", None
+        logger.exception("No se pudo crear el cobro de %s", mask_phone(phone))
+        return "interno", None
 
     if origen_monto == "override":
-        log_admin(user, "cobro:monto-override",
-                  f"#{ticket_id} {cotizado}->{monto_centavos}")
+        log_admin(user, "cobro:monto-override", f"#{ticket_id} {cotizado}->{monto_centavos}")
     if monto_centavos >= MONTO_ALTO_CENTAVOS:
-        log_admin(user, "cobro:monto-alto", f"#{ticket_id} {monto_centavos}")
+        log_admin(user, "cobro:monto-alto", f"#{ticket_id or cobro_id} {monto_centavos}")
 
     # ---- Red, FUERA de toda transacción.
     with get_session() as session:
@@ -242,15 +280,7 @@ def generar_cobro(
         resultado = cobranza.aplicar_respuesta_stripe(session, cobro, intento, respuesta)
         session.commit()
 
-    if resultado != "exitoso":
-        # Rechazo: el cobro se queda en borrador y es reintentable.
-        # Indeterminado: lo resuelve el barrido de huérfanos con la MISMA
-        # clave — jamás se crea otro aquí.
-        return _volver(ticket_id, volver=volver,err="stripe")
-
-    enviado = _enviar_link(cobro_id, user)
-    return _volver(ticket_id, volver=volver,ok="cobro" if enviado else None,
-                   err=None if enviado else "ventana")
+    return ("ok" if resultado == "exitoso" else "stripe"), cobro_id
 
 
 # ---------------------------------------------------------------------------
