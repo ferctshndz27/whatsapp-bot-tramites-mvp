@@ -25,6 +25,7 @@
         {# Va en Operación y NO bajo Administración: la cartera es del asesor.
            /cobros (admin) es la vista de toda la oficina; esta es la suya. #}
         <a href="/my/cobros" {% if request.url.path.startswith('/my/cobros') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💰</span>Mi cartera</a>
+        <a href="/cobros/nuevo" {% if request.url.path == '/cobros/nuevo' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🔗</span>Nuevo cobro</a>
         {# El detalle de folio vive bajo /tickets/: sin esta rama, entrar a un
            folio dejaba el sidebar entero sin ítem activo. El chat vive en /crm,
            que tiene su propia entrada; /inbox/{phone} solo reenvía ahí. #}

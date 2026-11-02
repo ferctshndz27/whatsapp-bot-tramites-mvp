@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Nuevo cobro{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static('css/cobro-nuevo.css') }}">{% endblock %}
+{% block content %}
+<h1>Nuevo cobro</h1>
+
+{% if modo == 'prueba' %}
+<div class="banner-warn" role="status">Stripe está en <strong>modo prueba</strong>: las ligas no cobran dinero real.</div>
+{% endif %}
+
+{# Resultado del cobro recién generado. Va arriba: es lo que el asesor vino a buscar. #}
+{% if creado %}
+<section class="card cn-listo" aria-labelledby="cn-listo-t" data-cn-listo>
+  <h2 id="cn-listo-t">Liga lista</h2>
+  <p class="cn-resumen">
+    <strong>{{ formato_monto(creado.monto_centavos, creado.moneda) }}</strong>
+    · {{ creado.concepto }}<br>
+    <span class="u-c-text-muted">{{ creado.client_name or 'Sin nombre' }} · {{ creado.phone }}</span>
+  </p>
+  <label for="cn-liga">Liga de pago</label>
+  <input type="text" id="cn-liga" class="cn-liga" readonly value="{{ creado.voucher_url or creado.url_pago }}">
+  <div class="cn-acciones">
+    <button type="button" class="btn-sm" data-cn-copiar="{{ creado.voucher_url or creado.url_pago }}"
+            data-cn-aviso="/cobros/{{ creado.id }}/liga-copiada" data-cn-texto="Copiar liga">Copiar liga</button>
+    <button type="button" class="btn-sm" data-cn-copiar="{{ mensaje_creado }}"
+            data-cn-aviso="/cobros/{{ creado.id }}/liga-copiada" data-cn-texto="Copiar mensaje">Copiar mensaje</button>
+  </div>
+  <p class="cn-ayuda">Pégala en tu WhatsApp. «Copiar mensaje» incluye el servicio y el monto. El pago lo confirma Stripe solo; lo ves en <a href="/my/cobros">Mi cartera</a>.</p>
+</section>
+{% endif %}
+
+{% if err %}
+<div class="error" role="alert">{{ errores.get(err, errores['interno']) }}</div>
+{% endif %}
+
+<form method="post" action="/cobros/nuevo" class="card cn-form" data-cn-form novalidate>
+  <h2>{% if creado %}Otro cobro{% else %}Datos del cobro{% endif %}</h2>
+  <input type="hidden" name="token_form" value="{{ token_form }}">
+
+  <fieldset class="cn-cliente">
+    <legend>Cliente</legend>
+    <label for="cn-buscar">Buscar por nombre o teléfono</label>
+    <input type="text" id="cn-buscar" autocomplete="off" inputmode="search"
+           placeholder="Ana López o 55 1234 5678" data-cn-buscar
+           aria-controls="cn-resultados" aria-describedby="cn-estado">
+    <p id="cn-estado" class="cn-ayuda" role="status" aria-live="polite" data-cn-estado></p>
+    <ul id="cn-resultados" class="cn-resultados" data-cn-resultados hidden></ul>
+
+    {# Elegido (o capturado): lo único que viaja al servidor es phone + name. #}
+    {# Sin JS los campos se ven y se teclean a mano; el JS los esconde hasta que se elige o se registra. #}
+    <div class="cn-elegido" data-cn-elegido>
+      <div class="cn-campos">
+        <div>
+          <label for="cn-phone">Teléfono (WhatsApp)</label>
+          <input type="tel" id="cn-phone" name="phone" inputmode="tel" autocomplete="off"
+                 value="{{ form.get('phone', '') }}" required data-cn-phone>
+        </div>
+        <div>
+          <label for="cn-name">Nombre <span data-cn-nombre-nota>{% if form.get('name') %}(cliente nuevo){% endif %}</span></label>
+          <input type="text" id="cn-name" name="name" maxlength="200" autocomplete="off"
+                 value="{{ form.get('name', '') }}" data-cn-name>
+        </div>
+      </div>
+      <label class="cn-check">
+        <input type="checkbox" name="cartera" value="1" data-cn-cartera
+               {% if form.get('cartera', true) %}checked{% endif %}>
+        <span data-cn-cartera-texto>Agregarlo a mi cartera</span>
+      </label>
+      <button type="button" class="btn-sm" data-cn-cambiar>Cambiar cliente</button>
+    </div>
+    <button type="button" class="btn-sm" data-cn-nuevo hidden>Registrar cliente nuevo</button>
+  </fieldset>
+
+  <label for="cn-concepto">Servicio (lo ve el cliente)</label>
+  <input type="text" id="cn-concepto" name="concepto" maxlength="300" required
+         value="{{ form.get('concepto', '') }}" placeholder="Acta de nacimiento certificada">
+
+  <label for="cn-monto">Monto en pesos</label>
+  <input type="text" id="cn-monto" name="monto" required inputmode="decimal"
+         value="{{ form.get('monto', '') }}" placeholder="1,250.00">
+
+  <fieldset class="cn-metodos">
+    <legend>Formas de pago</legend>
+    {% set elegidos = form.get('metodos', ['card']) %}
+    <label class="cn-check"><input type="checkbox" name="metodo" value="card" {% if 'card' in elegidos %}checked{% endif %}> Tarjeta</label>
+    <label class="cn-check"><input type="checkbox" name="metodo" value="oxxo" {% if 'oxxo' in elegidos %}checked{% endif %}> OXXO</label>
+    <label class="cn-check"><input type="checkbox" name="metodo" value="spei" {% if 'spei' in elegidos %}checked{% endif %}> Transferencia SPEI</label>
+    <p class="cn-ayuda">OXXO tarda hasta 3 días en confirmar y tiene tope de {{ formato_monto(oxxo_max_centavos) }} por ficha.</p>
+    <label for="cn-msi">Meses sin intereses (tarjeta)</label>
+    <select id="cn-msi" name="msi">
+      <option value="">Sin MSI</option>
+      {% for m in ('3', '6', '9', '12') %}<option value="{{ m }}" {% if form.get('msi') == m %}selected{% endif %}>Hasta {{ m }}</option>{% endfor %}
+    </select>
+  </fieldset>
+
+  <button type="submit" class="cn-enviar" data-cn-enviar>Generar liga</button>
+</form>
+
+<section class="card" aria-labelledby="cn-rec-t">
+  <h2 id="cn-rec-t">{% if es_admin %}Últimos cobros manuales de la oficina{% else %}Mis últimos cobros manuales{% endif %}</h2>
+  {% if recientes %}
+  <ul class="cn-lista">
+    {% for c in recientes %}
+    <li class="tile">
+      <div class="cn-fila">
+        {% if c.estado == 'pagado' %}<span class="badge cerrado">✓ Pagado</span>
+        {% elif c.estado == 'pendiente' %}<span class="badge tomado">Pendiente de pago</span>
+        {% elif c.estado == 'borrador' %}<span class="badge asignada">Borrador</span>
+        {% elif c.estado == 'reembolsado' %}<span class="badge asignada">Reembolsado</span>
+        {% else %}<span class="badge caducada">{{ c.estado|replace('_', ' ')|capitalize }}</span>{% endif %}
+        <strong>{{ formato_monto(c.monto_centavos, c.moneda) }}</strong>
+      </div>
+      <div>{{ c.concepto }}</div>
+      <div class="u-c-text-muted u-fs-0_85rem">
+        {{ c.client_name or 'Sin nombre' }} · {{ c.phone }} · {{ c.created_at|local }}{% if es_admin %} · {{ c.creado_por }}{% endif %}
+      </div>
+      {% if (c.url_pago or c.voucher_url) and c.estado in ('pendiente', 'borrador') %}
+      <button type="button" class="btn-sm" data-cn-copiar="{{ c.voucher_url or c.url_pago }}"
+              data-cn-aviso="/cobros/{{ c.id }}/liga-copiada" data-cn-texto="Copiar liga">Copiar liga</button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="u-c-text-muted">Todavía no generas cobros manuales. El primero aparecerá aquí con su liga.</p>
+  {% endif %}
+</section>
+
+<script src="{{ static('js/cobro-nuevo.js') }}" defer></script>
+{% endblock %}

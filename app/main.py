@@ -22,6 +22,7 @@ from app import (
     catalog_admin,
     clients,
     cobranza_panel,
+    cobro_manual,
     crm,
     dashboard,
     eventos,
@@ -262,6 +263,7 @@ app.include_router(webhook.router)
 app.include_router(stripe_webhook.router)
 app.include_router(dashboard.router)
 app.include_router(cobranza_panel.router)
+app.include_router(cobro_manual.router)
 app.include_router(inbox.router)
 app.include_router(crm.router)
 app.include_router(team_chat.router)
