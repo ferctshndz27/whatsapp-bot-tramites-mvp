@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import create_engine
 
+import app.dashboard as dashboard
 import app.db as db
 from app.config import settings
 from app.main import app
@@ -47,15 +48,34 @@ def _base_para_el_otro_hilo(_isolated_db, monkeypatch):
     monkeypatch.setattr(settings, "geoip_enabled", False)
 
 
-def test_un_megabyte_de_puntos_y_comas_a_login_no_cuesta_segundos_de_cpu():
-    cliente = TestClient(app, base_url="https://testserver")
+def _cpu_de_un_login(cliente: TestClient, cuerpo: bytes) -> tuple[int, float]:
     inicio = time.process_time()
-    r = cliente.post("/login", content=b"a;" * 500_000, headers=URLENCODED)
-    cpu = time.process_time() - inicio
-    assert r.status_code < 500, f"el cuerpo malicioso tumbó el handler: {r.status_code}"
-    assert cpu < TOPE_CPU_SEGUNDOS, (
-        f"1 MB de «a;» costó {cpu:.2f} s de CPU: el parser de formularios volvió a ser "
-        "cuadrático (python-multipart < 0.0.30) y bloquea al único worker"
+    r = cliente.post("/login", content=cuerpo, headers=URLENCODED)
+    return r.status_code, time.process_time() - inicio
+
+
+def test_un_megabyte_de_puntos_y_comas_a_login_no_cuesta_segundos_de_cpu(monkeypatch):
+    """Se mide lo que el cuerpo hostil cuesta DE MÁS que un login normal, no el login.
+
+    Un POST a /login ya cuesta ~0.2 s de CPU aquí con cualquier cuerpo (verificar la clave) y
+    ~5 veces eso en Jenkins: el tope absoluto de 1.0 s sobre el login entero cayó en 1.04 s sin
+    que el parser tuviera culpa (build #2 de fix/seguridad-cobro-manual). Restar un login de
+    control, hecho en la misma máquina y el mismo segundo, deja solo el parser: ~0.01 s sano
+    contra ~4 s si vuelve a ser cuadrático.
+
+    Los contadores de bloqueo se vacían: pasados cinco fallos el login contesta sin evaluar la
+    clave y la resta saldría negativa —verde por la razón equivocada—."""
+    monkeypatch.setattr(dashboard, "_login_attempts", {})
+    cliente = TestClient(app, base_url="https://testserver")
+    _cpu_de_un_login(cliente, b"username=calentar&password=x")  # imports perezosos, primera conexión
+    _, control = _cpu_de_un_login(cliente, b"username=control&password=x")
+    estado, bruto = _cpu_de_un_login(cliente, b"a;" * 500_000)
+    de_mas = bruto - control
+    assert estado < 500, f"el cuerpo malicioso tumbó el handler: {estado}"
+    assert de_mas < TOPE_CPU_SEGUNDOS, (
+        f"1 MB de «a;» costó {de_mas:.2f} s de CPU más que un login normal ({control:.2f} s): "
+        "el parser de formularios volvió a ser cuadrático (python-multipart < 0.0.30) y "
+        "bloquea al único worker"
     )
 
 
