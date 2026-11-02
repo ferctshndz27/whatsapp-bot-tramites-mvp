@@ -1,6 +1,7 @@
 # Imagen de los agentes de CI del Jenkins local (ver Jenkinsfile). Dos etapas:
 #   pytest     Python y dependencias de producción, más git (tests/test_deploy_rollback.py y otros lo usan).
-#   navegador  pytest + Node 22 + Chromium, para el juez del CRM (scripts/qa_crm_navegador.mjs).
+#   navegador  pytest + Node 22 + Chromium + Firefox ESR y geckodriver, para los jueces de navegador
+#              (ci/navegador.sh: el del CRM y los de la extensión ext-cse en Chrome y en Firefox).
 #
 # Lo de arriba de la primera capa propia (hasta el `pip install`) es, a la letra, el Dockerfile de
 # producción, y tests/test_ci_jenkins.py lo vigila. Por dos razones:
@@ -27,5 +28,21 @@ COPY --from=node:22.23.3-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd50
 RUN apt-get update \
  && apt-get install -y --no-install-recommends chromium fonts-dejavu-core fonts-noto-color-emoji \
  && rm -rf /var/lib/apt/lists/*
-# El juez lee estas dos (scripts/qa_crm_navegador.mjs); fuera de esta imagen usa .venv y google-chrome.
-ENV CHROME_BIN=/usr/bin/chromium QA_PYTHON=/usr/local/bin/python
+# Firefox ESR de Debian para el juez de Firefox de la extensión (ext-cse/prueba/juez-firefox.py), en
+# su propia capa para no rehacer la de Chromium. La extensión exige Firefox 140 o mayor.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends firefox-esr \
+ && rm -rf /var/lib/apt/lists/*
+# geckodriver no está en Debian: el binario oficial de Mozilla, fijado por versión y por SHA256 (el
+# digest que GitHub publica del archivo). Se baja con Python porque la imagen no trae curl.
+ARG GECKODRIVER_VERSION=0.37.1
+ARG GECKODRIVER_SHA256=e815130ea95983e162ae91843b48d3a3ce991735635fce83a647afde21e09f7e
+RUN python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], '/tmp/geckodriver.tar.gz')" \
+      "https://github.com/mozilla/geckodriver/releases/download/v${GECKODRIVER_VERSION}/geckodriver-v${GECKODRIVER_VERSION}-linux64.tar.gz" \
+ && echo "${GECKODRIVER_SHA256}  /tmp/geckodriver.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/geckodriver.tar.gz -C /usr/local/bin geckodriver \
+ && rm /tmp/geckodriver.tar.gz
+# Los jueces leen estas variables; fuera de esta imagen usan .venv, google-chrome y el Firefox y el
+# geckodriver que haya (el de snap trae los dos).
+ENV CHROME_BIN=/usr/bin/chromium QA_PYTHON=/usr/local/bin/python \
+    FIREFOX_BIN=/usr/bin/firefox-esr GECKODRIVER=/usr/local/bin/geckodriver

@@ -752,6 +752,8 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "resolved_at": "DATETIME2 NULL",
         "status_changed_at": "DATETIME2 NULL",
         "office_id": _OFFICE_ID_MSSQL,
+        # 'manual' = alta de un colaborador; NULL = lo abrió el bot.
+        "origen": "NVARCHAR(20) NULL",
     },
     "ticket_activity": {"habilitado": "BIT NOT NULL DEFAULT 1"},
     "conversations": {
@@ -1270,6 +1272,7 @@ def archive_ticket(t) -> None:
                 _naive_utc(t.status_changed_at) if t.status_changed_at else None
             ),
             "office_id": t.office_id,
+            "origen": t.origen,
         },
     )
 

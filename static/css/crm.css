@@ -157,7 +157,8 @@
   pointer-events: none;
 }
 
-.crm #crm-search {
+.crm #crm-search,
+.crm #crm-ir-cliente-tel {
   width: 100%;
   max-width: none;
   height: 36px;
@@ -170,9 +171,21 @@
   font-size: 14px;
   font-family: inherit;
 }
-.crm #crm-search::placeholder { color: rgba(255, 255, 255, .72); }
+.crm #crm-search::placeholder,
+.crm #crm-ir-cliente-tel::placeholder { color: rgba(255, 255, 255, .72); }
 .crm #crm-search::-webkit-search-cancel-button { filter: invert(1); cursor: pointer; }
-.crm #crm-search:focus { outline: 2px solid #fff; outline-offset: 2px; box-shadow: none; }
+.crm #crm-search:focus,
+.crm #crm-ir-cliente-tel:focus { outline: 2px solid #fff; outline-offset: 2px; box-shadow: none; }
+
+/* «Ir al cliente»: el campo con el aspecto de la búsqueda (sin lupa) y su botón «Ir». */
+.crm .ir-cliente {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 280px;
+  min-width: 0;
+}
+.crm #crm-ir-cliente-tel { min-width: 0; padding-left: 14px; }
 
 .crm .toolbar-actions {
   display: flex;
@@ -1236,14 +1249,27 @@
 }
 .crm .qr-gestionar:hover { background: var(--wa-soft); border-color: var(--wa-teal-2); }
 
-/* Sin tope de alto propio: el <dialog> modal ya se limita a la ventana y scrollea solo. */
-.crm .dlg-respuestas { width: min(92vw, 560px); }
+/* Sin tope de alto propio: el <dialog> modal ya se limita a la ventana y scrollea solo.
+   La ayuda «Folio manual» (E4 de ext-cse) usa la misma caja. */
+.crm .dlg-respuestas,
+.crm .dlg-ayuda { width: min(92vw, 560px); }
 
-.crm .dlg-respuestas .dlg-cuerpo {
+.crm .dlg-respuestas .dlg-cuerpo,
+.crm .dlg-ayuda .dlg-cuerpo {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 20px;
+}
+
+/* Los pasos de la ayuda: numerados por el <ol>, con aire entre uno y otro. */
+.crm .ayuda-pasos {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 /* .crm dialog form le da 20 px de relleno al único form del diálogo de etapas;
@@ -1345,6 +1371,20 @@
     order: 3;
     flex-basis: 100%;
     max-width: none;
+  }
+
+  .crm .ir-cliente {
+    order: 4;
+    flex-basis: 100%;
+  }
+
+  /* Las acciones ocupan su fila y, si no caben, sus botones bajan a otra en vez de empujar la
+     página a lo ancho. Con el `flex: 0 0 auto` de arriba medían lo que su contenido, así que su
+     `flex-wrap` nunca actuaba: los cuatro botones (aquí se suma «Ocultar bandeja») cabían con la
+     fuente de Ubuntu y se salían 17 px con DejaVu Sans, la de la imagen de CI. */
+  .crm .toolbar-actions {
+    flex: 1 1 100%;
+    min-width: 0;
   }
 
   .crm #crm-btn-toggle-tray { display: inline-flex; }

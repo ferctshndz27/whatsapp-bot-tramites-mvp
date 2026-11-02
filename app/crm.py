@@ -68,6 +68,7 @@ from app.audit import log_admin
 from app.auth import alcance, is_admin, is_admin_global
 from app.authlog import sesion_vigente
 from app.clients import MAX_NOMBRE, _cliente_visible, folio_vigente, folios_escribibles
+from app.config import settings
 from app.db import get_session
 from app.inbox import QUICK_REPLIES
 from app.models import (
@@ -261,7 +262,9 @@ def _agregar(session, clientes: list[Client], viewer: str | None = None) -> dict
             func.max(Message.id).label("ult_id"),
             corte_saliente.label("corte"),
             func.max(
-                case((Message.direction == Direction.IN, Message.created_at))
+                # Solo lo que mandó el propio cliente: el material que reenvió un colaborador no
+                # abre la ventana ni cuenta como «visto» (`ventana.ABRE_VENTANA`, ext-cse).
+                case((ventana.ABRE_VENTANA, Message.created_at))
             ).label("last_in"),
         )
         .where(Message.habilitado == True)  # noqa: E712
@@ -748,6 +751,25 @@ def _datos_bootstrap(session, user: str, telefono: str | None, abrir_respuestas:
     }
 
 
+def _ayuda_folio_manual(session, user: str) -> dict:
+    """Lo que la ayuda «Folio manual» de la barra (E4 de ext-cse) necesita para decir la verdad.
+
+    La ayuda explica el alta manual: el colaborador reenvía al agente desde SU celular y el agente
+    le pregunta lo demás (`app/alta_manual_dialogo.py`). Dos cosas la volverían falsa si no se
+    miraran: la perilla apagada, porque entonces el agente lo atiende como a un cliente, y un
+    usuario sin celular válido, porque el agente lo reconoce comparando ese número normalizado
+    (`conversation._colaborador_del_alta`). Va aparte de `datos` a propósito: el celular es para
+    la plantilla y no tiene por qué viajar en el JSON que lee crm.js."""
+    fila = session.exec(select(User).where(User.username == user)).first()
+    celular = (fila.phone or "").strip() if fila else ""
+    return {
+        "encendida": settings.alta_manual_enabled,
+        "espera_s": settings.alta_manual_espera_s,
+        # Tal como lo tecleó al registrarse, que es como lo reconoce; vacío si no sirve.
+        "celular": celular if normalize_phone(celular) else "",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Página
 # ---------------------------------------------------------------------------
@@ -757,14 +779,18 @@ def crm_page(request: Request, chat: str = "", respuestas: str = ""):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    # `chat` abre esa conversación al cargar. Solo dígitos: el JS lo mete en una URL de la
-    # API y el alcance lo comprueba el endpoint del chat, no esta página.
-    telefono = chat if re.fullmatch(r"\d{8,15}", chat or "") else None
+    # `chat` abre esa conversación al cargar. Llega de los enlaces «Abrir chat» (ya canónico) y del
+    # campo «Ir al cliente» de la barra (tal como lo pegó el asesor: «+52 1 55…», diez dígitos,
+    # con guiones). normalize_phone lo lleva al formato en que el webhook y _normalize_phones
+    # guardan al cliente, así que a un canónico no lo cambia. Sale solo con dígitos: el JS lo
+    # mete en una URL de la API, y el alcance lo comprueba el endpoint del chat, no esta página.
+    telefono = normalize_phone(chat) or None
     # `respuestas=1` abre «Mis respuestas» al cargar: es a donde reenvía la ruta vieja /replies.
     with get_session() as session:
         datos = _datos_bootstrap(session, user, telefono, abrir_respuestas=respuestas == "1")
+        ayuda_folio = _ayuda_folio_manual(session, user)
     return templates.TemplateResponse(
-        request, "crm.html", {"request": request, "user": user, "datos": datos}
+        request, "crm.html", {"request": request, "user": user, "datos": datos, "ayuda_folio": ayuda_folio}
     )
 
 

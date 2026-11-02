@@ -1,0 +1,4 @@
+# Lo que genera construir.py: se reconstruye, no se versiona.
+dist/
+# Pruebas descartables de la fase 1 (spike S1): evidencia local del plan, no producto.
+spikes/

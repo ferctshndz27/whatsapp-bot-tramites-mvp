@@ -93,7 +93,7 @@ ARCHIVE_DDL = [
         escalado INTEGER DEFAULT 0, notes TEXT, assigned_to TEXT,
         habilitado INTEGER DEFAULT 1, agent_active INTEGER DEFAULT 1,
         requirements_json TEXT,
-        provider TEXT DEFAULT 'meta',
+        provider TEXT DEFAULT 'meta', origen TEXT,
         first_response_at TIMESTAMP, first_response_by TEXT,
         resolved_at TIMESTAMP, status_changed_at TIMESTAMP,
         created_at TIMESTAMP, updated_at TIMESTAMP,
@@ -816,3 +816,16 @@ def test_el_espejo_falso_no_inventa_tablas_que_el_real_no_tiene():
         "Si se renombró una tabla en _SCHEMA_DDL, hay que renombrarla aquí; si no, "
         "estas pruebas escriben en una tabla que en producción no existe."
     )
+
+
+def test_el_origen_manual_del_folio_viaja_al_espejo(mirror):
+    """Si `origen` no llega a MSSQL, el archivo no distingue los folios que un
+    colaborador dio de alta a mano de los que abrió el bot, y el reporte de
+    conversión por canal los mezcla."""
+    archive.archive_ticket(Ticket(id=8, phone="521111", category="c", service_id="s",
+                                  service_name="n", price_info="$1", origen="manual"))
+    archive.archive_ticket(Ticket(id=9, phone="521112", category="c", service_id="s",
+                                  service_name="n", price_info="$1"))
+    with mirror.connect() as conn:
+        assert conn.execute(text("SELECT origen FROM tickets WHERE source_id = 8")).scalar() == "manual"
+        assert conn.execute(text("SELECT origen FROM tickets WHERE source_id = 9")).scalar() is None

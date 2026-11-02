@@ -31,9 +31,10 @@ from app.models import (
     Ticket,
     TicketActivity,
     TicketStatus,
+    User,
     utcnow,
 )
-from app.utils import mask_phone
+from app.utils import mask_phone, normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -428,7 +429,13 @@ def handle_incoming(
     # que se anexó a un folio ni mientras se aclara (casos-analisis §5.4).
     extraer = not is_media and conv.state not in ESTADOS_ACLARANDO
 
-    if is_media:
+    if (colaborador := _colaborador_del_alta(session, phone)) is not None:
+        # Alta manual (ext-cse): quien escribe es un colaborador y reenvía material de SU cliente.
+        # Va ANTES de todo lo demás —incluido el silencio por agente apagado y la regla del
+        # folio— porque nada de lo que dice es una petición de trámite. Y `extraer` se apaga: lo
+        # que reenvía es del cliente de otro, no de la ficha del colaborador.
+        replies, extraer = _handle_alta_lote(session, conv, colaborador, text, entrante.id), False
+    elif is_media:
         # El archivo ya quedó en el chat del CRM (solo su referencia). El bot
         # acusa recibo y nada más —revisarlo es del asesor—, y calla si alguien
         # apagó el agente en su folio, igual que con un mensaje de texto.
@@ -783,6 +790,88 @@ def _dispatch(session: Session, client: Client, conv: Conversation, text: str, n
     # La FSM es `_HANDLERS`, debajo del último handler (un dict de módulo solo
     # puede nombrar funciones ya definidas).
     return _handler_de(conv.state)(session, client, conv, text, normalized)
+
+
+# ---- Alta manual de un folio (ext-cse, B3) ----
+#
+# El colaborador atendió a un cliente por su teléfono personal y le reenvía el material al agente.
+# `alta_manual_lote` junta ese material en silencio; B5 lo cierra por temporizador y B6 pregunta
+# número, trámite y dueño. Detrás de `alta_manual_enabled` (apagada).
+#
+# Por qué NO está en `_HANDLERS` como `escalado` (que sí): el handler necesita el id del mensaje
+# entrante para anotarlo en el lote, y la firma de la FSM no lo trae. Se invoca desde
+# `handle_incoming`, antes del preludio, igual que `escalado`. Si el usuario deja de ser
+# colaborador a media captura, `_handler_de` lo atiende como `inicio` (estado desconocido).
+
+ALTA_LOTE = "alta_manual_lote"
+# El lote ya calló lo suficiente y el agente preguntó el número del cliente (B5, app/alta_manual_barrido.py).
+# La respuesta con el número la atiende B6; mientras tanto un mensaje nuevo reabre el lote.
+ALTA_NUMERO = "alta_manual_numero"
+# Pasos del diálogo (B6, app/alta_manual_dialogo.py): número → confirmar → nombre → trámite →
+# asignado → resumen. Todos comparten el contexto del lote.
+ALTA_CONFIRMA = "alta_manual_confirma"
+ALTA_NOMBRE = "alta_manual_nombre"
+ALTA_SERVICIO = "alta_manual_servicio"
+ALTA_ASIGNADO = "alta_manual_asignado"
+ALTA_RESUMEN = "alta_manual_resumen"
+# Consentimiento para invitar desde A (B8): se pregunta tras el «Sí» del resumen si el cliente no
+# ha consentido todavía. La respuesta registra `Client.opt_in_*` ANTES de crear el folio.
+ALTA_CONSENT = "alta_manual_consent"
+ESTADOS_ALTA_DIALOGO = frozenset(
+    {ALTA_NUMERO, ALTA_CONFIRMA, ALTA_NOMBRE, ALTA_SERVICIO, ALTA_ASIGNADO, ALTA_RESUMEN, ALTA_CONSENT}
+)
+ESTADOS_ALTA_MANUAL = frozenset({ALTA_LOTE}) | ESTADOS_ALTA_DIALOGO
+ALTA_LOTE_CANCELADO = "Listo, descarté lo que me enviaste."
+# Palabra completa y mensaje entero: «quiere cancelar su acta» es material del lote, no una orden.
+ALTA_CANCELAR_WORDS = frozenset({"cancelar", "cancela"})
+# Tope de ids que guarda el lote: el contexto es un JSON en una sola fila. Pasado el tope los
+# mensajes siguen en el chat; solo se cuentan.
+MAX_LOTE_MENSAJES = 100
+
+
+def _colaborador_del_alta(session: Session, phone: str) -> str | None:
+    """El `username` del colaborador habilitado cuyo celular es `phone`, o None.
+
+    Compara normalizado: el usuario guarda lo que tecleó un humano («+52 1 55…») y el webhook
+    entrega el canónico. Son pocos usuarios, así que se compara en Python y no en SQL. Un
+    teléfono vacío o ajeno nunca coincide. La decisión es por remitente, no por estado: un
+    colaborador vuelve a entrar con cada mensaje."""
+    if not settings.alta_manual_enabled or not phone:
+        return None
+    usuarios = session.exec(
+        select(User).where(User.habilitado == True).where(User.phone != None)  # noqa: E711,E712
+    ).all()
+    for u in usuarios:
+        if normalize_phone(u.phone) == phone:
+            return u.username
+    return None
+
+
+def _handle_alta_lote(
+    session: Session, conv: Conversation, colaborador: str, text: str, entrante_id: int | None
+) -> list[str]:
+    """Anota el mensaje o el archivo en el lote y calla. «cancelar» lo descarta; un lote que pasó
+    de CAPTURE_TTL_HOURS sin movimiento se descarta y este mensaje abre otro."""
+    if text.strip().lower().strip("¡!.,; ") in ALTA_CANCELAR_WORDS:
+        _set_state(session, conv, "inicio")
+        return [ALTA_LOTE_CANCELADO]
+    contexto = _get_context(conv) if conv.state in ESTADOS_ALTA_MANUAL else {}
+    if conv.state in ESTADOS_ALTA_MANUAL and _captura_caducada(conv):
+        contexto = {}
+    elif conv.state in ESTADOS_ALTA_DIALOGO:
+        from app import alta_manual_dialogo  # import perezoso: el diálogo importa este módulo
+
+        respuesta = alta_manual_dialogo.atender(session, conv, colaborador, text, entrante_id)
+        if respuesta is not None:
+            return respuesta
+        # None: no era respuesta al paso sino más material; sigue como lote.
+    mensajes = [i for i in contexto.get("mensajes", []) if isinstance(i, int)]
+    total = int(contexto.get("total", len(mensajes))) + 1
+    if entrante_id is not None and len(mensajes) < MAX_LOTE_MENSAJES:
+        mensajes.append(entrante_id)
+    # `_set_state` sella `updated_at`: ese es el reloj de silencio del lote (B5) y de su caducidad.
+    _set_state(session, conv, ALTA_LOTE, {"colaborador": colaborador, "mensajes": mensajes, "total": total})
+    return []
 
 
 def _handle_escalado(session: Session, client: Client, conv: Conversation, text: str, normalized: str) -> list[str]:
@@ -2197,6 +2286,12 @@ def presentation(session: Session, phone: str, replies: list[str]) -> list:
 
     out: list = list(replies)
     last = out[-1]
+    if conv.state in ESTADOS_ALTA_DIALOGO:
+        from app import alta_manual_dialogo  # import perezoso (ver _handle_alta_lote)
+
+        if (interactivo := alta_manual_dialogo.presentar(session, conv, last)) is not None:
+            out[-1] = interactivo
+        return out
     if conv.state == "confirmar":
         out[-1] = {"text": last, "buttons": list(CONFIRM_BUTTONS)}
         return out

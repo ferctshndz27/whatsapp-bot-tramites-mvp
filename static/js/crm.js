@@ -1749,6 +1749,11 @@
     } catch (_) { /* URL no manipulable: se sigue sin ella */ }
     var a = abridorRespuestas;
     abridorRespuestas = null;
+    devolverFoco(a);
+  }
+
+  /* El foco vuelve a quien abrió un diálogo, si sigue en la página y se ve. */
+  function devolverFoco(a) {
     if (a && a !== document.body && typeof a.focus === "function" && document.contains(a) && a.getClientRects().length) {
       try { a.focus({ preventScroll: true }); } catch (_) { a.focus(); }
     }
@@ -1900,6 +1905,49 @@
     if (els.respCerrar) els.respCerrar.addEventListener("click", cerrarRespuestas);
     if (els.formRespuesta) els.formRespuesta.addEventListener("submit", guardarRespuesta);
     dlg.addEventListener("close", alCerrarRespuestas);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Ayuda «Folio manual» (dialog, E4 de ext-cse)                        */
+  /* ------------------------------------------------------------------ */
+
+  /* Es solo texto, y lo pinta el servidor con el estado real (crm.html): aquí nada
+     más se abre, se cierra con ✕ y el foco vuelve al botón. Escape es del navegador
+     (ver wireGlobal: con un diálogo abierto no cierra el chat de atrás). */
+  function wireAyudaFolio() {
+    var dlg = els.dlgAyudaFolio;
+    if (!dlg) {
+      /* Sin el diálogo no hay qué abrir: mejor sin botón que con un botón muerto. */
+      quitar(els.btnAyudaFolio);
+      els.btnAyudaFolio = null;
+      return;
+    }
+    var abridor = null;
+    if (els.btnAyudaFolio) {
+      els.btnAyudaFolio.addEventListener("click", function () {
+        if (dlg.open) return;
+        abridor = document.activeElement;
+        if (dialogSupported(dlg)) dlg.showModal();
+        else dlg.setAttribute("open", "");
+        if (els.ayudaFolioCerrar) els.ayudaFolioCerrar.focus();
+      });
+    }
+    function alCerrar() {
+      var a = abridor;
+      abridor = null;
+      devolverFoco(a);
+    }
+    if (els.ayudaFolioCerrar) {
+      els.ayudaFolioCerrar.addEventListener("click", function () {
+        if (dialogSupported(dlg)) {
+          if (dlg.open) dlg.close();
+        } else {
+          dlg.removeAttribute("open");
+          alCerrar();
+        }
+      });
+    }
+    dlg.addEventListener("close", alCerrar);
   }
 
   /* ------------------------------------------------------------------ */
@@ -2742,7 +2790,10 @@
       respCargando: document.getElementById("crm-resp-cargando"),
       respLista: document.getElementById("crm-resp-lista"),
       respVacio: document.getElementById("crm-resp-vacio"),
-      respCerrar: document.getElementById("crm-resp-cerrar")
+      respCerrar: document.getElementById("crm-resp-cerrar"),
+      btnAyudaFolio: document.getElementById("crm-btn-ayuda-folio"),
+      dlgAyudaFolio: document.getElementById("crm-dlg-ayuda-folio"),
+      ayudaFolioCerrar: document.getElementById("crm-ayuda-folio-cerrar")
     };
     var templates = ["crm-tpl-tab", "crm-tpl-miembro", "crm-tpl-tray-item", "crm-tpl-column", "crm-tpl-card", "crm-tpl-bubble"];
     var missing = templates.filter(function (id) { return !document.getElementById(id); });
@@ -2756,6 +2807,7 @@
     wireChat();
     wireComposer();
     wireRespuestas();
+    wireAyudaFolio();
     load();
     if (DATOS.chat_inicial) abrirChat(DATOS.chat_inicial);
     /* /crm?respuestas=1 es a donde reenvía la ruta vieja /replies. */

@@ -1,0 +1,13 @@
+{
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "declarativeNetRequest",
+    "sidePanel"
+  ],
+  "background": {
+    "service_worker": "fondo-chrome.js"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  }
+}

@@ -96,6 +96,10 @@ NO_SON_CREDENCIALES = {
     "CONTEXTO_FOLIO_ENABLED",
     "REVISION_ENABLED",
     "CONTEXTO_MIN_PALABRAS",
+    # Perilla del alta manual de folios por colaboradores (ext-cse): un interruptor de conducta,
+    # editable desde /agente. No es un secreto.
+    "ALTA_MANUAL_ENABLED",
+    "ALTA_MANUAL_ESPERA_S",
 }
 
 

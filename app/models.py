@@ -257,6 +257,11 @@ class Ticket(SQLModel, table=True):
     resolved_at: datetime | None = None
     # Último cambio de status; permite medir tiempo en etapa.
     status_changed_at: datetime | None = None
+    # Cómo nació el folio: 'manual' = lo dio de alta un colaborador desde la
+    # extensión (el cliente le escribió a su número personal); NULL = lo abrió
+    # el bot por WhatsApp. Nullable a propósito: los folios previos no se
+    # reclasifican (un DEFAULT inventaría un canal que nadie registró).
+    origen: str | None = None
 
 
 class User(SQLModel, table=True):

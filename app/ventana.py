@@ -6,10 +6,10 @@ La ventana es **del número, no del folio**: dos folios del mismo cliente
 comparten una sola ventana, y contestar por el otro canal no la reabre (cada
 cuenta —Meta y Twilio— tiene su propio número, ver `app/messaging.py`).
 
-La fuente de verdad es `Message`: el último entrante de ese teléfono. NO hay una
-columna `last_inbound_at` a propósito — sería una copia desnormalizada de algo
-que la tabla ya contesta, y una copia que se puede desincronizar es exactamente
-el bug que costó el arreglo del espejo (61ea7c2).
+La fuente de verdad es `Message`: el último entrante que mandó el propio cliente
+(`ABRE_VENTANA`). NO hay una columna `last_inbound_at` a propósito — sería una
+copia desnormalizada de algo que la tabla ya contesta, y una copia que se puede
+desincronizar es exactamente el bug que costó el arreglo del espejo (61ea7c2).
 
 Este módulo existe porque la misma pregunta se hacía en cinco lugares —bandeja,
 envío manual, avisos de cierre y de soltado, y los dos envíos de cobranza— cada
@@ -25,9 +25,22 @@ costo es `app/medidor.py`, que no adivina: copia lo que Meta reporta.
 
 from datetime import datetime, timedelta, timezone
 
-from sqlmodel import select
+from sqlalchemy import and_
+from sqlmodel import col, select
 
 from app.models import Direction, Message
+
+# REGLA: la ventana la abre el CLIENTE al escribir. Un entrante con `sent_by` no lo escribió él:
+# es material que un colaborador le reenvió a A desde su número personal y que el alta manual mudó
+# al chat del cliente (ext-cse, B6). Para quien atiende el folio son palabras del cliente, pero a A
+# no se las mandó el cliente, así que no abren ni alargan su ventana. Si se contaran, la invitación
+# del folio saldría en texto plano —sin pedir consentimiento— y el proveedor la rechazaría.
+ABRE_VENTANA = and_(col(Message.direction) == Direction.IN, col(Message.sent_by).is_(None))
+
+
+def abre_ventana(m: Message) -> bool:
+    """`ABRE_VENTANA` para quien ya tiene los mensajes en la mano (la bandeja los recorre)."""
+    return m.direction == Direction.IN and m.sent_by is None
 
 WINDOW_HOURS = 24
 
@@ -70,7 +83,7 @@ def restante_texto(last_in_at: datetime | None) -> str:
 
 
 def ultimo_entrante(session, phone: str) -> datetime | None:
-    """Momento del último mensaje ENTRANTE de ese teléfono.
+    """Momento del último mensaje que el cliente mismo le mandó a ese teléfono (`ABRE_VENTANA`).
 
     # ponytail: no discrimina por canal. Un cliente que escribiera por las DOS
     # cuentas tendría una sola ventana calculada aquí, cuando en realidad Meta
@@ -81,7 +94,7 @@ def ultimo_entrante(session, phone: str) -> datetime | None:
     """
     fila = session.exec(
         select(Message)
-        .where(Message.phone == phone, Message.direction == Direction.IN)
+        .where(Message.phone == phone, ABRE_VENTANA)
         .order_by(Message.created_at.desc())  # type: ignore[union-attr]
     ).first()
     return fila.created_at if fila else None

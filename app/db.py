@@ -125,6 +125,9 @@ _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     "first_response_by": "VARCHAR",
     "resolved_at": "DATETIME",
     "status_changed_at": "DATETIME",
+    # 'manual' = alta de un colaborador (extensión); NULL = lo abrió el bot.
+    # NULL honesto en los folios viejos: no se reclasifican.
+    "origen": "VARCHAR",
 }
 _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH = {
     "email": "VARCHAR",

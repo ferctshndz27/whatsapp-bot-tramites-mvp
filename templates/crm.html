@@ -21,11 +21,23 @@
       <span class="search-icon" aria-hidden="true">🔍</span>
       <input id="crm-search" type="search" placeholder="Buscar contacto o teléfono" autocomplete="off" spellcheck="false">
     </div>
+    {# «Ir al cliente»: el número que el asesor pega o teclea (el que ve en WhatsApp Web, junto al
+       panel lateral de ext-cse) abre su conversación. Un GET a /crm?chat= sin JS propio: el servidor
+       lo lleva al formato canónico (crm_page) y el chat lo abre como un enlace «Abrir chat». #}
+    <form id="crm-ir-cliente" class="ir-cliente" action="/crm" method="get" role="search" aria-label="Ir al cliente">
+      <label for="crm-ir-cliente-tel" class="sr-only">Ir al cliente: su número de WhatsApp</label>
+      <input id="crm-ir-cliente-tel" name="chat" type="tel" inputmode="tel" placeholder="Ir al cliente: su número"
+             autocomplete="off" maxlength="40" required>
+      <button class="btn btn-ghost" type="submit">Ir</button>
+    </form>
     <div class="toolbar-actions">
       <button id="crm-btn-toggle-tray" class="btn btn-ghost" type="button" aria-controls="crm-tray" aria-expanded="true">Ocultar bandeja</button>
       {# Para todos: las respuestas guardadas son de cada quien. Llega sin chat abierto, que es
          justo cuando la fila del compositor no se ve. #}
       <button id="crm-btn-respuestas" class="btn btn-ghost" type="button" aria-haspopup="dialog"><span aria-hidden="true">⚡</span> Mis respuestas</button>
+      {# Para todos: cómo abrir un folio a un cliente que se atendió por celular (E4 de ext-cse). #}
+      <button id="crm-btn-ayuda-folio" class="btn btn-ghost" type="button" aria-haspopup="dialog"
+              aria-controls="crm-dlg-ayuda-folio" aria-label="Ayuda: cómo crear un folio manual">¿Folio manual?</button>
       {# Para todos: cada quien administra las etapas de SU tablero (app/tablero.py). #}
       <button id="crm-btn-new-column" class="btn btn-primary" type="button">Nueva etapa</button>
     </div>
@@ -494,6 +506,57 @@
       <ul class="resp-lista" id="crm-resp-lista"></ul>
       <p class="dlg-nota" id="crm-resp-vacio" hidden>
         Aún no guardas respuestas. La primera te ahorrará teclear la número cien.
+      </p>
+    </div>
+  </dialog>
+
+  {# Ayuda «Folio manual» (E4 de ext-cse): cómo un colaborador le abre un folio a un cliente que
+     atendió desde su celular, reenviándole el material al agente. Es solo texto, y el servidor lo
+     pinta con el estado real (crm._ayuda_folio_manual): la perilla del Estudio, la espera antes de
+     la pregunta y el celular de quien tiene la sesión. Cada paso es uno del diálogo del agente
+     (app/alta_manual_barrido.py y app/alta_manual_dialogo.py): si ese diálogo cambia, este texto
+     también. crm.js solo lo abre y lo cierra. #}
+  {% set ayuda = ayuda_folio %}
+  <dialog id="crm-dlg-ayuda-folio" class="dlg-ayuda" aria-labelledby="crm-dlg-ayuda-folio-title">
+    <div class="dlg-cuerpo">
+      <header class="dlg-cabeza">
+        <h2 id="crm-dlg-ayuda-folio-title">Cómo crear un folio manual</h2>
+        <button class="dlg-cerrar" id="crm-ayuda-folio-cerrar" type="button" aria-label="Cerrar la ayuda">✕</button>
+      </header>
+      <p class="dlg-nota">
+        Si atendiste a un cliente desde tu celular, el agente le abre su folio aquí con lo que le reenvíes.
+      </p>
+      {% if not ayuda.encendida %}
+      <p class="banner-warn" role="note" id="crm-ayuda-folio-apagada">
+        Por ahora el alta manual está apagada: si le reenvías algo al agente, te va a contestar como a un
+        cliente. La enciende un administrador en el Estudio del Agente («Alta manual de folios por colaboradores»).
+      </p>
+      {% endif %}
+      <ol class="ayuda-pasos">
+        <li>Desde {% if ayuda.celular %}el celular registrado en tu usuario ({{ ayuda.celular }}){% else %}tu celular{% endif %},
+          reenvíale al WhatsApp del agente —el mismo número al que escriben los clientes— los mensajes,
+          fotos y documentos del cliente.</li>
+        <li>Cuando termines, espera unos {{ ayuda.espera_s }} segundos: el agente te va a preguntar el número
+          de WhatsApp del cliente. Escríbelo con lada, a 10 dígitos.</li>
+        <li>Confirma el número con «Sí» o responde «Corregir» para escribirlo de nuevo. Si el cliente es
+          nuevo, el agente te pide su nombre.</li>
+        <li>Elige el trámite de la lista (o escribe su nombre) y a quién se lo asignas: «Yo» aparece primero.</li>
+        <li>Revisa el resumen y responde «Sí» («No» te deja cambiar el trámite). Si el cliente todavía no
+          acepta mensajes del agente, te va a preguntar si aceptó que lo contactemos desde ese número:
+          «Sí» le manda una invitación y «No» crea el folio sin ella.</li>
+        <li>El agente te confirma el número de folio, y lo que reenviaste queda en el chat del cliente,
+          aquí en el CRM.</li>
+      </ol>
+      {% if not ayuda.celular %}
+      <p class="banner-warn" role="note" id="crm-ayuda-folio-sin-celular">
+        Tu usuario no tiene un celular registrado, así que el agente no va a saber que eres tú.
+        Coméntaselo a un administrador.
+      </p>
+      {% endif %}
+      <p class="dlg-nota">
+        Para descartar lo que reenviaste, escribe «cancelar» en cualquier momento.{% if ayuda.encendida and ayuda.celular %}
+        Mientras el alta manual esté encendida, el agente toma todo lo que le mandes desde ese celular
+        —reenviado o escrito por ti— como material para un folio.{% endif %}
       </p>
     </div>
   </dialog>

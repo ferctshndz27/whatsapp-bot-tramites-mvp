@@ -584,6 +584,18 @@ const enPagina = {
     return { ok: true };
   },
 
+  /* «Ir al cliente» (E3 de ext-cse): escribe el número como lo pegaría un asesor y pulsa «Ir». */
+  irAlCliente: (numero) => {
+    const form = document.querySelector("#crm-ir-cliente");
+    const campo = document.querySelector("#crm-ir-cliente-tel");
+    const boton = form?.querySelector("button[type=submit]");
+    if (!form || !campo || !boton) return { error: "no está el campo «Ir al cliente» en la barra" };
+    if (!campo.getClientRects().length || !boton.getClientRects().length) return { error: "el campo «Ir al cliente» no se ve" };
+    campo.value = numero;
+    boton.click();
+    return { ok: true };
+  },
+
   /* Apaga TODOS los setInterval de la página: es lo que vuelve determinista al criterio 7c.
      Sin sondeo de 8/20 s, lo único que puede refrescar el hilo es el stream de avisos. */
   matarSondeos: () => {
@@ -1117,6 +1129,44 @@ const enPagina = {
     return { ok: document.activeElement === el };
   },
 
+  /* La ayuda «¿Folio manual?» de la barra (E4 de ext-cse). */
+  ayudaFolioEstado: () => {
+    const visible = (el) => !!el && !el.hidden && getComputedStyle(el).display !== "none" && el.getClientRects().length > 0;
+    const d = document.querySelector("dialog#crm-dlg-ayuda-folio");
+    const b = document.querySelector("#crm-btn-ayuda-folio");
+    const a = document.activeElement;
+    const r = d?.open ? d.getBoundingClientRect() : null;
+    // Lo último de la ayuda se alcanza: el diálogo cabe en el alto de la ventana y, si su texto no
+    // cabe, scrollea por dentro (overflow auto o scroll: con hidden, scrollTop se puede fijar por
+    // código, pero una persona no llega) hasta la última nota.
+    let alcanzaFinal = null;
+    const ultimo = d?.querySelector(".dlg-cuerpo > :last-child");
+    if (d?.open && ultimo) {
+      const desborda = d.scrollHeight > d.clientHeight + 1;
+      const scrollea = ["auto", "scroll"].includes(getComputedStyle(d).overflowY);
+      const antes = d.scrollTop;
+      d.scrollTop = d.scrollHeight;
+      const rd = d.getBoundingClientRect();
+      alcanzaFinal = (!desborda || scrollea) && ultimo.getBoundingClientRect().bottom <= rd.bottom + 1 && rd.bottom <= innerHeight + 1;
+      d.scrollTop = antes;
+    }
+    return {
+      boton: visible(b) && !!b.closest("header.crm-toolbar"),
+      abierto: d?.open === true,
+      modal: !!d && d.open && d.matches(":modal"),
+      titulo: d?.querySelector("h2")?.textContent.trim() ?? null,
+      pasos: d ? [...d.querySelectorAll("ol.ayuda-pasos > li")].map((li) => li.textContent.replace(/\s+/g, " ").trim()) : [],
+      apagada: visible(document.querySelector("#crm-ayuda-folio-apagada")),
+      sinCelular: visible(document.querySelector("#crm-ayuda-folio-sin-celular")),
+      foco: a ? (a.id || a.className || a.tagName) : null,
+      chatAbierto: document.querySelector("#crm")?.classList.contains("chat-abierto") ?? false,
+      // Cabe en la ventana: ni se sale por los lados ni obliga a scroll horizontal de página.
+      cabe: !r || (r.left >= 0 && r.right <= document.documentElement.clientWidth),
+      scrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      alcanzaFinal,
+    };
+  },
+
   pulsarQrTitulo: (titulo) => {
     const b = [...document.querySelectorAll("#crm-qr-bar .qr")].find((x) => x.textContent === titulo);
     if (!b) return { error: `no hay respuesta rápida «${titulo}»` };
@@ -1421,6 +1471,92 @@ async function criterioRutaVieja(ctx) {
   if (s.url !== `/crm?chat=${ANA}`) throw new Error(`la URL final es ${s.url}`);
   if (s.nombre !== "Ana Lucía Ramírez") throw new Error(`abrió ${JSON.stringify(s.nombre)}`);
   return `/inbox/${ANA} (con volver y folio) aterriza en /crm?chat=${ANA} con el chat abierto y sin arrastrar parámetros`;
+}
+
+async function criterioIrAlCliente(ctx) {
+  // El número de Ana como lo copia un asesor de WhatsApp Web: con «+», espacios y el 1 de los móviles.
+  await ctx.abrirCrm();
+  const cargado = ctx.cdp.esperarEvento("Page.loadEventFired", 20000);
+  const r = await ctx.cdp.evaluate(enPagina.irAlCliente, "+52 1 55 0000 0011");
+  if (r.error) throw new Error(r.error);
+  await cargado;
+  const s = await waitFor(async () => {
+    const e = await ctx.cdp.evaluate(enPagina.estadoChat);
+    return e.abierto && e.burbujas.length > 0 ? e : null;
+  }, { timeout: 8000, label: "que «Ir al cliente» abra el chat" });
+  if (s.nombre !== "Ana Lucía Ramírez") throw new Error(`abrió ${JSON.stringify(s.nombre)}`);
+  if (s.url !== `/crm?chat=${ANA}`) throw new Error(`la URL quedó en ${s.url}`);
+  return `«Ir al cliente» con «+52 1 55 0000 0011» abre el chat de Ana y deja /crm?chat=${ANA}`;
+}
+
+// La ayuda «¿Folio manual?» (E4 de ext-cse). El servidor del QA corre con ALTA_MANUAL_ENABLED=0 y
+// sus usuarios no tienen celular: la ayuda debe decir las dos cosas. Los pasos con la perilla
+// encendida y el celular los fija tests/test_crm.py; aquí, que se abra, se lea y se cierre bien.
+async function criterioAyudaFolio(ctx) {
+  const fallos = [];
+  const esperar = async (condicion, label) => {
+    let visto = null;
+    try {
+      return await waitFor(async () => {
+        visto = await ctx.cdp.evaluate(enPagina.ayudaFolioEstado);
+        return condicion(visto) ? visto : null;
+      }, { timeout: 6000, label });
+    } catch (e) {
+      throw new Error(`${e.message} — visto: ${JSON.stringify(visto)}`);
+    }
+  };
+  // Con el chat de Ana abierto detrás: Escape debe cerrar la ayuda y no el chat.
+  await ctx.abrirCrm(`?chat=${ANA}`);
+  await waitFor(async () => (await ctx.cdp.evaluate(enPagina.estadoChat)).abierto || null, { timeout: 8000, label: "el chat de Ana abierto" });
+  let s = await ctx.cdp.evaluate(enPagina.ayudaFolioEstado);
+  if (!s.boton) throw new Error("no se ve el botón «¿Folio manual?» en la barra");
+  let r = await ctx.cdp.evaluate(enPagina.activarBoton, "crm-btn-ayuda-folio");
+  if (r.error) throw new Error(r.error);
+  s = await esperar((e) => e.abierto, "que «¿Folio manual?» abra la ayuda");
+  if (!s.modal) fallos.push("la ayuda no se abrió como modal");
+  if (s.titulo !== "Cómo crear un folio manual") fallos.push(`título: ${JSON.stringify(s.titulo)}`);
+  if (s.pasos.length !== 6) fallos.push(`trae ${s.pasos.length} pasos y no 6`);
+  if (!s.pasos[0]?.startsWith("Desde tu celular, reenvíale al WhatsApp del agente")) fallos.push(`primer paso: ${JSON.stringify(s.pasos[0])}`);
+  if (!s.apagada) fallos.push("con ALTA_MANUAL_ENABLED=0 no avisa que el alta manual está apagada");
+  if (!s.sinCelular) fallos.push("a un usuario sin celular no le avisa que el agente no lo va a reconocer");
+  if (s.foco !== "crm-ayuda-folio-cerrar") fallos.push(`al abrir, el foco quedó en ${s.foco} y no en ✕`);
+  if (!s.cabe || s.scrollX) fallos.push("a 1400 px la ayuda no cabe en la ventana");
+  if (!s.alcanzaFinal) fallos.push("a 1400 px la última nota de la ayuda queda fuera de alcance");
+  await ctx.capturar("10-ayuda-folio-1400");
+
+  // ✕ cierra y el foco vuelve al botón de la barra.
+  r = await ctx.cdp.evaluate(enPagina.activarBoton, "crm-ayuda-folio-cerrar");
+  if (r.error) throw new Error(r.error);
+  s = await esperar((e) => !e.abierto, "que ✕ cierre la ayuda");
+  if (s.foco !== "crm-btn-ayuda-folio") fallos.push(`tras ✕, el foco quedó en ${s.foco}`);
+  if (!s.chatAbierto) fallos.push("✕ en la ayuda cerró también el chat");
+
+  // Escape cierra solo la ayuda: el chat de atrás sigue abierto.
+  r = await ctx.cdp.evaluate(enPagina.activarBoton, "crm-btn-ayuda-folio");
+  if (r.error) throw new Error(r.error);
+  await esperar((e) => e.abierto && e.foco === "crm-ayuda-folio-cerrar", "la ayuda abierta otra vez");
+  await teclaReal(ctx, "Escape", 27);
+  s = await esperar((e) => !e.abierto, "que Escape cierre la ayuda");
+  if (!s.chatAbierto) fallos.push("Escape en la ayuda cerró también el chat");
+  if (s.foco !== "crm-btn-ayuda-folio") fallos.push(`tras Escape, el foco quedó en ${s.foco}`);
+
+  // A 400 px (teléfono, o un panel lateral angosto) el botón se ve y la ayuda cabe.
+  await ctx.ancho(400, 800);
+  try {
+    await ctx.abrirCrm();
+    s = await ctx.cdp.evaluate(enPagina.ayudaFolioEstado);
+    if (!s.boton) fallos.push("a 400 px no se ve el botón «¿Folio manual?»");
+    r = await ctx.cdp.evaluate(enPagina.activarBoton, "crm-btn-ayuda-folio");
+    if (r.error) throw new Error(r.error);
+    s = await esperar((e) => e.abierto, "la ayuda abierta a 400 px");
+    if (!s.cabe || s.scrollX) fallos.push("a 400 px la ayuda se sale de la ventana");
+    if (!s.alcanzaFinal) fallos.push("a 400 px la última nota de la ayuda no se alcanza con scroll");
+    await ctx.capturar("10b-ayuda-folio-400");
+  } finally {
+    await ctx.cdp.send("Emulation.clearDeviceMetricsOverride");
+  }
+  if (fallos.length) throw new Error(fallos.join("; "));
+  return "abre como modal con los 6 pasos y los avisos de perilla apagada y sin celular; ✕ y Escape la cierran sin tocar el chat y el foco vuelve a la barra; a 400 px cabe y se llega con scroll a la última nota";
 }
 
 async function criterioBusqueda(ctx) {
@@ -3156,6 +3292,8 @@ async function main() {
     DB_PATH: db, SECURE_COOKIES: "0", SESSION_SECRET: "qa-secreto-de-prueba-no-usar",
     MSSQL_HOST: "", MSSQL_SA_PASSWORD: "", OLLAMA_URL: "", ANTHROPIC_API_KEY: "", WHATSAPP_TOKEN: "",
     STRIPE_SECRET_KEY: "",
+    // Apagada a propósito, sin importar el entorno: el criterio 15d espera el aviso de la ayuda.
+    ALTA_MANUAL_ENABLED: "0",
     GEOIP_ENABLED: "0", DASHBOARD_USERNAME: "", DASHBOARD_PASSWORD: "",
     CRM_QA_REPO: REPO, CRM_QA_CLAVE: CLAVE, PYTHONUNBUFFERED: "1",
   };
@@ -3214,6 +3352,8 @@ async function main() {
     await criterio(ctx, "14. Alta de contacto desde una columna", criterioAltaContacto);
     await criterio(ctx, "15. /crm?chat= abre el chat al cargar", criterioChatInicial);
     await criterio(ctx, "15b. La ruta vieja /inbox/{phone} aterriza en el CRM", criterioRutaVieja);
+    await criterio(ctx, "15c. «Ir al cliente» abre el chat con el número como lo peguen", criterioIrAlCliente);
+    await criterio(ctx, "15d. La ayuda «¿Folio manual?» abre, avisa, se cierra con ✕ y Escape y cabe a 400 px", criterioAyudaFolio);
     await criterio(ctx, "16. Ocultar/mostrar bandeja", criterioToggleTray);
     await criterio(ctx, "17. Colaborador: alcance y sin controles de admin", criterioColaborador);
     await criterio(ctx, "17b. Tablero personal: lo que colab1 hace con sus etapas no toca el de jefa1", criterioTableroPersonal);

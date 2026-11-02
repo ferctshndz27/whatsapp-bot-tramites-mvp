@@ -395,6 +395,11 @@ def client_profile(
             .order_by(ClientNote.created_at.desc())
         ).all()
         titulares = sorted(cartera.duenos(session, phone))
+        # Estado de la ventana para la ficha (B8): sin ventana, el próximo saliente
+        # desde A tiene que ser la plantilla de invitación.
+        from app import invitacion
+
+        ventana_a = invitacion.ventana_abierta(session, normalize_phone(phone))
         # A quién puede meter un admin: gente habilitada de la oficina DEL CLIENTE
         # (la de quien mira puede ser otra, o todas para el admin global).
         candidatos = [] if not es_admin else [
@@ -418,6 +423,7 @@ def client_profile(
             # regreso; validado, un valor externo se descarta.
             "volver": ruta_interna(volver),
             "titulares": titulares,
+            "ventana_a": ventana_a,
             "candidatos": candidatos,
             "error": _ERRORES_CARTERA.get(error, ""),
             "aviso": _AVISOS_CARTERA.get(aviso_cartera, ""),
