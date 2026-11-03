@@ -19,7 +19,9 @@ export const CLAVE = "chispa";
 const ID_GRUPO = `ext-cse-${CLAVE}`;
 const ID_PANEL = `ext-cse-${CLAVE}-panel`;
 const ID_MENU = `ext-cse-${CLAVE}-menu`;
-const ANCHO = 420;
+const ANCHO = 420; // ancho inicial; la persona lo cambia arrastrando el borde izquierdo del panel
+const MIN_ANCHO = 320;
+const maxAncho = () => Math.max(MIN_ANCHO, Math.floor(innerWidth * 0.7));
 
 // Los módulos del CRM que ya tienen vista (`listo` en barra.js, la misma lista del panel de la extensión).
 // No depende de la sesión: dentro de WhatsApp Web el panel va en un marco con su propia cookie (particionada),
@@ -60,14 +62,17 @@ const ESTILO_MENU = `
 
 const ESTILO_PANEL = `
   :host { all: initial; }
-  section { position: fixed; top: 0; right: 0; bottom: 0; width: ${ANCHO}px; z-index: 2147483645; display: flex; flex-direction: column;
+  section { position: fixed; top: 0; right: 0; bottom: 0; width: var(--ancho, ${ANCHO}px); z-index: 2147483645; display: flex; flex-direction: column;
             background: #fff; border-left: 1px solid #d1d7db; font: 14px system-ui, sans-serif; }
   section[hidden] { display: none; }
   header { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; height: 59px; padding: 0 16px; background: #f0f2f5; color: #111b21; }
   h2 { all: unset; flex: 1; font: 500 16px system-ui, sans-serif; }
   button { all: unset; width: 32px; height: 32px; line-height: 32px; text-align: center; border-radius: 50%; cursor: pointer; font-size: 22px; color: #54656f; }
   button:hover, button:focus-visible { background: rgba(11, 20, 26, .1); }
-  iframe { flex: 1; width: 100%; border: 0; background: #fff; }`;
+  iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+  section[data-arrastrando] iframe { pointer-events: none; }
+  .asa { position: absolute; top: 0; bottom: 0; left: -3px; width: 7px; cursor: col-resize; touch-action: none; }
+  .asa:hover, section[data-arrastrando] .asa { background: rgba(0, 168, 132, .45); }`;
 
 const pedirModulos = () => chrome.runtime.sendMessage({ tipo: "modulos" }).catch(() => undefined);
 
@@ -93,12 +98,38 @@ function crearPanel() {
   cerrar.title = cerrar.ariaLabel = "Cerrar";
   cerrar.textContent = "×";
   cabecera.append(titulo, cerrar);
-  seccion.append(cabecera);
+  const asa = document.createElement("div");
+  asa.className = "asa";
+  asa.title = "Arrastra para ajustar el ancho";
+  seccion.append(cabecera, asa);
   sombra.append(seccion);
 
   const app = () => document.querySelector("#app") ?? document.body;
   let abierto;
   const avisar = () => document.dispatchEvent(new CustomEvent(`${ID_GRUPO}-cambio`));
+  let ancho = ANCHO;
+  const ajustar = (px) => {
+    ancho = Math.min(maxAncho(), Math.max(MIN_ANCHO, Math.round(px)));
+    seccion.style.setProperty("--ancho", `${ancho}px`);
+    if (abierto) app().style.paddingRight = `${ancho}px`; // WhatsApp se acomoda al ancho elegido
+  };
+  // Los movimientos se escuchan en la ventana (no en el asa): el panel se mueve con el ratón y, con el
+  // marco encima, el asa perdería los eventos. El marco no recibe el ratón mientras se arrastra.
+  const mover = (e) => ajustar(innerWidth - e.clientX);
+  const soltar = () => {
+    delete seccion.dataset.arrastrando;
+    removeEventListener("pointermove", mover, true);
+    removeEventListener("pointerup", soltar, true);
+    removeEventListener("pointercancel", soltar, true);
+  };
+  asa.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    seccion.dataset.arrastrando = "";
+    addEventListener("pointermove", mover, true);
+    addEventListener("pointerup", soltar, true);
+    addEventListener("pointercancel", soltar, true);
+  });
+  addEventListener("resize", () => ajustar(ancho)); // si la ventana se achica, el panel también
   const api = {
     anfitrion,
     get abierto() {
@@ -121,7 +152,7 @@ function crearPanel() {
       titulo.textContent = boton.nombre;
       seccion.append(marco);
       seccion.hidden = false;
-      app().style.paddingRight = `${ANCHO}px`; // WhatsApp se corre, como #app en MI CIERRO
+      app().style.paddingRight = `${ancho}px`; // WhatsApp se corre, como #app en MI CIERRO
       app().style.boxSizing = "border-box";
       abierto = boton.id;
       avisar();
