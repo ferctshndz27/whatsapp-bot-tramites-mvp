@@ -1919,19 +1919,23 @@
     if (!dlg) {
       /* Sin el diálogo no hay qué abrir: mejor sin botón que con un botón muerto. */
       quitar(els.btnAyudaFolio);
+      quitar(els.btnAyudaFolioChat);
       els.btnAyudaFolio = null;
+      els.btnAyudaFolioChat = null;
       return;
     }
     var abridor = null;
-    if (els.btnAyudaFolio) {
-      els.btnAyudaFolio.addEventListener("click", function () {
-        if (dlg.open) return;
-        abridor = document.activeElement;
-        if (dialogSupported(dlg)) dlg.showModal();
-        else dlg.setAttribute("open", "");
-        if (els.ayudaFolioCerrar) els.ayudaFolioCerrar.focus();
-      });
+    function abrir() {
+      if (dlg.open) return;
+      abridor = document.activeElement;
+      if (dialogSupported(dlg)) dlg.showModal();
+      else dlg.setAttribute("open", "");
+      if (els.ayudaFolioCerrar) els.ayudaFolioCerrar.focus();
     }
+    /* Dos botones, un diálogo: el de la barra y el «?» de la cabecera del chat (panel embebido). */
+    [els.btnAyudaFolio, els.btnAyudaFolioChat].forEach(function (b) {
+      if (b) b.addEventListener("click", abrir);
+    });
     function alCerrar() {
       var a = abridor;
       abridor = null;
@@ -2792,6 +2796,7 @@
       respVacio: document.getElementById("crm-resp-vacio"),
       respCerrar: document.getElementById("crm-resp-cerrar"),
       btnAyudaFolio: document.getElementById("crm-btn-ayuda-folio"),
+      btnAyudaFolioChat: document.getElementById("crm-btn-ayuda-folio-chat"),
       dlgAyudaFolio: document.getElementById("crm-dlg-ayuda-folio"),
       ayudaFolioCerrar: document.getElementById("crm-ayuda-folio-cerrar")
     };

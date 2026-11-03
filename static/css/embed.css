@@ -14,6 +14,9 @@
 }
 .embebido .crm.chat-abierto > h1,
 .embebido .crm.chat-abierto .crm-toolbar { display: none; }
+/* Con un chat abierto la barra se esconde: la ayuda «Folio manual» pasa a un «?» en la cabecera. */
+.embebido .crm .chat-ayuda { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; }
+.embebido .crm .chat-ayuda + .chat-close { margin-left: 4px; }
 .embebido .crm.chat-abierto .crm-layout { flex: 1 1 auto; min-height: 0; }
 .embebido .crm.chat-abierto #crm-chat { height: auto; min-height: 0; }
 

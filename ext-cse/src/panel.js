@@ -8,7 +8,7 @@
 //
 // Las fallas esperadas (sin red, sin permiso, CRM caído) no van a la consola: no son errores del
 // código y la pantalla ya las explica.
-import { CRM, PENDIENTES, PERMISO, SALIDA, SALUD, SESION } from "./crm.js";
+import { CRM, PANEL, PENDIENTES, PERMISO, SALIDA, SALUD, SESION } from "./crm.js";
 import { marcarPendientes, pintarBarra } from "./barra.js";
 
 // Módulo que se abre solo al entrar (id de barra.js).
@@ -16,6 +16,7 @@ const INICIAL = "dia";
 const REINTENTO_MS = 5000;
 const ESPERA_MS = 8000;
 const CADA = `Volveremos a intentar cada ${REINTENTO_MS / 1000} segundos.`;
+const enFirefox = Boolean(globalThis.browser?.sidebarAction);
 
 const titulo = document.querySelector("#titulo");
 const detalle = document.querySelector("#detalle");
@@ -247,7 +248,10 @@ async function intentar() {
       return;
     }
     abierto = true;
-    await entrar();
+    // Firefox no deja enmarcar el CRM (spike S1): ahí el panel navega a la página del CRM misma, sin la
+    // barra de módulos, que vive en marcos.
+    if (enFirefox) location.replace(PANEL);
+    else await entrar();
   } catch (error) {
     abierto = false;
     aviso.hidden = false;

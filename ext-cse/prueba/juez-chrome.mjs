@@ -394,7 +394,7 @@ async function main() {
     let trasEscape = null;
     try {
       ayuda = conChat && (await hasta(async () => evaluar(cdp, conChat, `(() => {
-        const b = document.querySelector("#crm-btn-ayuda-folio");
+        const b = document.querySelector("#crm-btn-ayuda-folio-chat");
         if (!b || !b.getClientRects().length) return undefined;
         if (!document.querySelector("#crm-dlg-ayuda-folio")?.open) { b.focus(); b.click(); }
         return ${ESTADO_AYUDA};
@@ -411,11 +411,11 @@ async function main() {
     } finally {
       await cdp.enviar("Emulation.clearDeviceMetricsOverride", {}, panel);
     }
-    criterio("«¿Folio manual?» abre la ayuda en el panel: modal, 6 pasos y cabe a 360 px",
+    criterio("El «?» de la cabecera del chat abre la ayuda «Folio manual» en el panel: modal, 6 pasos y cabe a 360 px",
       Boolean(ayuda?.abierto && ayuda.modal && ayuda.pasos === 6 && ayuda.cabe && !ayuda.scrollX && ayuda.foco === "crm-ayuda-folio-cerrar"),
       JSON.stringify(ayuda ?? "el CRM del panel no tiene el botón «¿Folio manual?»"));
     criterio("Escape cierra la ayuda del panel sin cerrar el chat y el foco vuelve al botón",
-      Boolean(trasEscape && trasEscape.chat && trasEscape.foco === "crm-btn-ayuda-folio"), JSON.stringify(trasEscape));
+      Boolean(trasEscape && trasEscape.chat && trasEscape.foco === "crm-btn-ayuda-folio-chat"), JSON.stringify(trasEscape));
 
     // 5. Primer arranque: si el panel se abre antes de que onInstalled ponga la regla, se la pide al
     // fondo antes de crear el marco. La regla se borra desde la página del panel, que tiene la API.
