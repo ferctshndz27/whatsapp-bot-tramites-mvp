@@ -1,6 +1,4 @@
-// «Chispa»: los botones de la extensión en el pie del chat de WhatsApp Web (junto a la caja de «Escribe
-// un mensaje»), como los íconos que MI CIERRO pone ahí (UI-MAPA.md §4 y §9: `FooterIconsRight`, anclado
-// a `footer > div` y vuelto a montar con un MutationObserver si WhatsApp reconstruye el pie). Cada botón
+// «Chispa»: los botones de la extensión en el chat de WhatsApp Web. Cada botón
 // abre un módulo del CRM en un panel pegado al borde derecho, como el `MenuLateral` de MI CIERRO:
 // WhatsApp se corre a la izquierda (padding de `#app`) y no hay fondo oscuro.
 //
@@ -12,8 +10,9 @@
 // absolute bottom-4 left-4, flex-col-reverse, gap 8). Aquí: `#ext-cse-chispa-menu`, `data-chispa-menu`.
 // Sus 6 botones abren las vistas del CRM ya hechas, en el mismo panel derecho.
 //
-// No lee ni toca nada de WhatsApp: solo agrega un nodo suyo al pie y un padding. Su CSS vive en un
+// No lee ni toca nada de WhatsApp: solo agrega nodos suyos y un padding. Su CSS vive en un
 // shadow DOM cerrado. Los íconos son texto estático de esta extensión.
+import { MODULOS } from "./barra.js";
 import { ICONOS } from "./iconos.js";
 
 export const CLAVE = "chispa";
@@ -22,29 +21,15 @@ const ID_PANEL = `ext-cse-${CLAVE}-panel`;
 const ID_MENU = `ext-cse-${CLAVE}-menu`;
 const ANCHO = 420;
 
-// Qué abre cada botón (id de barra.js). Para quitar o agregar uno basta tocar esta lista.
-const BOTONES = [
-  { id: "solicitudes", nombre: "Solicitudes" },
-  { id: "nuevocobro", nombre: "Nuevo cobro" },
-  { id: "cartera", nombre: "Mi cartera" },
-];
-
-// Los 6 del menú vertical, de arriba abajo (el primero queda más lejos del interruptor).
-const MENU = [
-  { id: "dia", nombre: "Mi día" },
-  { id: "cartera", nombre: "Mi cartera" },
-  { id: "nuevocobro", nombre: "Nuevo cobro" },
-  { id: "solicitudes", nombre: "Solicitudes" },
-  { id: "clientes", nombre: "Clientes" },
-  { id: "guia", nombre: "Guía de trámites" },
-];
+// Todos los módulos del CRM (barra.js), menos el de chats de WhatsApp: ya estamos en WhatsApp.
+const MENU = MODULOS.filter((m) => m.id !== "whatsapp");
 const LOGO =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>';
 
 const ESTILO_MENU = `
   :host { all: initial; }
   ul { all: unset; position: fixed; z-index: 2147483644; display: flex; flex-direction: column-reverse; align-items: center; gap: 8px; }
-  li { all: unset; display: block; }
+  li, ol { all: unset; display: block; }
   button { all: unset; box-sizing: border-box; display: grid; place-items: center; cursor: pointer; background: #fff; color: #565f1d;
            box-shadow: 0 4px 10px rgba(0, 0, 0, .25); transition: transform .15s, border-radius .15s; }
   button:hover { transform: scale(1.08); }
@@ -55,16 +40,21 @@ const ESTILO_MENU = `
   .accion[aria-pressed="true"] { background: #dcf24c; }
   .accion svg, .accion img { width: 20px; height: 20px; }
   .interruptor { width: 40px; height: 40px; border-radius: 50%; background: #dcf24c; color: #22242a; }
-  ul[data-cerrado] li:not(:first-child) { display: none; }`;
-
-const ESTILO_GRUPO = `
-  :host { all: initial; display: flex; align-items: center; flex: 0 0 auto; }
-  button { all: unset; box-sizing: border-box; display: grid; place-items: center; width: 40px; height: 40px;
-           border-radius: 50%; cursor: pointer; color: var(--chispa-color, #8696a0); }
-  button:hover { background: color-mix(in srgb, currentColor 15%, transparent); }
-  button:focus-visible { outline: 2px solid #00a884; outline-offset: -2px; }
-  button[aria-pressed="true"] { color: #fff; background: #00a884; }
-  svg, img { width: 24px; height: 24px; }`;
+  ul[data-cerrado] .acciones { display: none !important; }
+  /* Los botones suben y aparecen uno tras otro al desplegar, como en MI CIERRO (transición de 300 ms). */
+  .acciones { display: flex; flex-direction: column-reverse; align-items: center; gap: 8px; padding: 6px; margin: -6px; overflow-y: auto;
+              overflow-x: hidden; scrollbar-width: none; }
+  .acciones li { animation: sube .3s ease-out backwards; animation-delay: calc(var(--n) * 35ms); }
+  @keyframes sube { from { opacity: 0; transform: translateY(8px); } }
+  .interruptor { position: relative; transition: transform .3s, box-shadow .3s; }
+  .interruptor:hover { transform: scale(1.05); box-shadow: 0 10px 20px rgba(0, 0, 0, .3); }
+  .interruptor::after { content: ""; position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%;
+                        background: #565f1d; opacity: 0; transition: opacity .3s; animation: latido 2s ease-in-out infinite; }
+  .interruptor:hover::after { opacity: 1; }
+  @keyframes latido { 50% { opacity: .35; } }
+  .accion { transition: transform .2s, border-radius .2s, box-shadow .2s; }
+  .accion:hover { box-shadow: 0 8px 16px rgba(0, 0, 0, .3); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }`;
 
 const ESTILO_PANEL = `
   :host { all: initial; }
@@ -149,32 +139,6 @@ function crearPanel() {
   return api;
 }
 
-// El grupo de botones que va dentro del pie.
-function crearGrupo(panel, permitidos) {
-  const anfitrion = document.createElement("div");
-  anfitrion.id = ID_GRUPO;
-  const sombra = anfitrion.attachShadow({ mode: "closed" });
-  sombra.adoptedStyleSheets = [hoja(ESTILO_GRUPO)];
-  // Sin sesión del CRM queda un solo botón, que lleva a entrar; con sesión, los que ese rol puede abrir.
-  const lista = permitidos ? BOTONES.filter((b) => permitidos.includes(b.id)) : BOTONES.slice(0, 1);
-  const botones = [];
-  for (const def of lista) {
-    const nombre = permitidos ? def.nombre : "Abrir Trámites";
-    const boton = document.createElement("button");
-    boton.type = "button";
-    boton.dataset.chispa = def.id;
-    boton.title = boton.ariaLabel = nombre;
-    boton.setAttribute("aria-pressed", "false");
-    boton.insertAdjacentHTML("beforeend", ICONOS[def.id]);
-    boton.addEventListener("click", () => panel.abrir({ ...def, nombre }));
-    sombra.append(boton);
-    botones.push([def.id, boton]);
-  }
-  const marcar = () => botones.forEach(([id, b]) => b.setAttribute("aria-pressed", String(panel.abierto === id)));
-  document.addEventListener(`${ID_GRUPO}-cambio`, marcar);
-  return anfitrion;
-}
-
 // El menú vertical: interruptor + botones. Se muestra sobre la caja de texto, a la izquierda del chat.
 function crearMenu(panel, permitidos) {
   const anfitrion = document.createElement("div");
@@ -196,8 +160,11 @@ function crearMenu(panel, permitidos) {
   ul.append(fila(interruptor));
   const lista = permitidos ? MENU.filter((b) => permitidos.includes(b.id)) : MENU.filter((b) => b.id === "solicitudes");
   const botones = [];
-  // column-reverse: el primero del DOM queda abajo, así que se agregan de abajo hacia arriba.
-  for (const def of [...lista].reverse()) {
+  const acciones = document.createElement("ol");
+  acciones.className = "acciones";
+  // column-reverse: el primero del DOM queda abajo; se agrega la lista tal cual y la primera queda cerca
+  // del interruptor.
+  for (const [n, def] of lista.entries()) {
     const nombre = permitidos ? def.nombre : "Abrir Trámites";
     const boton = document.createElement("button");
     boton.type = "button";
@@ -207,9 +174,14 @@ function crearMenu(panel, permitidos) {
     boton.setAttribute("aria-pressed", "false");
     boton.insertAdjacentHTML("beforeend", ICONOS[def.id]);
     boton.addEventListener("click", () => panel.abrir({ ...def, nombre }));
-    ul.append(fila(boton));
+    const li = fila(boton);
+    li.style.setProperty("--n", n);
+    acciones.append(li);
     botones.push([def.id, boton]);
   }
+  const contenedor = document.createElement("li");
+  contenedor.append(acciones);
+  ul.append(contenedor);
   interruptor.addEventListener("click", () => {
     if (ul.toggleAttribute("data-cerrado") && panel.abierto) panel.cerrar();
   });
@@ -223,27 +195,10 @@ function crearMenu(panel, permitidos) {
     if (!pie || !chat) return;
     ul.style.left = `${Math.round(chat.left + 16)}px`;
     ul.style.bottom = `${Math.round(innerHeight - pie.top + 16)}px`;
+    // Con muchos botones la columna se desplaza en vez de salirse de la ventana (deja libre la cabecera).
+    acciones.style.maxHeight = `${Math.max(100, Math.round(pie.top - 16 - 40 - 8 - 60 - 12))}px`;
   };
   return anfitrion;
-}
-
-// Dónde va: en la fila de la caja de texto (la que tiene el clip, los emojis y el campo), justo después
-// del botón de emojis, a la izquierda como los íconos de MI CIERRO. Se buscan por `aria-label`
-// («Adjuntar», «Emojis…»), no por las clases, que WhatsApp cambia. Si no los encuentra, cae al final de
-// `footer > div` (a la derecha del micrófono), que siempre existe con el campo editable.
-function dondeVa() {
-  const pie = document.querySelector("footer");
-  if (!pie?.querySelector("div[contenteditable=true]")) return null;
-  const clip = pie.querySelector('button[aria-label="Adjuntar"]');
-  const emoji = pie.querySelector('button[aria-label^="Emojis"]');
-  let fila = clip?.parentElement;
-  while (fila && fila !== pie && !(emoji && fila.contains(emoji))) fila = fila.parentElement;
-  if (fila && fila !== pie && emoji) {
-    let hijo = emoji;
-    while (hijo.parentElement !== fila) hijo = hijo.parentElement;
-    return { fila, despues: hijo };
-  }
-  return { fila: pie.querySelector(":scope > div") ?? pie, despues: null };
 }
 
 export async function montar() {
@@ -251,40 +206,28 @@ export async function montar() {
   const panel = crearPanel();
   document.documentElement.append(panel.anfitrion);
   let permitidos = (await pedirModulos())?.modulos ?? null;
-  let nodo;
   let menu;
-  const montarGrupo = () => {
-    if (document.querySelector("footer") && !menu?.isConnected) {
+  const montarMenu = () => {
+    const hayChat = !!document.querySelector("footer div[contenteditable=true]");
+    if (hayChat && !menu?.isConnected) {
       menu = crearMenu(panel, permitidos);
       document.documentElement.append(menu);
-    } else if (!document.querySelector("footer") && menu) {
+    } else if (!hayChat && menu) {
       menu.remove(); // sin chat abierto no hay dónde ponerlo
       menu = undefined;
     }
     menu?.colocar();
-    const sitio = dondeVa();
-    if (!sitio || (nodo?.isConnected && sitio.fila.contains(nodo))) return;
-    const { fila, despues } = sitio;
-    nodo?.remove();
-    nodo = crearGrupo(panel, permitidos);
-    // El color de los íconos nativos (cambia entre tema claro y oscuro): chispa se pinta igual.
-    const nativo = fila.querySelector("button");
-    if (nativo) nodo.style.setProperty("--chispa-color", getComputedStyle(nativo).color);
-    if (despues) despues.after(nodo);
-    else fila.append(nodo);
   };
-  // WhatsApp reconstruye el pie al cambiar de chat: se vuelve a montar.
   addEventListener("resize", () => menu?.colocar());
-  new MutationObserver(montarGrupo).observe(document.body, { childList: true, subtree: true });
-  montarGrupo();
+  // WhatsApp reconstruye el pie al cambiar de chat: se vuelve a colocar.
+  new MutationObserver(montarMenu).observe(document.body, { childList: true, subtree: true });
+  montarMenu();
   // Alguien entró o salió en el panel: los botones cambian.
   chrome.runtime.onMessage.addListener(async (m) => {
     if (m?.tipo !== "sesion-cambio") return;
     permitidos = (await pedirModulos())?.modulos ?? null;
-    nodo?.remove();
-    nodo = undefined;
     menu?.remove();
     menu = undefined;
-    montarGrupo();
+    montarMenu();
   });
 }
