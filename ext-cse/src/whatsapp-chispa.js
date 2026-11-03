@@ -7,6 +7,11 @@
 // Nombre clave: «chispa». Todo lo nuestro lo lleva: `#ext-cse-chispa` (el grupo de botones),
 // `#ext-cse-chispa-panel` (el panel) y `data-chispa="<id>"` en cada botón.
 //
+// Además, el menú flotante `MenuVertical` de MI CIERRO: un círculo con el logo (interruptor) sobre la
+// caja de texto, a la izquierda del chat, que despliega hacia arriba 6 botones de 36 px (en MI CIERRO:
+// absolute bottom-4 left-4, flex-col-reverse, gap 8). Aquí: `#ext-cse-chispa-menu`, `data-chispa-menu`.
+// Sus 6 botones abren las vistas del CRM ya hechas, en el mismo panel derecho.
+//
 // No lee ni toca nada de WhatsApp: solo agrega un nodo suyo al pie y un padding. Su CSS vive en un
 // shadow DOM cerrado. Los íconos son texto estático de esta extensión.
 import { ICONOS } from "./iconos.js";
@@ -14,6 +19,7 @@ import { ICONOS } from "./iconos.js";
 export const CLAVE = "chispa";
 const ID_GRUPO = `ext-cse-${CLAVE}`;
 const ID_PANEL = `ext-cse-${CLAVE}-panel`;
+const ID_MENU = `ext-cse-${CLAVE}-menu`;
 const ANCHO = 420;
 
 // Qué abre cada botón (id de barra.js). Para quitar o agregar uno basta tocar esta lista.
@@ -22,6 +28,34 @@ const BOTONES = [
   { id: "nuevocobro", nombre: "Nuevo cobro" },
   { id: "cartera", nombre: "Mi cartera" },
 ];
+
+// Los 6 del menú vertical, de arriba abajo (el primero queda más lejos del interruptor).
+const MENU = [
+  { id: "dia", nombre: "Mi día" },
+  { id: "cartera", nombre: "Mi cartera" },
+  { id: "nuevocobro", nombre: "Nuevo cobro" },
+  { id: "solicitudes", nombre: "Solicitudes" },
+  { id: "clientes", nombre: "Clientes" },
+  { id: "guia", nombre: "Guía de trámites" },
+];
+const LOGO =
+  '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>';
+
+const ESTILO_MENU = `
+  :host { all: initial; }
+  ul { all: unset; position: fixed; z-index: 2147483644; display: flex; flex-direction: column-reverse; align-items: center; gap: 8px; }
+  li { all: unset; display: block; }
+  button { all: unset; box-sizing: border-box; display: grid; place-items: center; cursor: pointer; background: #fff; color: #565f1d;
+           box-shadow: 0 4px 10px rgba(0, 0, 0, .25); transition: transform .15s, border-radius .15s; }
+  button:hover { transform: scale(1.08); }
+  button:focus-visible { outline: 2px solid #565f1d; outline-offset: 2px; }
+  button:active { transform: scale(.95); }
+  .accion { width: 36px; height: 36px; border-radius: 10px; }
+  .accion:hover { border-radius: 50%; }
+  .accion[aria-pressed="true"] { background: #dcf24c; }
+  .accion svg, .accion img { width: 20px; height: 20px; }
+  .interruptor { width: 40px; height: 40px; border-radius: 50%; background: #dcf24c; color: #22242a; }
+  ul[data-cerrado] li:not(:first-child) { display: none; }`;
 
 const ESTILO_GRUPO = `
   :host { all: initial; display: flex; align-items: center; flex: 0 0 auto; }
@@ -141,6 +175,58 @@ function crearGrupo(panel, permitidos) {
   return anfitrion;
 }
 
+// El menú vertical: interruptor + botones. Se muestra sobre la caja de texto, a la izquierda del chat.
+function crearMenu(panel, permitidos) {
+  const anfitrion = document.createElement("div");
+  anfitrion.id = ID_MENU;
+  const sombra = anfitrion.attachShadow({ mode: "closed" });
+  sombra.adoptedStyleSheets = [hoja(ESTILO_MENU)];
+  const ul = document.createElement("ul");
+  ul.setAttribute("aria-label", "Trámites");
+  const fila = (...hijos) => {
+    const li = document.createElement("li");
+    li.append(...hijos);
+    return li;
+  };
+  const interruptor = document.createElement("button");
+  interruptor.type = "button";
+  interruptor.className = "interruptor";
+  interruptor.title = interruptor.ariaLabel = "Abrir/Cerrar Menú";
+  interruptor.insertAdjacentHTML("beforeend", LOGO);
+  ul.append(fila(interruptor));
+  const lista = permitidos ? MENU.filter((b) => permitidos.includes(b.id)) : MENU.filter((b) => b.id === "solicitudes");
+  const botones = [];
+  // column-reverse: el primero del DOM queda abajo, así que se agregan de abajo hacia arriba.
+  for (const def of [...lista].reverse()) {
+    const nombre = permitidos ? def.nombre : "Abrir Trámites";
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.className = "accion";
+    boton.dataset.chispaMenu = def.id;
+    boton.title = boton.ariaLabel = nombre;
+    boton.setAttribute("aria-pressed", "false");
+    boton.insertAdjacentHTML("beforeend", ICONOS[def.id]);
+    boton.addEventListener("click", () => panel.abrir({ ...def, nombre }));
+    ul.append(fila(boton));
+    botones.push([def.id, boton]);
+  }
+  interruptor.addEventListener("click", () => {
+    if (ul.toggleAttribute("data-cerrado") && panel.abierto) panel.cerrar();
+  });
+  const marcar = () => botones.forEach(([id, b]) => b.setAttribute("aria-pressed", String(panel.abierto === id)));
+  document.addEventListener(`${ID_GRUPO}-cambio`, marcar);
+  sombra.append(ul);
+  // Va pegado a la esquina inferior izquierda del chat, 16 px por encima del pie (bottom-4 left-4).
+  anfitrion.colocar = () => {
+    const pie = document.querySelector("footer")?.getBoundingClientRect();
+    const chat = document.querySelector("#main")?.getBoundingClientRect();
+    if (!pie || !chat) return;
+    ul.style.left = `${Math.round(chat.left + 16)}px`;
+    ul.style.bottom = `${Math.round(innerHeight - pie.top + 16)}px`;
+  };
+  return anfitrion;
+}
+
 // Dónde va: en la fila de la caja de texto (la que tiene el clip, los emojis y el campo), justo después
 // del botón de emojis, a la izquierda como los íconos de MI CIERRO. Se buscan por `aria-label`
 // («Adjuntar», «Emojis…»), no por las clases, que WhatsApp cambia. Si no los encuentra, cae al final de
@@ -166,7 +252,16 @@ export async function montar() {
   document.documentElement.append(panel.anfitrion);
   let permitidos = (await pedirModulos())?.modulos ?? null;
   let nodo;
+  let menu;
   const montarGrupo = () => {
+    if (document.querySelector("footer") && !menu?.isConnected) {
+      menu = crearMenu(panel, permitidos);
+      document.documentElement.append(menu);
+    } else if (!document.querySelector("footer") && menu) {
+      menu.remove(); // sin chat abierto no hay dónde ponerlo
+      menu = undefined;
+    }
+    menu?.colocar();
     const sitio = dondeVa();
     if (!sitio || (nodo?.isConnected && sitio.fila.contains(nodo))) return;
     const { fila, despues } = sitio;
@@ -179,6 +274,7 @@ export async function montar() {
     else fila.append(nodo);
   };
   // WhatsApp reconstruye el pie al cambiar de chat: se vuelve a montar.
+  addEventListener("resize", () => menu?.colocar());
   new MutationObserver(montarGrupo).observe(document.body, { childList: true, subtree: true });
   montarGrupo();
   // Alguien entró o salió en el panel: los botones cambian.
@@ -187,6 +283,8 @@ export async function montar() {
     permitidos = (await pedirModulos())?.modulos ?? null;
     nodo?.remove();
     nodo = undefined;
+    menu?.remove();
+    menu = undefined;
     montarGrupo();
   });
 }
