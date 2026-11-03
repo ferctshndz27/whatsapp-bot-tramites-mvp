@@ -26,8 +26,8 @@ const BOTONES = [
 const ESTILO_GRUPO = `
   :host { all: initial; display: flex; align-items: center; flex: 0 0 auto; }
   button { all: unset; box-sizing: border-box; display: grid; place-items: center; width: 40px; height: 40px;
-           border-radius: 50%; cursor: pointer; color: #54656f; }
-  button:hover { background: rgba(11, 20, 26, .08); }
+           border-radius: 50%; cursor: pointer; color: var(--chispa-color, #8696a0); }
+  button:hover { background: color-mix(in srgb, currentColor 15%, transparent); }
   button:focus-visible { outline: 2px solid #00a884; outline-offset: -2px; }
   button[aria-pressed="true"] { color: #fff; background: #00a884; }
   svg, img { width: 24px; height: 24px; }`;
@@ -160,6 +160,9 @@ export async function montar() {
     if (!fila || (nodo?.isConnected && fila.contains(nodo))) return;
     nodo?.remove();
     nodo = crearGrupo(panel, permitidos);
+    // El color de los íconos nativos (cambia entre tema claro y oscuro): chispa se pinta igual.
+    const nativo = fila.querySelector("button");
+    if (nativo) nodo.style.setProperty("--chispa-color", getComputedStyle(nativo).color);
     fila.append(nodo);
   };
   // WhatsApp reconstruye el pie al cambiar de chat: se vuelve a montar.
