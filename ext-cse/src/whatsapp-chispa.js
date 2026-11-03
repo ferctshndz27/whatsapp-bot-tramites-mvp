@@ -141,12 +141,23 @@ function crearGrupo(panel, permitidos) {
   return anfitrion;
 }
 
-// La fila del pie de WhatsApp: `footer > div`. Solo se usan la etiqueta `footer` y el campo
-// `contenteditable`, no las clases (que WhatsApp cambia).
-function filaDelPie() {
+// Dónde va: en la fila de la caja de texto (la que tiene el clip, los emojis y el campo), justo después
+// del botón de emojis, a la izquierda como los íconos de MI CIERRO. Se buscan por `aria-label`
+// («Adjuntar», «Emojis…»), no por las clases, que WhatsApp cambia. Si no los encuentra, cae al final de
+// `footer > div` (a la derecha del micrófono), que siempre existe con el campo editable.
+function dondeVa() {
   const pie = document.querySelector("footer");
   if (!pie?.querySelector("div[contenteditable=true]")) return null;
-  return pie.querySelector(":scope > div") ?? pie;
+  const clip = pie.querySelector('button[aria-label="Adjuntar"]');
+  const emoji = pie.querySelector('button[aria-label^="Emojis"]');
+  let fila = clip?.parentElement;
+  while (fila && fila !== pie && !(emoji && fila.contains(emoji))) fila = fila.parentElement;
+  if (fila && fila !== pie && emoji) {
+    let hijo = emoji;
+    while (hijo.parentElement !== fila) hijo = hijo.parentElement;
+    return { fila, despues: hijo };
+  }
+  return { fila: pie.querySelector(":scope > div") ?? pie, despues: null };
 }
 
 export async function montar() {
@@ -156,14 +167,16 @@ export async function montar() {
   let permitidos = (await pedirModulos())?.modulos ?? null;
   let nodo;
   const montarGrupo = () => {
-    const fila = filaDelPie();
-    if (!fila || (nodo?.isConnected && fila.contains(nodo))) return;
+    const sitio = dondeVa();
+    if (!sitio || (nodo?.isConnected && sitio.fila.contains(nodo))) return;
+    const { fila, despues } = sitio;
     nodo?.remove();
     nodo = crearGrupo(panel, permitidos);
     // El color de los íconos nativos (cambia entre tema claro y oscuro): chispa se pinta igual.
     const nativo = fila.querySelector("button");
     if (nativo) nodo.style.setProperty("--chispa-color", getComputedStyle(nativo).color);
-    fila.append(nodo);
+    if (despues) despues.after(nodo);
+    else fila.append(nodo);
   };
   // WhatsApp reconstruye el pie al cambiar de chat: se vuelve a montar.
   new MutationObserver(montarGrupo).observe(document.body, { childList: true, subtree: true });
