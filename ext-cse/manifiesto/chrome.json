@@ -7,7 +7,8 @@
     "sidePanel"
   ],
   "background": {
-    "service_worker": "fondo-chrome.js"
+    "service_worker": "fondo-chrome.js",
+    "type": "module"
   },
   "web_accessible_resources": [
     {
@@ -17,11 +18,31 @@
       "matches": [
         "http://*/*",
         "https://*/*"
+      ]
+    },
+    {
+      "resources": [
+        "whatsapp-chispa.js",
+        "barra.js",
+        "iconos.js"
       ],
-      "use_dynamic_url": true
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ]
     }
   ],
   "side_panel": {
     "default_path": "panel.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
+        "whatsapp.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }

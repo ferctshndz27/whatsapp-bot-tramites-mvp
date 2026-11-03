@@ -42,7 +42,7 @@ from app import (
 )
 from app.config import settings
 from app.db import init_db
-from app.guardas_http import guardas_http
+from app.guardas_http import cookie_en_marco, guardas_http
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -254,6 +254,7 @@ app.add_middleware(
 # Es un fallo mudo: el panel no da error, simplemente vuelve a enterarse tarde. Si algún día se
 # comprime el panel, hay que excluir text/event-stream.
 app.middleware("http")(_fetch_sin_html)  # dentro de _security_headers: su 204 también se sella
+app.middleware("http")(cookie_en_marco)  # fuera de SessionMiddleware: reescribe su Set-Cookie en un marco
 app.middleware("http")(guardas_http)  # origen cruzado y tope del cuerpo; su 403/413 también se sellan
 app.middleware("http")(_security_headers)
 

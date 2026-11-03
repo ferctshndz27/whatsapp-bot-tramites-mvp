@@ -222,3 +222,6 @@ body {
 #acceso[hidden] {
   display: none;
 }
+
+/* Dentro de WhatsApp Web la barra de módulos es la de la página: aquí solo se ve la vista. */
+html.solo #barra { display: none; }

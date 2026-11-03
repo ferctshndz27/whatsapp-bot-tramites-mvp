@@ -12,6 +12,8 @@
 //     submarcos hacia el CRM que pide esta extensión o el propio CRM (el login redirige dentro
 //     del marco); fuera del panel el CRM sigue sin poder enmarcarse.
 
+import { registrarMensajes } from "./fondo-comun.js";
+
 const yo = chrome.runtime.id;
 
 // Se ejecuta DENTRO de la página (executeScript la serializa): no puede usar nada de este archivo.
@@ -98,7 +100,9 @@ async function instalarRegla() {
   // El id no existe hasta instalar la extensión, así que se le suma aquí y no en construir.py.
   regla.condition.initiatorDomains.unshift(yo);
   const csp = regla.action.responseHeaders.find((c) => c.header === "content-security-policy");
-  csp.value += `; frame-ancestors chrome-extension://${yo}`;
+  // Con la barra de WhatsApp Web el panel va enmarcado dentro de web.whatsapp.com, y frame-ancestors
+  // revisa TODOS los ancestros: la extensión y esa página (solo esa; el pedido sigue siendo de la extensión).
+  csp.value += `; frame-ancestors chrome-extension://${yo} https://web.whatsapp.com`;
 
   // Quedan exactamente las reglas del paquete: se quitan todas las anteriores, también las de una
   // versión vieja, y el id de esta aunque no esté, para que dos instalaciones a la vez (onInstalled
@@ -127,3 +131,6 @@ chrome.runtime.onMessage.addListener((mensaje, _remitente, responder) => {
   );
   return true; // la respuesta llega después, cuando la regla ya está
 });
+
+// La barra de módulos de WhatsApp Web consulta aquí qué módulos puede abrir la sesión.
+registrarMensajes();

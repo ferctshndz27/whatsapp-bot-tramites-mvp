@@ -16,7 +16,6 @@ const INICIAL = "dia";
 const REINTENTO_MS = 5000;
 const ESPERA_MS = 8000;
 const CADA = `Volveremos a intentar cada ${REINTENTO_MS / 1000} segundos.`;
-const enFirefox = Boolean(globalThis.browser?.sidebarAction);
 
 const titulo = document.querySelector("#titulo");
 const detalle = document.querySelector("#detalle");
@@ -118,6 +117,12 @@ async function abrirVista(modulo) {
   nombre.hidden = texto.hidden = true;
 }
 
+// Dentro de WhatsApp Web el panel viene sin barra propia (la barra es la de la página) y con el módulo en el hash.
+const solo = new URLSearchParams(location.hash.slice(1)).get("solo");
+if (solo !== null) document.documentElement.classList.add("solo");
+let moduloPorAbrir = solo || undefined;
+
+const enFirefox = Boolean(globalThis.browser?.sidebarAction);
 const aviso = document.querySelector("#aviso");
 const acceso = document.querySelector("#acceso");
 const app = document.querySelector("#app");
@@ -168,11 +173,15 @@ function mostrarBarra(modulos) {
   document.title = "Trámites";
   // Se pinta de nuevo en cada entrada: quien entra ahora puede ser otro usuario con otros módulos.
   const elegir = pintarBarra(document.querySelector("#barra"), abrirVista, modulos);
+  chrome.runtime.sendMessage({ tipo: "sesion-cambio" }).catch(() => undefined);
   vigilarPendientes(modulos);
   ++eleccion;
   // Al entrar no se deja el panel en blanco: se abre «Mi día», lo primero que mira quien trabaja. Si esta sesión no
   // lo tiene permitido, queda el aviso de elegir un módulo.
-  if (modulos.includes(INICIAL)) elegir(INICIAL);
+  const pedido = moduloPorAbrir;
+  moduloPorAbrir = undefined;
+  if (pedido && modulos.includes(pedido)) elegir(pedido);
+  else if (modulos.includes(INICIAL)) elegir(INICIAL);
   else sinMarco({ nombre: "Trámites" }, "Elige un módulo de la barra.");
 }
 
@@ -248,8 +257,6 @@ async function intentar() {
       return;
     }
     abierto = true;
-    // Firefox no deja enmarcar el CRM (spike S1): ahí el panel navega a la página del CRM misma, sin la
-    // barra de módulos, que vive en marcos.
     if (enFirefox) location.replace(PANEL);
     else await entrar();
   } catch (error) {

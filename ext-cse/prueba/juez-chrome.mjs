@@ -293,7 +293,7 @@ async function main() {
     criterio("la regla admite como iniciadores solo a la extensión y al CRM",
       JSON.stringify(regla?.condition.initiatorDomains) === JSON.stringify([id, "127.0.0.1"]),
       JSON.stringify(regla?.condition.initiatorDomains));
-    criterio("la CSP del marco deja enmarcar solo a esta extensión", csp.endsWith(`; frame-ancestors chrome-extension://${id}`), csp);
+    criterio("la CSP del marco deja enmarcar solo a esta extensión (y a WhatsApp Web, su página anfitriona)", csp.endsWith(`; frame-ancestors chrome-extension://${id} https://web.whatsapp.com`), csp);
     const comportamiento = await evaluar(cdp, fondo, "chrome.sidePanel.getPanelBehavior()");
     // El ícono ya no abre el panel lateral: pone el CRM en la página (prueba/probar-panel.mjs mide
     // el ancho de 1/3 y que la página se encoja). El lateral queda de respaldo donde no se inyecta.
