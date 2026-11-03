@@ -65,6 +65,8 @@ const ESTILO_PANEL = `
   section { position: fixed; top: 0; right: 0; bottom: 0; width: var(--ancho, ${ANCHO}px); z-index: 2147483645; display: flex; flex-direction: column;
             background: #fff; border-left: 1px solid #d1d7db; font: 14px system-ui, sans-serif; }
   section[hidden] { display: none; }
+  /* En el flujo de WhatsApp (como MenuLateral de MI CIERRO): es una columna más, a la derecha del chat. */
+  :host([data-enflujo]) section { position: relative; width: auto; height: 100%; z-index: auto; }
   header { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; height: 59px; padding: 0 16px; background: #f0f2f5; color: #111b21; }
   h2 { all: unset; flex: 1; font: 500 16px system-ui, sans-serif; }
   button { all: unset; width: 32px; height: 32px; line-height: 32px; text-align: center; border-radius: 50%; cursor: pointer; font-size: 22px; color: #54656f; }
@@ -106,16 +108,46 @@ function crearPanel() {
 
   const app = () => document.querySelector("#app") ?? document.body;
   let abierto;
+  // La columna del chat dentro de la fila de WhatsApp (`div.two`): el panel se inserta justo después, como
+  // MI CIERRO inserta MenuLateral `afterend` de esa columna. Sin esa fila (WhatsApp cambió) queda fijo al borde.
+  const columna = () => {
+    const fila = document.querySelector("#main")?.closest(".two");
+    let hijo = document.querySelector("#main");
+    while (fila && hijo && hijo.parentElement !== fila) hijo = hijo.parentElement;
+    return fila && hijo ? hijo : null;
+  };
+  const ubicar = () => {
+    if (!abierto) return;
+    const col = columna();
+    const est = anfitrion.style;
+    if (col) {
+      if (col.nextElementSibling !== anfitrion) col.after(anfitrion);
+      anfitrion.toggleAttribute("data-enflujo", true);
+      est.display = "block";
+      est.flex = `0 0 ${ancho}px`;
+      est.width = `${ancho}px`;
+      est.height = "100%";
+      est.position = "relative";
+      app().style.paddingRight = "";
+    } else {
+      if (anfitrion.parentElement !== document.documentElement) document.documentElement.append(anfitrion);
+      anfitrion.removeAttribute("data-enflujo");
+      est.cssText = "";
+      app().style.paddingRight = `${ancho}px`;
+      app().style.boxSizing = "border-box";
+    }
+  };
   const avisar = () => document.dispatchEvent(new CustomEvent(`${ID_GRUPO}-cambio`));
   let ancho = ANCHO;
   const ajustar = (px) => {
     ancho = Math.min(maxAncho(), Math.max(MIN_ANCHO, Math.round(px)));
     seccion.style.setProperty("--ancho", `${ancho}px`);
-    if (abierto) app().style.paddingRight = `${ancho}px`; // WhatsApp se acomoda al ancho elegido
+    ubicar(); // WhatsApp se acomoda al ancho elegido
   };
   // Los movimientos se escuchan en la ventana (no en el asa): el panel se mueve con el ratón y, con el
   // marco encima, el asa perdería los eventos. El marco no recibe el ratón mientras se arrastra.
-  const mover = (e) => ajustar(innerWidth - e.clientX);
+  let derecha = innerWidth; // borde derecho del panel al empezar a arrastrar (no se mueve mientras se arrastra)
+  const mover = (e) => ajustar(derecha - e.clientX);
   const soltar = () => {
     delete seccion.dataset.arrastrando;
     removeEventListener("pointermove", mover, true);
@@ -124,6 +156,7 @@ function crearPanel() {
   };
   asa.addEventListener("pointerdown", (e) => {
     e.preventDefault();
+    derecha = anfitrion.getBoundingClientRect().right;
     seccion.dataset.arrastrando = "";
     addEventListener("pointermove", mover, true);
     addEventListener("pointerup", soltar, true);
@@ -132,6 +165,7 @@ function crearPanel() {
   addEventListener("resize", () => ajustar(ancho)); // si la ventana se achica, el panel también
   const api = {
     anfitrion,
+    ubicar,
     get abierto() {
       return abierto;
     },
@@ -140,6 +174,9 @@ function crearPanel() {
       seccion.querySelector("iframe")?.remove();
       app().style.paddingRight = "";
       abierto = undefined;
+      anfitrion.removeAttribute("data-enflujo");
+      anfitrion.style.cssText = "";
+      document.documentElement.append(anfitrion);
       avisar();
     },
     abrir(boton) {
@@ -152,9 +189,8 @@ function crearPanel() {
       titulo.textContent = boton.nombre;
       seccion.append(marco);
       seccion.hidden = false;
-      app().style.paddingRight = `${ancho}px`; // WhatsApp se corre, como #app en MI CIERRO
-      app().style.boxSizing = "border-box";
       abierto = boton.id;
+      ubicar();
       avisar();
     },
   };
@@ -255,6 +291,7 @@ export async function montar() {
       menu = undefined;
     }
     menu?.colocar();
+    panel.ubicar(); // WhatsApp reconstruye su fila al cambiar de chat: el panel vuelve a su sitio
   };
   const alCambiarTamano = () => menu?.colocar();
   const observador = new MutationObserver(montarMenu);
