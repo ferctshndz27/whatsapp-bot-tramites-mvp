@@ -21,8 +21,10 @@ const ID_PANEL = `ext-cse-${CLAVE}-panel`;
 const ID_MENU = `ext-cse-${CLAVE}-menu`;
 const ANCHO = 420;
 
-// Todos los módulos del CRM (barra.js), menos el de chats de WhatsApp: ya estamos en WhatsApp.
-const MENU = MODULOS.filter((m) => m.id !== "whatsapp");
+// Los módulos del CRM que ya tienen vista (`listo` en barra.js, la misma lista del panel de la extensión).
+// No depende de la sesión: dentro de WhatsApp Web el panel va en un marco con su propia cookie (particionada),
+// que el fondo no ve; el panel mismo pide el acceso y abre el módulo elegido al entrar.
+const MENU = MODULOS.filter((m) => m.listo);
 const LOGO =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>';
 
@@ -158,14 +160,14 @@ function crearMenu(panel, permitidos) {
   interruptor.title = interruptor.ariaLabel = "Abrir/Cerrar Menú";
   interruptor.insertAdjacentHTML("beforeend", LOGO);
   ul.append(fila(interruptor));
-  const lista = permitidos ? MENU.filter((b) => permitidos.includes(b.id)) : MENU.filter((b) => b.grupo === "Operación");
+  const lista = permitidos ? MENU.filter((b) => permitidos.includes(b.id)) : MENU;
   const botones = [];
   const acciones = document.createElement("ol");
   acciones.className = "acciones";
   // column-reverse: el primero del DOM queda abajo; se agrega la lista tal cual y la primera queda cerca
   // del interruptor.
   for (const [n, def] of lista.entries()) {
-    const nombre = permitidos ? def.nombre : `${def.nombre} (inicia sesión)`;
+    const nombre = def.nombre;
     const boton = document.createElement("button");
     boton.type = "button";
     boton.className = "accion";
