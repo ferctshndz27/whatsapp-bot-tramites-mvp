@@ -158,14 +158,14 @@ function crearMenu(panel, permitidos) {
   interruptor.title = interruptor.ariaLabel = "Abrir/Cerrar Menú";
   interruptor.insertAdjacentHTML("beforeend", LOGO);
   ul.append(fila(interruptor));
-  const lista = permitidos ? MENU.filter((b) => permitidos.includes(b.id)) : MENU.filter((b) => b.id === "solicitudes");
+  const lista = permitidos ? MENU.filter((b) => permitidos.includes(b.id)) : MENU.filter((b) => b.grupo === "Operación");
   const botones = [];
   const acciones = document.createElement("ol");
   acciones.className = "acciones";
   // column-reverse: el primero del DOM queda abajo; se agrega la lista tal cual y la primera queda cerca
   // del interruptor.
   for (const [n, def] of lista.entries()) {
-    const nombre = permitidos ? def.nombre : "Abrir Trámites";
+    const nombre = permitidos ? def.nombre : `${def.nombre} (inicia sesión)`;
     const boton = document.createElement("button");
     boton.type = "button";
     boton.className = "accion";
@@ -202,12 +202,17 @@ function crearMenu(panel, permitidos) {
 }
 
 export async function montar() {
-  if (document.getElementById(ID_PANEL)) return;
+  // Si la extensión se recargó sin recargar WhatsApp, el script anterior sigue en la página con su contexto
+  // invalidado (sus llamadas a chrome.runtime fallan con «Extension context invalidated»). Éste lo reemplaza:
+  // quita sus nodos y el anterior se apaga solo al ver que ya no tiene contexto.
+  document.getElementById(ID_PANEL)?.remove();
+  document.getElementById(ID_MENU)?.remove();
   const panel = crearPanel();
   document.documentElement.append(panel.anfitrion);
   let permitidos = (await pedirModulos())?.modulos ?? null;
   let menu;
   const montarMenu = () => {
+    if (!chrome.runtime?.id) return apagar(); // contexto invalidado: este script quedó huérfano
     const hayChat = !!document.querySelector("footer div[contenteditable=true]");
     if (hayChat && !menu?.isConnected) {
       menu = crearMenu(panel, permitidos);
@@ -218,13 +223,21 @@ export async function montar() {
     }
     menu?.colocar();
   };
-  addEventListener("resize", () => menu?.colocar());
+  const alCambiarTamano = () => menu?.colocar();
+  const observador = new MutationObserver(montarMenu);
+  function apagar() {
+    observador.disconnect();
+    removeEventListener("resize", alCambiarTamano);
+    menu?.remove();
+    panel.anfitrion.remove();
+  }
+  addEventListener("resize", alCambiarTamano);
   // WhatsApp reconstruye el pie al cambiar de chat: se vuelve a colocar.
-  new MutationObserver(montarMenu).observe(document.body, { childList: true, subtree: true });
+  observador.observe(document.body, { childList: true, subtree: true });
   montarMenu();
   // Alguien entró o salió en el panel: los botones cambian.
   chrome.runtime.onMessage.addListener(async (m) => {
-    if (m?.tipo !== "sesion-cambio") return;
+    if (m?.tipo !== "sesion-cambio" || !chrome.runtime?.id) return;
     permitidos = (await pedirModulos())?.modulos ?? null;
     menu?.remove();
     menu = undefined;
