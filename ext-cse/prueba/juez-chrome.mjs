@@ -295,7 +295,12 @@ async function main() {
       JSON.stringify(regla?.condition.initiatorDomains));
     criterio("la CSP del marco deja enmarcar solo a esta extensión", csp.endsWith(`; frame-ancestors chrome-extension://${id}`), csp);
     const comportamiento = await evaluar(cdp, fondo, "chrome.sidePanel.getPanelBehavior()");
-    criterio("el ícono abre el panel lateral", comportamiento?.openPanelOnActionClick === true);
+    // El ícono ya no abre el panel lateral: pone el CRM en la página (prueba/probar-panel.mjs mide
+    // el ancho de 1/3 y que la página se encoja). El lateral queda de respaldo donde no se inyecta.
+    const alternar = await evaluar(cdp, fondo, "typeof globalThis.alternarPanel");
+    criterio("el ícono pone el CRM en la página y el panel lateral queda de respaldo",
+      alternar === "function" && comportamiento?.openPanelOnActionClick !== true,
+      JSON.stringify({ alternarPanel: alternar, openPanelOnActionClick: comportamiento?.openPanelOnActionClick }));
 
     // 3. Sin el CRM: el panel lo dice con el código que recibió y no abre el marco; el botón vuelve
     // a preguntar, y cuando el puerto deja de contestar el aviso cambia sin que nadie toque nada.
