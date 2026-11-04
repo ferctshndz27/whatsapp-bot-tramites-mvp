@@ -41,7 +41,7 @@ NAVEGADORES = ("chrome", "firefox")
 # Lo que viaja en cada paquete, y nada más (tests/test_ext_cse_manifiesto.py sigue la cadena de
 # referencias y falla si algo falta o sobra).
 ARCHIVOS = {
-    "chrome": ("fondo-chrome.js", "fondo-comun.js", "whatsapp.js", "whatsapp-chispa.js", "panel.html", "panel.css", "panel.js", "crm.js", "barra.js", "iconos.js"),
+    "chrome": ("fondo-chrome.js", "fondo-comun.js", "whatsapp.js", "whatsapp-chispa.js", "whatsapp-agente.js", "agente-cola.js", "relevo-crm.js", "chispa-menu.css", "chispa-panel.css", "chispa-agente.css", "panel.html", "panel.css", "panel.js", "crm.js", "barra.js", "iconos.js"),
     "firefox": ("fondo-firefox.js", "panel.html", "panel.css", "panel.js", "crm.js", "barra.js", "iconos.js"),
 }
 
@@ -147,7 +147,15 @@ def manifiesto(navegador: str, origen: str) -> dict:
         if clave in comun or clave in capa:
             raise ValueError(f"{clave} no se escribe a mano: lo pone --crm")
     # homepage_url es el origen exacto del CRM, del que crm.js saca sus direcciones.
-    return {**comun, **capa, "homepage_url": f"{origen}/", "host_permissions": [patron_del_sitio(navegador, origen), *([WHATSAPP] if navegador == "chrome" else [])]}
+    manifiesto = {**comun, **capa, "homepage_url": f"{origen}/", "host_permissions": [patron_del_sitio(navegador, origen), *([WHATSAPP] if navegador == "chrome" else [])]}
+    if navegador == "chrome":
+        # El relevo del agente: un script del CRM, solo dentro de un marco (relevo-crm.js lo comprueba), que es
+        # el único sitio con la cookie de sesión del panel de WhatsApp Web. Lleva el origen del CRM, por eso va aquí.
+        manifiesto["content_scripts"] = [
+            *manifiesto["content_scripts"],
+            {"matches": [patron_del_sitio(navegador, origen)], "js": ["relevo-crm.js"], "all_frames": True, "run_at": "document_idle"},
+        ]
+    return manifiesto
 
 
 def paquete(navegador: str, origen: str) -> dict[str, bytes]:

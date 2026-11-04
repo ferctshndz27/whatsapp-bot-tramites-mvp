@@ -19,6 +19,18 @@ export function registrarMensajes() {
           for (const t of tabs) chrome.tabs.sendMessage(t.id, { tipo: "sesion-cambio" }).catch(() => undefined);
         });
         return false;
+      case "agente-entrante": {
+        // El agente (página de WhatsApp) pide una respuesta: se la pasa al script del CRM que vive en el marco
+        // del panel de ESA pestaña (relevo-crm.js), el único con la cookie de sesión. Sin panel o sin sesión
+        // nadie contesta: a los 15 s se responde «nada» y el agente lo reintenta.
+        const tab = _remitente?.tab?.id;
+        if (tab === undefined) return false;
+        const { phone, text, wa_id } = mensaje;
+        const espera = new Promise((r) => setTimeout(() => r({}), 15000));
+        const consulta = chrome.tabs.sendMessage(tab, { tipo: "agente-consulta", phone, text, wa_id }).catch(() => ({}));
+        Promise.race([consulta, espera]).then((r) => responder(r ?? {}));
+        return true;
+      }
       default:
         return false;
     }

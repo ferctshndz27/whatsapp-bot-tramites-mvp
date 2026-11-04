@@ -14,6 +14,7 @@
 // shadow DOM cerrado. Los íconos son texto estático de esta extensión.
 import { MODULOS } from "./barra.js";
 import { ICONOS } from "./iconos.js";
+import { crearAgente } from "./whatsapp-agente.js";
 
 export const CLAVE = "chispa";
 const ID_GRUPO = `ext-cse-${CLAVE}`;
@@ -30,66 +31,26 @@ const MENU = MODULOS.filter((m) => m.listo);
 const LOGO =
   '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>';
 
-const ESTILO_MENU = `
-  :host { all: initial; }
-  ul { all: unset; position: fixed; z-index: 2147483644; display: flex; flex-direction: column-reverse; align-items: center; gap: 8px; }
-  li, ol { all: unset; display: block; }
-  button { all: unset; box-sizing: border-box; display: grid; place-items: center; cursor: pointer; background: #fff; color: #565f1d;
-           box-shadow: 0 4px 10px rgba(0, 0, 0, .25); transition: transform .15s, border-radius .15s; }
-  button:hover { transform: scale(1.08); }
-  button:focus-visible { outline: 2px solid #565f1d; outline-offset: 2px; }
-  button:active { transform: scale(.95); }
-  .accion { width: 36px; height: 36px; border-radius: 10px; }
-  .accion:hover { border-radius: 50%; }
-  .accion[aria-pressed="true"] { background: #dcf24c; }
-  .accion svg, .accion img { width: 20px; height: 20px; }
-  .interruptor { width: 40px; height: 40px; border-radius: 50%; background: #dcf24c; color: #22242a; }
-  ul[data-cerrado] .acciones { display: none !important; }
-  /* Los botones suben y aparecen uno tras otro al desplegar, como en MI CIERRO (transición de 300 ms). */
-  .acciones { display: flex; flex-direction: column-reverse; align-items: center; gap: 8px; padding: 6px; margin: -6px; overflow-y: auto;
-              overflow-x: hidden; scrollbar-width: none; }
-  .acciones li { animation: sube .3s ease-out backwards; animation-delay: calc(var(--n) * 35ms); }
-  @keyframes sube { from { opacity: 0; transform: translateY(8px); } }
-  .interruptor { position: relative; transition: transform .3s, box-shadow .3s; }
-  .interruptor:hover { transform: scale(1.05); box-shadow: 0 10px 20px rgba(0, 0, 0, .3); }
-  .interruptor::after { content: ""; position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%;
-                        background: #565f1d; opacity: 0; transition: opacity .3s; animation: latido 2s ease-in-out infinite; }
-  .interruptor:hover::after { opacity: 1; }
-  @keyframes latido { 50% { opacity: .35; } }
-  .accion { transition: transform .2s, border-radius .2s, box-shadow .2s; }
-  .accion:hover { box-shadow: 0 8px 16px rgba(0, 0, 0, .3); }
-  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }`;
-
-const ESTILO_PANEL = `
-  :host { all: initial; }
-  section { position: fixed; top: 0; right: 0; bottom: 0; width: var(--ancho, ${ANCHO}px); z-index: 2147483645; display: flex; flex-direction: column;
-            background: #fff; border-left: 1px solid #d1d7db; font: 14px system-ui, sans-serif; }
-  section[hidden] { display: none; }
-  /* En el flujo de WhatsApp (como MenuLateral de MI CIERRO): es una columna más, a la derecha del chat. */
-  :host([data-enflujo]) section { position: relative; width: auto; height: 100%; z-index: auto; }
-  header { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; height: 59px; padding: 0 16px; background: #f0f2f5; color: #111b21; }
-  h2 { all: unset; flex: 1; font: 500 16px system-ui, sans-serif; }
-  button { all: unset; width: 32px; height: 32px; line-height: 32px; text-align: center; border-radius: 50%; cursor: pointer; font-size: 22px; color: #54656f; }
-  button:hover, button:focus-visible { background: rgba(11, 20, 26, .1); }
-  iframe { flex: 1; width: 100%; border: 0; background: #fff; }
-  section[data-arrastrando] iframe { pointer-events: none; }
-  .asa { position: absolute; top: 0; bottom: 0; left: -3px; width: 7px; cursor: col-resize; touch-action: none; }
-  .asa:hover, section[data-arrastrando] .asa { background: rgba(0, 168, 132, .45); }`;
+const ICONO_AGENTE =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9 17h6"/></svg>';
 
 const pedirModulos = () => chrome.runtime.sendMessage({ tipo: "modulos" }).catch(() => undefined);
 
-function hoja(css) {
-  const h = new CSSStyleSheet(); // no cuenta como estilo en línea: la CSP de WhatsApp no la bloquea
+// Las hojas de estilo son archivos .css de la extensión (accesibles desde WhatsApp, ver el manifiesto). Se leen una vez
+// y se adoptan en el shadow DOM. `new CSSStyleSheet()` no cuenta como estilo en línea: la CSP de WhatsApp no lo bloquea.
+async function cargarHoja(archivo) {
+  const css = await (await fetch(chrome.runtime.getURL(archivo))).text();
+  const h = new CSSStyleSheet();
   h.replaceSync(css);
   return h;
 }
 
 // El panel: se crea una vez. `abrir(boton)` carga la vista; el mismo botón otra vez la cierra.
-function crearPanel() {
+function crearPanel(hojaPanel) {
   const anfitrion = document.createElement("div");
   anfitrion.id = ID_PANEL;
   const sombra = anfitrion.attachShadow({ mode: "closed" });
-  sombra.adoptedStyleSheets = [hoja(ESTILO_PANEL)];
+  sombra.adoptedStyleSheets = [hojaPanel];
   const seccion = document.createElement("section");
   seccion.hidden = true;
   seccion.setAttribute("role", "complementary");
@@ -209,11 +170,11 @@ function crearPanel() {
 }
 
 // El menú vertical: interruptor + botones. Se muestra sobre la caja de texto, a la izquierda del chat.
-function crearMenu(panel, permitidos) {
+function crearMenu(panel, permitidos, agente, hojaMenu) {
   const anfitrion = document.createElement("div");
   anfitrion.id = ID_MENU;
   const sombra = anfitrion.attachShadow({ mode: "closed" });
-  sombra.adoptedStyleSheets = [hoja(ESTILO_MENU)];
+  sombra.adoptedStyleSheets = [hojaMenu];
   const ul = document.createElement("ul");
   ul.setAttribute("aria-label", "Trámites");
   const fila = (...hijos) => {
@@ -248,6 +209,50 @@ function crearMenu(panel, permitidos) {
     acciones.append(li);
     botones.push([def.id, boton]);
   }
+  // El agente: enciende o apaga las respuestas automáticas en el chat abierto (whatsapp-agente.js).
+  // Va en el pie de WhatsApp, junto al botón de emojis (no en el menú): verde = encendido en este chat.
+  const botonAgente = document.createElement("button");
+  botonAgente.type = "button";
+  botonAgente.dataset.chispaAgente = "";
+  botonAgente.insertAdjacentHTML("beforeend", ICONO_AGENTE);
+  const ponerBotonPie = () => {
+    const pie = document.querySelector("footer");
+    if (!pie) return;
+    const emoji = pie.querySelector('button[aria-label^="Emoji"], [data-icon="expressions"], [data-icon="smiley"], [data-icon="emoji"]')?.closest("button, [role=button]")
+      ?? pie.querySelector("button, [role=button]");
+    const caja = pie.querySelector('[contenteditable="true"]');
+    if (!emoji || !caja) return;
+    // El contenedor del botón es el hijo de la fila que contiene la caja de texto: ahí va el nuestro, al lado.
+    let envoltura = emoji;
+    while (envoltura.parentElement && !envoltura.parentElement.contains(caja)) envoltura = envoltura.parentElement;
+    if (envoltura.nextElementSibling !== botonAgente) envoltura.insertAdjacentElement("afterend", botonAgente);
+  };
+  const pastilla = document.createElement("div");
+  pastilla.className = "estado";
+  pastilla.setAttribute("role", "status");
+  const marcarAgente = () => {
+    const activo = agente.activo();
+    pastilla.toggleAttribute("data-activo", activo);
+    pastilla.textContent = activo ? `Agente encendido en este chat. ${agente.estado}` : agente.estado;
+    pastilla.title = pastilla.textContent;
+    pastilla.hidden = !pastilla.textContent;
+    ponerBotonPie();
+    botonAgente.setAttribute("aria-pressed", String(activo));
+    botonAgente.title = botonAgente.ariaLabel = [activo ? "Agente encendido en este chat (clic para apagar)" : "Encender el agente en este chat", agente.estado]
+      .filter(Boolean)
+      .join(" — ");
+  };
+  botonAgente.addEventListener("click", () => {
+    agente.alternar();
+    marcarAgente();
+  });
+  const quitarAnfitrion = anfitrion.remove.bind(anfitrion);
+  anfitrion.remove = () => {
+    botonAgente.remove();
+    quitarAnfitrion();
+  };
+  anfitrion.marcar = marcarAgente;
+  marcarAgente();
   const contenedor = document.createElement("li");
   contenedor.append(acciones);
   ul.append(contenedor);
@@ -256,7 +261,7 @@ function crearMenu(panel, permitidos) {
   });
   const marcar = () => botones.forEach(([id, b]) => b.setAttribute("aria-pressed", String(panel.abierto === id)));
   document.addEventListener(`${ID_GRUPO}-cambio`, marcar);
-  sombra.append(ul);
+  sombra.append(ul, pastilla);
   // Va pegado a la esquina inferior izquierda del chat, 16 px por encima del pie (bottom-4 left-4).
   anfitrion.colocar = () => {
     const pie = document.querySelector("footer")?.getBoundingClientRect();
@@ -264,6 +269,19 @@ function crearMenu(panel, permitidos) {
     if (!pie || !chat) return;
     ul.style.left = `${Math.round(chat.left + 16)}px`;
     ul.style.bottom = `${Math.round(innerHeight - pie.top + 16)}px`;
+    // La pastilla va en la cabecera del chat, a la derecha del nombre y sin pasar de los botones de llamada.
+    const cab = document.querySelector("#main header")?.getBoundingClientRect();
+    const nombre = document.querySelector("#main header span[title], #main header span[dir='auto']")?.getBoundingClientRect();
+    if (cab && nombre) {
+      const tope = [...document.querySelectorAll("#main header button, #main header [role=button]")]
+        .map((b) => b.getBoundingClientRect())
+        .filter((r) => r.left > nombre.right)
+        .reduce((m, r) => Math.min(m, r.left), cab.right);
+      const izq = Math.round(nombre.right + 16);
+      pastilla.style.left = `${izq}px`;
+      pastilla.style.top = `${Math.round(cab.top + (cab.height - 28) / 2)}px`;
+      pastilla.style.maxWidth = `${Math.max(0, Math.round(tope - 16 - izq))}px`;
+    }
     // Con muchos botones la columna se desplaza en vez de salirse de la ventana (deja libre la cabecera).
     acciones.style.maxHeight = `${Math.max(100, Math.round(pie.top - 16 - 40 - 8 - 60 - 12))}px`;
   };
@@ -276,27 +294,31 @@ export async function montar() {
   // quita sus nodos y el anterior se apaga solo al ver que ya no tiene contexto.
   document.getElementById(ID_PANEL)?.remove();
   document.getElementById(ID_MENU)?.remove();
-  const panel = crearPanel();
+  const [hojaPanel, hojaMenu] = await Promise.all([cargarHoja("chispa-panel.css"), cargarHoja("chispa-menu.css")]);
+  const panel = crearPanel(hojaPanel);
   document.documentElement.append(panel.anfitrion);
+  const agente = crearAgente({ alCambiar: () => menu?.marcar?.() });
   let permitidos = (await pedirModulos())?.modulos ?? null;
   let menu;
   const montarMenu = () => {
     if (!chrome.runtime?.id) return apagar(); // contexto invalidado: este script quedó huérfano
     const hayChat = !!document.querySelector("footer div[contenteditable=true]");
     if (hayChat && !menu?.isConnected) {
-      menu = crearMenu(panel, permitidos);
+      menu = crearMenu(panel, permitidos, agente, hojaMenu);
       document.documentElement.append(menu);
     } else if (!hayChat && menu) {
       menu.remove(); // sin chat abierto no hay dónde ponerlo
       menu = undefined;
     }
     menu?.colocar();
+    menu?.marcar?.(); // el agente es por chat: el botón sigue al chat abierto
     panel.ubicar(); // WhatsApp reconstruye su fila al cambiar de chat: el panel vuelve a su sitio
   };
   const alCambiarTamano = () => menu?.colocar();
   const observador = new MutationObserver(montarMenu);
   function apagar() {
     observador.disconnect();
+    agente.parar();
     removeEventListener("resize", alCambiarTamano);
     menu?.remove();
     panel.anfitrion.remove();
@@ -306,11 +328,16 @@ export async function montar() {
   observador.observe(document.body, { childList: true, subtree: true });
   montarMenu();
   // Alguien entró o salió en el panel: los botones cambian.
-  chrome.runtime.onMessage.addListener(async (m) => {
-    if (m?.tipo !== "sesion-cambio" || !chrome.runtime?.id) return;
-    permitidos = (await pedirModulos())?.modulos ?? null;
-    menu?.remove();
-    menu = undefined;
-    montarMenu();
+  // Sin `async` a propósito: un listener que devuelve una promesa le contesta él mismo al remitente (con
+  // `undefined`) y se adelanta a quien sí debe responder (relevo-crm.js, en el marco del panel).
+  chrome.runtime.onMessage.addListener((m) => {
+    if (m?.tipo !== "sesion-cambio" || !chrome.runtime?.id) return false;
+    pedirModulos().then((r) => {
+      permitidos = r?.modulos ?? null;
+      menu?.remove();
+      menu = undefined;
+      montarMenu();
+    });
+    return false;
   });
 }

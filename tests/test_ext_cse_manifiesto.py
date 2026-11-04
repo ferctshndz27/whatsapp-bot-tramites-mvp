@@ -95,8 +95,13 @@ def test_el_unico_sitio_que_toca_es_el_crm(dist, navegador):
     if navegador == "chrome":
         assert m["host_permissions"] == [f"{CRM}/*", "https://web.whatsapp.com/*"], "solo el CRM y WhatsApp Web"
         # Decisión del operador (2026-11-03): la barra de botones vive dentro de WhatsApp Web. Un solo
-        # content script, en ese único sitio, y que no lee nada de la página: solo se pinta a un lado.
-        assert [(c["matches"], c["js"]) for c in m["content_scripts"]] == [(["https://web.whatsapp.com/*"], ["whatsapp.js"])]
+        # content script en ese único sitio. Decisión del operador (2026-11-03): el agente contesta en el chat
+        # abierto, así que lee los mensajes nuevos de ESE chat. El segundo script es del propio CRM, solo en
+        # marcos (relevo-crm.js): hace la llamada con la cookie del panel; no toca otro sitio.
+        assert [(c["matches"], c["js"], c.get("all_frames", False)) for c in m["content_scripts"]] == [
+            (["https://web.whatsapp.com/*"], ["whatsapp.js"], False),
+            ([f"{CRM}/*"], ["relevo-crm.js"], True),
+        ]
     else:  # Firefox: la barra espera a resolver la cookie de sesión en marcos de otro sitio
         assert m["host_permissions"] == [f"{CRM}/*"] and "content_scripts" not in m
     for clave in ("optional_permissions", "optional_host_permissions", "externally_connectable"):
@@ -112,7 +117,7 @@ def test_chrome_solo_deja_enmarcar_el_panel(dist):
     pidiendo sesión y solo se deja enmarcar desde esta extensión."""
     assert _manifiesto(dist, "chrome")["web_accessible_resources"] == [
         {"resources": ["panel.html"], "matches": ["http://*/*", "https://*/*"]},
-        {"resources": ["whatsapp-chispa.js", "barra.js", "iconos.js"], "matches": ["https://web.whatsapp.com/*"]},
+        {"resources": ["whatsapp-chispa.js", "whatsapp-agente.js", "agente-cola.js", "barra.js", "iconos.js", "chispa-menu.css", "chispa-panel.css"], "matches": ["https://web.whatsapp.com/*"]},
     ]
     assert "web_accessible_resources" not in _manifiesto(dist, "firefox")
 
@@ -143,7 +148,7 @@ def test_viaja_todo_lo_que_se_usa_y_nada_mas(dist, navegador):
     m = _manifiesto(dist, navegador)
     usados = set(m["background"].get("scripts", []))
     usados |= {m["background"]["service_worker"]} if "service_worker" in m["background"] else set()
-    usados |= {c for cs in m.get("content_scripts", []) for c in cs["js"]}
+    usados |= {c for cs in m.get("content_scripts", []) for c in cs["js"] + cs.get("css", [])}
     usados |= {m["side_panel"]["default_path"]} if "side_panel" in m else set()
     usados |= {m["sidebar_action"]["default_panel"]} if "sidebar_action" in m else set()
     pendientes = list(usados)
@@ -154,7 +159,7 @@ def test_viaja_todo_lo_que_se_usa_y_nada_mas(dist, navegador):
         if ruta.suffix not in (".html", ".js"):
             continue
         texto = ruta.read_text(encoding="utf-8")
-        for grupos in re.findall(r'(?:src|href)="([^"]+)"|from "\./([^"]+)"|getURL\("([^"]+)"\)', texto):
+        for grupos in re.findall(r'(?:src|href)="([^"]+)"|from "\./([^"]+)"|getURL\("([^"]+)"\)|cargarHoja\("([^"]+)"\)', texto):
             referido = next(g for g in grupos if g)
             if referido not in usados:
                 usados.add(referido)
