@@ -23,9 +23,9 @@ import logging
 
 from sqlmodel import col, select
 
-from app import twilio_client, whatsapp_client
+from app import twilio_client, web_client, whatsapp_client
 from app.db import get_session
-from app.models import PROVIDER_META, PROVIDER_TWILIO, Conversation, Ticket
+from app.models import PROVIDER_META, PROVIDER_TWILIO, PROVIDER_WEB, Conversation, Ticket
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,8 @@ def _adaptador(provider: str):
     """
     if provider == PROVIDER_TWILIO:
         return twilio_client
+    if provider == PROVIDER_WEB:
+        return web_client
     return whatsapp_client
 
 

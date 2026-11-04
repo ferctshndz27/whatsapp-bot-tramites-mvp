@@ -17,6 +17,7 @@ from app import (
     activity,
     agent_settings,
     agente_studio,
+    agente_web,
     alta_manual_barrido,
     archive,
     authlog,
@@ -272,6 +273,7 @@ app.include_router(cobranza_panel.router)
 app.include_router(cobro_manual.router)
 app.include_router(inbox.router)
 app.include_router(crm.router)
+app.include_router(agente_web.router)
 app.include_router(team_chat.router)
 app.include_router(activity.router)
 app.include_router(users.router)
