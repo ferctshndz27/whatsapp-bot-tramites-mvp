@@ -42,7 +42,7 @@ function mundo({ azar = () => 0, resultados = [] } = {}) {
   return { cola, avanzar, enviados, descartados, ahora: () => t };
 }
 
-test("un mensaje nuevo no sale antes de 20 s", async () => {
+test("un mensaje nuevo no sale antes de 10 s", async () => {
   const m = mundo();
   m.cola.encolar("a");
   await m.avanzar(PAUSA_MS - 1);
@@ -51,7 +51,7 @@ test("un mensaje nuevo no sale antes de 20 s", async () => {
   assert.equal(m.enviados.length, 1);
 });
 
-test("nunca dos mensajes con menos de 20 s entre sí, aunque se encolen de golpe", async () => {
+test("nunca dos mensajes con menos de 10 s entre sí, aunque se encolen de golpe", async () => {
   const m = mundo({ azar: Math.random });
   for (const x of "abcde") m.cola.encolar(x);
   await m.avanzar(10 * 60000);
@@ -59,7 +59,7 @@ test("nunca dos mensajes con menos de 20 s entre sí, aunque se encolen de golpe
   for (let i = 1; i < m.enviados.length; i++) assert.ok(m.enviados[i].t - m.enviados[i - 1].t >= PAUSA_MS);
 });
 
-test("el azar solo suma: con azar máximo la pausa es 30 s, nunca menos de 20", async () => {
+test("el azar solo suma: con azar máximo la pausa es 20 s, nunca menos de 10", async () => {
   const m = mundo({ azar: () => 0.99999999 });
   m.cola.encolar("a");
   m.cola.encolar("b");

@@ -6,7 +6,7 @@ conteste. Aquí solo vive la mitad del servidor: recibir el texto y devolver las
 
 Lo que esta ruta deliberadamente NO hace:
 - No envía nada: no hay API de WhatsApp en este canal (`web_client`). Quien escribe en el chat,
-  y cuándo, es la extensión: mínimo 20 s entre mensajes, nunca ráfagas.
+  y cuándo, es la extensión: mínimo 10 s entre mensajes, nunca ráfagas.
 - No contesta a clientes de otra oficina (`auth.alcance`): devuelve [] como si nada hubiera que decir.
 - No salta ninguna regla del bot: si el colaborador ya tomó el folio, o el agente está apagado
   para ese chat, `handle_incoming` devuelve [] y no se contesta nada.

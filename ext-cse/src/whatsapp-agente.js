@@ -1,6 +1,6 @@
 // El agente en el WhatsApp Web del colaborador. Cuando la persona lo enciende en un chat, lo que el cliente
 // escriba se le pasa al mismo cerebro del bot (por el CRM, `POST /crm/api/agente/entrante`) y la respuesta se
-// escribe en ese chat, con la pausa y los límites de `agente-cola.js` (mínimo 20 s, nunca ráfagas).
+// escribe en ese chat, con la pausa y los límites de `agente-cola.js` (mínimo 10 s, nunca ráfagas).
 //
 // Reglas, pensadas para que se parezca lo menos posible a un programa y para no pisar a la persona:
 //  - Apagado por defecto y POR CHAT: solo contesta donde la persona lo encendió. Se apaga al recargar.
@@ -181,7 +181,7 @@ export function crearAgente({ alCambiar = () => undefined } = {}) {
         cambiar("Mensaje nuevo: consultando al agente…", chat);
         const respuestas = await consultar(chat, m.texto, m.id);
         if (!respuestas) return;
-        cambiar(respuestas.length ? "Respuesta lista: se escribirá en 20–30 s." : "El agente no tiene nada que responder (¿ya tomaste el folio?).", chat);
+        cambiar(respuestas.length ? "Respuesta lista: se escribirá en 10–20 s." : "El agente no tiene nada que responder (¿ya tomaste el folio?).", chat);
         for (const texto of respuestas) if (activos.has(chat)) cola.encolar({ chat, texto });
       });
     }
