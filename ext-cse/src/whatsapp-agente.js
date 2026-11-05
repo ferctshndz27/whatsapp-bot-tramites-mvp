@@ -106,6 +106,20 @@ function entrantes() {
   return lista;
 }
 
+// Pone `texto` en la caja conservando los saltos de línea. El editor de WhatsApp (Lexical) conserva los
+// renglones de un «pegado»; un insertLineBreak suelto a veces los pierde y el menú queda en una sola línea.
+// Si el pegado no deja nada en la caja, se cae al método renglón por renglón.
+function escribirTexto(caja, texto) {
+  const dt = new DataTransfer();
+  dt.setData("text/plain", texto);
+  caja.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  if (caja.innerText.trim() !== "") return;
+  texto.split("\n").forEach((linea, i) => {
+    if (i > 0) document.execCommand("insertLineBreak");
+    if (linea) document.execCommand("insertText", false, linea);
+  });
+}
+
 // Escribe `texto` en la caja del chat abierto y pulsa «enviar». Devuelve lo que la cola entiende.
 async function escribirYEnviar({ chat, texto }) {
   if (chatActual() !== chat) return "reintentar"; // la persona está en otro chat
@@ -113,11 +127,7 @@ async function escribirYEnviar({ chat, texto }) {
   if (!caja) return "reintentar";
   if (caja.innerText.trim() !== "") return "reintentar"; // la persona está escribiendo
   caja.focus();
-  const lineas = texto.split("\n");
-  lineas.forEach((linea, i) => {
-    if (i > 0) document.execCommand("insertLineBreak");
-    if (linea) document.execCommand("insertText", false, linea);
-  });
+  escribirTexto(caja, texto);
   await dormir(azar(ESCRIBIR_MIN_MS, ESCRIBIR_AZAR_MS));
   const boton = botonEnviar();
   if (!boton || chatActual() !== chat) {
