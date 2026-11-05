@@ -53,3 +53,175 @@ iframe {
   height: 100%;
   border: 0;
 }
+
+/* ---- Barra de módulos (maqueta). Colores del ERP: static/css/tokens.css ---- */
+body {
+  /* Gris plata del ERP con la banda violeta→azul→verde→lima al pie. */
+  background:
+    radial-gradient(600px 400px at 0% 102%, rgba(139, 92, 246, 0.42), transparent 64%),
+    radial-gradient(700px 420px at 50% 108%, rgba(59, 130, 246, 0.34), transparent 64%),
+    radial-gradient(700px 420px at 100% 102%, rgba(220, 242, 76, 0.48), transparent 64%),
+    #d0d2d7;
+  background-attachment: fixed;
+}
+
+#app {
+  display: flex;
+  height: 100%;
+}
+
+#app[hidden] {
+  display: none;
+}
+
+#barra {
+  flex: 0 0 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(20, 22, 28, 0.06);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+#barra ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#barra li.separador {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #e6e7ea;
+}
+
+#barra button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  color: #22242a;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 12px;
+}
+
+#barra button svg,
+#barra button img {
+  width: 22px;
+  height: 22px;
+}
+
+/* Mensajes sin atender: un globo rojo con el número en la esquina del botón. El rojo se distingue del
+   lima del módulo activo, y la cifra lleva el significado aunque no se vea el color. */
+#barra button .pendientes {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  color: #fff;
+  background: #b3261e;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  box-sizing: content-box;
+}
+
+#barra button:hover {
+  background: #f1f2f4;
+}
+
+/* Activo: lima del ERP con borde oliva; el aria-current y el borde llevan el estado, no solo el color. */
+#barra button[aria-current="page"] {
+  background: #dcf24c;
+  border-color: #565f1d;
+}
+
+/* Etiqueta a la derecha, como el tooltip de MI CIERRO; también con el foco del teclado. */
+#barra button::after {
+  content: attr(data-tip);
+  position: fixed;
+  left: 64px;
+  z-index: 10;
+  padding: 6px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+  color: #fff;
+  background: #22242a;
+  border-radius: 8px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#barra button:hover::after,
+#barra button:focus-visible::after {
+  opacity: 1;
+}
+
+#vista {
+  flex: 1;
+  min-width: 0;
+  margin: 12px;
+  padding: 16px;
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 2px 10px rgba(20, 22, 28, 0.06);
+}
+
+#vista h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+#vista p {
+  margin: 0;
+  color: #5f6572;
+}
+
+/* Con un módulo abierto la tarjeta es solo el marco: la vista trae su propio fondo y márgenes. */
+#vista.con-marco {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+#vista iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* Salir: al pie de la barra, separado de los módulos. */
+#barra #salir {
+  order: 1; /* en el HTML va antes de la lista; aquí queda debajo y no empuja los módulos */
+  margin-top: auto;
+}
+
+/* Acceso: sin sesión, el login del CRM ocupa el panel (marco, como cualquier vista). */
+#acceso {
+  height: 100%;
+}
+
+#acceso[hidden] {
+  display: none;
+}
+
+/* Dentro de WhatsApp Web la barra de módulos es la de la página: aquí solo se ve la vista. */
+html.solo #barra { display: none; }

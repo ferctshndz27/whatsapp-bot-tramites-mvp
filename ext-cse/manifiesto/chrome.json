@@ -1,13 +1,55 @@
 {
   "minimum_chrome_version": "116",
   "permissions": [
+    "activeTab",
     "declarativeNetRequest",
+    "scripting",
     "sidePanel"
   ],
   "background": {
-    "service_worker": "fondo-chrome.js"
+    "service_worker": "fondo-chrome.js",
+    "type": "module"
   },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "panel.html"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ]
+    },
+    {
+      "resources": [
+        "whatsapp-chispa.js",
+        "whatsapp-agente.js",
+        "agente-cola.js",
+        "barra.js",
+        "iconos.js",
+        "chispa-menu.css",
+        "chispa-panel.css"
+      ],
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ]
+    }
+  ],
   "side_panel": {
     "default_path": "panel.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
+        "whatsapp.js"
+      ],
+      "run_at": "document_idle",
+      "css": [
+        "chispa-agente.css"
+      ]
+    }
+  ]
 }

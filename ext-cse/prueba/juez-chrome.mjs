@@ -293,9 +293,14 @@ async function main() {
     criterio("la regla admite como iniciadores solo a la extensión y al CRM",
       JSON.stringify(regla?.condition.initiatorDomains) === JSON.stringify([id, "127.0.0.1"]),
       JSON.stringify(regla?.condition.initiatorDomains));
-    criterio("la CSP del marco deja enmarcar solo a esta extensión", csp.endsWith(`; frame-ancestors chrome-extension://${id}`), csp);
+    criterio("la CSP del marco deja enmarcar solo a esta extensión (y a WhatsApp Web, su página anfitriona)", csp.endsWith(`; frame-ancestors chrome-extension://${id} https://web.whatsapp.com`), csp);
     const comportamiento = await evaluar(cdp, fondo, "chrome.sidePanel.getPanelBehavior()");
-    criterio("el ícono abre el panel lateral", comportamiento?.openPanelOnActionClick === true);
+    // El ícono ya no abre el panel lateral: pone el CRM en la página (prueba/probar-panel.mjs mide
+    // el ancho de 1/3 y que la página se encoja). El lateral queda de respaldo donde no se inyecta.
+    const alternar = await evaluar(cdp, fondo, "typeof globalThis.alternarPanel");
+    criterio("el ícono pone el CRM en la página y el panel lateral queda de respaldo",
+      alternar === "function" && comportamiento?.openPanelOnActionClick !== true,
+      JSON.stringify({ alternarPanel: alternar, openPanelOnActionClick: comportamiento?.openPanelOnActionClick }));
 
     // 3. Sin el CRM: el panel lo dice con el código que recibió y no abre el marco; el botón vuelve
     // a preguntar, y cuando el puerto deja de contestar el aviso cambia sin que nadie toque nada.
@@ -344,9 +349,15 @@ async function main() {
       criterio("el login dentro del marco entra al CRM", false, "no hubo login que llenar");
     }
     await cdp.enviar("Page.navigate", { url: urlPanel }, panel);
+    // Al entrar, el panel abre solo «Mi día» (no se queda en blanco) y el botón queda marcado como la página actual.
+    marco = await marcoDelCrm(cdp, crm, "/my");
+    const inicial = await evaluar(cdp, panel, `document.querySelector("#barra button[aria-current=page]")?.dataset.id`);
+    criterio("con sesión, el panel abre solo «Mi día» (/my) y no queda en blanco", Boolean(marco) && inicial === "dia", `marco: ${marco ? "sí" : "no"}; botón activo: ${inicial}`);
+    // El recorrido de «WhatsApp» (E3, E4) parte de elegir ese módulo.
+    await evaluar(cdp, panel, `document.querySelector('#barra button[data-id="whatsapp"]').click()`);
     marco = await marcoDelCrm(cdp, crm, "/crm");
     const tablero = marco && (await hasta(async () => evaluar(cdp, marco, "Boolean(document.querySelector('#crm'))")));
-    criterio("con sesión, el panel abre directo en /crm", Boolean(tablero));
+    criterio("al elegir «WhatsApp», el panel abre /crm", Boolean(tablero));
 
     // E3. «Ir al cliente»: el número como lo pega un asesor de WhatsApp Web abre su conversación en
     // el panel. El envío es otra navegación del marco, iniciada por el CRM: la regla también la deja.
@@ -388,7 +399,7 @@ async function main() {
     let trasEscape = null;
     try {
       ayuda = conChat && (await hasta(async () => evaluar(cdp, conChat, `(() => {
-        const b = document.querySelector("#crm-btn-ayuda-folio");
+        const b = document.querySelector("#crm-btn-ayuda-folio-chat");
         if (!b || !b.getClientRects().length) return undefined;
         if (!document.querySelector("#crm-dlg-ayuda-folio")?.open) { b.focus(); b.click(); }
         return ${ESTADO_AYUDA};
@@ -405,11 +416,11 @@ async function main() {
     } finally {
       await cdp.enviar("Emulation.clearDeviceMetricsOverride", {}, panel);
     }
-    criterio("«¿Folio manual?» abre la ayuda en el panel: modal, 6 pasos y cabe a 360 px",
+    criterio("El «?» de la cabecera del chat abre la ayuda «Folio manual» en el panel: modal, 6 pasos y cabe a 360 px",
       Boolean(ayuda?.abierto && ayuda.modal && ayuda.pasos === 6 && ayuda.cabe && !ayuda.scrollX && ayuda.foco === "crm-ayuda-folio-cerrar"),
       JSON.stringify(ayuda ?? "el CRM del panel no tiene el botón «¿Folio manual?»"));
     criterio("Escape cierra la ayuda del panel sin cerrar el chat y el foco vuelve al botón",
-      Boolean(trasEscape && trasEscape.chat && trasEscape.foco === "crm-btn-ayuda-folio"), JSON.stringify(trasEscape));
+      Boolean(trasEscape && trasEscape.chat && trasEscape.foco === "crm-btn-ayuda-folio-chat"), JSON.stringify(trasEscape));
 
     // 5. Primer arranque: si el panel se abre antes de que onInstalled ponga la regla, se la pide al
     // fondo antes de crear el marco. La regla se borra desde la página del panel, que tiene la API.
@@ -417,7 +428,7 @@ async function main() {
     const quedan = await evaluar(cdp, panel, "chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length)");
     await cerrar(cdp, panel);
     const repuesto = await pestana(cdp, urlPanel);
-    marco = await marcoDelCrm(cdp, crm, "/crm");
+    marco = await marcoDelCrm(cdp, crm, "/my");
     const despues = await evaluar(cdp, repuesto, "chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length)");
     criterio("si falta la regla, el panel la pide al fondo y el marco carga", quedan === 0 && Boolean(marco) && despues === 1,
       `reglas antes del panel: ${quedan}; después: ${despues}; marco: ${marco ? "cargó" : "no cargó"}`);
@@ -436,7 +447,7 @@ async function main() {
     criterio("sin red, el panel lo dice y no abre el marco", Boolean(aviso?.reintentar && !aviso.marco),
       JSON.stringify(aviso ?? (await leerAviso(cdp, sinRed))));
     await cdp.enviar("Network.emulateNetworkConditions", { offline: false, ...RED }, sinRed);
-    marco = await marcoDelCrm(cdp, crm, "/crm");
+    marco = await marcoDelCrm(cdp, crm, "/my");
     criterio("al volver la red, el panel abre el CRM solo", Boolean(marco));
     await cerrar(cdp, sinRed);
 
@@ -463,10 +474,14 @@ async function main() {
     criterio("el botón Dar permiso le pide al navegador el permiso del CRM",
       JSON.stringify(pedidos) === JSON.stringify([{ origins: [`${crm}/*`] }]), JSON.stringify(pedidos));
     await accesoASitios(cdp, ajustes, id, "ON_ALL_SITES");
-    marco = await marcoDelCrm(cdp, crm, "/crm");
+    marco = await marcoDelCrm(cdp, crm, "/my");
     criterio("al dar el permiso, el panel abre el CRM solo", Boolean(marco));
     await accesoASitios(cdp, ajustes, id, "ON_CLICK");
-    aviso = await avisoQue(cdp, sinPermiso, "Falta el permiso para conectarse con el CRM");
+    // El texto del aviso queda en el DOM (oculto) mientras el CRM está abierto: se espera a que el panel se recargue.
+    aviso = await hasta(async () => {
+      const a = await leerAviso(cdp, sinPermiso).catch(() => undefined);
+      return a?.titulo === "Falta el permiso para conectarse con el CRM" && a.permiso && !a.marco ? a : undefined;
+    }, { timeout: 10000 });
     criterio("si quitan el permiso con el CRM abierto, el panel lo cierra y lo explica",
       Boolean(aviso?.permiso && !aviso.marco), JSON.stringify(aviso ?? (await leerAviso(cdp, sinPermiso))));
     await accesoASitios(cdp, ajustes, id, "ON_ALL_SITES");

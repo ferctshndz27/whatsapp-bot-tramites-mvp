@@ -70,12 +70,17 @@ def construir():
 # --- Permisos ---------------------------------------------------------------------------------
 
 
-def test_chrome_pide_solo_el_panel_lateral_y_la_regla_de_cabeceras(dist):
-    """Ni `storage` (nada lo usa, y el teléfono de un cliente no se guarda en el navegador) ni
-    `tabs`, `scripting` o `webRequest`, que leerían o tocarían otras páginas, WhatsApp Web incluido."""
-    assert sorted(_manifiesto(dist, "chrome")["permissions"]) == ["declarativeNetRequest", "sidePanel"], (
-        "un permiso de más amplía lo que la extensión puede hacer con la sesión del CRM"
-    )
+def test_chrome_pide_solo_lo_que_necesita_para_poner_el_panel_en_la_pestana(dist):
+    """El ícono pone el CRM en la página de la pestaña (1/3 del ancho). Lo hace con `activeTab` +
+    `scripting`: el acceso vale solo para la pestaña donde se hizo clic y solo en ese momento. Siguen
+    fuera `storage` (el teléfono de un cliente no se guarda en el navegador), `tabs` y `webRequest`, que
+    leerían otras páginas, WhatsApp Web incluido."""
+    assert sorted(_manifiesto(dist, "chrome")["permissions"]) == [
+        "activeTab",
+        "declarativeNetRequest",
+        "scripting",
+        "sidePanel",
+    ], "un permiso de más amplía lo que la extensión puede hacer con la sesión del CRM"
 
 
 def test_firefox_no_pide_ningun_permiso(dist):
@@ -87,17 +92,34 @@ def test_firefox_no_pide_ningun_permiso(dist):
 @pytest.mark.parametrize("navegador", NAVEGADORES)
 def test_el_unico_sitio_que_toca_es_el_crm(dist, navegador):
     m = _manifiesto(dist, navegador)
-    assert m["host_permissions"] == [f"{CRM}/*"], "la extensión solo debe alcanzar al CRM"
-    for clave in (
-        "optional_permissions",
-        "optional_host_permissions",
-        "content_scripts",
-        "web_accessible_resources",
-        "externally_connectable",
-    ):
-        assert clave not in m, f"{clave} abriría la extensión a otros sitios, WhatsApp Web incluido"
+    if navegador == "chrome":
+        assert m["host_permissions"] == [f"{CRM}/*", "https://web.whatsapp.com/*"], "solo el CRM y WhatsApp Web"
+        # Decisión del operador (2026-11-03): la barra de botones vive dentro de WhatsApp Web. Un solo
+        # content script en ese único sitio. Decisión del operador (2026-11-03): el agente contesta en el chat
+        # abierto, así que lee los mensajes nuevos de ESE chat. El segundo script es del propio CRM, solo en
+        # marcos (relevo-crm.js): hace la llamada con la cookie del panel; no toca otro sitio.
+        assert [(c["matches"], c["js"], c.get("all_frames", False)) for c in m["content_scripts"]] == [
+            (["https://web.whatsapp.com/*"], ["whatsapp.js"], False),
+            ([f"{CRM}/*"], ["relevo-crm.js"], True),
+        ]
+    else:  # Firefox: la barra espera a resolver la cookie de sesión en marcos de otro sitio
+        assert m["host_permissions"] == [f"{CRM}/*"] and "content_scripts" not in m
+    for clave in ("optional_permissions", "optional_host_permissions", "externally_connectable"):
+        assert clave not in m, f"{clave} abriría la extensión a otros sitios"
     texto = (dist / navegador / "manifest.json").read_text(encoding="utf-8")
     assert "<all_urls>" not in texto and "*://" not in texto
+
+
+def test_chrome_solo_deja_enmarcar_el_panel(dist):
+    """Para ponerlo en una página, panel.html tiene que poder enmarcarse desde ella. Es lo único que
+    se expone. Sin `use_dynamic_url`: web.whatsapp.com manda COEP require-corp y con la dirección
+    dinámica Chrome bloquea el marco del panel (probado). El panel no tiene datos; el CRM sigue
+    pidiendo sesión y solo se deja enmarcar desde esta extensión."""
+    assert _manifiesto(dist, "chrome")["web_accessible_resources"] == [
+        {"resources": ["panel.html"], "matches": ["http://*/*", "https://*/*"]},
+        {"resources": ["whatsapp-chispa.js", "whatsapp-agente.js", "agente-cola.js", "barra.js", "iconos.js", "chispa-menu.css", "chispa-panel.css"], "matches": ["https://web.whatsapp.com/*"]},
+    ]
+    assert "web_accessible_resources" not in _manifiesto(dist, "firefox")
 
 
 @pytest.mark.parametrize("navegador", NAVEGADORES)
@@ -109,7 +131,8 @@ def test_no_trae_codigo_ni_configuracion_de_fuera(dist, navegador):
     assert "update_url" not in m.get("browser_specific_settings", {}).get("gecko", {})
     for archivo in (dist / navegador).iterdir():
         if archivo.suffix in (".js", ".html", ".css"):
-            assert not re.search(r"https?://", archivo.read_text(encoding="utf-8")), (
+            texto = archivo.read_text(encoding="utf-8").replace("https://web.whatsapp.com", "")
+            assert not re.search(r"https?://", texto), (
                 f"{archivo.name} nombra una URL: el único sitio es el CRM y sale del manifiesto"
             )
 
@@ -125,6 +148,7 @@ def test_viaja_todo_lo_que_se_usa_y_nada_mas(dist, navegador):
     m = _manifiesto(dist, navegador)
     usados = set(m["background"].get("scripts", []))
     usados |= {m["background"]["service_worker"]} if "service_worker" in m["background"] else set()
+    usados |= {c for cs in m.get("content_scripts", []) for c in cs["js"] + cs.get("css", [])}
     usados |= {m["side_panel"]["default_path"]} if "side_panel" in m else set()
     usados |= {m["sidebar_action"]["default_panel"]} if "sidebar_action" in m else set()
     pendientes = list(usados)
@@ -135,7 +159,7 @@ def test_viaja_todo_lo_que_se_usa_y_nada_mas(dist, navegador):
         if ruta.suffix not in (".html", ".js"):
             continue
         texto = ruta.read_text(encoding="utf-8")
-        for grupos in re.findall(r'(?:src|href)="([^"]+)"|from "\./([^"]+)"|getURL\("([^"]+)"\)', texto):
+        for grupos in re.findall(r'(?:src|href)="([^"]+)"|from "\./([^"]+)"|getURL\("([^"]+)"\)|cargarHoja\("([^"]+)"\)', texto):
             referido = next(g for g in grupos if g)
             if referido not in usados:
                 usados.add(referido)
@@ -155,7 +179,7 @@ def test_los_dos_paquetes_son_la_misma_extension(dist):
 
 def test_chrome_no_arrastra_claves_de_firefox(dist):
     m = _manifiesto(dist, "chrome")
-    assert set(m["background"]) == {"service_worker"}
+    assert set(m["background"]) == {"service_worker", "type"}
     assert "sidebar_action" not in m and "browser_specific_settings" not in m
 
 
@@ -191,7 +215,13 @@ def test_la_regla_solo_toca_submarcos_hacia_el_crm(dist):
     assert regla["action"]["type"] == "modifyHeaders"
     assert "requestHeaders" not in regla["action"]
     cabeceras = {(c["header"], c["operation"]) for c in regla["action"]["responseHeaders"]}
-    assert cabeceras == {("x-frame-options", "remove"), ("content-security-policy", "set")}
+    # CORP/COEP: web.whatsapp.com manda COEP require-corp y sin ellas Chrome bloquea el marco del CRM.
+    assert cabeceras == {
+        ("x-frame-options", "remove"),
+        ("content-security-policy", "set"),
+        ("cross-origin-resource-policy", "set"),
+        ("cross-origin-embedder-policy", "set"),
+    }
 
 
 def test_la_csp_del_marco_es_la_del_servidor_sin_frame_ancestors(dist):
@@ -249,7 +279,7 @@ def test_el_crm_es_un_solo_origen_https(tmp_path, crm):
 def test_acepta_el_crm_de_produccion_y_uno_local_para_probar(tmp_path, crm, host):
     r = _construir("--crm", crm, "--navegador", "chrome", salida=tmp_path)
     assert r.returncode == 0, r.stderr
-    assert _manifiesto(tmp_path, "chrome")["host_permissions"] == [host]
+    assert _manifiesto(tmp_path, "chrome")["host_permissions"] == [host, "https://web.whatsapp.com/*"]
 
 
 @pytest.mark.parametrize("navegador", NAVEGADORES)

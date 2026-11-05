@@ -2,6 +2,8 @@
 {% block title %}Mi día{% endblock %}
 {% block content %}
 {% from "partials/alias.html" import alias_tag %}
+{# En el panel de la extensión (V3) seguimientos y solicitudes activas quedan fuera: ni sus tarjetas ni sus cifras. #}
+{% set en_marco = (estado_peticion.embebido | default(false)) if estado_peticion else false %}
 <h1 class="u-d-flex u-items-center u-gap-1rem u-wrap-wrap">
   Mi día
   <form class="u-d-inline-flex u-items-center u-gap-0_5rem u-ml-auto" method="post" action="/my/estado">
@@ -24,6 +26,7 @@
     <div class="label">Esperando mi respuesta</div>
     <div class="value">{{ waiting | length }}</div>
   </div>
+  {% if not en_marco %}
   <div class="stat-card blue">
     <div class="label">Seguimientos para hoy</div>
     <div class="value">{{ due_now | length }}</div>
@@ -32,6 +35,7 @@
     <div class="label">Mis solicitudes activas</div>
     <div class="value">{{ tickets | length }}</div>
   </div>
+  {% endif %}
   {# Es un <a> y no un <div> a propósito: la cartera solo cambia el día de
      alguien si se llega a ella desde la pantalla que ya abre todas las
      mañanas. `.stats` es grid, así que el ancla se comporta como bloque sola.
@@ -68,6 +72,7 @@
 </div>
 {% endif %}
 
+{% if not en_marco %}
 <div class="grid-2">
   <div class="card">
     <h2>Seguimientos</h2>
@@ -121,4 +126,5 @@
     {% endif %}
   </div>
 </div>
+{% endif %}
 {% endblock %}

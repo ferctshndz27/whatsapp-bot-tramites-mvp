@@ -23,7 +23,10 @@ class Direction(str, Enum):
 # cada comparación. Para dos valores no compensa.
 PROVIDER_META = "meta"
 PROVIDER_TWILIO = "twilio"
-PROVIDERS = (PROVIDER_META, PROVIDER_TWILIO)
+# El WhatsApp Web de un colaborador (agente de ext-cse): no hay API que llamar, la respuesta la escribe
+# la extensión en el chat. Ver app/agente_web.py y app/web_client.py.
+PROVIDER_WEB = "web"
+PROVIDERS = (PROVIDER_META, PROVIDER_TWILIO, PROVIDER_WEB)
 
 # Multi-oficina (docs/SPEC-MULTI-OFICINA.md). La 1 es Tlaxcala: la única oficina
 # que ha operado, y por eso es el DEFAULT de office_id en las 15 tablas de §2.3.

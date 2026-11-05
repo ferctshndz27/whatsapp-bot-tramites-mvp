@@ -968,6 +968,20 @@
 }
 .crm .chat-close:hover { background: rgba(0, 0, 0, .06); }
 
+/* Solo se muestra embebido (embed.css); en la página completa la ayuda está en la barra. */
+.crm .chat-ayuda {
+  display: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--wa-muted-2);
+  color: var(--wa-muted-2);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+.crm .chat-ayuda:hover { background: rgba(0, 0, 0, .06); }
+
 .crm .chat-badges {
   flex: 1 1 100%;
   display: flex;

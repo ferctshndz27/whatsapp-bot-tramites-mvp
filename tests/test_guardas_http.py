@@ -6,7 +6,7 @@ cookie viaje, un cuerpo enorme no se lee, y «%»/«_» del buscador son texto y
 
 import pytest
 
-from app.guardas_http import MAX_CUERPO_BYTES, origen_permitido
+from app.guardas_http import MAX_CUERPO_BYTES, cookie_para_marco, origen_permitido
 from tests.test_cobranza_panel import ASESOR, _cliente, entorno, stripe_doble  # noqa: F401
 from tests.test_cobro_manual import PHONE, _ficha_canonica  # noqa: F401
 
@@ -66,3 +66,38 @@ def test_buscador_trata_comodines_como_texto(entorno):
         assert c.get("/cobros/nuevo/clientes", params={"q": q}).json()["clientes"] == [], q
     # Control positivo: el término normal sigue encontrando.
     assert len(c.get("/cobros/nuevo/clientes", params={"q": "Cliente"}).json()["clientes"]) == 1
+
+
+def _set_cookies(r):
+    return [v for k, v in r.headers.multi_items() if k.lower() == "set-cookie" and v.startswith("session=")]
+
+
+def test_cookie_de_sesion_dentro_de_un_marco_es_none_secure_partitioned(entorno):
+    """La extensión muestra el panel dentro de web.whatsapp.com: ahí `Lax` es de terceros y el
+    navegador descarta la cookie (el login vuelve a /login). Solo con Sec-Fetch-Dest: iframe."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from tests.test_cobranza_panel import CLAVE
+
+    def entrar(**cabeceras):
+        c = TestClient(app, base_url="https://testserver")
+        return c.post("/login", data={"username": ASESOR, "password": CLAVE},
+                      headers=cabeceras, follow_redirects=False)
+
+    marco = _set_cookies(entrar(**{"Sec-Fetch-Dest": "iframe"}))
+    assert len(marco) == 1
+    assert "samesite=none" in marco[0].lower() and "partitioned" in marco[0].lower()
+    assert marco[0].lower().count("secure") == 1 and "samesite=lax" not in marco[0].lower()
+    assert "httponly" in marco[0].lower()
+    # Control: fuera de un marco (documento, fetch, curl) la cookie no cambia.
+    for cab in ({"Sec-Fetch-Dest": "document"}, {"Sec-Fetch-Dest": "empty"}, {}):
+        normal = _set_cookies(entrar(**cab))
+        assert len(normal) == 1 and "samesite=lax" in normal[0].lower()
+        assert "partitioned" not in normal[0].lower()
+
+
+def test_cookie_para_marco_no_duplica_atributos():
+    v = cookie_para_marco("session=abc; path=/; Max-Age=43200; httponly; samesite=lax; Secure")
+    assert v.lower().count("secure") == 1 and v.lower().count("samesite") == 1
+    assert v.endswith("SameSite=None; Partitioned")

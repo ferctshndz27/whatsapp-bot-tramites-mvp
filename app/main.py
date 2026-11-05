@@ -12,10 +12,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from sqlmodel import Session
 
 import app.db as db
+from app.utils import es_embebido
 from app import (
     activity,
     agent_settings,
     agente_studio,
+    agente_web,
     alta_manual_barrido,
     archive,
     authlog,
@@ -41,7 +43,7 @@ from app import (
 )
 from app.config import settings
 from app.db import init_db
-from app.guardas_http import guardas_http
+from app.guardas_http import cookie_en_marco, guardas_http
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -199,6 +201,8 @@ async def _nav_context(request, call_next):
     # admin en base.html). Best-effort: si falla, el nav no muestra badge y el
     # request sigue normal. Corre DENTRO de SessionMiddleware (usa la sesión).
     request.state.pending_proposals = 0
+    # Panel lateral de la extensión: base.html omite el menú y la barra superior (app/utils.py).
+    request.state.embebido = es_embebido(request)
     # Los estáticos no renderizan base.html, así que su badge no lo lee nadie:
     # una navegación del panel pide la página y luego su CSS y su JS, y sin esta
     # línea cada uno de esos pedía también el COUNT. La comparación de prefijo
@@ -251,6 +255,7 @@ app.add_middleware(
 # Es un fallo mudo: el panel no da error, simplemente vuelve a enterarse tarde. Si algún día se
 # comprime el panel, hay que excluir text/event-stream.
 app.middleware("http")(_fetch_sin_html)  # dentro de _security_headers: su 204 también se sella
+app.middleware("http")(cookie_en_marco)  # fuera de SessionMiddleware: reescribe su Set-Cookie en un marco
 app.middleware("http")(guardas_http)  # origen cruzado y tope del cuerpo; su 403/413 también se sellan
 app.middleware("http")(_security_headers)
 
@@ -268,6 +273,7 @@ app.include_router(cobranza_panel.router)
 app.include_router(cobro_manual.router)
 app.include_router(inbox.router)
 app.include_router(crm.router)
+app.include_router(agente_web.router)
 app.include_router(team_chat.router)
 app.include_router(activity.router)
 app.include_router(users.router)

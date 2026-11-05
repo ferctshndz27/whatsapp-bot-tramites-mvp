@@ -10,15 +10,15 @@
 {% for cat in categories %}
 <div class="card">
   <h2>{{ cat.name }}</h2>
-  <div class="table-wrap">
+  <div class="table-wrap tabla-tarjetas">
     <table>
       <thead><tr><th class="u-w-30pct">Servicio</th><th class="u-w-15pct">Precio</th><th>Requisitos</th></tr></thead>
       <tbody>
         {% for s in cat.services %}
         <tr>
-          <td><strong>{{ s.name }}</strong></td>
-          <td>{{ s.price_info }}</td>
-          <td class="u-ws-pre-line">{{ s.requirements or '— pendiente de documentar —' }}</td>
+          <td data-label="Servicio"><strong>{{ s.name }}</strong></td>
+          <td data-label="Precio">{{ s.price_info }}</td>
+          <td class="u-ws-pre-line celda-larga" data-label="Requisitos">{{ s.requirements or '— pendiente de documentar —' }}</td>
         </tr>
         {% endfor %}
       </tbody>

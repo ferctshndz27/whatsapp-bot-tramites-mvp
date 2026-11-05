@@ -5,7 +5,11 @@
 {% from "partials/alias.html" import alias_tag %}
 {# URL actual (filtros y página incluidos) urlencoded: viaja como ?volver= en
    cada enlace al detalle para que su botón de regreso restaure esta vista. #}
+{# En el panel de la extensión (ext-vistas V8) no van el saludo ni las cuatro cifras: las mismas cuentas ya
+   están en los filtros de abajo y empujaban las solicitudes fuera de vista. #}
+{% set en_marco = (estado_peticion.embebido | default(false)) if estado_peticion else false %}
 {% set volver_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode %}
+{% if not en_marco %}
 <h1>Hola, {{ user }}</h1>
 
 <div class="stats">
@@ -26,6 +30,7 @@
     <div class="value">{{ stats.escalados }}</div>
   </div>
 </div>
+{% endif %}
 
 <div class="card">
   <h2>{% if conv_filter %}Conversaciones{% else %}Solicitudes{% endif %}</h2>
@@ -74,7 +79,7 @@
     {% include "_convo_list.html" %}
   {% endwith %}
   {% elif tickets %}
-  <div class="table-wrap">
+  <div class="table-wrap tabla-tarjetas">
     <table>
       <thead>
         <tr>
@@ -85,7 +90,7 @@
       <tbody>
         {% for t in tickets %}
         <tr data-href="/tickets/{{ t.id }}?volver={{ volver_actual }}">
-          <td>
+          <td data-label="Cliente">
             <a class="cell-person u-deco-none u-c-inherit" href="/tickets/{{ t.id }}?volver={{ volver_actual }}">
               <span class="avatar avatar-c{{ t.id % 5 }}" aria-hidden="true">
                 {{ (t.client_name or t.phone)[:2] | upper }}
@@ -96,15 +101,15 @@
               </span>
             </a>
           </td>
-          <td>{{ t.category }}</td>
-          <td>{{ t.service_name }}</td>
-          <td>{{ t.price_info }}</td>
-          <td>
+          <td data-label="Categoría">{{ t.category }}</td>
+          <td data-label="Servicio">{{ t.service_name }}</td>
+          <td data-label="Precio">{{ t.price_info }}</td>
+          <td data-label="Estado">
             <span class="badge {{ t.status.value }}">{{ t.status.value.replace('_', ' ') }}</span>
             {% if t.escalado %}<span class="badge escalado">escalado</span>{% endif %}
             {% if t.escalado and not t.agent_active %}<span class="badge pausado">agente apagado</span>{% endif %}
           </td>
-          <td>
+          <td data-label="Asignado a">
             {% if t.assigned_to %}
               {{ t.assigned_to }}
             {% elif t.status.value != 'cerrado' %}
@@ -115,7 +120,7 @@
               —
             {% endif %}
           </td>
-          <td>{{ t.created_at | local }}</td>
+          <td data-label="Creado">{{ t.created_at | local }}</td>
         </tr>
         {% endfor %}
       </tbody>

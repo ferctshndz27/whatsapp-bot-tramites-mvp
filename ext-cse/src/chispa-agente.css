@@ -1,0 +1,28 @@
+/* Botón del agente, en el pie de WhatsApp (DOM de la página, no shadow): lo inyecta el manifiesto como CSS del
+   content script. Todo va acotado a [data-chispa-agente] para no tocar nada de WhatsApp. */
+[data-chispa-agente] {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #ffffff;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+}
+[data-chispa-agente][aria-pressed="true"] {
+  background: #00a884;
+  color: #fff;
+}
+[data-chispa-agente] svg {
+  width: 26px;
+  height: 26px;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-chispa-agente] { transition: none; }
+}

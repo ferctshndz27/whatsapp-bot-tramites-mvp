@@ -9,11 +9,20 @@
   formulario o JSON legítimo del panel pesa unos KB; los adjuntos van en multipart y tienen su
   tope en `media_store`, por eso el multipart no se mide aquí.
 
+- **Cookie dentro de un marco.** La extensión del CRM muestra el panel dentro de web.whatsapp.com.
+  Ahí la cookie `SameSite=Lax` es de terceros: el navegador la descarta y el login vuelve a
+  `/login`. Si la petición declara `Sec-Fetch-Dest: iframe`, la cookie de sesión sale
+  `SameSite=None; Secure; Partitioned`: queda atada al sitio que enmarca (WhatsApp Web) y no viaja
+  a ningún otro. Nadie más puede llegar con `iframe`: `X-Frame-Options` y `frame-ancestors 'none'`
+  impiden enmarcar el panel, salvo con la regla que instala la extensión. Fuera de un marco la
+  cookie no cambia: sigue `Lax`.
+
 No es autenticación: no sustituye el guard de sesión de cada handler.
 """
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlsplit
 
 from fastapi.responses import PlainTextResponse
@@ -51,3 +60,29 @@ async def guardas_http(request, call_next):
                 and int(largo) > MAX_CUERPO_BYTES):
             return PlainTextResponse("Cuerpo demasiado grande.", status_code=413)
     return await call_next(request)
+
+
+_SAMESITE = re.compile(r";\s*samesite=[^;]*", re.IGNORECASE)
+_ATRIBUTOS_MARCO = {"secure", "partitioned"}
+
+
+def cookie_para_marco(valor: str) -> str:
+    """Reescribe un `Set-Cookie` de sesión para que lo guarde un navegador dentro de un marco."""
+    valor = _SAMESITE.sub("", valor)
+    quedan = {a.strip().lower() for a in valor.split(";")[1:]}
+    extras = [a for a in ("Secure", "Partitioned") if a.lower() not in quedan]
+    return "; ".join([valor, "SameSite=None", *extras])
+
+
+async def cookie_en_marco(request, call_next):
+    """Solo la cookie de sesión, solo si la petición es un marco (ver el docstring del módulo)."""
+    respuesta = await call_next(request)
+    if request.headers.get("sec-fetch-dest", "").lower() not in ("iframe", "frame"):
+        return respuesta
+    respuesta.raw_headers = [
+        (k, cookie_para_marco(v.decode("latin-1")).encode("latin-1"))
+        if k.lower() == b"set-cookie" and v.lower().startswith(b"session=")
+        else (k, v)
+        for k, v in respuesta.raw_headers
+    ]
+    return respuesta

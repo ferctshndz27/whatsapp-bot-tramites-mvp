@@ -81,6 +81,10 @@
           <span class="alias-tag" id="crm-chat-alias" hidden></span>
           <span class="chat-phone" id="crm-chat-phone"></span>
         </div>
+        {# Solo en el panel embebido (embed.css): ahí la barra se esconde con un chat abierto y la
+           ayuda «Folio manual» se queda sin botón. Abre el mismo diálogo (crm.js). #}
+        <button id="crm-btn-ayuda-folio-chat" class="chat-ayuda" type="button" aria-haspopup="dialog"
+                aria-controls="crm-dlg-ayuda-folio" aria-label="Ayuda: cómo crear un folio manual" title="¿Folio manual?">?</button>
         <button class="chat-close" type="button" aria-label="Cerrar el chat y volver al tablero">✕</button>
         <div class="chat-badges" id="crm-chat-badges"></div>
         {# Trámites en curso de la conversación (varios folios en un chat): uno por folio, del

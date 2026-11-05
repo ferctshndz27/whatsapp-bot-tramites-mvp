@@ -159,17 +159,17 @@
   <div class="card">
     <h2>Historial de solicitudes</h2>
     {% if tickets %}
-    <div class="table-wrap">
+    <div class="table-wrap tabla-tarjetas">
       <table>
         <thead><tr><th>Folio</th><th>Servicio</th><th>Estado</th><th>Fecha</th><th>Atendió</th></tr></thead>
         <tbody>
           {% for t in tickets %}
           <tr data-href="/tickets/{{ t.id }}"{% if not t.habilitado %} class="u-op-0_55"{% endif %}>
-            <td><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
-            <td>{{ t.service_name }}</td>
-            <td><span class="badge {{ t.status.value }}">{{ t.status.value.replace('_', ' ') }}</span></td>
-            <td>{{ t.created_at | local('%Y-%m-%d') }}</td>
-            <td>{{ t.assigned_to or '—' }}</td>
+            <td data-label="Folio"><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
+            <td data-label="Servicio">{{ t.service_name }}</td>
+            <td data-label="Estado"><span class="badge {{ t.status.value }}">{{ t.status.value.replace('_', ' ') }}</span></td>
+            <td data-label="Fecha">{{ t.created_at | local('%Y-%m-%d') }}</td>
+            <td data-label="Atendió">{{ t.assigned_to or '—' }}</td>
           </tr>
           {% endfor %}
         </tbody>
