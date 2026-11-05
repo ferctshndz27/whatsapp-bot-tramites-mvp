@@ -8,6 +8,17 @@ services:
     # no sirve de nada. El default de Docker son 10 s, justo el borde.
     stop_grace_period: 20s
     env_file: .env
+    # Endurecimiento del contenedor (auditoría 2026-11): el bot no necesita ninguna capability de
+    # Linux, no debe poder ganar privilegios con un binario setuid y no escribe fuera de /data
+    # (bind mount) y /tmp. Un RCE de la app queda sin root, sin capabilities y sin poder
+    # modificar el código ni los binarios de la imagen.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       # México ya no tiene horario de verano (eliminado en 2022): offset fijo.
       - TZ=America/Mexico_City

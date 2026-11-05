@@ -4,5 +4,6 @@ __pycache__/
 .pytest_cache/
 tramites.db
 .git/
-.env
+# Cualquier .env (.env.old, .env.bak, la plantilla…) fuera del contexto de construcción: la imagen no copia ninguno.
+.env*
 data/
