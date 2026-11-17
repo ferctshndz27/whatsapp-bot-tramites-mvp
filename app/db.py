@@ -111,6 +111,9 @@ _TABLES_NEEDING_OFFICE = (
     # La 16ª, agregada después de la Fase 7: la oficina se decide al invitar
     # (models.Invitation), no cuando la persona acepta.
     "invitation",
+    # La 17ª: el calendario de cobranza. La oficina es la del cliente con mensualidad;
+    # el puente y las mensualidades no la duplican (se resuelve por cliente_id).
+    "clientemensualidad",
 )
 _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     "agent_active": "BOOLEAN NOT NULL DEFAULT 1",
@@ -248,6 +251,23 @@ def init_db() -> None:
                 "ON clienteasesor(phone, username) WHERE habilitado = 1"
             )
         )
+        # Calendario de cobranza (app/mensualidades.py). Parciales porque la baja es soft delete:
+        # una fila apagada no debe impedir reactivar ni volver a dar de alta. CURP y NSS vivos
+        # únicos (dos asesores no duplican a la misma persona); un periodo vivo por cliente (sin
+        # doble cobro del mes); un par asesor-cliente vivo y UN solo responsable vivo por cliente.
+        for _sql in (
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_clientemensualidad_curp "
+            "ON clientemensualidad(curp) WHERE habilitado = 1 AND curp IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_clientemensualidad_nss "
+            "ON clientemensualidad(nss) WHERE habilitado = 1 AND nss IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_mensualidad_periodo_vivo "
+            "ON mensualidad(cliente_id, periodo) WHERE habilitado = 1",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_mensualidadasesor_vivo "
+            "ON mensualidadasesor(cliente_id, username) WHERE habilitado = 1",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_mensualidadasesor_responsable "
+            "ON mensualidadasesor(cliente_id) WHERE habilitado = 1 AND rol = 'responsable'",
+        ):
+            conn.execute(text(_sql))
         # Tablero personal del CRM (app/tablero.py). Una copia por (persona, etapa
         # global): dos primeras cargas a la vez —dos pestañas— sembrarían dos
         # tableros, y este índice hace chocar a la segunda. Parcial porque las

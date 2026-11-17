@@ -26,6 +26,9 @@ TABLAS_CON_OFICINA = frozenset({
     "catalogcategory", "catalogservice", "synonymproposal", "nluevent", "infodoc",
     "label", "savedreply", "plantilla", "agentconfig",
     "invitation",
+    # La 17ª: calendario de cobranza (spec calendario-cobranza-mensualidades); la oficina es
+    # la del cliente, el puente y las mensualidades la resuelven por cliente_id.
+    "clientemensualidad",
 })
 
 
@@ -63,7 +66,7 @@ def test_solo_las_15_tablas_de_la_spec_llevan_office_id():
     } - {"officecredential"}
     assert con_columna == TABLAS_CON_OFICINA
     assert set(db._TABLES_NEEDING_OFFICE) == TABLAS_CON_OFICINA
-    assert len(db._TABLES_NEEDING_OFFICE) == 16  # sin duplicados en la tupla
+    assert len(db._TABLES_NEEDING_OFFICE) == 17  # sin duplicados en la tupla
 
 
 @pytest.mark.parametrize("tabla", sorted(TABLAS_CON_OFICINA))

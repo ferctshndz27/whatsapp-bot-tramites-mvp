@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 
 from sqlalchemy import text
@@ -640,6 +640,65 @@ class ClienteAsesor(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     created_by: str | None = None
     habilitado: bool = True
+
+
+class ClienteMensualidad(SQLModel, table=True):
+    """Persona con mensualidad (calendario de cobranza, app/mensualidades.py).
+
+    NO es un `Client` del CRM: no escribe en él ni aparece como lead en el tablero; el WhatsApp
+    solo la liga a su conversación. CURP, NSS y RFC son datos personales: nunca van a un log, a un
+    mensaje de error ni a una prueba con valores reales. Soft delete con `habilitado` (la baja se
+    reactiva sobre el mismo registro); los índices únicos parciales de CURP y NSS viven en
+    db.init_db. La oficina es la del cliente.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    nombre: str
+    curp: str | None = None
+    nss: str | None = None
+    rfc: str | None = None
+    whatsapp: str | None = Field(default=None, index=True)
+    modalidad: str = "BASICA"  # BASICA | SEMIESTABLE | ALTA_ESTABLE
+    # Vacíos a propósito: NULL = «Por completar», sin mensualidades hasta que alguien los capture.
+    importe_centavos: int | None = None
+    dia_pago: int | None = None
+    primer_pago: date | None = None
+    habilitado: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+    created_by: str | None = None
+    office_id: int = _office_id_field()
+
+
+class MensualidadAsesor(SQLModel, table=True):
+    """Puente cliente-asesor: un cliente, un responsable vivo y N colaboradores.
+
+    El responsable da de baja y cambia importe, día y asesores; el colaborador solo registra pagos.
+    Sin office_id: la oficina es la del cliente. Los índices (par vivo, un responsable vivo) viven
+    en db.init_db.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    cliente_id: int = Field(index=True)
+    username: str = Field(index=True)
+    rol: str = "colaborador"  # responsable | colaborador
+    habilitado: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+    created_by: str | None = None
+
+
+class Mensualidad(SQLModel, table=True):
+    """Un mes por cobrar de un cliente. El estatus (pendiente, por vencer, vencida, pagada) se
+    DERIVA de `vence_el` y `pagado_at`; no se guarda. Deshacer un pago deja `pagado_at` en NULL."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    cliente_id: int = Field(index=True)
+    periodo: str  # AAAA-MM
+    vence_el: date
+    importe_centavos: int
+    pagado_at: datetime | None = None
+    pagado_por: str | None = None
+    habilitado: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class SynonymProposal(SQLModel, table=True):

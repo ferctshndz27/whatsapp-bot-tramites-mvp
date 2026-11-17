@@ -1,4 +1,4 @@
-// CI local del bot de trámites en el Jenkins del equipo (job «tramites», http://127.0.0.1:8090).
+// CI local del bot de trámites en el Jenkins del equipo (job «tramites», http://127.0.0.1:8091).
 //
 // Complementa a GitHub Actions, no lo sustituye: Actions sigue corriendo test + build y es el único que
 // promueve `production`; el VPS sigue jalando solo (deploy/pull-deploy.sh). Aquí corre, en cada commit
