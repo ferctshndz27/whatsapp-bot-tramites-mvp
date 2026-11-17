@@ -471,6 +471,8 @@ TABLAS_MSSQL_CON_OFICINA = frozenset({
     "catalog_categories", "catalog_services", "synonym_proposals", "nlu_events",
     "info_docs", "labels", "saved_replies", "message_templates", "agent_config",
     "invitations",
+    # La 17ª: calendario de cobranza; la oficina es la del cliente.
+    "cliente_mensualidades",
 })
 
 

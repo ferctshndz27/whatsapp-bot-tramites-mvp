@@ -342,6 +342,52 @@ _SCHEMA_DDL = [
         created_at DATETIME2    NOT NULL
     )
     """,
+    # Calendario de cobranza (app/mensualidades.py): tres tablas. La oficina es la del cliente.
+    """
+    IF OBJECT_ID('cliente_mensualidades', 'U') IS NULL
+    CREATE TABLE cliente_mensualidades (
+        source_id        BIGINT        NOT NULL PRIMARY KEY,
+        nombre           NVARCHAR(200) NOT NULL,
+        curp             NVARCHAR(18)  NULL,
+        nss              NVARCHAR(11)  NULL,
+        rfc              NVARCHAR(13)  NULL,
+        whatsapp         NVARCHAR(32)  NULL,
+        modalidad        NVARCHAR(16)  NOT NULL,
+        importe_centavos INT           NULL,
+        dia_pago         INT           NULL,
+        primer_pago      DATE          NULL,
+        habilitado       BIT           NOT NULL DEFAULT 1,
+        created_at       DATETIME2     NOT NULL,
+        created_by       NVARCHAR(64)  NULL,
+        office_id        INT           NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    IF OBJECT_ID('mensualidad_asesores', 'U') IS NULL
+    CREATE TABLE mensualidad_asesores (
+        source_id  BIGINT       NOT NULL PRIMARY KEY,
+        cliente_id BIGINT       NOT NULL,
+        username   NVARCHAR(64) NOT NULL,
+        rol        NVARCHAR(16) NOT NULL,
+        habilitado BIT          NOT NULL DEFAULT 1,
+        created_at DATETIME2    NOT NULL,
+        created_by NVARCHAR(64) NULL
+    )
+    """,
+    """
+    IF OBJECT_ID('mensualidades', 'U') IS NULL
+    CREATE TABLE mensualidades (
+        source_id        BIGINT       NOT NULL PRIMARY KEY,
+        cliente_id       BIGINT       NOT NULL,
+        periodo          NVARCHAR(7)  NOT NULL,
+        vence_el         DATE         NOT NULL,
+        importe_centavos INT          NOT NULL,
+        pagado_at        DATETIME2    NULL,
+        pagado_por       NVARCHAR(64) NULL,
+        habilitado       BIT          NOT NULL DEFAULT 1,
+        created_at       DATETIME2    NOT NULL
+    )
+    """,
     """
     IF OBJECT_ID('synonym_proposals', 'U') IS NULL
     CREATE TABLE synonym_proposals (
@@ -741,6 +787,7 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "solo_su_oficina": "BIT NOT NULL DEFAULT 0",
     },
     "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL},
+    "cliente_mensualidades": {"office_id": _OFFICE_ID_MSSQL},
     "tickets": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "agent_active": "BIT NOT NULL DEFAULT 1",
@@ -1460,6 +1507,57 @@ def archive_cliente_asesor(a) -> None:
     )
 
 
+def archive_cliente_mensualidad(c) -> None:
+    _upsert(
+        "cliente_mensualidades", "source_id", c.id,
+        {
+            "nombre": c.nombre,
+            "curp": c.curp,
+            "nss": c.nss,
+            "rfc": c.rfc,
+            "whatsapp": c.whatsapp,
+            "modalidad": c.modalidad,
+            "importe_centavos": c.importe_centavos,
+            "dia_pago": c.dia_pago,
+            "primer_pago": c.primer_pago,
+            "habilitado": c.habilitado,
+            "created_at": _naive_utc(c.created_at),
+            "created_by": c.created_by,
+            "office_id": c.office_id,
+        },
+    )
+
+
+def archive_mensualidad_asesor(a) -> None:
+    _upsert(
+        "mensualidad_asesores", "source_id", a.id,
+        {
+            "cliente_id": a.cliente_id,
+            "username": a.username,
+            "rol": a.rol,
+            "habilitado": a.habilitado,
+            "created_at": _naive_utc(a.created_at),
+            "created_by": a.created_by,
+        },
+    )
+
+
+def archive_mensualidad(m) -> None:
+    _upsert(
+        "mensualidades", "source_id", m.id,
+        {
+            "cliente_id": m.cliente_id,
+            "periodo": m.periodo,
+            "vence_el": m.vence_el,
+            "importe_centavos": m.importe_centavos,
+            "pagado_at": _naive_utc(m.pagado_at) if m.pagado_at else None,
+            "pagado_por": m.pagado_por,
+            "habilitado": m.habilitado,
+            "created_at": _naive_utc(m.created_at),
+        },
+    )
+
+
 def archive_catalog_audit(a) -> None:
     _upsert(
         "catalog_audit", "source_id", a.id,
@@ -1973,6 +2071,9 @@ def backfill() -> None:
         Client,
         ClientNote,
         ClienteAsesor,
+        ClienteMensualidad,
+        Mensualidad,
+        MensualidadAsesor,
         Cobro,
         Conversation,
         EventoPasarela,
@@ -2049,6 +2150,12 @@ def backfill() -> None:
                 archive_client_note(n)
             for ca in session.exec(select(ClienteAsesor)).all():
                 archive_cliente_asesor(ca)
+            for c in session.exec(select(ClienteMensualidad)).all():
+                archive_cliente_mensualidad(c)
+            for a in session.exec(select(MensualidadAsesor)).all():
+                archive_mensualidad_asesor(a)
+            for m in session.exec(select(Mensualidad)).all():
+                archive_mensualidad(m)
             for r in session.exec(select(SavedReply)).all():
                 archive_saved_reply(r)
             for e in session.exec(select(LoginEvent)).all():
@@ -2135,6 +2242,9 @@ def _register_listeners() -> None:
         Client,
         ClientNote,
         ClienteAsesor,
+        ClienteMensualidad,
+        Mensualidad,
+        MensualidadAsesor,
         Cobro,
         Conversation,
         EventoPasarela,
@@ -2321,6 +2431,21 @@ def _register_listeners() -> None:
     @event.listens_for(ClienteAsesor, "after_update")
     def _cliente_asesor_upsert(mapper, connection, target):
         _safe(archive_cliente_asesor, target)
+
+    @event.listens_for(ClienteMensualidad, "after_insert")
+    @event.listens_for(ClienteMensualidad, "after_update")
+    def _cliente_mensualidad_upsert(mapper, connection, target):
+        _safe(archive_cliente_mensualidad, target)
+
+    @event.listens_for(MensualidadAsesor, "after_insert")
+    @event.listens_for(MensualidadAsesor, "after_update")
+    def _mensualidad_asesor_upsert(mapper, connection, target):
+        _safe(archive_mensualidad_asesor, target)
+
+    @event.listens_for(Mensualidad, "after_insert")
+    @event.listens_for(Mensualidad, "after_update")
+    def _mensualidad_upsert(mapper, connection, target):
+        _safe(archive_mensualidad, target)
 
     @event.listens_for(NluEvent, "after_insert")
     @event.listens_for(NluEvent, "after_update")
