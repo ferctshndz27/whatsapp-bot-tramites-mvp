@@ -250,7 +250,7 @@ def login_submit(request: Request, username: str = Form(""), password: str = For
 # Módulos de la barra de la extensión (ext-cse/src/barra.js, mismos `id`), por quién los puede abrir.
 # Es la misma regla que el menú de templates/base.html (is_admin → administración; is_admin_global →
 # oficinas, agente, estudio y sistema); tests/test_sesion.py compara las dos para que no se separen.
-MODULOS_DE_TODOS = ("dia", "cartera", "nuevocobro", "solicitudes", "whatsapp", "clientes", "equipo", "actividad", "guia", "catalogo")
+MODULOS_DE_TODOS = ("dia", "cartera", "nuevocobro", "solicitudes", "whatsapp", "mensualidades", "clientes", "equipo", "actividad", "guia", "catalogo")
 MODULOS_DE_ADMIN = ("invitaciones", "usuarios", "cobros", "accesos")
 MODULOS_DE_ADMIN_GLOBAL = ("oficinas", "agente", "estudio", "sistema")
 

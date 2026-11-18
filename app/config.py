@@ -216,6 +216,13 @@ class Settings:
             1, min(200, int(os.environ.get("CARGA_MAXIMA_ASESOR", "15")))
         )
 
+        # Días de antelación con que una mensualidad sin pagar pasa a «por vencer» en el calendario
+        # de cobranza (app/mensualidades.py). Barandal 1-15: un 0 nunca avisaría y uno enorme
+        # pintaría todo el mes de aviso.
+        self.mensualidad_aviso_dias = max(
+            1, min(15, int(os.environ.get("MENSUALIDAD_AVISO_DIAS", "5")))
+        )
+
         # Interruptor del reparto (fase 3b). APAGADO por default, aquí y en el
         # panel: repartir folios solos cambia a quién le aparece el trabajo en
         # /my, y eso lo enciende un admin desde el Estudio cuando el equipo

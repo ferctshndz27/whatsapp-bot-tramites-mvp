@@ -39,6 +39,8 @@
         <a href="/" {% if request.url.path == '/' or request.url.path.startswith('/tickets') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🎫</span>Solicitudes</a>
         {# CRM: embudo comercial, bandeja y chat en una página (app/crm.py). #}
         <a href="/crm" {% if request.url.path.startswith('/crm') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📋</span>WhatsApp</a>
+        {# Calendario de cobranza (app/mensualidades_panel.py): cada asesor ve su cartera; el admin, su oficina. #}
+        <a href="/mensualidades" {% if request.url.path.startswith('/mensualidades') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📅</span>Mensualidades</a>
         <a href="/clients" {% if request.url.path.startswith('/clients') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👤</span>Clientes</a>
         <a href="/team" {% if request.url.path.startswith('/team') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💬</span>Equipo</a>
         <a href="/activity" {% if request.url.path.startswith('/activity') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📈</span>Actividad</a>

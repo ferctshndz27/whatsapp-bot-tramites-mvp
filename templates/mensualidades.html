@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Mensualidades{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static('css/mensualidades.css') }}">{% endblock %}
+{% block content %}
+{% set en_marco = (estado_peticion.embebido | default(false)) if estado_peticion else false %}
+{# Los filtros se conservan al cambiar de mes o de día: cada enlace arma su query desde aquí. #}
+{% set base_q = ('&estatus=' ~ estatus if estatus != 'todos' else '') ~ ('&q=' ~ (q | urlencode) if q else '') %}
+{% if not en_marco %}<h1>Mensualidades</h1>{% endif %}
+
+<div class="stats">
+  <div class="stat-card red"><div class="label">Vencidas sin cobrar</div><div class="value">{{ vencidas_n }}</div><div class="label">{{ vencidas_monto }}</div></div>
+  <div class="stat-card orange"><div class="label">Por vencer este mes</div><div class="value">{{ cuenta['por_vencer'] }}</div><div class="label">en los próximos {{ aviso }} días o menos</div></div>
+  <div class="stat-card green"><div class="label">Pagadas este mes</div><div class="value">{{ cuenta['pagado'] }}</div></div>
+  <div class="stat-card blue"><div class="label">Por completar</div><div class="value">{{ por_completar_n }}</div><div class="label">sin mensualidades aún</div></div>
+</div>
+
+<div class="card">
+  <div class="mes-nav">
+    <a class="btn-nav" href="/mensualidades?mes={{ mes_anterior }}{{ base_q }}" aria-label="Mes anterior">←</a>
+    <h2>{{ mes_titulo }}</h2>
+    <a class="btn-nav" href="/mensualidades?mes={{ mes_siguiente }}{{ base_q }}" aria-label="Mes siguiente">→</a>
+    {% if not es_mes_actual %}<a class="btn-nav" href="/mensualidades">Hoy</a>{% endif %}
+  </div>
+
+  <div class="cal" role="grid" aria-label="Vencimientos de {{ mes_titulo }}">
+    {% for n in dias_semana %}<div class="cal-cab" role="columnheader">{{ n }}</div>{% endfor %}
+    {% for semana in semanas %}{% for d in semana %}
+      {% if d is none %}
+      <div class="cal-dia vacio" role="gridcell" aria-hidden="true"></div>
+      {% else %}
+      {# Un día con vencimientos es un enlace: filtra la lista de abajo a ese día; el mismo enlace lo quita. #}
+      {% set activo = (dia == d.dia) %}
+      <a class="cal-dia{% if not d.chips %} sin-pagos{% endif %}" role="gridcell"
+         href="/mensualidades?mes={{ mes_valor }}{% if not activo %}&dia={{ d.dia }}{% endif %}{{ base_q }}#lista"
+         {% if activo %}aria-current="true"{% elif d.hoy %}aria-current="date"{% endif %}>
+        <span class="cal-num">{{ d.dia }}{% if d.hoy %}<span class="sr-only"> (hoy)</span>{% endif %}</span>
+        {% if d.chips %}
+        <span class="cal-chips">
+          {% for est, n in d.chips %}<span class="badge {{ est }}" title="{{ etiquetas[est] }}">{{ n }} {{ etiquetas[est] | lower }}</span>{% endfor %}
+        </span>
+        {% endif %}
+      </a>
+      {% endif %}
+    {% endfor %}{% endfor %}
+  </div>
+</div>
+
+<div class="card" id="lista">
+  <h2>Mensualidades de {{ mes_titulo | lower }}{% if dia %} · día {{ dia }}{% endif %}</h2>
+
+  <div class="pills" role="group" aria-label="Filtrar por estatus">
+    {% for f in filtros %}
+    <a href="/mensualidades?mes={{ mes_valor }}&estatus={{ f }}{% if dia %}&dia={{ dia }}{% endif %}{% if q %}&q={{ q | urlencode }}{% endif %}#lista"
+       {% if estatus == f %}aria-current="true"{% endif %}>{{ 'Todas' if f == 'todos' else etiquetas[f] }}{% if f != 'todos' %} ({{ cuenta[f] }}){% endif %}</a>
+    {% endfor %}
+  </div>
+
+  <form method="get" action="/mensualidades" role="search">
+    <input type="hidden" name="mes" value="{{ mes_valor }}">
+    {% if estatus != 'todos' %}<input type="hidden" name="estatus" value="{{ estatus }}">{% endif %}
+    {% if dia %}<input type="hidden" name="dia" value="{{ dia }}">{% endif %}
+    <div class="u-d-flex u-gap-0_5rem u-wrap-wrap u-items-center">
+      <label class="u-m-0" for="mens-q">Buscar</label>
+      <input type="text" id="mens-q" name="q" value="{{ q }}" placeholder="Nombre del cliente" autocomplete="off">
+      <button type="submit" class="btn-sm">Buscar</button>
+      {% if q or dia or estatus != 'todos' %}<a class="btn-sm u-deco-none u-d-inline-flex u-items-center" href="/mensualidades?mes={{ mes_valor }}">Limpiar</a>{% endif %}
+    </div>
+  </form>
+
+  {% if filas %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Cliente</th><th>Vence</th><th>Importe</th><th>Estatus</th></tr></thead>
+      <tbody>
+        {% for f in filas %}
+        <tr>
+          <td><strong>{{ f.c.nombre }}</strong>{% if f.c.whatsapp %}<div class="mens-sin">{{ f.c.whatsapp }}</div>{% endif %}</td>
+          <td>{{ f.m.vence_el.strftime('%d/%m/%Y') }}</td>
+          <td>{{ '${:,.2f}'.format(f.m.importe_centavos / 100) }}</td>
+          <td><span class="badge {{ f.estatus }}">{{ f.etiqueta }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if truncada %}<p class="sub">Se muestran las primeras {{ filas | length }}. Filtra por estatus, día o nombre para ver el resto.</p>{% endif %}
+  {% else %}
+  <p class="empty">{% if q or dia or estatus != 'todos' %}Ninguna mensualidad coincide con el filtro.{% else %}No hay mensualidades que venzan en {{ mes_titulo | lower }}.{% endif %}</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Por completar</h2>
+  {% if por_completar %}
+  <p class="sub">A estos clientes les falta un dato y no se les generan mensualidades hasta tenerlo.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Cliente</th><th>Falta</th></tr></thead>
+      <tbody>
+        {% for c, falta in por_completar %}
+        <tr>
+          <td><strong>{{ c.nombre }}</strong></td>
+          <td>{% for x in falta %}<span class="badge pendiente">{{ {'whatsapp': 'WhatsApp', 'importe': 'Importe', 'dia_pago': 'Día de pago', 'primer_pago': 'Primer pago'}[x] }}</span> {% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if por_completar_n > por_completar | length %}<p class="sub">Se muestran {{ por_completar | length }} de {{ por_completar_n }}.</p>{% endif %}
+  {% else %}
+  <p class="empty">Todos los clientes tienen sus datos completos.</p>
+  {% endif %}
+</div>
+{% endblock %}

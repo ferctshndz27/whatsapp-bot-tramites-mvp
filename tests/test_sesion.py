@@ -83,7 +83,7 @@ def test_el_marco_no_cambia_la_respuesta():
 
 # id del módulo (ext-cse/src/barra.js) → enlace que le corresponde en el menú del ERP.
 ENLACE = {
-    "dia": "/my", "cartera": "/my/cobros", "nuevocobro": "/cobros/nuevo", "solicitudes": "/", "whatsapp": "/crm", "clientes": "/clients",
+    "dia": "/my", "cartera": "/my/cobros", "nuevocobro": "/cobros/nuevo", "solicitudes": "/", "whatsapp": "/crm", "mensualidades": "/mensualidades", "clientes": "/clients",
     "equipo": "/team", "actividad": "/activity", "guia": "/kb", "catalogo": "/catalog",
     "invitaciones": "/invitations", "oficinas": "/oficinas", "usuarios": "/users", "cobros": "/cobros",
     "accesos": "/logins", "agente": "/unmatched", "estudio": "/agente", "sistema": "/system",
@@ -104,7 +104,7 @@ def _enlaces_del_menu(usuario: str) -> set[str]:
     return set(re.findall(r'<a [^>]*href="(/[^"]*)"', menu))
 
 
-@pytest.mark.parametrize("usuario, cuantos", [("asesora", 10), ("jefa", 14), ("jefe", 18)])
+@pytest.mark.parametrize("usuario, cuantos", [("asesora", 11), ("jefa", 15), ("jefe", 19)])
 def test_la_barra_ofrece_solo_lo_que_cada_rol_puede_abrir(usuario, cuantos):
     modulos = _modulos(usuario)
     assert len(modulos) == cuantos and len(set(modulos)) == cuantos, f"{usuario} recibió {modulos}"

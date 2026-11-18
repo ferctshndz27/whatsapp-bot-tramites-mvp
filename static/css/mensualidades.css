@@ -1,0 +1,34 @@
+/* /mensualidades: calendario de cobranza. Los colores salen de los badges de components.css y de
+   tokens.css; aquí solo va la cuadrícula. */
+.mes-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: 1rem; }
+.mes-nav h2 { margin: 0 .5rem; font-size: 1.15rem; }
+
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .4rem; }
+.cal-cab { font-size: .75rem; font-weight: 700; color: #5f6572; text-align: center; padding-bottom: .25rem; }
+.cal-dia {
+  min-height: 78px; padding: .4rem .45rem; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--card-bg); display: flex; flex-direction: column; gap: .25rem;
+  color: var(--text); text-decoration: none;
+}
+.cal-dia.vacio { background: transparent; border-style: dashed; opacity: .45; }
+.cal-dia.sin-pagos { color: #5f6572; }
+a.cal-dia:hover { border-color: var(--lime); }
+.cal-dia[aria-current="date"] { border: 2px solid var(--lime-ink); }
+.cal-dia[aria-current="true"] { background: var(--lime); color: var(--lime-ink); }
+.cal-num { font-size: .85rem; font-weight: 700; }
+.cal-chips { display: flex; flex-wrap: wrap; gap: .2rem; }
+.cal-chips .badge { font-size: .68rem; padding: .1rem .45rem; }
+
+/* Estatus de mensualidad: color + texto del badge (nunca solo color). */
+.badge.pagado     { background: #e3f7f0; color: #0b6e5d; }
+.badge.vencido    { background: #be1e51; color: #fff; }
+.badge.por_vencer { background: #fdeedd; color: #92590a; }
+.badge.pendiente  { background: #eef0f3; color: #444; }
+
+.mens-sin { color: #5f6572; font-size: .85rem; }
+
+@media (max-width: 900px) {
+  .cal { gap: .25rem; }
+  .cal-dia { min-height: 56px; padding: .3rem; }
+  .cal-chips .badge { font-size: .62rem; padding: .05rem .35rem; }
+}
