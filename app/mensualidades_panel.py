@@ -15,12 +15,14 @@ from collections import Counter
 from datetime import date
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import exists, func, or_
 from sqlmodel import select
 
 from app import mensualidades as dom
 from app import mensualidades_captura as captura
+from app import mensualidades_export as export
+from app import mensualidades_pago as pago
 from app.audit import log_admin
 from app.auth import alcance, is_admin
 from app.config import settings
@@ -61,6 +63,12 @@ def _puede_capturar(user: str) -> bool:
     return is_admin(user)
 
 
+def _puede_deshacer(user: str, responsable: str | None) -> bool:
+    """Deshacer un pago: el responsable de la cuenta o un admin (no un colaborador). Aparte de la
+    vista por la misma razón que `_puede_capturar`."""
+    return is_admin(user) or responsable == user
+
+
 def _orden_codigo(c: CuentaCobranza):
     """Los códigos del piloto son números: 2 antes que 10."""
     return (0, int(c.codigo), "") if c.codigo.isdigit() else (1, 0, c.codigo)
@@ -89,6 +97,7 @@ def mensualidades(
     q: str = "",
     ok: str = "",
     err: str = "",
+    pagada: str = "",
 ):
     user = request.session.get("user")
     if not user:
@@ -170,7 +179,13 @@ def mensualidades(
         est = dom.estado_de(m, hoy, aviso)
         cuenta[est] += 1
         por_dia.setdefault(m.vence_el.day, Counter())[est] += 1
-        filas.append({"m": m, "c": c, "estatus": est, "etiqueta": dom.ETIQUETAS[est]})
+        filas.append(
+            {
+                "m": m, "c": c, "estatus": est, "etiqueta": dom.ETIQUETAS[est],
+                # Deshacer un pago: el responsable de la cuenta o un admin (no un colaborador).
+                "puede_deshacer": _puede_deshacer(user, responsables.get(c.id)),
+            }
+        )
 
     visibles = [
         f
@@ -248,6 +263,10 @@ def mensualidades(
             "puede_capturar": puede_capturar,
             "ok": int(ok) if ok.isdigit() and len(ok) < 5 else None,
             "error": captura.MENSAJES.get(err, ""),  # solo códigos conocidos: la URL no inyecta texto
+            "error_pago": pago.MENSAJES_PAGO.get(err, ""),
+            "pagada": pagada in ("1", "0"),
+            "pagada_deshecha": pagada == "0",
+            "mes_param": mes if mes else "",
             "aviso": aviso,
         },
     )
@@ -313,3 +332,133 @@ def guardar_datos(
     # Sin valores: el importe y el WhatsApp son datos del cliente.
     log_admin(user, "mensualidades-datos", f"cuenta:{codigo} campos:{','.join(sorted(cambios)) or '-'}")
     return _volver(ok=creadas)
+
+
+def _volver_lista(mes: str, **params) -> RedirectResponse:
+    hoy = dom.hoy_mx()
+    params["mes"] = dom.parse_mes(mes, hoy).strftime("%Y-%m")  # solo un mes válido vuelve a la URL
+    return RedirectResponse(f"/mensualidades?{urlencode(params)}#lista", status_code=303)
+
+
+def _mensualidad_visible(session, user: str, mensualidad_id: int):
+    """La mensualidad y su cuenta si el usuario alcanza la cuenta; si no, None (el llamador da 404)."""
+    return session.exec(
+        select(Mensualidad, CuentaCobranza)
+        .join(CuentaCobranza, CuentaCobranza.id == Mensualidad.cuenta_id)
+        .where(Mensualidad.id == mensualidad_id)
+        .where(Mensualidad.habilitado == True)  # noqa: E712
+        .where(Mensualidad.cuenta_id.in_(_cuentas_visibles(user)))
+    ).first()
+
+
+@router.post("/mensualidades/{mensualidad_id}/pago")
+def registrar_pago(request: Request, mensualidad_id: int, mes: str = Form("")):
+    """Registra el pago de una mensualidad. Cualquiera con la cuenta en su cartera, o el admin."""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with get_session() as session:
+        fila = _mensualidad_visible(session, user, mensualidad_id)
+        if fila is None:
+            raise HTTPException(status_code=404)
+        codigo, periodo = fila[1].codigo, fila[0].periodo
+        try:
+            pago.registrar_pago(session, mensualidad_id, por=user)
+        except pago.PagoRechazado as e:
+            return _volver_lista(mes, err=e.codigo)
+    log_admin(user, "mensualidades-pago", f"cuenta:{codigo} periodo:{periodo}")
+    return _volver_lista(mes, pagada=1)
+
+
+@router.post("/mensualidades/{mensualidad_id}/pago/deshacer")
+def deshacer_pago(request: Request, mensualidad_id: int, mes: str = Form("")):
+    """Deshace un pago registrado por error. Solo el responsable de la cuenta o un admin."""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with get_session() as session:
+        fila = _mensualidad_visible(session, user, mensualidad_id)
+        if fila is None:
+            raise HTTPException(status_code=404)
+        cuenta = fila[1]
+        if not (is_admin(user) or pago.es_responsable(session, cuenta.id, user)):
+            return _volver_lista(mes, err="permiso-deshacer")
+        codigo, periodo = cuenta.codigo, fila[0].periodo
+        try:
+            pago.deshacer_pago(session, mensualidad_id)
+        except pago.PagoRechazado as e:
+            return _volver_lista(mes, err=e.codigo)
+    log_admin(user, "mensualidades-pago-deshecho", f"cuenta:{codigo} periodo:{periodo}")
+    return _volver_lista(mes, pagada=0)
+
+
+@router.get("/mensualidades/export.xlsx")
+def exportar(request: Request, pii: str = ""):
+    """.xlsx con todo lo que el usuario ve (su cartera, o su oficina si es admin), no solo lo filtrado.
+
+    CURP, NSS y RFC solo salen con `pii=1` (la casilla, desmarcada por omisión); si no, las columnas
+    se omiten. Queda en la bitácora con la bandera, nunca con los valores.
+    """
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    con_pii = pii == "1"
+    hoy = dom.hoy_mx()
+    with get_session() as session:
+        ids = _cuentas_visibles(user)
+        cuentas = sorted(session.exec(select(CuentaCobranza).where(CuentaCobranza.id.in_(ids))).all(), key=_orden_codigo)
+        por_cuenta = {c.id: c for c in cuentas}
+        personas: dict[int, list[ClienteMensualidad]] = {}
+        for p in session.exec(
+            select(ClienteMensualidad)
+            .where(ClienteMensualidad.cuenta_id.in_(ids))
+            .where(ClienteMensualidad.habilitado == True)  # noqa: E712
+            .order_by(ClienteMensualidad.nombre)
+        ).all():
+            personas.setdefault(p.cuenta_id, []).append(p)
+        responsables = {
+            f.cuenta_id: f.username
+            for f in session.exec(
+                select(MensualidadAsesor)
+                .where(MensualidadAsesor.cuenta_id.in_(ids))
+                .where(MensualidadAsesor.habilitado == True)  # noqa: E712
+                .where(MensualidadAsesor.rol == "responsable")
+            ).all()
+        }
+        mens = session.exec(
+            select(Mensualidad)
+            .where(Mensualidad.cuenta_id.in_(ids))
+            .where(Mensualidad.habilitado == True)  # noqa: E712
+            .order_by(Mensualidad.vence_el, Mensualidad.cuenta_id)
+        ).all()
+
+        filas_m = []
+        for m in mens:
+            c = por_cuenta[m.cuenta_id]
+            vivas = sum(1 for p in personas.get(c.id, []) if not p.baja_at)
+            filas_m.append([
+                c.codigo, _titulo(c), vivas, c.whatsapp, responsables.get(c.id), m.periodo,
+                m.vence_el, m.importe_centavos / 100,
+                dom.ETIQUETAS[dom.estado_de(m, hoy, settings.mensualidad_aviso_dias)],
+                m.pagado_at, m.pagado_por,
+            ])
+        filas_p = []
+        for c in cuentas:
+            for p in personas.get(c.id, []):
+                fila = [
+                    c.codigo, _titulo(c), p.nombre, p.modalidad.replace("_", " ").lower().capitalize(),
+                    p.fecha_inicio, "Baja" if p.baja_at else "Alta",
+                ]
+                if con_pii:
+                    fila += [p.curp, p.nss, p.rfc]
+                filas_p.append(fila)
+        contenido = export.construir_xlsx([
+            ("Mensualidades", export.ENC_MENSUALIDADES, filas_m),
+            ("Personas", export.encabezado_personas(con_pii), filas_p),
+        ])
+    log_admin(user, "mensualidades-export", f"filas:{len(filas_m)} personas:{len(filas_p)} pii:{int(con_pii)}")
+    return Response(
+        content=contenido,
+        media_type=export.MIME_XLSX,
+        headers={"Content-Disposition": f'attachment; filename="mensualidades-{hoy.isoformat()}.xlsx"'},
+    )

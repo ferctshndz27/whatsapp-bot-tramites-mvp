@@ -44,3 +44,5 @@ a.cal-dia:hover { border-color: var(--lime); }
 .mens-captura .sub { flex-basis: 100%; margin: 0; }
 .mens-captura label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; }
 .mens-captura input, .mens-captura select { min-height: 40px; }
+.mens-pago { margin: 4px 0 0; }
+.mens-export { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; }

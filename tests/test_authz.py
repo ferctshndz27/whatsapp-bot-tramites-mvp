@@ -572,6 +572,9 @@ def test_la_tabla_cubre_toda_ruta_con_guard_de_admin():
     con_prueba_propia = {
         ("POST", "/crm/api/contactos"),
         ("POST", "/mensualidades/cuentas/{cuenta_id}/datos"),
+        # Deshacer un pago: responsable o admin; su rechazo y su control positivo viven en
+        # tests/test_mensualidades_pago.py.
+        ("POST", "/mensualidades/{mensualidad_id}/pago/deshacer"),
     }
 
     cubiertas = {(r.metodo, _plantilla_de(r.metodo, r.path)) for r in RUTAS}
