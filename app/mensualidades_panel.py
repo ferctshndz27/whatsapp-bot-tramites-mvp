@@ -4,25 +4,30 @@ La unidad de cobro es la cuenta (el titular); las personas que cubre se listan d
 Quién ve qué: un admin ve la oficina que alcanza (`alcance`); cualquier otro usuario, solo las
 cuentas donde figura en `MensualidadAsesor`. El alcance se aplica ANTES que cualquier filtro, con
 EXISTS y no con JOIN: una cuenta compartida entre asesores no debe duplicar filas ni descuadrar los
-conteos. Las escrituras (alta, baja, pago) llegan en las fases siguientes del plan.
+conteos. Escribir los datos de cobro de un titular (importe, día, primer pago, WhatsApp, responsable) es
+solo de un admin de la oficina de la cuenta; al guardar se generan sus mensualidades. El alta, la
+baja y el pago llegan en las fases siguientes del plan.
 """
 
 import logging
+from urllib.parse import urlencode
 from collections import Counter
 from datetime import date
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import exists, func, or_
 from sqlmodel import select
 
 from app import mensualidades as dom
+from app import mensualidades_captura as captura
+from app.audit import log_admin
 from app.auth import alcance, is_admin
 from app.config import settings
 from app.db import get_session
 from app.dinero import formato_monto
 from app.mensualidades_import import PREFIJO
-from app.models import ClienteMensualidad, CuentaCobranza, Mensualidad, MensualidadAsesor
+from app.models import ClienteMensualidad, CuentaCobranza, Mensualidad, MensualidadAsesor, User
 from app.templating import templates
 
 logger = logging.getLogger(__name__)
@@ -50,6 +55,12 @@ def _cuentas_visibles(user: str):
     )
 
 
+def _puede_capturar(user: str) -> bool:
+    """Capturar los datos de cobro es de un admin. Aparte de la ruta para que el GET de la vista, que
+    abre a cualquiera con cartera, no parezca una ruta de solo admin."""
+    return is_admin(user)
+
+
 def _orden_codigo(c: CuentaCobranza):
     """Los códigos del piloto son números: 2 antes que 10."""
     return (0, int(c.codigo), "") if c.codigo.isdigit() else (1, 0, c.codigo)
@@ -71,7 +82,13 @@ def _suma(centavos: int) -> str:
 
 @router.get("/mensualidades")
 def mensualidades(
-    request: Request, mes: str = "", estatus: str = "todos", dia: int = 0, q: str = ""
+    request: Request,
+    mes: str = "",
+    estatus: str = "todos",
+    dia: int = 0,
+    q: str = "",
+    ok: str = "",
+    err: str = "",
 ):
     user = request.session.get("user")
     if not user:
@@ -121,6 +138,29 @@ def mensualidades(
             personas.setdefault(p.cuenta_id, []).append(p)
 
         por_completar = [c for c in cuentas if dom.faltantes(c)]
+        responsables = {
+            f.cuenta_id: f.username
+            for f in session.exec(
+                select(MensualidadAsesor)
+                .where(MensualidadAsesor.cuenta_id.in_(ids))
+                .where(MensualidadAsesor.habilitado == True)  # noqa: E712
+                .where(MensualidadAsesor.rol == "responsable")
+            ).all()
+        }
+        puede_capturar = _puede_capturar(user)
+        asesores = (
+            [
+                u.username
+                for u in session.exec(
+                    select(User)
+                    .where(User.habilitado == True)  # noqa: E712
+                    .where(User.office_id.in_({c.office_id for c in cuentas}))
+                    .order_by(User.username)
+                ).all()
+            ]
+            if puede_capturar and cuentas
+            else []
+        )
 
     # Una sola pasada: el estatus de cada fila y el conteo de cada día salen del mismo cálculo.
     filas = []
@@ -150,6 +190,9 @@ def mensualidades(
             "personas": personas.get(c.id, []),
             "vivas": sum(1 for p in personas.get(c.id, []) if not p.baja_at),
             "falta": dom.faltantes(c),
+            "responsable": responsables.get(c.id),
+            "asesores": asesores,
+            "importe_texto": f"{c.importe_centavos / 100:.2f}" if c.importe_centavos is not None else "",
         }
         for c in cuentas
         if not q or _coincide(q, c, personas.get(c.id, []))
@@ -202,6 +245,71 @@ def mensualidades(
             "cuentas_n": len(cuentas),
             "personas_n": n_personas,
             "prefijo_revisar": PREFIJO,
+            "puede_capturar": puede_capturar,
+            "ok": int(ok) if ok.isdigit() and len(ok) < 5 else None,
+            "error": captura.MENSAJES.get(err, ""),  # solo códigos conocidos: la URL no inyecta texto
             "aviso": aviso,
         },
     )
+
+
+def _volver(**params) -> RedirectResponse:
+    return RedirectResponse(f"/mensualidades?{urlencode(params)}#titulares", status_code=303)
+
+
+@router.post("/mensualidades/cuentas/{cuenta_id}/datos")
+def guardar_datos(
+    request: Request,
+    cuenta_id: int,
+    whatsapp: str = Form(""),
+    importe: str = Form(""),
+    dia_pago: str = Form(""),
+    primer_pago: str = Form(""),
+    responsable: str = Form(""),
+):
+    """Captura los datos de cobro del titular y genera sus mensualidades. Solo admin.
+
+    Todo o nada: si un campo viene mal no se escribe ninguno. Un campo vacío no cambia lo que ya
+    había (no se puede borrar un dato desde aquí). Una cuenta fuera del alcance contesta 404, igual
+    que una que no existe.
+    """
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with get_session() as session:
+        visible = session.exec(
+            select(CuentaCobranza.id)
+            .where(CuentaCobranza.id == cuenta_id)
+            .where(CuentaCobranza.id.in_(_cuentas_visibles(user)))
+        ).first()
+        if visible is None:
+            raise HTTPException(status_code=404)
+        if not is_admin(user):
+            return _volver(err="permiso")
+        cuenta = session.get(CuentaCobranza, cuenta_id)
+        cambios: dict = {}
+        resp = responsable.strip()
+        try:
+            if whatsapp.strip():
+                cambios["whatsapp"] = captura.parse_whatsapp(whatsapp)
+            if importe.strip():
+                cambios["importe_centavos"] = captura.parse_importe(importe)
+            if dia_pago.strip():
+                cambios["dia_pago"] = captura.parse_dia(dia_pago)
+            if primer_pago.strip():
+                cambios["primer_pago"] = captura.parse_fecha(primer_pago)
+            if resp and not captura.usuario_de_la_oficina(session, resp, cuenta.office_id):
+                raise captura.DatoInvalido("responsable")
+        except captura.DatoInvalido as e:
+            return _volver(err=e.codigo)
+        for campo, valor in cambios.items():
+            setattr(cuenta, campo, valor)
+        session.add(cuenta)
+        if resp:
+            captura.asignar_responsable(session, cuenta, resp, por=user)
+        creadas = captura.generar(session, cuenta, dom.hoy_mx())
+        session.commit()
+        codigo = cuenta.codigo
+    # Sin valores: el importe y el WhatsApp son datos del cliente.
+    log_admin(user, "mensualidades-datos", f"cuenta:{codigo} campos:{','.join(sorted(cambios)) or '-'}")
+    return _volver(ok=creadas)

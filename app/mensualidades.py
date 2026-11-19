@@ -8,7 +8,7 @@ espejo MSSQL (ver el plan, «Decisión principal»).
 import calendar
 from datetime import date, datetime
 
-from app.models import ClienteMensualidad, Mensualidad
+from app.models import CuentaCobranza, Mensualidad
 from app.templating import BUSINESS_TZ
 
 PAGADO = "pagado"
@@ -55,8 +55,8 @@ def estado_de(m: Mensualidad, hoy: date, aviso: int) -> str:
     return PENDIENTE
 
 
-def faltantes(c: ClienteMensualidad) -> list[str]:
-    """Qué le falta a un cliente para generar mensualidades («Por completar»)."""
+def faltantes(c: CuentaCobranza) -> list[str]:
+    """Qué le falta a un titular para completar su ficha («Por completar»)."""
     falta = []
     if not c.whatsapp:
         falta.append("whatsapp")
@@ -90,3 +90,26 @@ def semanas_del_mes(primero: date) -> list[list[date | None]]:
         [date(primero.year, primero.month, n) if n else None for n in sem]
         for sem in calendar.Calendar(firstweekday=0).monthdayscalendar(primero.year, primero.month)
     ]
+
+
+# Cuántos meses hacia adelante (contados desde hoy) tiene generados un titular.
+# ponytail: ventana fija; si el negocio pide otra, pasa a un ajuste con barandal en config.py.
+HORIZONTE_MESES = 12
+
+
+def periodos_a_generar(primer_pago: date, dia_pago: int, hoy: date) -> list[tuple[str, date]]:
+    """(periodo, vence_el) desde el mes del primer pago hasta `HORIZONTE_MESES` después de hoy.
+
+    Un mes cuyo vencimiento cae ANTES del primer pago no se cobra (el titular aún no empezaba):
+    primer pago el 20 con día de pago 10 arranca el mes siguiente.
+    """
+    ultimo = mes_vecino(hoy.replace(day=1), HORIZONTE_MESES)
+    mes = primer_pago.replace(day=1)
+    salida = []
+    while mes <= ultimo:
+        periodo = mes.strftime("%Y-%m")
+        vence = vence_el(periodo, dia_pago)
+        if vence >= primer_pago:
+            salida.append((periodo, vence))
+        mes = mes_vecino(mes, 1)
+    return salida

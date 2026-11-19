@@ -566,7 +566,13 @@ def test_la_tabla_cubre_toda_ruta_con_guard_de_admin():
     # (la llama fetch) y no encaja en el molde de Ruta. Su rechazo al colaborador y su
     # control positivo con el admin viven en tests/test_crm.py
     # (test_el_alta_nace_en_la_oficina_de_quien_la_hace_con_telefono_canonico).
-    con_prueba_propia = {("POST", "/crm/api/contactos")}
+    # Igual: POST /mensualidades/cuentas/{cuenta_id}/datos necesita una cuenta sembrada para que
+    # el admin surta efecto; su rechazo al colaborador y su control positivo viven en
+    # tests/test_mensualidades_captura.py.
+    con_prueba_propia = {
+        ("POST", "/crm/api/contactos"),
+        ("POST", "/mensualidades/cuentas/{cuenta_id}/datos"),
+    }
 
     cubiertas = {(r.metodo, _plantilla_de(r.metodo, r.path)) for r in RUTAS}
     assert None not in {p for _, p in cubiertas}, "hay filas cuyo path no existe en el router"
