@@ -1,6 +1,7 @@
 import logging
 
-from sqlalchemy import event, text
+from sqlalchemy import MetaData, Table, event, func, inspect, select, table, text
+from sqlalchemy.schema import DropTable
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -112,9 +113,20 @@ _TABLES_NEEDING_OFFICE = (
     # (models.Invitation), no cuando la persona acepta.
     "invitation",
     # La 17ª: el calendario de cobranza. La oficina es la del cliente con mensualidad;
-    # el puente y las mensualidades no la duplican (se resuelve por cliente_id).
+    # el puente y las mensualidades no la duplican (se resuelve por cuenta_id).
     "clientemensualidad",
+    # La 18ª: la cuenta de cobranza (titular). Hereda la oficina a sus personas por cuenta_id.
+    "cuentacobranza",
 )
+# Columnas que F1b le agregó a una tabla que F1 ya había desplegado (vacía). Nullable: el ALTER
+# no puede llevar NOT NULL sin DEFAULT sobre una tabla con filas.
+_CLIENTEMENSUALIDAD_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "cuenta_id": "INTEGER",
+    "fecha_inicio": "DATE",
+    "observaciones": "VARCHAR",
+    "baja_at": "DATETIME",
+    "baja_motivo": "VARCHAR",
+}
 _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     "agent_active": "BOOLEAN NOT NULL DEFAULT 1",
     # Nullable a propósito: los folios viejos no tienen requisitos capturados y
@@ -187,7 +199,31 @@ _TABLAS_CON_TELEFONO = ("message", "ticket", "clientnote", "feedback", "nluevent
 _TABLAS_CON_TELEFONO_COMO_PK = ("client", "conversation")
 
 
+def _migrar_cobranza_a_cuentas() -> None:
+    """F1b: `mensualidad` y `mensualidadasesor` pasan de `cliente_id` a `cuenta_id`.
+
+    SQLite no quita un NOT NULL con ALTER, así que se recrean. F1 salió sin flujo de captura, por
+    lo que deberían estar vacías: si no lo están, se ABORTA sin tocar nada (un DROP con datos
+    perdería cobranza real). create_all() las vuelve a crear ya con `cuenta_id`.
+    """
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for tabla in ("mensualidad", "mensualidadasesor"):
+            columnas = {c["name"] for c in insp.get_columns(tabla)} if insp.has_table(tabla) else set()
+            if "cliente_id" not in columnas or "cuenta_id" in columnas:
+                continue
+            filas = conn.execute(select(func.count()).select_from(table(tabla))).scalar_one()
+            if filas:
+                raise RuntimeError(
+                    f"{tabla} trae {filas} filas con cliente_id: migrarlas a cuenta_id necesita "
+                    "una migración de datos, no un DROP"
+                )
+            logger.warning("Recreando %s (vacía) con cuenta_id", tabla)
+            conn.execute(DropTable(Table(tabla, MetaData())))
+
+
 def init_db() -> None:
+    _migrar_cobranza_a_cuentas()
     SQLModel.metadata.create_all(engine)
     # Antes de la siembra: con la columna retirada todavía NOT NULL, hasta el
     # INSERT de Tlaxcala revienta.
@@ -202,6 +238,7 @@ def init_db() -> None:
     _add_missing_columns("ticket", _TICKET_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("conversation", _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("client", _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH)
+    _add_missing_columns("clientemensualidad", _CLIENTEMENSUALIDAD_COLUMNS_ADDED_AFTER_LAUNCH)
     _seed_crm_etapas()
     for table in _TABLES_NEEDING_HABILITADO:
         _add_missing_columns(table, _HABILITADO_COLUMN)
@@ -253,19 +290,21 @@ def init_db() -> None:
         )
         # Calendario de cobranza (app/mensualidades.py). Parciales porque la baja es soft delete:
         # una fila apagada no debe impedir reactivar ni volver a dar de alta. CURP y NSS vivos
-        # únicos (dos asesores no duplican a la misma persona); un periodo vivo por cliente (sin
-        # doble cobro del mes); un par asesor-cliente vivo y UN solo responsable vivo por cliente.
+        # únicos (dos asesores no duplican a la misma persona); un código de cuenta vivo por oficina; un periodo
+        # vivo por cuenta (sin doble cobro del mes); un par asesor-cuenta vivo y UN solo responsable.
         for _sql in (
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_clientemensualidad_curp "
             "ON clientemensualidad(curp) WHERE habilitado = 1 AND curp IS NOT NULL",
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_clientemensualidad_nss "
             "ON clientemensualidad(nss) WHERE habilitado = 1 AND nss IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_cuentacobranza_codigo "
+            "ON cuentacobranza(office_id, codigo) WHERE habilitado = 1",
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_mensualidad_periodo_vivo "
-            "ON mensualidad(cliente_id, periodo) WHERE habilitado = 1",
+            "ON mensualidad(cuenta_id, periodo) WHERE habilitado = 1",
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_mensualidadasesor_vivo "
-            "ON mensualidadasesor(cliente_id, username) WHERE habilitado = 1",
+            "ON mensualidadasesor(cuenta_id, username) WHERE habilitado = 1",
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_mensualidadasesor_responsable "
-            "ON mensualidadasesor(cliente_id) WHERE habilitado = 1 AND rol = 'responsable'",
+            "ON mensualidadasesor(cuenta_id) WHERE habilitado = 1 AND rol = 'responsable'",
         ):
             conn.execute(text(_sql))
         # Tablero personal del CRM (app/tablero.py). Una copia por (persona, etapa

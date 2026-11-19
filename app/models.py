@@ -642,8 +642,30 @@ class ClienteAsesor(SQLModel, table=True):
     habilitado: bool = True
 
 
+class CuentaCobranza(SQLModel, table=True):
+    """El titular: la unidad a la que se le cobra (calendario de cobranza, app/mensualidades.py).
+
+    Una cuenta agrupa a las personas (`ClienteMensualidad`) que cubre; el importe mensual, el día
+    de pago, el primer pago, el WhatsApp y los asesores viven AQUÍ y no en la persona. `codigo` es
+    la columna CLIENTE del Excel del piloto, único por oficina entre las vivas (índice parcial en
+    db.init_db). NULL en importe, día o primer pago = «Por completar»: sin mensualidades todavía.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    codigo: str = Field(index=True)
+    nombre: str | None = None  # opcional: el Excel solo trae el código
+    whatsapp: str | None = Field(default=None, index=True)
+    importe_centavos: int | None = None
+    dia_pago: int | None = None
+    primer_pago: date | None = None
+    habilitado: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+    created_by: str | None = None
+    office_id: int = _office_id_field()
+
+
 class ClienteMensualidad(SQLModel, table=True):
-    """Persona con mensualidad (calendario de cobranza, app/mensualidades.py).
+    """Persona cubierta por una cuenta de cobranza (calendario, app/mensualidades.py).
 
     NO es un `Client` del CRM: no escribe en él ni aparece como lead en el tablero; el WhatsApp
     solo la liga a su conversación. CURP, NSS y RFC son datos personales: nunca van a un log, a un
@@ -657,9 +679,18 @@ class ClienteMensualidad(SQLModel, table=True):
     curp: str | None = None
     nss: str | None = None
     rfc: str | None = None
-    whatsapp: str | None = Field(default=None, index=True)
     modalidad: str = "BASICA"  # BASICA | SEMIESTABLE | ALTA_ESTABLE
-    # Vacíos a propósito: NULL = «Por completar», sin mensualidades hasta que alguien los capture.
+    # La cuenta (titular) que la cubre. Nullable solo porque la columna llegó por ALTER sobre una
+    # tabla que ya existía; el alta siempre la llena.
+    cuenta_id: int | None = Field(default=None, index=True)
+    fecha_inicio: date | None = None  # columna ALTA del Excel
+    observaciones: str | None = None
+    # Baja de la persona (no de la cuenta): se conserva el registro y el historial.
+    baja_at: datetime | None = None
+    baja_motivo: str | None = None
+    # SIN USO desde F1b: whatsapp, importe, día y primer pago pasaron a CuentaCobranza. Las
+    # columnas siguen porque quitarlas obliga a reconstruir el espejo MSSQL sin ganar nada.
+    whatsapp: str | None = None
     importe_centavos: int | None = None
     dia_pago: int | None = None
     primer_pago: date | None = None
@@ -670,15 +701,16 @@ class ClienteMensualidad(SQLModel, table=True):
 
 
 class MensualidadAsesor(SQLModel, table=True):
-    """Puente cliente-asesor: un cliente, un responsable vivo y N colaboradores.
+    """Puente cuenta-asesor: una cuenta, un responsable vivo y N colaboradores. Las personas de la
+    cuenta heredan el asesor.
 
     El responsable da de baja y cambia importe, día y asesores; el colaborador solo registra pagos.
-    Sin office_id: la oficina es la del cliente. Los índices (par vivo, un responsable vivo) viven
+    Sin office_id: la oficina es la de la cuenta. Los índices (par vivo, un responsable vivo) viven
     en db.init_db.
     """
 
     id: int | None = Field(default=None, primary_key=True)
-    cliente_id: int = Field(index=True)
+    cuenta_id: int = Field(index=True)
     username: str = Field(index=True)
     rol: str = "colaborador"  # responsable | colaborador
     habilitado: bool = True
@@ -687,11 +719,11 @@ class MensualidadAsesor(SQLModel, table=True):
 
 
 class Mensualidad(SQLModel, table=True):
-    """Un mes por cobrar de un cliente. El estatus (pendiente, por vencer, vencida, pagada) se
+    """Un mes por cobrar de una cuenta (titular). El estatus (pendiente, por vencer, vencida, pagada) se
     DERIVA de `vence_el` y `pagado_at`; no se guarda. Deshacer un pago deja `pagado_at` en NULL."""
 
     id: int | None = Field(default=None, primary_key=True)
-    cliente_id: int = Field(index=True)
+    cuenta_id: int = Field(index=True)
     periodo: str  # AAAA-MM
     vence_el: date
     importe_centavos: int

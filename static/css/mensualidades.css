@@ -32,3 +32,8 @@ a.cal-dia:hover { border-color: var(--lime); }
   .cal-dia { min-height: 56px; padding: .3rem; }
   .cal-chips .badge { font-size: .62rem; padding: .05rem .35rem; }
 }
+
+/* Titulares y personas: un <details> por titular, la lista de personas se abre debajo. */
+.mens-titular { border-top: 1px solid var(--border, #e5e7eb); padding: 0.5rem 0; }
+.mens-titular summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.mens-titular .table-wrap { margin-top: 0.5rem; }

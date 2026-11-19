@@ -21,6 +21,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
@@ -29,9 +30,10 @@ from sqlmodel import Session, create_engine
 import app.archive as archive
 import app.db as db
 import app.system as system
-from app.models import ClienteMensualidad, Mensualidad, MensualidadAsesor
+from app.models import ClienteMensualidad, CuentaCobranza, Mensualidad, MensualidadAsesor
 
 TABLAS = {
+    CuentaCobranza: ("cuentas_cobranza", "archive_cuenta_cobranza"),
     ClienteMensualidad: ("cliente_mensualidades", "archive_cliente_mensualidad"),
     MensualidadAsesor: ("mensualidad_asesores", "archive_mensualidad_asesor"),
     Mensualidad: ("mensualidades", "archive_mensualidad"),
@@ -105,6 +107,7 @@ def test_lugar_5_mirror_tables_la_cuenta(modelo):
 
 def test_la_oficina_es_la_del_cliente_y_no_se_duplica_en_el_puente_ni_en_las_mensualidades():
     assert "office_id" in ClienteMensualidad.model_fields
+    assert "office_id" in CuentaCobranza.model_fields
     assert "office_id" not in MensualidadAsesor.model_fields
     assert "office_id" not in Mensualidad.model_fields
 
@@ -118,6 +121,10 @@ def base_real(monkeypatch):
     monkeypatch.setattr(db, "engine", engine)
     db.init_db()
     return engine
+
+
+def _cuenta(**kw):
+    return CuentaCobranza(**{**dict(codigo="101"), **kw})
 
 
 def _cliente(**kw):
@@ -147,13 +154,13 @@ def test_curp_y_nss_son_unicos_solo_entre_clientes_vivos(base_real):
 def test_un_cliente_no_tiene_dos_mensualidades_vivas_del_mismo_periodo(base_real):
     """Un doble clic o dos procesos generando periodos cobrarían dos veces el mes."""
     with Session(base_real) as s:
-        c = _cliente()
+        c = _cuenta()
         s.add(c)
         s.commit()
         for _ in range(2):
             s.add(
                 Mensualidad(
-                    cliente_id=c.id, periodo="2026-12", vence_el=date(2026, 12, 5), importe_centavos=50000
+                    cuenta_id=c.id, periodo="2026-12", vence_el=date(2026, 12, 5), importe_centavos=50000
                 )
             )
         with pytest.raises(IntegrityError):
@@ -161,18 +168,63 @@ def test_un_cliente_no_tiene_dos_mensualidades_vivas_del_mismo_periodo(base_real
 
 
 def test_el_puente_admite_un_par_vivo_y_un_solo_responsable_vivo(base_real):
-    """Un cliente con dos responsables dejaría a dos asesores dándolo de baja a la vez."""
+    """Una cuenta con dos responsables dejaría a dos asesores dándolo de baja a la vez."""
     with Session(base_real) as s:
-        c = _cliente()
+        c = _cuenta()
         s.add(c)
         s.commit()
-        s.add(MensualidadAsesor(cliente_id=c.id, username="ana", rol="responsable"))
-        s.add(MensualidadAsesor(cliente_id=c.id, username="beto", rol="colaborador"))
+        s.add(MensualidadAsesor(cuenta_id=c.id, username="ana", rol="responsable"))
+        s.add(MensualidadAsesor(cuenta_id=c.id, username="beto", rol="colaborador"))
         s.commit()
-        s.add(MensualidadAsesor(cliente_id=c.id, username="ana", rol="colaborador"))
+        s.add(MensualidadAsesor(cuenta_id=c.id, username="ana", rol="colaborador"))
         with pytest.raises(IntegrityError):
             s.commit()
         s.rollback()
-        s.add(MensualidadAsesor(cliente_id=c.id, username="carla", rol="responsable"))
+        s.add(MensualidadAsesor(cuenta_id=c.id, username="carla", rol="responsable"))
         with pytest.raises(IntegrityError):
             s.commit()
+
+
+def test_el_codigo_de_cuenta_es_unico_por_oficina_solo_entre_vivas(base_real):
+    """Dos cuentas con el mismo código en una oficina mezclarían las personas de dos titulares."""
+    with Session(base_real) as s:
+        s.add(_cuenta())
+        s.commit()
+        s.add(_cuenta())
+        with pytest.raises(IntegrityError):
+            s.commit()
+        s.rollback()
+        s.add(_cuenta(office_id=2))  # otra oficina puede reusar el código
+        s.commit()
+        s.exec(text("UPDATE cuentacobranza SET habilitado = 0 WHERE office_id = 1"))
+        s.add(_cuenta())  # la apagada no estorba
+        s.commit()
+
+
+def _engine_con_esquema_f1(filas: int):
+    """Una base como la que F1 dejó en el VPS: mensualidad y mensualidadasesor con cliente_id."""
+    e = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    with e.begin() as c:
+        c.execute(text("CREATE TABLE mensualidad (id INTEGER PRIMARY KEY, cliente_id INTEGER NOT NULL)"))
+        c.execute(text("CREATE TABLE mensualidadasesor (id INTEGER PRIMARY KEY, cliente_id INTEGER NOT NULL)"))
+        for i in range(filas):
+            c.execute(text("INSERT INTO mensualidad (cliente_id) VALUES (1)"))
+    return e
+
+
+def test_la_migracion_a_cuentas_recrea_las_tablas_vacias(monkeypatch):
+    monkeypatch.setattr(db, "engine", _engine_con_esquema_f1(0))
+    db.init_db()
+    insp = sa_inspect(db.engine)
+    for tabla in ("mensualidad", "mensualidadasesor"):
+        cols = {c["name"] for c in insp.get_columns(tabla)}
+        assert "cuenta_id" in cols and "cliente_id" not in cols, tabla
+
+
+def test_la_migracion_a_cuentas_aborta_si_hay_cobranza_sin_tocar_nada(monkeypatch):
+    """Un DROP con filas perdería cobranza real: se aborta y la tabla queda intacta."""
+    monkeypatch.setattr(db, "engine", _engine_con_esquema_f1(1))
+    with pytest.raises(RuntimeError, match="mensualidad"):
+        db.init_db()
+    with db.engine.begin() as c:
+        assert c.execute(text("SELECT COUNT(*) FROM mensualidad")).scalar_one() == 1

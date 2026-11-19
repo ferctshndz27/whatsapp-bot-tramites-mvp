@@ -42,6 +42,7 @@ from app.models import (
     ClientNote,
     ClienteAsesor,
     ClienteMensualidad,
+    CuentaCobranza,
     Mensualidad,
     MensualidadAsesor,
     Cobro,
@@ -131,6 +132,7 @@ MIRROR_TABLES = [
     (CrmUbicacion, "crm_ubicaciones"),
     # La cartera de clientes de cada colaborador (app/cartera.py).
     (ClienteAsesor, "cliente_asesores"),
+    (CuentaCobranza, "cuentas_cobranza"),
     (ClienteMensualidad, "cliente_mensualidades"),
     (MensualidadAsesor, "mensualidad_asesores"),
     (Mensualidad, "mensualidades"),

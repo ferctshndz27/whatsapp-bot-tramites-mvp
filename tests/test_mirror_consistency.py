@@ -473,6 +473,8 @@ TABLAS_MSSQL_CON_OFICINA = frozenset({
     "invitations",
     # La 17ª: calendario de cobranza; la oficina es la del cliente.
     "cliente_mensualidades",
+    # La 18ª: la cuenta de cobranza (titular).
+    "cuentas_cobranza",
 })
 
 
