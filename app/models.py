@@ -1105,7 +1105,66 @@ class PlanCobro(SQLModel, table=True):
     fin_at: datetime | None = None
     stripe_customer_id: str | None = None
     stripe_subscription_id: str | None = None
+    # Autocobro (spec autocobranza): el plan cobra hasta cubrir `monto_total_centavos`. Todas
+    # nullable: NULL = «sin tope todavía», y un default inventaría un monto que nadie acordó.
+    # Estados nuevos (valores de `estado`, no esquema): borrador, esperando_cliente,
+    # requiere_accion, completado.
+    monto_total_centavos: int | None = None
+    saldo_pendiente_centavos: int | None = None
+    cargos_previstos: int | None = None
+    fecha_inicio: date | None = None
+    consentimiento_id: int | None = None
     creado_por: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
+class LigaAutocobro(SQLModel, table=True):
+    """La liga que el colaborador manda al cliente para registrar su tarjeta (app/autocobro.py, F3).
+
+    Guarda el HASH del token, nunca el token: quien lea la base no puede abrir ligas. Sin espejo
+    MSSQL a propósito: es efímera (72 h) y el hash es un secreto de acceso, no un dato de archivo.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    plan_id: int = Field(index=True)
+    token_hash: str = Field(unique=True, index=True)  # SHA-256 hex del token
+    expira_at: datetime
+    usada_at: datetime | None = None
+    intentos_abiertos: int = 0  # aperturas de la liga: tope contra fuerza bruta
+    creada_por: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    habilitado: bool = True
+
+
+class ConsentimientoCobro(SQLModel, table=True):
+    """La prueba de que el cliente autorizó el cobro (spec autocobranza §5), lo que se enseña ante
+    una disputa o una queja ante PROFECO.
+
+    Append-only salvo la revocación: un cambio que rebase el tope crea una fila NUEVA, no edita la
+    vieja. `texto_mandato` y `hash_texto` congelan lo que el cliente leyó; el resto son los topes
+    contra los que el motor valida cada cobro. Nunca guarda número de tarjeta ni CVV: la tarjeta
+    vive en Stripe y aquí solo está su SetupIntent y su mandato.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    plan_id: int = Field(index=True)
+    phone: str = Field(index=True)
+    version_terminos: str
+    hash_texto: str
+    texto_mandato: str
+    contrato_folio: str | None = None  # el contrato que el cliente ya firmó con el colaborador
+    tope_cargo_centavos: int
+    monto_total_centavos: int
+    periodicidad: str = "mensual"
+    dia_cobro: int | None = None
+    ip_hash: str | None = None  # hash, no la IP: es dato personal y solo hace falta compararla
+    user_agent: str | None = None
+    stripe_setup_intent_id: str | None = Field(default=None, index=True)
+    stripe_mandate_id: str | None = None
+    aceptado_at: datetime = Field(default_factory=utcnow)
+    revocado_at: datetime | None = None
+    motivo_revocacion: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     habilitado: bool = True
 
