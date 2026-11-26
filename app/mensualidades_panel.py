@@ -1,8 +1,9 @@
 """/mensualidades: calendario de cobranza, lista por estatus y cola «Por completar» (solo lectura).
 
-Quién ve qué: un admin ve la oficina que alcanza (`alcance`); cualquier otro usuario, solo los
-clientes donde figura en `MensualidadAsesor`. El alcance se aplica ANTES que cualquier filtro, con
-EXISTS y no con JOIN: un cliente compartido entre asesores no debe duplicar filas ni descuadrar los
+La unidad de cobro es la cuenta (el titular); las personas que cubre se listan debajo de ella.
+Quién ve qué: un admin ve la oficina que alcanza (`alcance`); cualquier otro usuario, solo las
+cuentas donde figura en `MensualidadAsesor`. El alcance se aplica ANTES que cualquier filtro, con
+EXISTS y no con JOIN: una cuenta compartida entre asesores no debe duplicar filas ni descuadrar los
 conteos. Las escrituras (alta, baja, pago) llegan en las fases siguientes del plan.
 """
 
@@ -20,7 +21,8 @@ from app.auth import alcance, is_admin
 from app.config import settings
 from app.db import get_session
 from app.dinero import formato_monto
-from app.models import ClienteMensualidad, Mensualidad, MensualidadAsesor
+from app.mensualidades_import import PREFIJO
+from app.models import ClienteMensualidad, CuentaCobranza, Mensualidad, MensualidadAsesor
 from app.templating import templates
 
 logger = logging.getLogger(__name__)
@@ -30,21 +32,37 @@ router = APIRouter()
 # Tope de filas de cada lista: el calendario del mes ya resume el resto.
 LIMITE_LISTA = 200
 LIMITE_POR_COMPLETAR = 50
+LIMITE_TITULARES = 200
 FILTROS = ("todos", *dom.ESTATUS)
 
 
-def _clientes_visibles(user: str):
-    """Los clientes vivos que este usuario puede ver: su oficina si es admin, su cartera si no."""
-    q = select(ClienteMensualidad.id).where(ClienteMensualidad.habilitado == True)  # noqa: E712
+def _cuentas_visibles(user: str):
+    """Las cuentas vivas que este usuario puede ver: su oficina si es admin, su cartera si no."""
+    q = select(CuentaCobranza.id).where(CuentaCobranza.habilitado == True)  # noqa: E712
     if is_admin(user):
-        return alcance(user).filtrar(q, ClienteMensualidad.office_id)
+        return alcance(user).filtrar(q, CuentaCobranza.office_id)
     return q.where(
         exists().where(
-            MensualidadAsesor.cliente_id == ClienteMensualidad.id,
+            MensualidadAsesor.cuenta_id == CuentaCobranza.id,
             MensualidadAsesor.username == user,
             MensualidadAsesor.habilitado == True,  # noqa: E712
         )
     )
+
+
+def _orden_codigo(c: CuentaCobranza):
+    """Los códigos del piloto son números: 2 antes que 10."""
+    return (0, int(c.codigo), "") if c.codigo.isdigit() else (1, 0, c.codigo)
+
+
+def _titulo(c: CuentaCobranza) -> str:
+    return c.nombre or f"Cliente {c.codigo}"
+
+
+def _coincide(q: str, c: CuentaCobranza, personas: list[ClienteMensualidad]) -> bool:
+    """La búsqueda acierta por código o nombre del titular, o por el nombre de alguna de sus personas."""
+    q = q.lower()
+    return q in c.codigo.lower() or q in _titulo(c).lower() or any(q in p.nombre.lower() for p in personas)
 
 
 def _suma(centavos: int) -> str:
@@ -68,40 +86,41 @@ def mensualidades(
     dia = dia if 1 <= dia <= 31 else 0
 
     with get_session() as session:
-        ids = _clientes_visibles(user)
+        ids = _cuentas_visibles(user)
         pesos = Mensualidad.importe_centavos
 
         # Todo lo vencido sin pagar, de cualquier mes: es lo que el asesor tiene que cobrar ya.
         vencidas_n, vencidas_monto = session.exec(
             select(func.count(Mensualidad.id), func.coalesce(func.sum(pesos), 0))
-            .where(Mensualidad.cliente_id.in_(ids))
+            .where(Mensualidad.cuenta_id.in_(ids))
             .where(Mensualidad.habilitado == True)  # noqa: E712
             .where(Mensualidad.pagado_at == None)  # noqa: E711
             .where(Mensualidad.vence_el < hoy)
         ).one()
 
         del_mes = session.exec(
-            select(Mensualidad, ClienteMensualidad)
-            .join(ClienteMensualidad, ClienteMensualidad.id == Mensualidad.cliente_id)
-            .where(Mensualidad.cliente_id.in_(ids))
+            select(Mensualidad, CuentaCobranza)
+            .join(CuentaCobranza, CuentaCobranza.id == Mensualidad.cuenta_id)
+            .where(Mensualidad.cuenta_id.in_(ids))
             .where(Mensualidad.habilitado == True)  # noqa: E712
             .where(Mensualidad.vence_el >= primero, Mensualidad.vence_el < ultimo)
-            .order_by(Mensualidad.vence_el, ClienteMensualidad.nombre)
+            .order_by(Mensualidad.vence_el, CuentaCobranza.codigo)
         ).all()
 
-        por_completar = session.exec(
+        cuentas = sorted(
+            session.exec(select(CuentaCobranza).where(CuentaCobranza.id.in_(ids))).all(),
+            key=_orden_codigo,
+        )
+        personas: dict[int, list[ClienteMensualidad]] = {}
+        for p in session.exec(
             select(ClienteMensualidad)
-            .where(ClienteMensualidad.id.in_(ids))
-            .where(
-                or_(
-                    ClienteMensualidad.whatsapp == None,  # noqa: E711
-                    ClienteMensualidad.importe_centavos == None,  # noqa: E711
-                    ClienteMensualidad.dia_pago == None,  # noqa: E711
-                    ClienteMensualidad.primer_pago == None,  # noqa: E711
-                )
-            )
+            .where(ClienteMensualidad.cuenta_id.in_(ids))
+            .where(ClienteMensualidad.habilitado == True)  # noqa: E712
             .order_by(ClienteMensualidad.nombre)
-        ).all()
+        ).all():
+            personas.setdefault(p.cuenta_id, []).append(p)
+
+        por_completar = [c for c in cuentas if dom.faltantes(c)]
 
     # Una sola pasada: el estatus de cada fila y el conteo de cada día salen del mismo cálculo.
     filas = []
@@ -118,8 +137,24 @@ def mensualidades(
         for f in filas
         if (estatus == "todos" or f["estatus"] == estatus)
         and (not dia or f["m"].vence_el.day == dia)
-        and (not q or q.lower() in f["c"].nombre.lower())
+        and (not q or _coincide(q, f["c"], personas.get(f["c"].id, [])))
     ]
+    for f in filas:
+        f["titulo"] = _titulo(f["c"])
+        f["n_personas"] = sum(1 for p in personas.get(f["c"].id, []) if not p.baja_at)
+
+    titulares = [
+        {
+            "c": c,
+            "titulo": _titulo(c),
+            "personas": personas.get(c.id, []),
+            "vivas": sum(1 for p in personas.get(c.id, []) if not p.baja_at),
+            "falta": dom.faltantes(c),
+        }
+        for c in cuentas
+        if not q or _coincide(q, c, personas.get(c.id, []))
+    ]
+    n_personas = sum(len(v) for v in personas.values())
 
     semanas = [
         [
@@ -136,7 +171,7 @@ def mensualidades(
         for semana in dom.semanas_del_mes(primero)
     ]
 
-    pendientes = [(c, dom.faltantes(c)) for c in por_completar]
+    pendientes = [(c, _titulo(c), dom.faltantes(c)) for c in por_completar]
 
     return templates.TemplateResponse(
         request,
@@ -162,6 +197,11 @@ def mensualidades(
             "vencidas_monto": _suma(vencidas_monto),
             "por_completar": pendientes[:LIMITE_POR_COMPLETAR],
             "por_completar_n": len(pendientes),
+            "titulares": titulares[:LIMITE_TITULARES],
+            "titulares_n": len(titulares),
+            "cuentas_n": len(cuentas),
+            "personas_n": n_personas,
+            "prefijo_revisar": PREFIJO,
             "aviso": aviso,
         },
     )

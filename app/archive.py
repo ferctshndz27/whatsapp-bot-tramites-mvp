@@ -46,6 +46,23 @@ logger = logging.getLogger(__name__)
 _engine = None
 _ready = False
 
+# Antes de _SCHEMA_DDL, que NO admite más que bloques «IF OBJECT_ID ... CREATE TABLE» (la auditoría
+# del espejo los lee así). F1b: `mensualidades` y `mensualidad_asesores` pasaron de cliente_id a
+# cuenta_id. F1 salió sin flujo de captura, así que el espejo debería estar vacío: solo se
+# recrean si lo está (un DROP con filas perdería archivo). Después, _SCHEMA_DDL las crea nuevas.
+_SCHEMA_MIGRATIONS = [
+    """
+    IF COL_LENGTH('mensualidad_asesores', 'cliente_id') IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM mensualidad_asesores)
+        DROP TABLE mensualidad_asesores
+    """,
+    """
+    IF COL_LENGTH('mensualidades', 'cliente_id') IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM mensualidades)
+        DROP TABLE mensualidades
+    """,
+]
+
 _SCHEMA_DDL = [
     """
     IF OBJECT_ID('wa_clients', 'U') IS NULL
@@ -342,7 +359,24 @@ _SCHEMA_DDL = [
         created_at DATETIME2    NOT NULL
     )
     """,
-    # Calendario de cobranza (app/mensualidades.py): tres tablas. La oficina es la del cliente.
+    # Calendario de cobranza (app/mensualidades.py): cuatro tablas. La oficina es la de la cuenta
+    # (y la de la persona, que la hereda).
+    """
+    IF OBJECT_ID('cuentas_cobranza', 'U') IS NULL
+    CREATE TABLE cuentas_cobranza (
+        source_id        BIGINT        NOT NULL PRIMARY KEY,
+        codigo           NVARCHAR(32)  NOT NULL,
+        nombre           NVARCHAR(200) NULL,
+        whatsapp         NVARCHAR(32)  NULL,
+        importe_centavos INT           NULL,
+        dia_pago         INT           NULL,
+        primer_pago      DATE          NULL,
+        habilitado       BIT           NOT NULL DEFAULT 1,
+        created_at       DATETIME2     NOT NULL,
+        created_by       NVARCHAR(64)  NULL,
+        office_id        INT           NOT NULL DEFAULT 1
+    )
+    """,
     """
     IF OBJECT_ID('cliente_mensualidades', 'U') IS NULL
     CREATE TABLE cliente_mensualidades (
@@ -366,7 +400,7 @@ _SCHEMA_DDL = [
     IF OBJECT_ID('mensualidad_asesores', 'U') IS NULL
     CREATE TABLE mensualidad_asesores (
         source_id  BIGINT       NOT NULL PRIMARY KEY,
-        cliente_id BIGINT       NOT NULL,
+        cuenta_id  BIGINT       NOT NULL,
         username   NVARCHAR(64) NOT NULL,
         rol        NVARCHAR(16) NOT NULL,
         habilitado BIT          NOT NULL DEFAULT 1,
@@ -378,7 +412,7 @@ _SCHEMA_DDL = [
     IF OBJECT_ID('mensualidades', 'U') IS NULL
     CREATE TABLE mensualidades (
         source_id        BIGINT       NOT NULL PRIMARY KEY,
-        cliente_id       BIGINT       NOT NULL,
+        cuenta_id        BIGINT       NOT NULL,
         periodo          NVARCHAR(7)  NOT NULL,
         vence_el         DATE         NOT NULL,
         importe_centavos INT          NOT NULL,
@@ -787,7 +821,16 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "solo_su_oficina": "BIT NOT NULL DEFAULT 0",
     },
     "invitations": {"habilitado": "BIT NOT NULL DEFAULT 1", "office_id": _OFFICE_ID_MSSQL},
-    "cliente_mensualidades": {"office_id": _OFFICE_ID_MSSQL},
+    "cliente_mensualidades": {
+        "office_id": _OFFICE_ID_MSSQL,
+        # F1b: la persona cuelga de una cuenta.
+        "cuenta_id": "BIGINT NULL",
+        "fecha_inicio": "DATE NULL",
+        "observaciones": "NVARCHAR(MAX) NULL",
+        "baja_at": "DATETIME2 NULL",
+        "baja_motivo": "NVARCHAR(200) NULL",
+    },
+    "cuentas_cobranza": {"office_id": _OFFICE_ID_MSSQL},
     "tickets": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "agent_active": "BIT NOT NULL DEFAULT 1",
@@ -880,7 +923,7 @@ def init() -> None:
 
         engine = _get_engine()
         with engine.begin() as conn:
-            for ddl in _SCHEMA_DDL:
+            for ddl in (*_SCHEMA_MIGRATIONS, *_SCHEMA_DDL):
                 conn.execute(text(ddl))
             for table, columns in _COLUMNS_ADDED_AFTER_LAUNCH.items():
                 for name, col_type in columns.items():
@@ -1507,6 +1550,24 @@ def archive_cliente_asesor(a) -> None:
     )
 
 
+def archive_cuenta_cobranza(c) -> None:
+    _upsert(
+        "cuentas_cobranza", "source_id", c.id,
+        {
+            "codigo": c.codigo,
+            "nombre": c.nombre,
+            "whatsapp": c.whatsapp,
+            "importe_centavos": c.importe_centavos,
+            "dia_pago": c.dia_pago,
+            "primer_pago": c.primer_pago,
+            "habilitado": c.habilitado,
+            "created_at": _naive_utc(c.created_at),
+            "created_by": c.created_by,
+            "office_id": c.office_id,
+        },
+    )
+
+
 def archive_cliente_mensualidad(c) -> None:
     _upsert(
         "cliente_mensualidades", "source_id", c.id,
@@ -1520,6 +1581,11 @@ def archive_cliente_mensualidad(c) -> None:
             "importe_centavos": c.importe_centavos,
             "dia_pago": c.dia_pago,
             "primer_pago": c.primer_pago,
+            "cuenta_id": c.cuenta_id,
+            "fecha_inicio": c.fecha_inicio,
+            "observaciones": c.observaciones,
+            "baja_at": _naive_utc(c.baja_at) if c.baja_at else None,
+            "baja_motivo": c.baja_motivo,
             "habilitado": c.habilitado,
             "created_at": _naive_utc(c.created_at),
             "created_by": c.created_by,
@@ -1532,7 +1598,7 @@ def archive_mensualidad_asesor(a) -> None:
     _upsert(
         "mensualidad_asesores", "source_id", a.id,
         {
-            "cliente_id": a.cliente_id,
+            "cuenta_id": a.cuenta_id,
             "username": a.username,
             "rol": a.rol,
             "habilitado": a.habilitado,
@@ -1546,7 +1612,7 @@ def archive_mensualidad(m) -> None:
     _upsert(
         "mensualidades", "source_id", m.id,
         {
-            "cliente_id": m.cliente_id,
+            "cuenta_id": m.cuenta_id,
             "periodo": m.periodo,
             "vence_el": m.vence_el,
             "importe_centavos": m.importe_centavos,
@@ -2072,6 +2138,7 @@ def backfill() -> None:
         ClientNote,
         ClienteAsesor,
         ClienteMensualidad,
+        CuentaCobranza,
         Mensualidad,
         MensualidadAsesor,
         Cobro,
@@ -2150,6 +2217,8 @@ def backfill() -> None:
                 archive_client_note(n)
             for ca in session.exec(select(ClienteAsesor)).all():
                 archive_cliente_asesor(ca)
+            for c in session.exec(select(CuentaCobranza)).all():
+                archive_cuenta_cobranza(c)
             for c in session.exec(select(ClienteMensualidad)).all():
                 archive_cliente_mensualidad(c)
             for a in session.exec(select(MensualidadAsesor)).all():
@@ -2243,6 +2312,7 @@ def _register_listeners() -> None:
         ClientNote,
         ClienteAsesor,
         ClienteMensualidad,
+        CuentaCobranza,
         Mensualidad,
         MensualidadAsesor,
         Cobro,
@@ -2431,6 +2501,11 @@ def _register_listeners() -> None:
     @event.listens_for(ClienteAsesor, "after_update")
     def _cliente_asesor_upsert(mapper, connection, target):
         _safe(archive_cliente_asesor, target)
+
+    @event.listens_for(CuentaCobranza, "after_insert")
+    @event.listens_for(CuentaCobranza, "after_update")
+    def _cuenta_cobranza_upsert(mapper, connection, target):
+        _safe(archive_cuenta_cobranza, target)
 
     @event.listens_for(ClienteMensualidad, "after_insert")
     @event.listens_for(ClienteMensualidad, "after_update")

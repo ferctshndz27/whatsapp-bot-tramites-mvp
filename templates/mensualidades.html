@@ -61,7 +61,7 @@
     {% if dia %}<input type="hidden" name="dia" value="{{ dia }}">{% endif %}
     <div class="u-d-flex u-gap-0_5rem u-wrap-wrap u-items-center">
       <label class="u-m-0" for="mens-q">Buscar</label>
-      <input type="text" id="mens-q" name="q" value="{{ q }}" placeholder="Nombre del cliente" autocomplete="off">
+      <input type="text" id="mens-q" name="q" value="{{ q }}" placeholder="Código del titular o nombre" autocomplete="off">
       <button type="submit" class="btn-sm">Buscar</button>
       {% if q or dia or estatus != 'todos' %}<a class="btn-sm u-deco-none u-d-inline-flex u-items-center" href="/mensualidades?mes={{ mes_valor }}">Limpiar</a>{% endif %}
     </div>
@@ -70,11 +70,11 @@
   {% if filas %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Cliente</th><th>Vence</th><th>Importe</th><th>Estatus</th></tr></thead>
+      <thead><tr><th>Titular</th><th>Vence</th><th>Importe</th><th>Estatus</th></tr></thead>
       <tbody>
         {% for f in filas %}
         <tr>
-          <td><strong>{{ f.c.nombre }}</strong>{% if f.c.whatsapp %}<div class="mens-sin">{{ f.c.whatsapp }}</div>{% endif %}</td>
+          <td><strong>{{ f.titulo }}</strong><div class="mens-sin">{{ f.n_personas }} persona{{ '' if f.n_personas == 1 else 's' }}{% if f.c.whatsapp %} · {{ f.c.whatsapp }}{% endif %}</div></td>
           <td>{{ f.m.vence_el.strftime('%d/%m/%Y') }}</td>
           <td>{{ '${:,.2f}'.format(f.m.importe_centavos / 100) }}</td>
           <td><span class="badge {{ f.estatus }}">{{ f.etiqueta }}</span></td>
@@ -92,14 +92,14 @@
 <div class="card">
   <h2>Por completar</h2>
   {% if por_completar %}
-  <p class="sub">A estos clientes les falta un dato y no se les generan mensualidades hasta tenerlo.</p>
+  <p class="sub">A estos titulares les falta un dato y no se les generan mensualidades hasta tenerlo.</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Cliente</th><th>Falta</th></tr></thead>
+      <thead><tr><th>Titular</th><th>Falta</th></tr></thead>
       <tbody>
-        {% for c, falta in por_completar %}
+        {% for c, titulo, falta in por_completar %}
         <tr>
-          <td><strong>{{ c.nombre }}</strong></td>
+          <td><strong>{{ titulo }}</strong></td>
           <td>{% for x in falta %}<span class="badge pendiente">{{ {'whatsapp': 'WhatsApp', 'importe': 'Importe', 'dia_pago': 'Día de pago', 'primer_pago': 'Primer pago'}[x] }}</span> {% endfor %}</td>
         </tr>
         {% endfor %}
@@ -108,7 +108,45 @@
   </div>
   {% if por_completar_n > por_completar | length %}<p class="sub">Se muestran {{ por_completar | length }} de {{ por_completar_n }}.</p>{% endif %}
   {% else %}
-  <p class="empty">Todos los clientes tienen sus datos completos.</p>
+  <p class="empty">Todos los titulares tienen sus datos completos.</p>
+  {% endif %}
+</div>
+<div class="card" id="titulares">
+  <h2>Titulares y personas</h2>
+  <p class="sub">{{ cuentas_n }} titular{{ '' if cuentas_n == 1 else 'es' }} · {{ personas_n }} persona{{ '' if personas_n == 1 else 's' }}. El cobro se hace al titular; las personas son a quienes cubre.</p>
+  {% if titulares %}
+  {% for t in titulares %}
+  <details class="mens-titular">
+    <summary>
+      <strong>{{ t.titulo }}</strong>
+      <span class="mens-sin">{{ t.vivas }} persona{{ '' if t.vivas == 1 else 's' }}</span>
+      {% if t.c.importe_centavos is not none %}<span class="badge pagado">{{ '${:,.2f}'.format(t.c.importe_centavos / 100) }}{% if t.c.dia_pago %} · día {{ t.c.dia_pago }}{% endif %}</span>{% else %}<span class="badge pendiente">Sin importe</span>{% endif %}
+    </summary>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Nombre</th><th>Modalidad</th><th>Alta</th><th>Estado</th></tr></thead>
+        <tbody>
+          {% for p in t.personas %}
+          <tr>
+            <td>{{ p.nombre }}</td>
+            <td>{{ p.modalidad | replace('_', ' ') | lower | capitalize }}</td>
+            <td>{{ p.fecha_inicio.strftime('%d/%m/%Y') if p.fecha_inicio else '—' }}</td>
+            <td>
+              {% if p.baja_at %}<span class="badge vencido">Baja</span>{% else %}<span class="badge pagado">Alta</span>{% endif %}
+              {% if p.observaciones and p.observaciones.startswith(prefijo_revisar) %}<span class="badge por_vencer" title="{{ p.observaciones }}">Revisar datos</span>{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="empty">Sin personas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endfor %}
+  {% if titulares_n > titulares | length %}<p class="sub">Se muestran {{ titulares | length }} de {{ titulares_n }}. Busca por código o nombre para ver el resto.</p>{% endif %}
+  {% else %}
+  <p class="empty">{% if q %}Ningún titular ni persona coincide con la búsqueda.{% else %}Todavía no hay titulares en tu cartera.{% endif %}</p>
   {% endif %}
 </div>
 {% endblock %}

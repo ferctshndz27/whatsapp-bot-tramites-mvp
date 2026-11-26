@@ -20,6 +20,7 @@ from app.config import settings
 from app.main import app
 from app.models import (
     ClienteMensualidad,
+    CuentaCobranza,
     Mensualidad,
     MensualidadAsesor,
     OFICINA_TLAXCALA_ID,
@@ -84,7 +85,7 @@ def test_el_estatus_cambia_a_medianoche_de_mexico():
 
 
 def test_faltantes_y_cliente_completo():
-    c = ClienteMensualidad(nombre="Ana")
+    c = CuentaCobranza(codigo="1")
     assert dom.faltantes(c) == ["whatsapp", "importe", "dia_pago", "primer_pago"]
     c.whatsapp, c.importe_centavos, c.dia_pago, c.primer_pago = "5255", 1, 5, HOY
     assert dom.faltantes(c) == []
@@ -128,7 +129,9 @@ def base(monkeypatch):
 
 
 def _cliente(s, nombre, asesores=(), office=OFICINA_TLAXCALA_ID, completo=True, **kw):
-    c = ClienteMensualidad(
+    """Una CUENTA (el titular) con nombre visible; la unidad de cobro es la cuenta."""
+    c = CuentaCobranza(
+        codigo=str(abs(hash(nombre)) % 10**6),
         nombre=nombre,
         office_id=office,
         whatsapp="5255000000" if completo else None,
@@ -142,7 +145,7 @@ def _cliente(s, nombre, asesores=(), office=OFICINA_TLAXCALA_ID, completo=True, 
     for i, u in enumerate(asesores):
         s.add(
             MensualidadAsesor(
-                cliente_id=c.id, username=u, rol="responsable" if i == 0 else "colaborador"
+                cuenta_id=c.id, username=u, rol="responsable" if i == 0 else "colaborador"
             )
         )
     return c
@@ -151,7 +154,7 @@ def _cliente(s, nombre, asesores=(), office=OFICINA_TLAXCALA_ID, completo=True, 
 def _mens(s, c, vence, pagado=False):
     s.add(
         Mensualidad(
-            cliente_id=c.id,
+            cuenta_id=c.id,
             periodo=vence.strftime("%Y-%m"),
             vence_el=vence,
             importe_centavos=150000,
@@ -189,7 +192,9 @@ def test_cliente_compartido_no_duplica_filas(base):
         _mens(s, c, date(2026, 11, 20))
         s.commit()
     html = _entrar("beto").get("/mensualidades").text
-    assert html.count("Compartido") == 1
+    # Una vez en la lista de mensualidades y una en «Titulares»: ninguna se duplica por el JOIN.
+    assert html.split('id="titulares"')[0].count("Compartido") == 1
+    assert html.split('id="titulares"')[1].count("Compartido") == 1
 
 
 def test_admin_ve_la_oficina_y_no_otra(base):
@@ -247,8 +252,52 @@ def test_por_completar_lista_lo_que_falta(base):
         s.commit()
     html = _entrar("ana").get("/mensualidades").text
     assert "Incompleto" in html and "Primer pago" in html
-    seccion = html.split("<h2>Por completar</h2>")[1]
+    seccion = html.split("<h2>Por completar</h2>")[1].split('id="titulares"')[0]
     assert "<strong>Completo</strong>" not in seccion
+
+
+def test_las_personas_cuelgan_de_su_titular_y_se_marca_la_baja(base):
+    with Session(base) as s:
+        c = _cliente(s, "Titular Uno", ["ana"])
+        s.add(ClienteMensualidad(nombre="Persona Viva", cuenta_id=c.id))
+        s.add(ClienteMensualidad(nombre="Persona Baja", cuenta_id=c.id, baja_at=datetime(2026, 11, 1)))
+        s.commit()
+    html = _entrar("ana").get("/mensualidades").text
+    seccion = html.split('id="titulares"')[1]
+    assert "Persona Viva" in seccion and "Persona Baja" in seccion
+    assert 'class="badge vencido">Baja' in seccion
+    assert "1 persona<" in seccion, "la baja no debe contar entre las personas vivas"
+
+
+def test_asesor_no_ve_las_personas_de_la_cuenta_de_otro(base):
+    with Session(base) as s:
+        a = _cliente(s, "Cuenta Ana", ["ana"])
+        b = _cliente(s, "Cuenta Beto", ["beto"])
+        s.add(ClienteMensualidad(nombre="Hija de Ana", cuenta_id=a.id))
+        s.add(ClienteMensualidad(nombre="Hijo de Beto", cuenta_id=b.id))
+        s.commit()
+    html = _entrar("ana").get("/mensualidades").text
+    assert "Hija de Ana" in html and "Hijo de Beto" not in html
+
+
+def test_la_busqueda_encuentra_al_titular_por_el_nombre_de_una_persona(base):
+    with Session(base) as s:
+        c = _cliente(s, "Cuenta Uno", ["ana"])
+        _cliente(s, "Cuenta Dos", ["ana"])
+        s.add(ClienteMensualidad(nombre="Zoraida Rara", cuenta_id=c.id))
+        s.commit()
+    html = _entrar("ana").get("/mensualidades?q=zoraida").text
+    seccion = html.split('id="titulares"')[1]
+    assert "Cuenta Uno" in seccion and "Cuenta Dos" not in seccion
+
+
+def test_los_titulares_salen_en_orden_numerico_de_codigo(base):
+    with Session(base) as s:
+        for cod in ("10", "2", "33"):
+            s.add(CuentaCobranza(codigo=cod, office_id=OFICINA_TLAXCALA_ID))
+        s.commit()
+    seccion = _entrar("root").get("/mensualidades").text.split('id="titulares"')[1]
+    assert seccion.index("Cliente 2<") < seccion.index("Cliente 10<") < seccion.index("Cliente 33<")
 
 
 def test_cliente_dado_de_baja_no_aparece(base):

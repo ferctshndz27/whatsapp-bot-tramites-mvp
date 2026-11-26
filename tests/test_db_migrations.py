@@ -432,15 +432,21 @@ _ESQUEMA_DESPLEGADO = {
     # La cartera de clientes (2026-09-25): tabla nueva, create_all() la crea completa.
     "clienteasesor": ("id", "phone", "username", "created_at", "created_by", "habilitado"),
     # Calendario de cobranza (tablas nuevas: create_all() las crea completas).
+    "cuentacobranza": (
+        "id", "codigo", "nombre", "whatsapp", "importe_centavos", "dia_pago", "primer_pago",
+        "habilitado", "created_at", "created_by", "office_id",
+    ),
     "clientemensualidad": (
         "id", "nombre", "curp", "nss", "rfc", "whatsapp", "modalidad", "importe_centavos",
         "dia_pago", "primer_pago", "habilitado", "created_at", "created_by", "office_id",
+        # F1b: la persona cuelga de una cuenta (llegaron por ALTER sobre la tabla de F1).
+        "cuenta_id", "fecha_inicio", "observaciones", "baja_at", "baja_motivo",
     ),
     "mensualidadasesor": (
-        "id", "cliente_id", "username", "rol", "habilitado", "created_at", "created_by",
+        "id", "cuenta_id", "username", "rol", "habilitado", "created_at", "created_by",
     ),
     "mensualidad": (
-        "id", "cliente_id", "periodo", "vence_el", "importe_centavos", "pagado_at",
+        "id", "cuenta_id", "periodo", "vence_el", "importe_centavos", "pagado_at",
         "pagado_por", "habilitado", "created_at",
     ),
     "catalogcategory": ("id", "name", "position", "habilitado"),
