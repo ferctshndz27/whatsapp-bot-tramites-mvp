@@ -37,3 +37,10 @@ a.cal-dia:hover { border-color: var(--lime); }
 .mens-titular { border-top: 1px solid var(--border, #e5e7eb); padding: 0.5rem 0; }
 .mens-titular summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .mens-titular .table-wrap { margin-top: 0.5rem; }
+
+.mens-aviso { margin: 0 0 12px; padding: 10px 14px; border-radius: var(--radius-sm, 10px); background: #eef6d0; }
+.mens-aviso.mens-error { background: #fde4e1; }
+.mens-captura { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 8px 0 16px; }
+.mens-captura .sub { flex-basis: 100%; margin: 0; }
+.mens-captura label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; }
+.mens-captura input, .mens-captura select { min-height: 40px; }

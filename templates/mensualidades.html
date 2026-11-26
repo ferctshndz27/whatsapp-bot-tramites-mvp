@@ -113,6 +113,8 @@
 </div>
 <div class="card" id="titulares">
   <h2>Titulares y personas</h2>
+  {% if ok is not none %}<p class="mens-aviso" role="status">Datos guardados. Mensualidades nuevas generadas: {{ ok }}.</p>{% endif %}
+  {% if error %}<p class="mens-aviso mens-error" role="alert">{{ error }}</p>{% endif %}
   <p class="sub">{{ cuentas_n }} titular{{ '' if cuentas_n == 1 else 'es' }} · {{ personas_n }} persona{{ '' if personas_n == 1 else 's' }}. El cobro se hace al titular; las personas son a quienes cubre.</p>
   {% if titulares %}
   {% for t in titulares %}
@@ -120,8 +122,25 @@
     <summary>
       <strong>{{ t.titulo }}</strong>
       <span class="mens-sin">{{ t.vivas }} persona{{ '' if t.vivas == 1 else 's' }}</span>
+      {% if t.responsable %}<span class="mens-sin">Responsable: {{ t.responsable }}</span>{% else %}<span class="badge pendiente">Sin responsable</span>{% endif %}
       {% if t.c.importe_centavos is not none %}<span class="badge pagado">{{ '${:,.2f}'.format(t.c.importe_centavos / 100) }}{% if t.c.dia_pago %} · día {{ t.c.dia_pago }}{% endif %}</span>{% else %}<span class="badge pendiente">Sin importe</span>{% endif %}
     </summary>
+    {% if puede_capturar %}
+    <form method="post" action="/mensualidades/cuentas/{{ t.c.id }}/datos" class="mens-captura"> {# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+      <p class="sub">Datos de cobro de este titular. Un campo vacío no cambia lo que ya hay. Al guardar se generan sus mensualidades (si hay importe, día, primer pago y al menos una persona viva).</p>
+      <label>WhatsApp <input name="whatsapp" inputmode="tel" autocomplete="off" value="{{ t.c.whatsapp or '' }}"></label>
+      <label>Importe mensual (MXN) <input name="importe" inputmode="decimal" autocomplete="off" value="{{ t.importe_texto }}"></label>
+      <label>Día de pago (1-31) <input name="dia_pago" type="number" min="1" max="31" value="{{ t.c.dia_pago or '' }}"></label>
+      <label>Primer pago <input name="primer_pago" type="date" value="{{ t.c.primer_pago.isoformat() if t.c.primer_pago else '' }}"></label>
+      <label>Responsable
+        <select name="responsable">
+          <option value="">{{ 'Sin cambio' if t.responsable else 'Elegir…' }}</option>
+          {% for a in t.asesores %}<option value="{{ a }}"{% if a == t.responsable %} selected{% endif %}>{{ a }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="btn-nav" type="submit">Guardar</button>
+    </form>
+    {% endif %}
     <div class="table-wrap">
       <table>
         <thead><tr><th>Nombre</th><th>Modalidad</th><th>Alta</th><th>Estado</th></tr></thead>
