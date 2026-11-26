@@ -89,6 +89,7 @@ NO_SON_CREDENCIALES = {
     "COBRO_MONTO_MAXIMO_CENTAVOS",
     "OXXO_DIAS_VENCIMIENTO",
     "CARGA_MAXIMA_ASESOR",
+    "MENSUALIDAD_AVISO_DIAS",  # días de antelación de «por vencer» (calendario de cobranza)
     "REPARTO_AUTOMATICO",
     "GEOIP_ENABLED",
     # Perillas de la regla del folio y de la revisión (casos-analisis §5.5): interruptores y un

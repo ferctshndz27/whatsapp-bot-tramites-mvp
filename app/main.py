@@ -30,6 +30,7 @@ from app import (
     eventos,
     inbox,
     kb,
+    mensualidades_panel,
     my,
     nlu,
     offices,
@@ -283,6 +284,7 @@ app.include_router(system.router)
 app.include_router(synonym_miner.router)
 app.include_router(my.router)
 app.include_router(clients.router)
+app.include_router(mensualidades_panel.router)
 app.include_router(replies.router)
 app.include_router(kb.router)
 app.include_router(agente_studio.router)
