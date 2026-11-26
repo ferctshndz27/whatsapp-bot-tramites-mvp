@@ -47,6 +47,13 @@
 
 <div class="card" id="lista">
   <h2>Mensualidades de {{ mes_titulo | lower }}{% if dia %} · día {{ dia }}{% endif %}</h2>
+  {% if pagada %}<p class="mens-aviso" role="status">{{ 'Pago deshecho.' if pagada_deshecha else 'Pago registrado.' }}</p>{% endif %}
+  {% if error_pago %}<p class="mens-aviso mens-error" role="alert">{{ error_pago }}</p>{% endif %}
+  <form method="get" action="/mensualidades/export.xlsx" class="mens-export">
+    <label><input type="checkbox" name="pii" value="1"> Incluir CURP, NSS y RFC completos</label>
+    <button class="btn-nav" type="submit">Exportar a Excel</button>
+    <span class="sub">Todo lo de tu cartera, no solo lo filtrado.</span>
+  </form>
 
   <div class="pills" role="group" aria-label="Filtrar por estatus">
     {% for f in filtros %}
@@ -70,7 +77,7 @@
   {% if filas %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Titular</th><th>Vence</th><th>Importe</th><th>Estatus</th></tr></thead>
+      <thead><tr><th>Titular</th><th>Vence</th><th>Importe</th><th>Estatus</th><th>Pago</th></tr></thead>
       <tbody>
         {% for f in filas %}
         <tr>
@@ -78,6 +85,22 @@
           <td>{{ f.m.vence_el.strftime('%d/%m/%Y') }}</td>
           <td>{{ '${:,.2f}'.format(f.m.importe_centavos / 100) }}</td>
           <td><span class="badge {{ f.estatus }}">{{ f.etiqueta }}</span></td>
+          <td>
+            {% if f.m.pagado_at %}
+            <span class="mens-sin">{{ f.m.pagado_at.strftime('%d/%m/%Y') }}{% if f.m.pagado_por %} · {{ f.m.pagado_por }}{% endif %}</span>
+            {% if f.puede_deshacer %}
+            <form method="post" action="/mensualidades/{{ f.m.id }}/pago/deshacer" class="mens-pago"> {# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+              <input type="hidden" name="mes" value="{{ mes_valor }}">
+              <button class="btn-sm" type="submit">Deshacer</button>
+            </form>
+            {% endif %}
+            {% else %}
+            <form method="post" action="/mensualidades/{{ f.m.id }}/pago" class="mens-pago"> {# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+              <input type="hidden" name="mes" value="{{ mes_valor }}">
+              <button class="btn-nav" type="submit">Registrar pago</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
