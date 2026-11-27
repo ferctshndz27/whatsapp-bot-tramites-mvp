@@ -630,6 +630,10 @@ PUBLICAS: dict[tuple[str, str], str] = {
     # panel: si estas pidieran login, vería la pantalla de acceso al asesor.
     ("GET", "/cobros/gracias"): "retorno del checkout de Stripe",
     ("GET", "/cobros/cancelado"): "retorno del checkout de Stripe",
+    # Términos del autocobro: el cliente los lee desde la liga, sin sesión.
+    # Solo texto fijo versionado; ningún dato de cliente ni de plan.
+    ("GET", "/legal/autocobro"): "términos vigentes del autocobro, texto fijo",
+    ("GET", "/legal/autocobro/v{version}"): "términos del autocobro por versión, texto fijo",
     # Adjunto servido por nombre aleatorio para que el cliente lo abra desde
     # WhatsApp; el secreto es la URL. Su gemela /media/{name} SÍ pide sesión.
     ("GET", "/media/publico/{name}"): "adjunto de cliente, URL no adivinable",

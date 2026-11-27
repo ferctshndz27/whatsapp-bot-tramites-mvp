@@ -1,0 +1,28 @@
+{# Términos del autocobro. Los abre el CLIENTE desde su celular, sin sesión: NO
+   extiende base.html (trae la barra del panel interno). El texto sale de
+   app/autocobro_terminos.py; aquí solo se pinta. #}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Términos de la autorización de cobro recurrente</title>
+  <link rel="stylesheet" href="{{ static('css/legal.css') }}">
+</head>
+<body>
+  <main class="legal">
+    <h1>Términos de la autorización de cobro recurrente</h1>
+    <p class="version">Versión {{ version }}{% if not vigente %} (anterior; ya no es la vigente){% endif %}
+      · huella de texto <code>{{ huella[:16] }}</code></p>
+    {% for titulo, parrafos in secciones %}
+    <section>
+      <h2>{{ titulo }}</h2>
+      {% for p in parrafos %}
+      {% if p.startswith('- ') %}<p class="vineta">{{ p[2:] }}</p>{% else %}<p>{{ p }}</p>{% endif %}
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </main>
+</body>
+</html>
