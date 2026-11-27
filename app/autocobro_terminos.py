@@ -127,8 +127,8 @@ _PERIODOS = {"mensual": "mensual", "quincenal": "quincenal"}
 def texto_mandato(
     *,
     proveedor: str,
-    marca: str,
-    ultimos4: str,
+    marca: str | None = None,
+    ultimos4: str | None = None,
     monto_cargo_centavos: int,
     periodicidad: str,
     dia: int,
@@ -140,8 +140,11 @@ def texto_mandato(
     Lo que el cliente lee en pantalla y lo que se guarda son el MISMO string:
     la huella (`hash_mandato`) se calcula sobre este resultado.
     """
+    # La liga muestra el mandato ANTES de que exista la tarjeta: sin marca ni últimos 4 habla de «la
+    # tarjeta que registro en este formulario». Lo que se guarda es exactamente lo que se mostró.
+    tarjeta = f"la tarjeta {marca} terminación {ultimos4}" if marca and ultimos4 else "la tarjeta que registro en este formulario"
     return (
-        f"Autorizo a {proveedor} a cobrar a la tarjeta {marca} terminación {ultimos4} cargos de hasta "
+        f"Autorizo a {proveedor} a cobrar a {tarjeta} cargos de hasta "
         f"{formato_monto(monto_cargo_centavos)} con periodicidad {_PERIODOS.get(periodicidad, periodicidad)} "
         f"el día {dia}, por el concepto {concepto}, hasta cubrir {formato_monto(monto_total_centavos)} en "
         "total. Puedo cancelar esta autorización en cualquier momento."

@@ -180,6 +180,9 @@ class Settings:
         # Cobranza con Stripe. Sin STRIPE_SECRET_KEY el módulo queda inerte:
         # el panel avisa "Stripe no configurado" y no se escribe ningún cobro.
         self.stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
+        # Llave PÚBLICA (pk_…) para Stripe Elements en la liga del autocobro: no es secreto, pero debe
+        # ser de la misma cuenta y modo (prueba/real) que la secreta. Sin ella la liga contesta 503.
+        self.stripe_publishable_key = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
         # Distinto en modo prueba y en modo real. Sin él el webhook rechaza
         # TODO con 403 a propósito: un webhook sin verificar es dinero ajeno
         # entrando a nuestra base.

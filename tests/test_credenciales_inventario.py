@@ -32,6 +32,10 @@ CONFIG_PY = (RAIZ / "app" / "config.py").read_text(encoding="utf-8")
 NO_SON_CREDENCIALES = {
     # Versión pineada de la API de Stripe: infra, no secreto (SPEC §4.2).
     "STRIPE_API_VERSION",
+    # Llave PÚBLICA (pk_…) que el navegador del cliente ya ve en la liga del autocobro: no es
+    # secreto. Va con la secreta de la misma cuenta y modo; si el multi-oficina de Stripe la
+    # exige por oficina, entra al inventario ese día, con ese motivo escrito.
+    "STRIPE_PUBLISHABLE_KEY",
     # La llave MAESTRA que cifra la tabla: no puede ser fila de lo que protege.
     "CREDENTIALS_KEY",
     # §7 lo argumenta explícitamente: infra del contenedor (una URL pública por
