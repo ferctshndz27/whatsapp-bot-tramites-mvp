@@ -162,15 +162,44 @@ def modo_real() -> bool:
     return es_modo_real(credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID))
 
 
+def llave_secreta_configurada() -> bool:
+    """True si hay llave secreta de la oficina: sin ella `_request` es un no-op y no hay nada que ofrecer."""
+    return bool(credencial("STRIPE_SECRET_KEY", office_id=OFICINA_TLAXCALA_ID))
+
+
 def _metadata_plana(prefijo: str, metadata: dict) -> dict:
     return {f"{prefijo}[{k}]": str(v) for k, v in metadata.items()}
 
 
-def crear_customer(clave_idempotencia: str, metadata: dict) -> RespuestaStripe:
-    """POST /v1/customers. Solo SPEI lo necesita — ver crear_checkout_session."""
-    return _request("POST", "/v1/customers",
-                    data=_metadata_plana("metadata", metadata),
-                    clave_idempotencia=clave_idempotencia)
+def crear_customer(
+    clave_idempotencia: str, metadata: dict, *, nombre: str | None = None, email: str | None = None,
+) -> RespuestaStripe:
+    """POST /v1/customers. SPEI y el autocobro lo necesitan — ver crear_checkout_session."""
+    datos = _metadata_plana("metadata", metadata)
+    if nombre:
+        datos["name"] = nombre
+    if email:
+        datos["email"] = email
+    return _request("POST", "/v1/customers", data=datos, clave_idempotencia=clave_idempotencia)
+
+
+def crear_setup_intent(customer_id: str, metadata: dict, clave_idempotencia: str | None = None) -> RespuestaStripe:
+    """POST /v1/setup_intents para guardar una tarjeta y cobrarla DESPUÉS sin el cliente (off_session).
+
+    El número y el CVV los captura Stripe Elements en el navegador: jamás pasan por aquí.
+    """
+    datos = {
+        "customer": customer_id,
+        "usage": "off_session",
+        "payment_method_types[0]": "card",
+        **_metadata_plana("metadata", metadata),
+    }
+    return _request("POST", "/v1/setup_intents", data=datos, clave_idempotencia=clave_idempotencia)
+
+
+def obtener_setup_intent(si_id: str) -> RespuestaStripe:
+    """GET del SetupIntent con su método de pago desplegado (marca, últimos 4, vencimiento)."""
+    return _request("GET", f"/v1/setup_intents/{si_id}", params={"expand[]": "payment_method"})
 
 
 def crear_checkout_session(

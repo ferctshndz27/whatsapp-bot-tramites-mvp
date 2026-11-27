@@ -1,0 +1,54 @@
+{# Liga del autocobro: la abre el CLIENTE desde su celular, sin sesión. NO extiende base.html.
+   El número de tarjeta y el CVV los captura el iframe de Stripe (Elements): este HTML y nuestro
+   servidor nunca los ven. El JS vive en static/js/autocobro.js; aquí solo se le pasan datos. #}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Registra tu tarjeta para tus pagos</title>
+  <link rel="stylesheet" href="{{ static('css/autocobro.css') }}">
+</head>
+<body>
+  <main class="caja-cobro">
+    <h1>Registra tu tarjeta</h1>
+    <p class="intro">{{ r.proveedor }} te cobrará con tarjeta, de forma automática, estos pagos:</p>
+
+    <dl class="resumen">
+      <dt>Concepto</dt><dd>{{ r.concepto }}</dd>
+      <dt>Cada cargo</dt><dd>{{ r.monto_cargo }}</dd>
+      <dt>Periodicidad</dt><dd>{{ r.periodicidad }}, el día {{ r.dia }}{% if r.fecha_inicio %} (primer cargo: {{ r.fecha_inicio.strftime('%d/%m/%Y') }}){% endif %}</dd>
+      <dt>Total acordado</dt><dd>{{ r.monto_total }} (unos {{ r.cargos }} cargos)</dd>
+    </dl>
+    <p class="nota">Los cargos terminan al cubrir el total. Puedes cancelar cuando quieras.</p>
+
+    <form id="form-autocobro" novalidate
+          data-pk="{{ pk }}" data-preparar="/autocobro/{{ token }}/preparar">
+      <label for="nombre">Nombre completo</label>
+      <input id="nombre" name="nombre" type="text" autocomplete="name" maxlength="120" required>
+
+      <label for="email">Correo electrónico</label>
+      <input id="email" name="email" type="email" autocomplete="email" maxlength="200" required>
+
+      <label for="tarjeta">Tarjeta</label>
+      <div id="tarjeta" class="campo-tarjeta"></div>
+
+      <blockquote class="mandato">{{ r.mandato }}</blockquote>
+      <label class="casilla">
+        <input id="acepto" name="acepto" type="checkbox" value="1">
+        <span>Entiendo y autorizo de forma expresa estos cobros recurrentes. Leí los
+          <a href="/legal/autocobro/v{{ version_terminos }}" target="_blank" rel="noopener">términos (versión {{ version_terminos }})</a>.</span>
+      </label>
+
+      <p id="error-autocobro" class="error" role="alert" hidden></p>
+      <button id="enviar" type="submit">Registrar mi tarjeta</button>
+      <p class="nota">Tu tarjeta se captura directo en Stripe; nosotros nunca vemos el número ni el código de seguridad.</p>
+    </form>
+  </main>
+  <!-- nosemgrep: html.security.audit.missing-integrity.missing-integrity -- Stripe exige cargar Stripe.js desde js.stripe.com y lo cambia sin aviso: un hash fijo lo rompería; la CSP limita el origen. -->
+  <script src="https://js.stripe.com/v3/"></script>
+  <script src="{{ static('js/autocobro.js') }}" defer></script>
+</body>
+</html>

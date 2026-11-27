@@ -1,0 +1,29 @@
+/* Liga del autocobro (templates/autocobro.html): página pública, sin el shell del panel. */
+body {
+  margin: 0; padding: 1.5rem 1rem; background: #f4f5f7; color: #22242a;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.caja-cobro {
+  background: #fff; border-radius: 14px; padding: 1.75rem 1.5rem;
+  max-width: 30rem; margin: 0 auto; box-shadow: 0 2px 18px rgba(0, 0, 0, .08);
+}
+h1 { font-size: 1.35rem; margin: 0 0 .5rem; }
+.resumen { margin: 1rem 0 .5rem; display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
+.resumen dt { color: #5a5f6b; }
+.resumen dd { margin: 0; font-weight: 600; }
+.nota { color: #5a5f6b; font-size: .9rem; }
+label { display: block; margin: 1rem 0 .25rem; font-weight: 600; }
+input[type="text"], input[type="email"], .campo-tarjeta {
+  width: 100%; box-sizing: border-box; padding: .75rem; min-height: 44px;
+  border: 1px solid #b9bcc6; border-radius: 8px; font: inherit; background: #fff;
+}
+.mandato { margin: 1.25rem 0 .5rem; padding: .75rem 1rem; background: #f4f5f7; border-left: 4px solid #22242a; font-size: .95rem; }
+.casilla { display: flex; gap: .6rem; align-items: flex-start; font-weight: 400; }
+.casilla input { width: 1.3rem; height: 1.3rem; margin-top: .15rem; flex: none; }
+.error { color: #a3201a; font-weight: 600; }
+button {
+  width: 100%; margin-top: 1rem; padding: .85rem; min-height: 44px; border: 0; border-radius: 999px;
+  background: #22242a; color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+}
+button:disabled { opacity: .55; cursor: progress; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid #dcf24c; outline-offset: 2px; }

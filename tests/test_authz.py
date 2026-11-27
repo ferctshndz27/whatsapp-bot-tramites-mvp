@@ -634,6 +634,11 @@ PUBLICAS: dict[tuple[str, str], str] = {
     # Solo texto fijo versionado; ningún dato de cliente ni de plan.
     ("GET", "/legal/autocobro"): "términos vigentes del autocobro, texto fijo",
     ("GET", "/legal/autocobro/v{version}"): "términos del autocobro por versión, texto fijo",
+    # Liga del autocobro: el cliente la abre desde WhatsApp sin sesión. Su secreto es el token
+    # (256 bits, guardado con hash, 72 h, un solo uso); sin token vigente no contesta 200.
+    ("GET", "/autocobro/{token}"): "liga con token de 256 bits, un solo uso, 72 h",
+    ("POST", "/autocobro/{token}/preparar"): "crea el SetupIntent; exige liga vigente y tope por IP",
+    ("GET", "/autocobro/{token}/listo"): "vuelta de Stripe; exige liga vigente y verifica con Stripe",
     # Adjunto servido por nombre aleatorio para que el cliente lo abra desde
     # WhatsApp; el secreto es la URL. Su gemela /media/{name} SÍ pide sesión.
     ("GET", "/media/publico/{name}"): "adjunto de cliente, URL no adivinable",
