@@ -21,6 +21,7 @@ from app import (
     alta_manual_barrido,
     archive,
     authlog,
+    autocobro_publico,
     catalog_admin,
     clients,
     cobranza_panel,
@@ -285,6 +286,7 @@ app.include_router(synonym_miner.router)
 app.include_router(my.router)
 app.include_router(clients.router)
 app.include_router(mensualidades_panel.router)
+app.include_router(autocobro_publico.router)
 app.include_router(replies.router)
 app.include_router(kb.router)
 app.include_router(agente_studio.router)
