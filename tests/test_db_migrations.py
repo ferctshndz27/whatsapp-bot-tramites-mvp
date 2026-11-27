@@ -385,6 +385,39 @@ _ESQUEMA_DESPLEGADO = {
         "created_at",
         "habilitado",
     ),
+    "consentimientocobro": (
+        "id",
+        "plan_id",
+        "phone",
+        "version_terminos",
+        "hash_texto",
+        "texto_mandato",
+        "contrato_folio",
+        "tope_cargo_centavos",
+        "monto_total_centavos",
+        "periodicidad",
+        "dia_cobro",
+        "ip_hash",
+        "user_agent",
+        "stripe_setup_intent_id",
+        "stripe_mandate_id",
+        "aceptado_at",
+        "revocado_at",
+        "motivo_revocacion",
+        "created_at",
+        "habilitado",
+    ),
+    "ligaautocobro": (
+        "id",
+        "plan_id",
+        "token_hash",
+        "expira_at",
+        "usada_at",
+        "intentos_abiertos",
+        "creada_por",
+        "created_at",
+        "habilitado",
+    ),
     "paymentmethod": (
         "id",
         "phone",
@@ -635,6 +668,7 @@ _DICTS_DE_MIGRACION = {
     "conversation": {**db._HABILITADO_COLUMN, **db._CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH},
     # client también aparece en el spread de habilitado: misma fusión.
     "client": {**db._HABILITADO_COLUMN, **db._CLIENT_COLUMNS_ADDED_AFTER_LAUNCH},
+    "plancobro": db._PLANCOBRO_COLUMNS_ADDED_AFTER_LAUNCH,
 }
 # office_id entra por un dict compartido a 15 tablas (como habilitado): se fusiona
 # sobre lo que ya recibía cada tabla para no perder de vista ningún dict.

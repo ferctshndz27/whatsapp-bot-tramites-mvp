@@ -57,6 +57,7 @@ from app.models import (
     Message,
     NluEvent,
     OFICINA_TLAXCALA_ID,
+    ConsentimientoCobro,
     PaymentMethod,
     PlanCobro,
     Plantilla,
@@ -122,6 +123,7 @@ MIRROR_TABLES = [
     (EventoPasarela, "eventos_pasarela"),
     (PlanCobro, "planes_cobro"),
     (PaymentMethod, "payment_methods"),
+    (ConsentimientoCobro, "consentimientos_cobro"),
     # Etiquetas (fase 1).
     (Label, "labels"),
     (TicketLabel, "ticket_labels"),

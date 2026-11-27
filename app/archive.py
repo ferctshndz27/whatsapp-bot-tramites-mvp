@@ -671,9 +671,40 @@ _SCHEMA_DDL = [
         fin_at                     DATETIME2     NULL,
         stripe_customer_id         NVARCHAR(128) NULL,
         stripe_subscription_id     NVARCHAR(128) NULL,
+        monto_total_centavos       BIGINT        NULL,
+        saldo_pendiente_centavos   BIGINT        NULL,
+        cargos_previstos           INT           NULL,
+        fecha_inicio               DATE          NULL,
+        consentimiento_id          BIGINT        NULL,
         creado_por                 NVARCHAR(64)  NOT NULL,
         created_at                 DATETIME2     NOT NULL,
         habilitado                 BIT           NOT NULL DEFAULT 1
+    )
+    """,
+    # Autocobro: la prueba del consentimiento. Nunca PAN ni CVC; ip_hash, no la IP.
+    """
+    IF OBJECT_ID('consentimientos_cobro', 'U') IS NULL
+    CREATE TABLE consentimientos_cobro (
+        source_id               BIGINT         NOT NULL PRIMARY KEY,
+        plan_id                 BIGINT         NOT NULL,
+        phone                   NVARCHAR(32)   NOT NULL,
+        version_terminos        NVARCHAR(32)   NOT NULL,
+        hash_texto              NVARCHAR(64)   NOT NULL,
+        texto_mandato           NVARCHAR(MAX)  NOT NULL,
+        contrato_folio          NVARCHAR(64)   NULL,
+        tope_cargo_centavos     BIGINT         NOT NULL,
+        monto_total_centavos    BIGINT         NOT NULL,
+        periodicidad            NVARCHAR(12)   NOT NULL,
+        dia_cobro               INT            NULL,
+        ip_hash                 NVARCHAR(64)   NULL,
+        user_agent              NVARCHAR(300)  NULL,
+        stripe_setup_intent_id  NVARCHAR(128)  NULL,
+        stripe_mandate_id       NVARCHAR(128)  NULL,
+        aceptado_at             DATETIME2      NOT NULL,
+        revocado_at             DATETIME2      NULL,
+        motivo_revocacion       NVARCHAR(300)  NULL,
+        created_at              DATETIME2      NOT NULL,
+        habilitado              BIT            NOT NULL DEFAULT 1
     )
     """,
     # Nunca PAN, nunca CVC: solo el identificador pm_ de Stripe y los últimos 4.
@@ -831,6 +862,13 @@ _COLUMNS_ADDED_AFTER_LAUNCH = {
         "baja_motivo": "NVARCHAR(200) NULL",
     },
     "cuentas_cobranza": {"office_id": _OFFICE_ID_MSSQL},
+    "planes_cobro": {
+        "monto_total_centavos": "BIGINT NULL",
+        "saldo_pendiente_centavos": "BIGINT NULL",
+        "cargos_previstos": "INT NULL",
+        "fecha_inicio": "DATE NULL",
+        "consentimiento_id": "BIGINT NULL",
+    },
     "tickets": {
         "habilitado": "BIT NOT NULL DEFAULT 1",
         "agent_active": "BIT NOT NULL DEFAULT 1",
@@ -1914,9 +1952,41 @@ def archive_plan_cobro(p) -> None:
             "fin_at": _naive_utc(p.fin_at) if p.fin_at else None,
             "stripe_customer_id": p.stripe_customer_id,
             "stripe_subscription_id": p.stripe_subscription_id,
+            "monto_total_centavos": p.monto_total_centavos,
+            "saldo_pendiente_centavos": p.saldo_pendiente_centavos,
+            "cargos_previstos": p.cargos_previstos,
+            "fecha_inicio": p.fecha_inicio,
+            "consentimiento_id": p.consentimiento_id,
             "creado_por": p.creado_por,
             "created_at": _naive_utc(p.created_at),
             "habilitado": p.habilitado,
+        },
+    )
+
+
+def archive_consentimiento_cobro(c) -> None:
+    _upsert(
+        "consentimientos_cobro", "source_id", c.id,
+        {
+            "plan_id": c.plan_id,
+            "phone": c.phone,
+            "version_terminos": c.version_terminos,
+            "hash_texto": c.hash_texto,
+            "texto_mandato": c.texto_mandato,
+            "contrato_folio": c.contrato_folio,
+            "tope_cargo_centavos": c.tope_cargo_centavos,
+            "monto_total_centavos": c.monto_total_centavos,
+            "periodicidad": c.periodicidad,
+            "dia_cobro": c.dia_cobro,
+            "ip_hash": c.ip_hash,
+            "user_agent": (c.user_agent or "")[:300] or None,
+            "stripe_setup_intent_id": c.stripe_setup_intent_id,
+            "stripe_mandate_id": c.stripe_mandate_id,
+            "aceptado_at": _naive_utc(c.aceptado_at),
+            "revocado_at": _naive_utc(c.revocado_at) if c.revocado_at else None,
+            "motivo_revocacion": c.motivo_revocacion,
+            "created_at": _naive_utc(c.created_at),
+            "habilitado": c.habilitado,
         },
     )
 
@@ -2036,6 +2106,7 @@ _TABLAS_ESPEJO_TELEFONO = (
     "cobros",
     "planes_cobro",
     "payment_methods",
+    "consentimientos_cobro",
 )
 
 
@@ -2160,6 +2231,7 @@ def backfill() -> None:
         NluEvent,
         PaymentMethod,
         PlanCobro,
+        ConsentimientoCobro,
         Plantilla,
         SavedReply,
         SynonymProposal,
@@ -2263,6 +2335,8 @@ def backfill() -> None:
                 archive_plan_cobro(pc)
             for pm in session.exec(select(PaymentMethod)).all():
                 archive_payment_method(pm)
+            for cc in session.exec(select(ConsentimientoCobro)).all():
+                archive_consentimiento_cobro(cc)
             for pl in session.exec(select(Plantilla)).all():
                 archive_plantilla(pl)
             for lb in session.exec(select(Label)).all():
@@ -2329,6 +2403,7 @@ def _register_listeners() -> None:
         NluEvent,
         PaymentMethod,
         PlanCobro,
+        ConsentimientoCobro,
         Plantilla,
         SavedReply,
         SynonymProposal,
@@ -2578,12 +2653,17 @@ def _register_listeners() -> None:
     @event.listens_for(PlanCobro, "after_insert")
     @event.listens_for(PlanCobro, "after_update")
     def _plan_cobro_upsert(mapper, connection, target):
-        _safe(archive_plan_cobro, target)
+        _diferir(archive_plan_cobro, target)
 
     @event.listens_for(PaymentMethod, "after_insert")
     @event.listens_for(PaymentMethod, "after_update")
     def _payment_method_upsert(mapper, connection, target):
-        _safe(archive_payment_method, target)
+        _diferir(archive_payment_method, target)
+
+    @event.listens_for(ConsentimientoCobro, "after_insert")
+    @event.listens_for(ConsentimientoCobro, "after_update")
+    def _consentimiento_cobro_upsert(mapper, connection, target):
+        _diferir(archive_consentimiento_cobro, target)
 
     @event.listens_for(Plantilla, "after_insert")
     @event.listens_for(Plantilla, "after_update")

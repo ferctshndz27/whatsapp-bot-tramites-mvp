@@ -127,6 +127,15 @@ _CLIENTEMENSUALIDAD_COLUMNS_ADDED_AFTER_LAUNCH = {
     "baja_at": "DATETIME",
     "baja_motivo": "VARCHAR",
 }
+# Autocobro F1: el plan lleva su tope. Todas nullable (NULL = «sin tope todavía»); `plancobro` ya
+# está en producción, vacía, desde la primera entrega de Stripe.
+_PLANCOBRO_COLUMNS_ADDED_AFTER_LAUNCH = {
+    "monto_total_centavos": "INTEGER",
+    "saldo_pendiente_centavos": "INTEGER",
+    "cargos_previstos": "INTEGER",
+    "fecha_inicio": "DATE",
+    "consentimiento_id": "INTEGER",
+}
 _TICKET_COLUMNS_ADDED_AFTER_LAUNCH = {
     "agent_active": "BOOLEAN NOT NULL DEFAULT 1",
     # Nullable a propósito: los folios viejos no tienen requisitos capturados y
@@ -239,6 +248,7 @@ def init_db() -> None:
     _add_missing_columns("conversation", _CONVERSATION_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("client", _CLIENT_COLUMNS_ADDED_AFTER_LAUNCH)
     _add_missing_columns("clientemensualidad", _CLIENTEMENSUALIDAD_COLUMNS_ADDED_AFTER_LAUNCH)
+    _add_missing_columns("plancobro", _PLANCOBRO_COLUMNS_ADDED_AFTER_LAUNCH)
     _seed_crm_etapas()
     for table in _TABLES_NEEDING_HABILITADO:
         _add_missing_columns(table, _HABILITADO_COLUMN)

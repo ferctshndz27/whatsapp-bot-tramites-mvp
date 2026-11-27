@@ -192,6 +192,15 @@ ARCHIVE_DDL = [
         predeterminado INTEGER DEFAULT 0, autorizado_por TEXT,
         autorizado_at TIMESTAMP, estado TEXT, created_at TIMESTAMP,
         habilitado INTEGER DEFAULT 1)""",
+    """CREATE TABLE consentimientos_cobro (
+        source_id INTEGER PRIMARY KEY, plan_id INTEGER, phone TEXT,
+        version_terminos TEXT, hash_texto TEXT, texto_mandato TEXT,
+        contrato_folio TEXT, tope_cargo_centavos INTEGER,
+        monto_total_centavos INTEGER, periodicidad TEXT, dia_cobro INTEGER,
+        ip_hash TEXT, user_agent TEXT, stripe_setup_intent_id TEXT,
+        stripe_mandate_id TEXT, aceptado_at TIMESTAMP, revocado_at TIMESTAMP,
+        motivo_revocacion TEXT, created_at TIMESTAMP,
+        habilitado INTEGER DEFAULT 1)""",
 ]
 
 
